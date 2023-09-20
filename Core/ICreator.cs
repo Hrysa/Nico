@@ -1,8 +1,8 @@
-﻿namespace Nico.Core;
+namespace Nico.Core;
 
 public interface ICreator
 {
-    void Build();
+    World Build();
 
-    void OnExit();
+    Task OnExit();
 }

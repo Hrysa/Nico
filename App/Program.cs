@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Nico.Core;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);

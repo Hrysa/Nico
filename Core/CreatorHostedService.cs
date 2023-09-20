@@ -8,7 +8,7 @@ namespace Nico.Core;
 public class CreatorHostedService : IHostedService, IAsyncDisposable
 {
     private readonly ILogger<CreatorHostedService> _logger;
-    private CancellationTokenSource? _cancellationTokenSource;
+    private CancellationTokenSource? _cancellationTokenSource = null;
 
     private readonly Dictionary<string, AssemblyLoadContext> _contexts = new();
     private readonly List<ICreator> _creators = new();
@@ -20,20 +20,22 @@ public class CreatorHostedService : IHostedService, IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
+
         GC.Collect();
-        LoadHotfix("Single");
-        LoadModel("Single");
+        LoadSystem("Single");
+        LoadState("Single");
     }
 
-    private void LoadHotfix(string module)
+    private void LoadSystem(string module)
     {
-        var assembly = LoadAssembly($"{module}.Hotfix");
-        _logger.LogInformation($"load hotfix, total types: {assembly.GetTypes().Length}");
+        var assembly = LoadAssembly($"{module}.System");
+        _logger.LogInformation($"load System, {assembly.GetTypes().Length} systems found");
     }
 
-    private void LoadModel(string module)
+    private void LoadState(string module)
     {
-        var assembly = LoadAssembly($"{module}.Model");
+        var assembly = LoadAssembly($"{module}.State");
         var type = assembly.GetTypes().FirstOrDefault(x => x.GetInterfaces().Contains(typeof(ICreator)));
         if (type is null)
         {
@@ -65,12 +67,14 @@ public class CreatorHostedService : IHostedService, IAsyncDisposable
         _cancellationTokenSource?.Cancel();
         foreach (var creator in _creators)
         {
-            creator.OnExit();
+            await creator.OnExit();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
+        await Task.CompletedTask;
+
         Console.WriteLine("Dispose");
     }
 }

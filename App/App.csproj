@@ -7,13 +7,13 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
-    
+
     <ItemGroup>
       <ProjectReference Include="..\Core\Core.csproj" />
-      <ProjectReference Include="..\demo\Single.Hotfix\Single.Hotfix.csproj" />
-      <ProjectReference Include="..\demo\Single.Model\Single.Model.csproj" />
+      <ProjectReference Include="..\demo\Single.System\Single.System.csproj" />
+      <ProjectReference Include="..\demo\Single.State\Single.State.csproj" />
     </ItemGroup>
-    
+
     <ItemGroup>
       <ProjectReference Include="..\Core\Core.csproj" />
     </ItemGroup>

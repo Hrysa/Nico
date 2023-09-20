@@ -1,10 +1,9 @@
-﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "App\App.csproj", "{34EBFF35-3B0A-460C-BE5D-9706353CA436}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Single.Model", "demo\Single.Model\Single.Model.csproj", "{9126B125-8E4A-4B77-8462-53426FCD909D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Single.State", "demo\Single.State\Single.State.csproj", "{9126B125-8E4A-4B77-8462-53426FCD909D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Single.Hotfix", "demo\Single.Hotfix\Single.Hotfix.csproj", "{79995F0C-177F-4DDD-BDF9-80B89671F21F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Single.System", "demo\Single.System\Single.System.csproj", "{79995F0C-177F-4DDD-BDF9-80B89671F21F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Core", "Core\Core.csproj", "{34FFBA8A-5E3E-47EE-9329-F298E462E6E9}"
 EndProject
