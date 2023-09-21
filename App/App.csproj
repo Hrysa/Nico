@@ -13,8 +13,4 @@
       <ProjectReference Include="..\demo\Single.System\Single.System.csproj" />
       <ProjectReference Include="..\demo\Single.State\Single.State.csproj" />
     </ItemGroup>
-
-    <ItemGroup>
-      <ProjectReference Include="..\Core\Core.csproj" />
-    </ItemGroup>
 </Project>

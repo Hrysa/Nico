@@ -2,16 +2,17 @@ namespace Nico.Core;
 
 public class World
 {
-    private Dictionary<long, Entity> Entitys = new();
-    private Dictionary<long, Component> Components = new();
-    private Dictionary<long, Archetype> Archetypes = new();
+    private readonly Dictionary<long, Entity> Entitys = new();
+    private readonly Dictionary<long, Component> Components = new();
+    private readonly Dictionary<long, Archetype> Archetypes = new();
 
-    private Dictionary<long, ArchetypeValue> EntityComponentIds = new();
-    private Dictionary<long, Archetype> EntityArcheTypeIndex = new();
+    private readonly Dictionary<long, ArchetypeValue> EntityComponentIds = new();
+    private readonly Dictionary<long, Archetype> EntityArchetypeIndex = new();
+    private readonly Dictionary<ArchetypeValue, Archetype> ArchetypeIndex = new();
 
-    private Dictionary<ArchetypeValue, Archetype> ArchetypeIndex = new();
+    private readonly IList<ISystem> Systems = new List<ISystem>();
 
-    private Dictionary<Type, Ref<long>> IdPool = new();
+    private readonly Dictionary<Type, Ref<long>> IdPool = new();
 
     public Entity CreateEntity()
     {
@@ -21,6 +22,17 @@ public class World
         return entity;
     }
 
+    public void RegisterSystem<T>() where T : ISystem
+    {
+        RegisterSystem(typeof(T));
+    }
+
+    public void RegisterSystem(Type type)
+    {
+        var system = Activator.CreateInstance(type) as ISystem;
+        system.Created();
+        Systems.Add(system);
+    }
     public long GenerateId<T>()
     {
         var type = typeof(T);
@@ -31,5 +43,10 @@ public class World
         }
 
         return Interlocked.Increment(ref idRef.DeRef);
+    }
+
+    public void Update()
+    {
+        Console.WriteLine("World update");
     }
 }

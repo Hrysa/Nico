@@ -1,8 +1,16 @@
 namespace Nico.Core;
 
-interface ISystem
+public interface ISystem
 {
+    void Created()
+    {
+    }
+
     void Update()
+    {
+    }
+
+    void Destroy()
     {
     }
 }
