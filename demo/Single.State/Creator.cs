@@ -9,6 +9,9 @@ public class Creator : ICreator
         var world = new World();
         Console.WriteLine("Creator new world");
 
+        var entity = new Entity();
+        entity.AddComponent<Component>();
+
         return world;
     }
 
