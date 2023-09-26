@@ -14,6 +14,8 @@ public class World
 
     private readonly Dictionary<Type, Ref<long>> IdPool = new();
 
+    private long Frame = 0;
+
     public Entity CreateEntity()
     {
         var entity = new Entity(this);
@@ -30,9 +32,10 @@ public class World
     public void RegisterSystem(Type type)
     {
         var system = Activator.CreateInstance(type) as ISystem;
-        system.Created();
+        system!.Created();
         Systems.Add(system);
     }
+
     public long GenerateId<T>()
     {
         var type = typeof(T);
@@ -47,6 +50,6 @@ public class World
 
     public void Update()
     {
-        Console.WriteLine("World update");
+        Console.WriteLine($"World update {++Frame}");
     }
 }

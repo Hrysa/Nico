@@ -1,4 +1,4 @@
-﻿namespace Nico.Core.Attributes;
+namespace Nico.Core.Attributes;
 
 public class AutoRegisterAttribute : Attribute
 {
