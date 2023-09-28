@@ -24,6 +24,19 @@ public class World
         return entity;
     }
 
+    public Entity CreateEntity(Archetype archetype)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Archetype CreateArchetype()
+    {
+        var archtype = new Archetype(this);
+        Archetypes.Add(archtype.Id, archtype);
+
+        return archtype;
+    }
+
     public void RegisterSystem<T>() where T : ISystem
     {
         RegisterSystem(typeof(T));

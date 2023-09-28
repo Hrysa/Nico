@@ -2,8 +2,8 @@ namespace Nico.Core;
 
 public class Archetype
 {
-    private readonly long Id;
-    private HashSet<long> _valueSet = new();
+    public readonly long Id;
+    private ArchetypeValue _valueSet = new List<long>();
 
     public Archetype(World world)
     {
