@@ -11,11 +11,7 @@ public static class HostBuilderExtensions
     {
         builder.ConfigureServices(x =>
         {
-            // x.AddSingleton(new LocalHostClusteringOptions());
-
-            x.Configure<LocalHostClusteringOptions>(configureOptions);
-
-
+            x.Configure(configureOptions);
             x.AddSingleton<IDiscovery, LocalhostDiscovery>();
         });
         return builder;
