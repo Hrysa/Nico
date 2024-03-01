@@ -9,7 +9,9 @@ await new HostBuilder()
         //
         x.AddHostedService<NicoHostedService>();
     })
-    .UseLocalhostClustering(x =>
+    .UseLocalhostClustering(options =>
     {
-        Console.WriteLine("????" + (x == null));
+        //
+        options.Port = 1234;
+
     }).Build().RunAsync();
