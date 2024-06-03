@@ -12,7 +12,8 @@ public static class HostBuilderExtensions
         builder.ConfigureServices(x =>
         {
             x.Configure(configureOptions);
-            x.AddSingleton<IDiscovery, LocalhostDiscovery>();
+            x.AddSingleton<LocalhostDiscoveryServer>();
+            x.AddSingleton<IDiscoveryClient, LocalhostDiscoveryClient>();
         });
         return builder;
     }
