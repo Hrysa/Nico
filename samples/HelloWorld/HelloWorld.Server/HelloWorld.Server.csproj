@@ -5,6 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RootNamespace>HelloWorld.App</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +16,7 @@
     <ProjectReference Include="..\..\..\src\Nico.Clustering.Abstractions\Nico.Clustering.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\Nico.Clustering.Localhost\Nico.Clustering.Localhost.csproj" />
     <ProjectReference Include="..\..\..\src\Nico.Core\Nico.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\Nico.Net\Nico.Net.csproj" />
   </ItemGroup>
 
 </Project>
