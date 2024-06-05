@@ -101,7 +101,7 @@ public class R2Udp : ISocketReceiver
                     continue;
                 }
 
-                byte[] buffer = GC.AllocateArray<byte>(length, pinned: true);
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
                 _receiveBuffer.AsSpan().Slice(0, length).CopyTo(buffer);
                 HandleReceivedDataAsync(length, address, buffer);
             }
@@ -251,113 +251,120 @@ public class R2Udp : ISocketReceiver
 
         internal void Receive(byte[] buff, int length, long ticks)
         {
-            lock (this)
+            try
             {
-                var span = buff.AsSpan(0, length);
-
-                // ack with no body
-                if (length == 4)
+                lock (this)
                 {
-                    HandleAck(BitConverter.ToUInt16(span.Slice(2)), ticks);
-                    return;
-                }
+                    var span = buff.AsSpan(0, length);
 
-                if (length < 6)
-                {
-                    Helper.Warn($"broken fragment, size: {length}");
-                    return;
-                }
+                    // ack with no body
+                    if (length == 4)
+                    {
+                        HandleAck(BitConverter.ToUInt16(span.Slice(2)), ticks);
+                        return;
+                    }
 
-                _incomeFrag.FrameId = BitConverter.ToUInt16(span);
-                _incomeFrag.AckFrameId = BitConverter.ToUInt16(span.Slice(2));
-                _incomeFrag.MsgId = BitConverter.ToUInt16(span.Slice(4));
-                _incomeFrag.MsgChunkIndex = BitConverter.ToUInt16(span.Slice(6));
+                    if (length < 6)
+                    {
+                        Helper.Warn($"broken fragment, size: {length}");
+                        return;
+                    }
 
-                HandleAck(_incomeFrag.AckFrameId, ticks);
+                    _incomeFrag.FrameId = BitConverter.ToUInt16(span);
+                    _incomeFrag.AckFrameId = BitConverter.ToUInt16(span.Slice(2));
+                    _incomeFrag.MsgId = BitConverter.ToUInt16(span.Slice(4));
+                    _incomeFrag.MsgChunkIndex = BitConverter.ToUInt16(span.Slice(6));
 
-                Helper.Log($"[rcv frag] {_incomeFrag.FrameId} -> {_curFragment.FrameId} msgId {_incomeFrag.MsgId}");
+                    HandleAck(_incomeFrag.AckFrameId, ticks);
 
-                // received resend fragment
-                if (_incomeFrag.FrameId == _curFragment.FrameId)
-                {
-                    Helper.Log($"ignore finished resend frag {_incomeFrag.FrameId} {_curFragment.FrameId}");
+                    Helper.Log($"[rcv frag] {_incomeFrag.FrameId} -> {_curFragment.FrameId} msgId {_incomeFrag.MsgId}");
+
+                    // received resend fragment
+                    if (_incomeFrag.FrameId == _curFragment.FrameId)
+                    {
+                        Helper.Log($"ignore finished resend frag {_incomeFrag.FrameId} {_curFragment.FrameId}");
+                        SendAck(_curFragment.FrameId);
+                        return;
+                    }
+
+                    // not valid increment id
+                    if (_incomeFrag.FrameId != (ushort)(_curFragment.FrameId + 1))
+                    {
+                        Helper.Warn($"invalid fragment {_incomeFrag.FrameId} {_curFragment.FrameId}");
+                        return;
+                    }
+
+                    if (_incomeFrag.MessageHead)
+                    {
+                        if (length < FirstHeadSize)
+                        {
+                            Helper.Warn($"invalid length, less than 14");
+                            return;
+                        }
+
+                        _bodySize = BitConverter.ToInt32(span.Slice(NormalHeadSize));
+
+                        // current fragment flags is broken
+                        if (_bodySize == 0)
+                        {
+                            Helper.Warn("body size broken");
+                            return;
+                        }
+
+                        if (_bodySize > MaxBodySize)
+                        {
+                            Helper.Warn("body size reached max body size limit");
+                            return;
+                        }
+
+                        // grow body size if coming message size larger than current body size
+                        if (_bodySize > _body.Length)
+                        {
+                            ArrayPool<byte>.Shared.Return(_body);
+                            _body = ArrayPool<byte>.Shared.Rent(_bodySize);
+                        }
+
+                        if (!CopyBody(span.Slice(FirstHeadSize)))
+                        {
+                            return;
+                        }
+
+                        Helper.Log($"new msg {_incomeFrag.FrameId} {_incomeFrag.MsgId}");
+
+                        _curFragment = _incomeFrag;
+                    }
+                    else
+                    {
+                        if (_curFragment.MsgId != _incomeFrag.MsgId)
+                        {
+                            Helper.Warn(
+                                $"msg id incorrect: {_curFragment.MsgId} {_incomeFrag.MsgId} no {_incomeFrag.FrameId} chunk {_incomeFrag.MsgChunkIndex} len {length}");
+                            return;
+                        }
+
+                        if (!CopyBody(span.Slice(NormalHeadSize)))
+                        {
+                            return;
+                        }
+
+                        _curFragment = _incomeFrag;
+                    }
+
                     SendAck(_curFragment.FrameId);
-                    return;
+
+                    Helper.Log(
+                        $"no {_curFragment.FrameId} msg {_curFragment.MsgId} size {_bodySize}/{length} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
+
+                    if (_bodySize == _fetchedSize)
+                    {
+                        _fetchedSize = 0;
+                        OnMessage?.Invoke(this, _body, _bodySize);
+                    }
                 }
-
-                // not valid increment id
-                if (_incomeFrag.FrameId != (ushort)(_curFragment.FrameId + 1))
-                {
-                    Helper.Warn($"invalid fragment {_incomeFrag.FrameId} {_curFragment.FrameId}");
-                    return;
-                }
-
-                if (_incomeFrag.MessageHead)
-                {
-                    if (length < FirstHeadSize)
-                    {
-                        Helper.Warn($"invalid length, less than 14");
-                        return;
-                    }
-
-                    _bodySize = BitConverter.ToInt32(span.Slice(NormalHeadSize));
-
-                    // current fragment flags is broken
-                    if (_bodySize == 0)
-                    {
-                        Helper.Warn("body size broken");
-                        return;
-                    }
-
-                    if (_bodySize > MaxBodySize)
-                    {
-                        Helper.Warn("body size reached max body size limit");
-                        return;
-                    }
-
-                    // grow body size if coming message size larger than current body size
-                    if (_bodySize > _body.Length)
-                    {
-                        ArrayPool<byte>.Shared.Return(_body);
-                        _body = ArrayPool<byte>.Shared.Rent(_bodySize);
-                    }
-
-                    if (!CopyBody(span.Slice(FirstHeadSize)))
-                    {
-                        return;
-                    }
-
-                    Helper.Log($"new msg {_incomeFrag.FrameId} {_incomeFrag.MsgId}");
-
-                    _curFragment = _incomeFrag;
-                }
-                else
-                {
-                    if (_curFragment.MsgId != _incomeFrag.MsgId)
-                    {
-                        Helper.Warn(
-                            $"msg id incorrect: {_curFragment.MsgId} {_incomeFrag.MsgId} no {_incomeFrag.FrameId} chunk {_incomeFrag.MsgChunkIndex} len {length}");
-                        return;
-                    }
-
-                    if (!CopyBody(span.Slice(NormalHeadSize)))
-                    {
-                        return;
-                    }
-
-                    _curFragment = _incomeFrag;
-                }
-
-                SendAck(_curFragment.FrameId);
-
-                Helper.Log(
-                    $"no {_curFragment.FrameId} msg {_curFragment.MsgId} size {_bodySize}/{length} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
-
-                if (_bodySize == _fetchedSize)
-                {
-                    _fetchedSize = 0;
-                    OnMessage?.Invoke(this, _body, _bodySize);
-                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buff);
             }
         }
 
@@ -374,7 +381,6 @@ public class R2Udp : ISocketReceiver
 
         private void Unlock()
         {
-            Channel<>
         }
 
         private void HandleAck(ushort fragment, long ticks)
@@ -440,11 +446,12 @@ public class R2Udp : ISocketReceiver
         {
             while (true)
             {
-                var opCount = 0;
-                await foreach (var i in _channel.Reader.ReadAllAsync())
-                {
-                    opCount++;
-                }
+                // var opCount = 0;
+                // await foreach (var i in _channel.Reader.ReadAllAsync())
+                // {
+                    // opCount++;
+                // }
+                await Task.Delay(1);
 
                 long ticks = DateTimeOffset.Now.UtcTicks / TimeSpan.TicksPerMillisecond;
 
@@ -460,24 +467,18 @@ public class R2Udp : ISocketReceiver
                     var lastSnd = _lastSnd;
                     if (latency <= _rto)
                     {
-                        _resendCts = new CancellationTokenSource();
-                        _ = Task.Delay((int)(_rto - latency), _resendCts.Token).ContinueWith(_ =>
-                            {
-                                if (lastSnd == _lastSnd)
-                                {
-                                    Console.WriteLine("timeout unlock");
-                                    Unlock();
-                                }
-                            }, _resendCts.Token)
-                            .ConfigureAwait(false);
+                        // _resendCts = new CancellationTokenSource();
+                        // _ = Task.Delay((int)(_rto - latency), _resendCts.Token).ContinueWith(_ =>
+                        //     {
+                        //         if (lastSnd == _lastSnd)
+                        //         {
+                        //             Console.WriteLine("timeout unlock");
+                        //             Unlock();
+                        //         }
+                        //     }, _resendCts.Token)
+                        //     .ConfigureAwait(false);
                         continue;
                     }
-
-                    // Helper.Log($"resend frag: {_sendFragmentNo} latency {latency} rtt {_rtt} rto {_rto}");
-                    // if (_dropFragmentCount > 0 && _dropFragmentCount % 100 == 0)
-                    // {
-                    //     Helper.Warn($"resend frag count: {_dropFragmentCount}/{_fragmentCount} id: {GetHashCode()}");
-                    // }
 
                     _rto *= 2;
                     _dropFragmentCount++;
