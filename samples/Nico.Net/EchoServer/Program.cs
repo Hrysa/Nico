@@ -10,14 +10,21 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 
 var server = new R2Udp(new IPEndPoint(IPAddress.Any, 8888));
 
+byte[] buff = new byte[40 * 8];
 server.OnMessage = (channel, data, length) =>
 {
-    // Console.WriteLine("server rcv: " + Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));
-    channel.Send(data.AsSpan().Slice(0, length).ToArray());
+    channel.Send(buff);
+    // channel.Send(data.AsSpan().Slice(0, length).ToArray());
 };
 
-Helper.Loop(server.Receive);
-Helper.Loop(server.Send);
-Helper.Loop(server.Update);
+server.StartReceive();
 
 Console.ReadLine();
+
+foreach (var conn in server.Connections.Values)
+{
+    Console.WriteLine($"{conn.DropFragmentCount}/{conn.FragmentCount} rtt {conn.RttMin}/{conn.RttMax}/{conn.RttMean}");
+}
+
+Console.ReadLine();
+

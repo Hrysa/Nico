@@ -5,11 +5,12 @@ using Microsoft.Extensions.Hosting;
 using Nico.Core;
 using Nico.Discovery;
 using Nico.Net;
+using Nico.Net.Abstractions;
 
 await new HostBuilder()
     .ConfigureServices(x =>
     {
-        x.AddSingleton<IMessageReceiver, R2Udp>(_ => new R2Udp());
+        x.AddSingleton<ISocketReceiver, R2Udp>(_ => new R2Udp());
         x.AddHostedService<R2UdpRunner>();
         x.AddHostedService<ConsoleHostedService>();
     })

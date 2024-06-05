@@ -82,13 +82,23 @@ public static class Helper
         return copy;
     }
 
-    public static void Loop(Action action)
+    public static void Loop(Action action, string tag = "")
     {
         Task.Run(() =>
         {
             while (true)
             {
                 action();
+
+                // DateTimeOffset start = DateTimeOffset.UtcNow;
+                // action();
+                //
+                // var ts = DateTimeOffset.UtcNow - start;
+                // if (ts > TimeSpan.FromMilliseconds(1))
+                // {
+                //     Console.WriteLine($"{tag} {ts.TotalMilliseconds}ms");
+                // }
+
                 Thread.Sleep(1);
             }
         });

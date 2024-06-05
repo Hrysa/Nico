@@ -1,4 +1,6 @@
-﻿namespace Nico.Net;
+﻿using Nico.Net.Abstractions;
+
+namespace Nico.Net;
 
 public class MessageDispatcher : IMessageDispatcher
 {

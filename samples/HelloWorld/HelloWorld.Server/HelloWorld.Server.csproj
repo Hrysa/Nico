@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MemoryPack" Version="1.21.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
   </ItemGroup>
 
@@ -17,6 +18,7 @@
     <ProjectReference Include="..\..\..\src\Nico.Clustering.Localhost\Nico.Clustering.Localhost.csproj" />
     <ProjectReference Include="..\..\..\src\Nico.Core\Nico.Core.csproj" />
     <ProjectReference Include="..\..\..\src\Nico.Net\Nico.Net.csproj" />
+    <ProjectReference Include="..\HelloWorld.Shared\HelloWorld.Shared.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,5 @@
 ﻿using System.Net;
 using System.Runtime.InteropServices;
-using System.Text;
 using Nico.Net;
 
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -10,33 +9,51 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 
 List<R2Udp> clients = new();
 
-for (int i = 0; i < 100; i++)
+for (int i = 0; i < 1000; i++)
 {
     var client = new R2Udp();
     clients.Add(client);
-    var connection = client.Connect(new IPEndPoint(IPAddress.Loopback, 8888));
+    var connection = client.Connect(new IPEndPoint(IPAddress.Parse("192.168.0.250"), 8888));
     connection.OnMessage = (conn, data, length) =>
     {
         // Console.WriteLine("client rcv: " + Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));
     };
 }
 
+
 foreach (var client in clients)
 {
-    Helper.Loop(client.Receive);
-    Helper.Loop(client.Send);
-    Helper.Loop(client.Update);
+    client.StartReceive();
+}
 
-    while (true)
+
+DateTimeOffset start = DateTimeOffset.UtcNow;
+byte[] buff = "hello world, hello world, hello world, hello world\n"u8.ToArray();
+for (int i = 0; i < 33 * 10; i++)
+{
+    // Thread.Sleep(30);
+    // Console.ReadLine();
+    foreach (var r2Udpse in clients.Chunk(300))
     {
-        // byte[] buff = Encoding.UTF8.GetBytes(Console.ReadLine());
-        byte[] buff = new byte[3000];
-        Thread.Sleep(20);
-        foreach (var simpleUdp in clients)
+        // await Task.Delay(2);
+        Thread.Sleep(1);
+        foreach (var client in r2Udpse)
         {
-            simpleUdp.Connection!.Send(buff);
+            client.Connection!.Send(buff);
         }
     }
 }
+
+await Task.Delay(5000);
+var idx = 0;
+foreach (var client in clients)
+{
+    var conn = client.Connection!;
+
+    Console.WriteLine(
+        $"{idx++:0000} {conn.DropFragmentCount}/{conn.FragmentCount} rtt {conn.RttMin}/{conn.RttMax}/{conn.RttMean}");
+}
+
+Console.WriteLine($"total {DateTimeOffset.UtcNow - start}");
 
 Console.ReadLine();

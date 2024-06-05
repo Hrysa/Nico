@@ -1,16 +1,17 @@
 ﻿using Microsoft.Extensions.Hosting;
+using Nico.Net.Abstractions;
 
 namespace Nico.Net;
 
 public class MessageHandler : IHostedService
 {
-    private readonly IMessageReceiver _messageReceiverReceiver;
+    private readonly ISocketReceiver _socketReceiver;
     private readonly IMessageDispatcher _messageDispatcher;
 
-    public MessageHandler(IMessageReceiver messageReceiverReceiver)
+    public MessageHandler(ISocketReceiver socketReceiver)
     {
-        _messageReceiverReceiver = messageReceiverReceiver;
-        _messageReceiverReceiver.OnMessage = OnMessage;
+        _socketReceiver = socketReceiver;
+        _socketReceiver.OnMessage = OnMessage;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
