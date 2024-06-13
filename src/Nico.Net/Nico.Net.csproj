@@ -12,6 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\Nico.Core\Nico.Core.csproj" />
       <ProjectReference Include="..\Nico.Net.Abstractions\Nico.Net.Abstractions.csproj" />
     </ItemGroup>
 

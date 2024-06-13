@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Runtime.InteropServices;
+using Nico.Core;
 using Nico.Net;
 
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -9,7 +10,7 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 
 List<R2Udp> clients = new();
 
-for (int i = 0; i < 1000; i++)
+for (int i = 0; i < 1; i++)
 {
     var client = new R2Udp();
     clients.Add(client);
@@ -20,6 +21,16 @@ for (int i = 0; i < 1000; i++)
     };
 }
 
+// Coroutine coroutine = new();
+//
+// coroutine.Start(() =>
+// {
+//     while (true)
+//     {
+//         Console.WriteLine(111);
+//         yield return null;
+//     }
+// });
 
 foreach (var client in clients)
 {
@@ -32,7 +43,7 @@ byte[] buff = "hello world, hello world, hello world, hello world\n"u8.ToArray()
 for (int i = 0; i < 33 * 10; i++)
 {
     // Thread.Sleep(30);
-    // Console.ReadLine();
+    Console.ReadLine();
     foreach (var r2Udpse in clients.Chunk(300))
     {
         // await Task.Delay(2);
@@ -43,6 +54,7 @@ for (int i = 0; i < 33 * 10; i++)
         }
     }
 }
+
 
 await Task.Delay(5000);
 var idx = 0;

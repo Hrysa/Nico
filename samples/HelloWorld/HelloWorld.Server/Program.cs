@@ -12,7 +12,7 @@ await new HostBuilder()
     {
         x.AddSingleton<ISocketReceiver, R2Udp>(_ => new R2Udp(new IPEndPoint(IPAddress.Any, 10001)));
         x.AddHostedService<R2UdpRunner>();
-        x.AddHostedService<NicoHostedService>();
+        // x.AddHostedService<NicoHostedService>();
     })
     .UseMessageHandler(x => { x.Scan(Assembly.GetEntryAssembly()!); })
     .UseLocalhostClustering(options => { }).Build().RunAsync();

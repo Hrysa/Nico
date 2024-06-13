@@ -1,9 +1,11 @@
 ﻿using System.Buffers;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Nico.Core;
 using Nico.Net.Abstractions;
 
 namespace Nico.Net;
@@ -41,6 +43,8 @@ public class R2Udp : ISocketReceiver
     public IPEndPoint? RemoteEndPoint => _remoteEndPoint;
 
     #endregion
+
+    private Coroutine _coroutine = new();
 
     public R2Udp(IPEndPoint? ipEndPoint = null)
     {
@@ -82,7 +86,7 @@ public class R2Udp : ISocketReceiver
         _connected = true;
         _socket.Bind(new IPEndPoint(IPAddress.Any, 0));
 
-        _connection.Update();
+        _coroutine.Start(_connection.Update);
         return _connection;
     }
 
@@ -103,7 +107,7 @@ public class R2Udp : ISocketReceiver
 
                 byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
                 _receiveBuffer.AsSpan().Slice(0, length).CopyTo(buffer);
-                HandleReceivedDataAsync(length, address, buffer);
+                HandleReceivedData(length, address, buffer);
             }
             catch (Exception ex)
             {
@@ -112,21 +116,18 @@ public class R2Udp : ISocketReceiver
         }
     }
 
-    private async void HandleReceivedDataAsync(int length, SocketAddress address, byte[] buffer)
+    private void HandleReceivedData(int length, SocketAddress address, byte[] buffer)
     {
-        long ticks = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
         if (_listenMode)
         {
             var fromCreate = GetOrCreate(address, out var connection);
 
-            await Task.Yield();
-
             if (fromCreate)
             {
-                connection.Update();
+                _coroutine.Start(connection.Update);
             }
 
-            connection.Receive(buffer, length, ticks);
+            HandleReceivedDataConnection(connection, buffer, length);
             return;
         }
 
@@ -135,8 +136,13 @@ public class R2Udp : ISocketReceiver
             return;
         }
 
-        await Task.Yield();
-        _connection?.Receive(buffer, length, ticks);
+        HandleReceivedDataConnection(_connection!, buffer, length);
+    }
+
+    private void HandleReceivedDataConnection(UdpConnection connection, byte[] buffer, int length)
+    {
+        connection._rcvBuffer = buffer;
+        connection._rcvLength = length;
     }
 
     // only create in server mode
@@ -198,6 +204,9 @@ public class R2Udp : ISocketReceiver
 
 
         #region receive message
+
+        internal byte[] _rcvBuffer;
+        internal int _rcvLength;
 
         private const int MaxBodySize = 1024 * 1024 * 8;
 
@@ -442,16 +451,15 @@ public class R2Udp : ISocketReceiver
         }
 
 
-        internal async void Update()
+        internal IEnumerable Update()
         {
             while (true)
             {
                 // var opCount = 0;
                 // await foreach (var i in _channel.Reader.ReadAllAsync())
                 // {
-                    // opCount++;
+                // opCount++;
                 // }
-                await Task.Delay(1);
 
                 long ticks = DateTimeOffset.Now.UtcTicks / TimeSpan.TicksPerMillisecond;
 
@@ -460,7 +468,7 @@ public class R2Udp : ISocketReceiver
                     if (_sendAck)
                     {
                         RequestSend(true);
-                        continue;
+                        yield return null;
                     }
 
                     var latency = ticks - _lastSnd;
@@ -477,7 +485,7 @@ public class R2Udp : ISocketReceiver
                         //         }
                         //     }, _resendCts.Token)
                         //     .ConfigureAwait(false);
-                        continue;
+                        yield return null;
                     }
 
                     _rto *= 2;
@@ -486,7 +494,7 @@ public class R2Udp : ISocketReceiver
                     RequestSend();
                     UpdateSendTime();
 
-                    continue;
+                    yield return null;
                 }
 
                 if (_resendCts?.Token.CanBeCanceled is true)
@@ -498,7 +506,7 @@ public class R2Udp : ISocketReceiver
                 {
                     if (!_messageQueue.TryDequeue(out _sendMessage))
                     {
-                        continue;
+                        yield return null;
                     }
 
                     // reset message state
@@ -510,6 +518,7 @@ public class R2Udp : ISocketReceiver
                 ParseFragment();
                 RequestSend();
                 UpdateSendTime();
+                yield return null;
             }
         }
 
