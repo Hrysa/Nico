@@ -18,7 +18,8 @@ server.OnMessage = (channel, data, length) =>
     // channel.Send(data.AsSpan().Slice(0, length).ToArray());
 };
 
-server.StartReceive();
+// server.StartReceive();
+server.Start();
 
 Console.ReadLine();
 

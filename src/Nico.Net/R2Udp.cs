@@ -46,8 +46,56 @@ public class R2Udp : ISocketReceiver
 
     private Coroutine _coroutine = new();
 
+    // TODO: make it pool to separate connections into workers
+    private Task _connectionUpdater;
+    private static object _locker = new();
+
+
+    public void Start()
+    {
+        _socket.ReceiveFromAsync(ConfigureSocketEventArgs());
+    }
+
+    private void ReceivedSocketEvent(object? sender, SocketAsyncEventArgs e)
+    {
+        Console.WriteLine($"{e.LastOperation} {e.BytesTransferred}");
+        switch (e.LastOperation)
+        {
+            case SocketAsyncOperation.ReceiveFrom:
+            {
+                // (e.RemoteEndPoint as IPEndPoint).Address.GetAddressBytes();
+                    // e.RemoteEndPoint.Serialize().Equals()
+                    SocketAddress sa = new SocketAddress(AddressFamily.InterNetwork);
+                    Ipend
+                    (e.RemoteEndPoint as IPEndPoint).Serialize(sa.Buffer.Span);
+                break;
+            }
+            default:
+                throw new InvalidOperationException();
+        }
+
+        _socket.ReceiveFromAsync(e);
+    }
+
+    private SocketAsyncEventArgs ConfigureSocketEventArgs()
+    {
+        var eventArg = new SocketAsyncEventArgs();
+        eventArg.Completed += ReceivedSocketEvent;
+        eventArg.SetBuffer(new byte[1440], 0, 1440);
+        eventArg.RemoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
+        return eventArg;
+    }
+
     public R2Udp(IPEndPoint? ipEndPoint = null)
     {
+        if (_connectionUpdater is null)
+        {
+            lock (_locker)
+            {
+                _connectionUpdater ??= Task.Run(ConnectionUpdate);
+            }
+        }
+
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -56,7 +104,7 @@ public class R2Udp : ISocketReceiver
             const uint IOC_VENDOR = 0x18000000;
             const int SIO_UDP_CONNRESET = unchecked((int)(IOC_IN | IOC_VENDOR | 12));
 
-            _socket.IOControl(SIO_UDP_CONNRESET, new[] { Convert.ToByte(false) }, null);
+            _socket.IOControl(SIO_UDP_CONNRESET, [Convert.ToByte(false)], null);
         }
 
 
@@ -71,6 +119,13 @@ public class R2Udp : ISocketReceiver
 
         _socket.Bind(ipEndPoint);
         _listenMode = true;
+    }
+
+    private static void ConnectionUpdate()
+    {
+        while (true)
+        {
+        }
     }
 
     public UdpConnection Connect(IPEndPoint ipEndPoint)
