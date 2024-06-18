@@ -7,6 +7,8 @@ public sealed class SPSCQueue<T>
     private int _head = 0;
     private int _tail = 0;
 
+    public int Count => _tail - _head;
+
     public static SPSCQueue<T> Create(int size = 1024)
     {
         return new SPSCQueue<T>(size);

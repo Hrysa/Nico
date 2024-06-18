@@ -2,43 +2,37 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Nico.Net;
 using Nico.Net.Abstractions;
 
-namespace Nico.Net;
-
-public class R2UdpConnection : IConnection
+struct MessageFragment
 {
-    private struct FragmentInfo
+    public ushort No;
+    public ushort AckNo;
+    public ushort MsgNo;
+    public ushort ChunkIndex;
+    public int Opt;
+
+    public override string ToString()
     {
-        public ushort No;
-        public ushort AckNo;
-        public ushort MsgNo;
-        public ushort MsgChunkIndex;
-
-        public bool MessageHead => MsgChunkIndex is 0;
+        return $"no {No} ack {AckNo} chunk {ChunkIndex} opt {Opt}";
     }
+}
 
-    // fragment number          2
-    // fragement ack number     2
-    // message number           2
-    // message chunk index      2
-    // body size(opt)           4
-    // body
-
-    private const int FirstHeadSize = 12;
-    private const int NormalHeadSize = 8;
-
+public class R2Connection : IConnection
+{
     private readonly int _fragmentSize;
-    private readonly SocketAddress _remoteAddress;
+    private readonly SocketAddress _socketAddress;
     private readonly IPEndPoint _remoteEndPoint;
-    private readonly ChannelWriter<R2UdpConnection> _channelWriter;
+    private readonly ChannelWriter<R2Connection> _channelWriter;
     private readonly Socket _socket;
 
-    public SocketAddress RemoteAddress => _remoteAddress;
+    public SocketAddress SocketAddress => _socketAddress;
     public EndPoint RemoteEndPoint => _remoteEndPoint;
-    public Action<R2UdpConnection, byte[], int>? OnMessage;
+    public Action<R2Connection, byte[], int>? OnMessage;
 
     public int MinRtt = 5;
 
@@ -56,13 +50,16 @@ public class R2UdpConnection : IConnection
 
     #region receive message
 
+    internal Queue<BufferFragment> IncomeBuffer = new();
+
+    internal byte[] _rcvBuffer;
+    internal int _rcvLength;
+
     private const int MaxBodySize = 1024 * 1024 * 8;
 
-    internal byte[]? RcvBuffer;
-    internal int RcvLength;
-
-    private FragmentInfo _curFragment;
-    private FragmentInfo _incomeFrag;
+    // private R2Udp.FragmentInfo _curFragment;
+    // private R2Udp.FragmentInfo _incomeFrag;
+    private ushort _curRcvNo = 0;
 
     private byte[] _body = ArrayPool<byte>.Shared.Rent(1024);
     private int _fetchedSize;
@@ -93,72 +90,66 @@ public class R2UdpConnection : IConnection
     private int _dropFragmentCount;
     private int _fragmentCount;
 
+    private CancellationTokenSource? _resendCts;
+
     public int DropFragmentCount => _dropFragmentCount;
     public int FragmentCount => _fragmentCount;
 
     Channel<int> _channel = Channel.CreateBounded<int>(2);
 
-    internal R2UdpConnection(int fragmentSize, SocketAddress remoteAddress, Socket socket)
+    private static readonly IPEndPoint EndPointFactory = new(IPAddress.Any, 0);
+
+    internal unsafe R2Connection(int fragmentSize, SocketAddress socketAddress, Socket socket)
     {
         _fragmentSize = fragmentSize;
         _sendFragment = new byte[fragmentSize];
-        _remoteAddress = remoteAddress;
-        // _remoteEndPoint = (IPEndPoint)EndPointFactory.Create(socketAddress);
+        _socketAddress = socketAddress;
+        _remoteEndPoint = (IPEndPoint)EndPointFactory.Create(socketAddress);
         _socket = socket;
     }
 
-    private void UpdateReceive(long ticks)
+    internal unsafe void Receive(IntPtr buffer, int length, long ticks)
     {
         try
         {
-            var span = RcvBuffer.AsSpan(0, RcvLength);
+            var fragment = (MessageFragment*)buffer;
 
-            var ackNo = BitConverter.ToUInt16(span.Slice(2));
-            // ack with no body
-            if (RcvLength == 4)
+            var span = MemoryMarshal.CreateSpan(
+                ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)buffer), 12), length - 12);
+
+            if (length < sizeof(MessageFragment))
             {
-                HandleAck(ackNo, ticks);
+                Helper.Warn($"broken fragment, size: {length}");
                 return;
             }
 
-            _incomeFrag.No = BitConverter.ToUInt16(span);
-            _incomeFrag.AckNo = ackNo;
-            _incomeFrag.MsgNo = BitConverter.ToUInt16(span.Slice(4));
-            _incomeFrag.MsgChunkIndex = BitConverter.ToUInt16(span.Slice(6));
+            HandleAck(fragment->AckNo, ticks);
 
-            HandleAck(_incomeFrag.AckNo, ticks);
+            Helper.Log($"[rcv frag] {fragment->No}");
 
-            Helper.Log($"[rcv frag] {_incomeFrag.No} -> {_curFragment.No} msgId {_incomeFrag.MsgNo}");
-
-            // resend fragment received
-            if (_incomeFrag.No == _curFragment.No)
+            // received resend fragment
+            if (fragment->No == _curRcvNo)
             {
-                Helper.Log($"ignore finished resend frag {_incomeFrag.No} {_curFragment.No}");
-                SendAck(_curFragment.No);
+                Helper.Log($"ignore finished resend frag {fragment->No}");
+                MarkSendAck(_curRcvNo);
                 return;
             }
 
             // not valid increment id
-            if (_incomeFrag.No != (ushort)(_curFragment.No + 1))
+            if (fragment->No != (ushort)(_curRcvNo + 1))
             {
-                Helper.Warn($"invalid fragment {_incomeFrag.No} {_curFragment.No}");
+                Helper.Warn($"invalid fragment {fragment->No} > {_curRcvNo}");
                 return;
             }
 
-            if (_incomeFrag.MessageHead)
+            if (fragment->ChunkIndex == 0)
             {
-                if (RcvLength < FirstHeadSize)
-                {
-                    Helper.Warn($"invalid length, less than 14");
-                    return;
-                }
-
-                _bodySize = BitConverter.ToInt32(span.Slice(NormalHeadSize));
+                _bodySize = fragment->Opt;
 
                 // current fragment flags is broken
                 if (_bodySize == 0)
                 {
-                    Helper.Warn("body size broken");
+                    Helper.Warn($"body size broken {fragment->ToString()}");
                     return;
                 }
 
@@ -175,36 +166,31 @@ public class R2UdpConnection : IConnection
                     _body = ArrayPool<byte>.Shared.Rent(_bodySize);
                 }
 
-                if (!CopyBody(span.Slice(FirstHeadSize)))
+                if (!CopyBody(span))
                 {
                     return;
                 }
 
-                Helper.Log($"new msg {_incomeFrag.No} {_incomeFrag.MsgNo}");
+                Helper.Log($"new msg, no {fragment->No} msg {fragment->MsgNo} size {fragment->Opt}");
 
-                _curFragment = _incomeFrag;
+                _curRcvNo = fragment->No;
             }
             else
             {
-                if (_curFragment.MsgNo != _incomeFrag.MsgNo)
-                {
-                    Helper.Warn(
-                        $"msg id incorrect: {_curFragment.MsgNo} {_incomeFrag.MsgNo} no {_incomeFrag.No} chunk {_incomeFrag.MsgChunkIndex} len {RcvLength}");
-                    return;
-                }
+                // TODO: verify chunk index computed data size equal received data size
 
-                if (!CopyBody(span.Slice(NormalHeadSize)))
+                if (!CopyBody(span))
                 {
                     return;
                 }
 
-                _curFragment = _incomeFrag;
+                _curRcvNo = fragment->No;
             }
 
-            SendAck(_curFragment.No);
+            MarkSendAck(_curRcvNo);
 
             Helper.Log(
-                $"no {_curFragment.No} msg {_curFragment.MsgNo} size {_bodySize}/{RcvLength} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
+                $"no {_curRcvNo} size {_bodySize}/{length} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
 
             if (_bodySize == _fetchedSize)
             {
@@ -214,13 +200,10 @@ public class R2UdpConnection : IConnection
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(RcvBuffer!);
-            RcvBuffer = null;
-            RcvLength = 0;
         }
     }
 
-    private void SendAck(ushort fragment)
+    private void MarkSendAck(ushort fragment)
     {
         // TODO: merge ack into message
 
@@ -275,6 +258,14 @@ public class R2UdpConnection : IConnection
         return true;
     }
 
+    internal void SendAck()
+    {
+        if (_sendAck)
+        {
+            RequestSend(true);
+        }
+    }
+
     public void Send(byte[]? data)
     {
         if (data == null || data.Length == 0)
@@ -285,37 +276,43 @@ public class R2UdpConnection : IConnection
         _messageQueue.Enqueue(data);
     }
 
-    internal void Update(long ticks)
-    {
-        UpdateReceive(ticks);
-        UpdateSend(ticks);
-    }
 
-    private void UpdateSend(long ticks)
+    internal void Update()
     {
         {
+            long ticks = DateTimeOffset.Now.UtcTicks / TimeSpan.TicksPerMillisecond;
+
             if (!_sent)
             {
                 var latency = ticks - _lastSnd;
+                var lastSnd = _lastSnd;
                 if (latency <= _rto)
                 {
-
+                    // _resendCts = new CancellationTokenSource();
+                    // _ = Task.Delay((int)(_rto - latency), _resendCts.Token).ContinueWith(_ =>
+                    //     {
+                    //         if (lastSnd == _lastSnd)
+                    //         {
+                    //             Console.WriteLine("timeout unlock");
+                    //             Unlock();
+                    //         }
+                    //     }, _resendCts.Token)
+                    //     .ConfigureAwait(false);
                     return;
                 }
 
                 _rto *= 2;
                 _dropFragmentCount++;
 
-                // merge ack fragment into resend data fragment
-                if (_sendAck)
-                {
-                    BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(_sendFragment.AsSpan().Slice(2));
-                }
-
                 RequestSend();
                 UpdateSendTime();
 
                 return;
+            }
+
+            if (_resendCts?.Token.CanBeCanceled is true)
+            {
+                _resendCts.Cancel();
             }
 
             if (_sendMessage is null || _lastChunk)
@@ -334,6 +331,7 @@ public class R2UdpConnection : IConnection
             ParseFragment();
             RequestSend();
             UpdateSendTime();
+            return;
         }
     }
 
@@ -341,16 +339,10 @@ public class R2UdpConnection : IConnection
     {
         _sent = false;
 
-        var headSize = _sendMessageChunkIndex == 0 ? FirstHeadSize : NormalHeadSize;
+        var headSize = 12;
         _sendFragmentBodySize = _fragmentSize - headSize;
         _sendFragmentSize = _fragmentSize;
         var startIndex = _sendMessageChunkIndex * _sendFragmentBodySize;
-
-        // using normal head size bytes step calculation will be missing first chunk extra 4 byte
-        if (headSize == NormalHeadSize)
-        {
-            startIndex -= 4;
-        }
 
         if (startIndex + _sendFragmentBodySize >= _sendMessage!.Length)
         {
@@ -363,18 +355,24 @@ public class R2UdpConnection : IConnection
         Span<byte> body = _sendFragment.AsSpan().Slice(headSize);
         if (_sendMessageChunkIndex == 0)
         {
-            BitConverter.GetBytes(_sendMessage.Length).CopyTo(_sendFragment.AsSpan().Slice(NormalHeadSize));
+            BitConverter.GetBytes(_sendMessage.Length).CopyTo(_sendFragment.AsSpan().Slice(headSize - 4));
         }
 
         var sendFragmentSpan = _sendFragment.AsSpan();
         BitConverter.GetBytes(++_sendFragmentNo).CopyTo(sendFragmentSpan);
-        BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(sendFragmentSpan.Slice(2));
+
+        if (_sendAck)
+        {
+            BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(sendFragmentSpan.Slice(2));
+            _sendAck = false;
+        }
+
         BitConverter.GetBytes(_sendMessageNo).CopyTo(sendFragmentSpan.Slice(4));
         BitConverter.GetBytes(_sendMessageChunkIndex++).CopyTo(sendFragmentSpan.Slice(6));
 
         _sendMessage.AsSpan().Slice(startIndex, _sendFragmentBodySize).CopyTo(body);
         Helper.Log(
-            $"[send frag]: {_sendFragmentNo} msg {_sendMessageNo} size: {_sendFragmentSize} body: {_sendFragmentBodySize} chunk {_sendMessageChunkIndex - 1}");
+            $"[send frag]: no {_sendFragmentNo} msg {_sendMessageNo} size: {_sendFragmentSize} body: {_sendFragmentBodySize} chunk {_sendMessageChunkIndex - 1}");
     }
 
     private void UpdateSendTime()
@@ -382,6 +380,7 @@ public class R2UdpConnection : IConnection
         _lastSnd = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
     }
 
+    byte[] _ackBuffer = GC.AllocateArray<byte>(12, pinned: true);
     private void RequestSend(bool sendAck = false)
     {
         _fragmentCount++;
@@ -389,12 +388,12 @@ public class R2UdpConnection : IConnection
 
         if (sendAck)
         {
-            byte[] buffer = GC.AllocateArray<byte>(4, pinned: true);
-            Memory<byte> bufferMem = buffer.AsMemory();
-            BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(buffer.AsSpan().Slice(2));
+            Memory<byte> bufferMem = _ackBuffer.AsMemory();
+            BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(_ackBuffer.AsSpan().Slice(2));
             _sendAck = false;
 
-            _socket.SendToAsync(bufferMem, SocketFlags.None, RemoteAddress);
+            _socket.SendToAsync(bufferMem, SocketFlags.None, SocketAddress);
+            Console.WriteLine($"Send ack {bufferMem.Length}");
         }
         else
         {
@@ -403,7 +402,7 @@ public class R2UdpConnection : IConnection
             _sendFragment.AsSpan()[.._sendFragmentSize].CopyTo(buffer.AsSpan());
 
             _socket.SendToAsync(bufferMem, SocketFlags.None,
-                RemoteAddress);
+                SocketAddress);
         }
     }
 }

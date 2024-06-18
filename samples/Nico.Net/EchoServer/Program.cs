@@ -14,7 +14,7 @@ byte[] buff = new byte[40 * 8];
 server.OnMessage = (channel, data, length) =>
 {
     Console.WriteLine(Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));
-    channel.Send(buff);
+    // channel.Send(buff);
     // channel.Send(data.AsSpan().Slice(0, length).ToArray());
 };
 
