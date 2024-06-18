@@ -76,6 +76,9 @@ public class R2Udp : ISocketReceiver
         {
             case SocketAsyncOperation.ReceiveFrom:
             {
+                Console.WriteLine($"RECV {e.BytesTransferred}");
+
+
                 if (e.BytesTransferred is > Mtu or < 12)
                 {
                     break;
@@ -94,7 +97,6 @@ public class R2Udp : ISocketReceiver
                     _connections.Add(new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
                         connection);
                 }
-
 
                 if (!_ptrStack.TryPop(out var ptr))
                 {
@@ -196,11 +198,11 @@ public class R2Udp : ISocketReceiver
                         connection.Receive(fragment.Buffer, fragment.Length, ticks);
                     }
 
-                    connection.Update();
+                    connection.Update(ticks);
                     connection.SendAck();
                 }
 
-                Thread.Sleep(1000);
+                Thread.Sleep(1);
             }
             catch (Exception ex)
             {
@@ -222,13 +224,13 @@ public class R2Udp : ISocketReceiver
         _connected = true;
         _socket.Bind(new IPEndPoint(IPAddress.Any, 0));
 
-        var connection = new R2Connection(Mtu, ipEndPoint.Serialize(), _socket)
-        {
-            OnMessage = OnMessage
-        };
+        // var connection = new R2Connection(Mtu, ipEndPoint.Serialize(), _socket)
+        // {
+        //     OnMessage = OnMessage
+        // };
 
         _connections.Add(new IPEndPoint(new IPAddress(ipEndPoint.Address.GetAddressBytes()), ipEndPoint.Port),
-            connection);
+            _connection);
 
         IncomeFragments.Enqueue(new BufferFragment { Connection = _connection });
 

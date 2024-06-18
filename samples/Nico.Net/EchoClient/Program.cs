@@ -14,7 +14,7 @@ for (int i = 0; i < 1; i++)
 {
     var client = new R2Udp();
     clients.Add(client);
-    var connection = client.Connect(new IPEndPoint(IPAddress.Parse("192.168.0.250"), 8888));
+    var connection = client.Connect(new IPEndPoint(IPAddress.Loopback, 8888));
     connection.OnMessage = (conn, data, length) =>
     {
         // Console.WriteLine("client rcv: " + Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));

@@ -125,6 +125,11 @@ public class R2Connection : IConnection
 
             HandleAck(fragment->AckNo, ticks);
 
+            if (length == sizeof(MessageFragment))
+            {
+                return;
+            }
+
             Helper.Log($"[rcv frag] {fragment->No}");
 
             // received resend fragment
@@ -217,6 +222,7 @@ public class R2Connection : IConnection
     {
         if (_sendFragmentNo != fragment)
         {
+            Console.WriteLine(GetHashCode());
             Helper.Log($"rcv invalid ack no {_sendFragmentNo} {fragment}");
             return;
         }
@@ -277,11 +283,9 @@ public class R2Connection : IConnection
     }
 
 
-    internal void Update()
+    internal void Update(long ticks)
     {
         {
-            long ticks = DateTimeOffset.Now.UtcTicks / TimeSpan.TicksPerMillisecond;
-
             if (!_sent)
             {
                 var latency = ticks - _lastSnd;
@@ -381,6 +385,7 @@ public class R2Connection : IConnection
     }
 
     byte[] _ackBuffer = GC.AllocateArray<byte>(12, pinned: true);
+
     private void RequestSend(bool sendAck = false)
     {
         _fragmentCount++;
@@ -388,20 +393,15 @@ public class R2Connection : IConnection
 
         if (sendAck)
         {
-            Memory<byte> bufferMem = _ackBuffer.AsMemory();
-            BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(_ackBuffer.AsSpan().Slice(2));
+            BitConverter.GetBytes(_sendAckFragmentNo).CopyTo(_ackBuffer.AsSpan()[2..]);
             _sendAck = false;
 
-            _socket.SendToAsync(bufferMem, SocketFlags.None, SocketAddress);
-            Console.WriteLine($"Send ack {bufferMem.Length}");
+            _socket.SendTo(_ackBuffer, SocketFlags.None, SocketAddress);
         }
         else
         {
-            byte[] buffer = GC.AllocateArray<byte>(_sendFragmentSize, pinned: true);
-            Memory<byte> bufferMem = buffer.AsMemory();
-            _sendFragment.AsSpan()[.._sendFragmentSize].CopyTo(buffer.AsSpan());
-
-            _socket.SendToAsync(bufferMem, SocketFlags.None,
+            Console.WriteLine($"SEND {_sendFragmentSize}");
+            _socket.SendTo(_sendFragment.AsSpan()[.._sendFragmentSize], SocketFlags.None,
                 SocketAddress);
         }
     }
