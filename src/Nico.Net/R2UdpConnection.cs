@@ -289,7 +289,6 @@ public class R2Connection : IConnection
             if (!_sent)
             {
                 var latency = ticks - _lastSnd;
-                var lastSnd = _lastSnd;
                 if (latency <= _rto)
                 {
                     // _resendCts = new CancellationTokenSource();
@@ -308,6 +307,7 @@ public class R2Connection : IConnection
                 _rto *= 2;
                 _dropFragmentCount++;
 
+                Console.WriteLine($"RESEND latency {latency} rto {_rto}");
                 RequestSend();
                 UpdateSendTime();
 
@@ -400,7 +400,7 @@ public class R2Connection : IConnection
         }
         else
         {
-            Console.WriteLine($"SEND {_sendFragmentSize}");
+            Console.WriteLine($"SEND {_sendFragmentSize} {SocketAddress}");
             _socket.SendTo(_sendFragment.AsSpan()[.._sendFragmentSize], SocketFlags.None,
                 SocketAddress);
         }

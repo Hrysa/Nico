@@ -1,11 +1,8 @@
-﻿using System.Buffers;
-using System.Collections;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading.Channels;
 using Nico.Core;
 using Nico.Net.Abstractions;
 
@@ -72,57 +69,66 @@ public class R2Udp : ISocketReceiver
 
     private unsafe void ReceivedSocketEvent(object? sender, SocketAsyncEventArgs e)
     {
-        switch (e.LastOperation)
+        Console.WriteLine("RECVING");
+        try
         {
-            case SocketAsyncOperation.ReceiveFrom:
+            switch (e.LastOperation)
             {
-                Console.WriteLine($"RECV {e.BytesTransferred}");
-
-
-                if (e.BytesTransferred is > Mtu or < 12)
+                case SocketAsyncOperation.ReceiveFrom:
                 {
+                    Console.WriteLine($"RECV {e.BytesTransferred}");
+
+
+                    if (e.BytesTransferred is > Mtu or < 12)
+                    {
+                        break;
+                    }
+
+                    var endPoint = (IPEndPoint)e.RemoteEndPoint!;
+
+                    if (!_connections.TryGetValue(endPoint, out var connection))
+                    {
+                        Helper.Log($"new connection created {endPoint}");
+                        connection = new R2Connection(Mtu, endPoint.Serialize(), _socket)
+                        {
+                            OnMessage = OnMessage
+                        };
+
+                        _connections.Add(
+                            new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
+                            connection);
+                    }
+
+                    if (!_ptrStack.TryPop(out var ptr))
+                    {
+                        ptr = Marshal.AllocHGlobal(Mtu);
+                    }
+
+                    Console.WriteLine(e.BytesTransferred);
+
+                    var span = MemoryMarshal.CreateSpan(
+                        ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
+                    e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
+
+                    IncomeFragments.Enqueue(new BufferFragment
+                        { Connection = connection, Buffer = ptr, Length = e.BytesTransferred });
+
+                    for (int i = 0; i < e.BytesTransferred; i++)
+                    {
+                        Console.Write($"{e.MemoryBuffer.Span[i]} ");
+                    }
+
+                    Console.WriteLine();
+
                     break;
                 }
-
-                var endPoint = (IPEndPoint)e.RemoteEndPoint!;
-
-                if (!_connections.TryGetValue(endPoint, out var connection))
-                {
-                    Helper.Log($"new connection created {endPoint}");
-                    connection = new R2Connection(Mtu, endPoint.Serialize(), _socket)
-                    {
-                        OnMessage = OnMessage
-                    };
-
-                    _connections.Add(new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
-                        connection);
-                }
-
-                if (!_ptrStack.TryPop(out var ptr))
-                {
-                    ptr = Marshal.AllocHGlobal(Mtu);
-                }
-
-                Console.WriteLine(e.BytesTransferred);
-
-                var span = MemoryMarshal.CreateSpan(
-                    ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
-                e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
-
-                IncomeFragments.Enqueue(new BufferFragment
-                    { Connection = connection, Buffer = ptr, Length = e.BytesTransferred });
-
-                for (int i = 0; i < e.BytesTransferred; i++)
-                {
-                    Console.Write($"{e.MemoryBuffer.Span[i]} ");
-                }
-
-                Console.WriteLine();
-
-                break;
+                default:
+                    throw new InvalidOperationException();
             }
-            default:
-                throw new InvalidOperationException();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
         }
 
         _socket.ReceiveFromAsync(e);
@@ -172,24 +178,30 @@ public class R2Udp : ISocketReceiver
         _listenMode = true;
     }
 
+    private static void ConsumeBufferFragment()
+    {
+        while (IncomeFragments.Dequeue(out var fragment))
+        {
+            _updateThreadConnections.Add(fragment.Connection);
+
+            if (fragment.Length is 0)
+            {
+                continue;
+            }
+
+            fragment.Connection.IncomeBuffer.Enqueue(fragment);
+        }
+    }
+
     private static void ConnectionUpdate()
     {
         while (true)
         {
             try
             {
+                ConsumeBufferFragment();
+
                 long ticks = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
-                while (IncomeFragments.Dequeue(out var fragment))
-                {
-                    _updateThreadConnections.Add(fragment.Connection);
-
-                    if (fragment.Length is 0)
-                    {
-                        continue;
-                    }
-
-                    fragment.Connection.IncomeBuffer.Enqueue(fragment);
-                }
 
                 foreach (var connection in _updateThreadConnections)
                 {
@@ -202,7 +214,7 @@ public class R2Udp : ISocketReceiver
                     connection.SendAck();
                 }
 
-                Thread.Sleep(1);
+                Thread.Sleep(100);
             }
             catch (Exception ex)
             {
@@ -224,11 +236,6 @@ public class R2Udp : ISocketReceiver
         _connected = true;
         _socket.Bind(new IPEndPoint(IPAddress.Any, 0));
 
-        // var connection = new R2Connection(Mtu, ipEndPoint.Serialize(), _socket)
-        // {
-        //     OnMessage = OnMessage
-        // };
-
         _connections.Add(new IPEndPoint(new IPAddress(ipEndPoint.Address.GetAddressBytes()), ipEndPoint.Port),
             _connection);
 
@@ -236,84 +243,6 @@ public class R2Udp : ISocketReceiver
 
         return _connection;
     }
-
-    // public async void StartReceive()
-    // {
-    //     var address = new SocketAddress(_socket.AddressFamily);
-    //
-    //     while (true)
-    //     {
-    //         try
-    //         {
-    //             int length = await _socket.ReceiveFromAsync(_receiveBuffer, SocketFlags.None, address);
-    //
-    //             if (length < 4 || length > _mtu)
-    //             {
-    //                 continue;
-    //             }
-    //
-    //             byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
-    //             _receiveBuffer.AsSpan().Slice(0, length).CopyTo(buffer);
-    //             HandleReceivedData(length, address, buffer);
-    //         }
-    //         catch (Exception ex)
-    //         {
-    //             Console.WriteLine(ex);
-    //         }
-    //     }
-    // }
-
-    // private void HandleReceivedData(int length, SocketAddress address, byte[] buffer)
-    // {
-    //     if (_listenMode)
-    //     {
-    //         var fromCreate = GetOrCreate(address, out var connection);
-    //
-    //         if (fromCreate)
-    //         {
-    //             _coroutine.Start(connection.Update);
-    //         }
-    //
-    //         HandleReceivedDataConnection(connection, buffer, length);
-    //         return;
-    //     }
-    //
-    //     if (!address.Equals(_remoteSocketAddress))
-    //     {
-    //         return;
-    //     }
-    //
-    //     HandleReceivedDataConnection(_connection!, buffer, length);
-    // }
-
-    private void HandleReceivedDataConnection(R2Connection connection, byte[] buffer, int length)
-    {
-        connection._rcvBuffer = buffer;
-        connection._rcvLength = length;
-    }
-
-    // // only create in server mode
-    // /// <summary>
-    // ///
-    // /// </summary>
-    // /// <param name="socketAddress"></param>
-    // /// <param name="connection"></param>
-    // /// <returns>is new created connection</returns>
-    // private bool GetOrCreate(SocketAddress socketAddress, out UdpConnection connection)
-    // {
-    //     if (!_connections.TryGetValue(socketAddress, out connection!))
-    //     {
-    //         connection = new UdpConnection(_mtu, socketAddress.Clone(), _socket);
-    //         connection.OnMessage = OnMessage;
-    //
-    //         _connections.TryAdd(connection.SocketAddress, connection);
-    //
-    //         return true;
-    //     }
-    //
-    //     return false;
-    // }
-
 
     public struct FragmentInfo
     {
