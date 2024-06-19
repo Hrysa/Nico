@@ -90,8 +90,6 @@ public class R2Connection : IConnection
     private int _dropFragmentCount;
     private int _fragmentCount;
 
-    private CancellationTokenSource? _resendCts;
-
     public int DropFragmentCount => _dropFragmentCount;
     public int FragmentCount => _fragmentCount;
 
@@ -222,7 +220,6 @@ public class R2Connection : IConnection
     {
         if (_sendFragmentNo != fragment)
         {
-            Console.WriteLine(GetHashCode());
             Helper.Log($"rcv invalid ack no {_sendFragmentNo} {fragment}");
             return;
         }
@@ -285,58 +282,39 @@ public class R2Connection : IConnection
 
     internal void Update(long ticks)
     {
+        if (!_sent)
         {
-            if (!_sent)
+            var latency = ticks - _lastSnd;
+            if (latency <= _rto)
             {
-                var latency = ticks - _lastSnd;
-                if (latency <= _rto)
-                {
-                    // _resendCts = new CancellationTokenSource();
-                    // _ = Task.Delay((int)(_rto - latency), _resendCts.Token).ContinueWith(_ =>
-                    //     {
-                    //         if (lastSnd == _lastSnd)
-                    //         {
-                    //             Console.WriteLine("timeout unlock");
-                    //             Unlock();
-                    //         }
-                    //     }, _resendCts.Token)
-                    //     .ConfigureAwait(false);
-                    return;
-                }
-
-                _rto *= 2;
-                _dropFragmentCount++;
-
-                Console.WriteLine($"RESEND latency {latency} rto {_rto}");
-                RequestSend();
-                UpdateSendTime();
-
                 return;
             }
 
-            if (_resendCts?.Token.CanBeCanceled is true)
-            {
-                _resendCts.Cancel();
-            }
+            _rto *= 2;
+            _dropFragmentCount++;
 
-            if (_sendMessage is null || _lastChunk)
-            {
-                if (!_messageQueue.TryDequeue(out _sendMessage))
-                {
-                    return;
-                }
-
-                // reset message state
-                _lastChunk = false;
-                _sendMessageChunkIndex = 0;
-                _sendMessageNo++;
-            }
-
-            ParseFragment();
             RequestSend();
             UpdateSendTime();
+
             return;
         }
+
+        if (_sendMessage is null || _lastChunk)
+        {
+            if (!_messageQueue.TryDequeue(out _sendMessage))
+            {
+                return;
+            }
+
+            // reset message state
+            _lastChunk = false;
+            _sendMessageChunkIndex = 0;
+            _sendMessageNo++;
+        }
+
+        ParseFragment();
+        RequestSend();
+        UpdateSendTime();
     }
 
     void ParseFragment()
@@ -400,7 +378,6 @@ public class R2Connection : IConnection
         }
         else
         {
-            Console.WriteLine($"SEND {_sendFragmentSize} {SocketAddress}");
             _socket.SendTo(_sendFragment.AsSpan()[.._sendFragmentSize], SocketFlags.None,
                 SocketAddress);
         }

@@ -45,7 +45,7 @@ public static class Helper
     [DllImport("winmm", EntryPoint = "timeBeginPeriod")]
     public static extern void TimeBeginPeriod(int t);
 
-    // [Conditional("NET9_0")]
+    [Conditional("NET9_0")]
     public static void Log(string s)
     {
         Console.WriteLine($"{DateTime.Now:O} {Thread.CurrentThread.ManagedThreadId:000000} I {s}");

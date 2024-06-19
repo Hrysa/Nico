@@ -10,7 +10,7 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 
 List<R2Udp> clients = new();
 
-for (int i = 0; i < 1; i++)
+for (int i = 0; i < 2; i++)
 {
     var client = new R2Udp();
     clients.Add(client);
@@ -43,11 +43,11 @@ byte[] buff = "hello world, hello world, hello world, hello world\n"u8.ToArray()
 for (int i = 0; i < 33 * 10; i++)
 {
     // Thread.Sleep(30);
-    Console.ReadLine();
+    // Console.ReadLine();
     foreach (var r2Udpse in clients.Chunk(300))
     {
         // await Task.Delay(2);
-        Thread.Sleep(1);
+        Thread.Sleep(10);
         foreach (var client in r2Udpse)
         {
             client.Connection!.Send(buff);

@@ -69,16 +69,22 @@ public class R2Udp : ISocketReceiver
 
     private unsafe void ReceivedSocketEvent(object? sender, SocketAsyncEventArgs e)
     {
-        Console.WriteLine("RECVING");
+        HandleSaea(e);
+
+        while (!_socket.ReceiveFromAsync(e))
+        {
+            HandleSaea(e);
+        }
+    }
+
+    private unsafe void HandleSaea(SocketAsyncEventArgs e)
+    {
         try
         {
             switch (e.LastOperation)
             {
                 case SocketAsyncOperation.ReceiveFrom:
                 {
-                    Console.WriteLine($"RECV {e.BytesTransferred}");
-
-
                     if (e.BytesTransferred is > Mtu or < 12)
                     {
                         break;
@@ -104,21 +110,17 @@ public class R2Udp : ISocketReceiver
                         ptr = Marshal.AllocHGlobal(Mtu);
                     }
 
-                    Console.WriteLine(e.BytesTransferred);
-
                     var span = MemoryMarshal.CreateSpan(
                         ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
                     e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
 
+                    if (connection is null)
+                    {
+                        Console.WriteLine();
+                    }
+                    // FIXME: thread safe
                     IncomeFragments.Enqueue(new BufferFragment
                         { Connection = connection, Buffer = ptr, Length = e.BytesTransferred });
-
-                    for (int i = 0; i < e.BytesTransferred; i++)
-                    {
-                        Console.Write($"{e.MemoryBuffer.Span[i]} ");
-                    }
-
-                    Console.WriteLine();
 
                     break;
                 }
@@ -130,8 +132,6 @@ public class R2Udp : ISocketReceiver
         {
             Console.WriteLine(ex);
         }
-
-        _socket.ReceiveFromAsync(e);
     }
 
     private SocketAsyncEventArgs ConfigureSocketEventArgs()
@@ -182,6 +182,10 @@ public class R2Udp : ISocketReceiver
     {
         while (IncomeFragments.Dequeue(out var fragment))
         {
+            if (fragment.Connection is null)
+            {
+                Console.WriteLine();
+            }
             _updateThreadConnections.Add(fragment.Connection);
 
             if (fragment.Length is 0)
@@ -205,16 +209,23 @@ public class R2Udp : ISocketReceiver
 
                 foreach (var connection in _updateThreadConnections)
                 {
-                    while (connection.IncomeBuffer.TryDequeue(out var fragment))
+                    try
                     {
-                        connection.Receive(fragment.Buffer, fragment.Length, ticks);
+                        while (connection.IncomeBuffer.TryDequeue(out var fragment))
+                        {
+                            connection.Receive(fragment.Buffer, fragment.Length, ticks);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex);
                     }
 
                     connection.Update(ticks);
                     connection.SendAck();
                 }
 
-                Thread.Sleep(100);
+                Thread.Sleep(1);
             }
             catch (Exception ex)
             {
