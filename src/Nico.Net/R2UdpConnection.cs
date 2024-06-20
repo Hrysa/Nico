@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Nico.Core;
 using Nico.Net;
 using Nico.Net.Abstractions;
 
@@ -50,7 +51,7 @@ public class R2Connection : IConnection
 
     #region receive message
 
-    internal Queue<BufferFragment> IncomeBuffer = new();
+    internal SPSCQueue<BufferFragment> IncomeBuffer = SPSCQueue<BufferFragment>.Create();
 
     internal byte[] _rcvBuffer;
     internal int _rcvLength;
@@ -93,11 +94,9 @@ public class R2Connection : IConnection
     public int DropFragmentCount => _dropFragmentCount;
     public int FragmentCount => _fragmentCount;
 
-    Channel<int> _channel = Channel.CreateBounded<int>(2);
-
     private static readonly IPEndPoint EndPointFactory = new(IPAddress.Any, 0);
 
-    internal unsafe R2Connection(int fragmentSize, SocketAddress socketAddress, Socket socket)
+    internal R2Connection(int fragmentSize, SocketAddress socketAddress, Socket socket)
     {
         _fragmentSize = fragmentSize;
         _sendFragment = new byte[fragmentSize];
@@ -108,8 +107,6 @@ public class R2Connection : IConnection
 
     internal unsafe void Receive(IntPtr buffer, int length, long ticks)
     {
-        try
-        {
             var fragment = (MessageFragment*)buffer;
 
             var span = MemoryMarshal.CreateSpan(
@@ -200,10 +197,6 @@ public class R2Connection : IConnection
                 _fetchedSize = 0;
                 OnMessage?.Invoke(this, _body, _bodySize);
             }
-        }
-        finally
-        {
-        }
     }
 
     private void MarkSendAck(ushort fragment)
@@ -276,8 +269,12 @@ public class R2Connection : IConnection
             return;
         }
 
+        SendTime = DateTimeOffset.UtcNow;
+
         _messageQueue.Enqueue(data);
     }
+
+    public DateTimeOffset SendTime { get; private set; }
 
 
     internal void Update(long ticks)
@@ -354,7 +351,7 @@ public class R2Connection : IConnection
 
         _sendMessage.AsSpan().Slice(startIndex, _sendFragmentBodySize).CopyTo(body);
         Helper.Log(
-            $"[send frag]: no {_sendFragmentNo} msg {_sendMessageNo} size: {_sendFragmentSize} body: {_sendFragmentBodySize} chunk {_sendMessageChunkIndex - 1}");
+            $"[send frag]: {GetHashCode()} no {_sendFragmentNo} msg {_sendMessageNo} size: {_sendFragmentSize} body: {_sendFragmentBodySize} chunk {_sendMessageChunkIndex - 1}");
     }
 
     private void UpdateSendTime()

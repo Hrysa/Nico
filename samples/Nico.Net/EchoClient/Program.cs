@@ -1,6 +1,5 @@
 ﻿using System.Net;
 using System.Runtime.InteropServices;
-using Nico.Core;
 using Nico.Net;
 
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -9,14 +8,16 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 }
 
 List<R2Udp> clients = new();
+DateTimeOffset sendTime = DateTimeOffset.Now;
 
-for (int i = 0; i < 2; i++)
+for (int i = 0; i < 1000; i++)
 {
     var client = new R2Udp();
     clients.Add(client);
     var connection = client.Connect(new IPEndPoint(IPAddress.Loopback, 8888));
     connection.OnMessage = (conn, data, length) =>
     {
+        Console.WriteLine($"rcv {(DateTimeOffset.Now - connection.SendTime).TotalMilliseconds}ms");
         // Console.WriteLine("client rcv: " + Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));
     };
 }
@@ -39,24 +40,28 @@ foreach (var client in clients)
 
 
 DateTimeOffset start = DateTimeOffset.UtcNow;
-byte[] buff = "hello world, hello world, hello world, hello world\n"u8.ToArray();
-for (int i = 0; i < 33 * 10; i++)
+// byte[] buff = "hello world, hello world, hello world, hello world\n"u8.ToArray();
+
+byte[] buff = new byte[4048];
+
+// Task.Run(() =>
+// {
+while (true)
 {
-    // Thread.Sleep(30);
-    // Console.ReadLine();
-    foreach (var r2Udpse in clients.Chunk(300))
+    foreach (var r2Udpse in clients.Chunk(500))
     {
-        // await Task.Delay(2);
-        Thread.Sleep(10);
+        Thread.Sleep(1);
+        Console.ReadLine();
         foreach (var client in r2Udpse)
         {
             client.Connection!.Send(buff);
         }
     }
 }
+// });
 
+Console.ReadLine();
 
-await Task.Delay(5000);
 var idx = 0;
 foreach (var client in clients)
 {
@@ -67,5 +72,3 @@ foreach (var client in clients)
 }
 
 Console.WriteLine($"total {DateTimeOffset.UtcNow - start}");
-
-Console.ReadLine();

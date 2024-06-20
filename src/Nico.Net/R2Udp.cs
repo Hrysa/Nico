@@ -3,27 +3,22 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using Nico.Core;
 using Nico.Net.Abstractions;
 
 namespace Nico.Net;
 
 internal struct BufferFragment
 {
-    public R2Connection Connection;
     public IntPtr Buffer;
     public int Length;
 }
 
 public class R2Udp : ISocketReceiver
 {
-    internal static ConcurrentBag<R2Udp> Group = new();
-
     public Action<IConnection, byte[], int> OnMessage { get; set; }
 
     private readonly Socket _socket;
 
-    private readonly byte[] _receiveBuffer;
     private const int Mtu = 1440;
     private readonly bool _listenMode;
 
@@ -49,15 +44,15 @@ public class R2Udp : ISocketReceiver
     #endregion
 
     // TODO: make it pool to separate connections into workers
-    private Task _connectionUpdater;
+    private static Task _connectionUpdater;
     private static HashSet<R2Connection> _updateThreadConnections = new();
     private static object _locker = new();
 
+    private static ConcurrentQueue<R2Connection> _newConnections = new();
+
     private static ConcurrentStack<IntPtr> _ptrStack = new();
 
-    private static SPSCQueue<BufferFragment> IncomeFragments = SPSCQueue<BufferFragment>.Create(10240);
-
-    internal void ReturnPtr(IntPtr ptr)
+    internal static void ReturnPtr(IntPtr ptr)
     {
         _ptrStack.Push(ptr);
     }
@@ -67,7 +62,7 @@ public class R2Udp : ISocketReceiver
         _socket.ReceiveFromAsync(ConfigureSocketEventArgs());
     }
 
-    private unsafe void ReceivedSocketEvent(object? sender, SocketAsyncEventArgs e)
+    private void ReceivedSocketEvent(object? sender, SocketAsyncEventArgs e)
     {
         HandleSaea(e);
 
@@ -103,6 +98,8 @@ public class R2Udp : ISocketReceiver
                         _connections.Add(
                             new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
                             connection);
+
+                        _newConnections.Enqueue(connection);
                     }
 
                     if (!_ptrStack.TryPop(out var ptr))
@@ -114,13 +111,8 @@ public class R2Udp : ISocketReceiver
                         ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
                     e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
 
-                    if (connection is null)
-                    {
-                        Console.WriteLine();
-                    }
-                    // FIXME: thread safe
-                    IncomeFragments.Enqueue(new BufferFragment
-                        { Connection = connection, Buffer = ptr, Length = e.BytesTransferred });
+                    connection.IncomeBuffer.Enqueue(new BufferFragment
+                        { Buffer = ptr, Length = e.BytesTransferred });
 
                     break;
                 }
@@ -164,11 +156,6 @@ public class R2Udp : ISocketReceiver
             _socket.IOControl(SIO_UDP_CONNRESET, [Convert.ToByte(false)], null);
         }
 
-
-        _receiveBuffer = new byte[_socket.ReceiveBufferSize];
-
-        Group.Add(this);
-
         if (ipEndPoint is null)
         {
             return;
@@ -180,20 +167,9 @@ public class R2Udp : ISocketReceiver
 
     private static void ConsumeBufferFragment()
     {
-        while (IncomeFragments.Dequeue(out var fragment))
+        while (_newConnections.TryDequeue(out var connection))
         {
-            if (fragment.Connection is null)
-            {
-                Console.WriteLine();
-            }
-            _updateThreadConnections.Add(fragment.Connection);
-
-            if (fragment.Length is 0)
-            {
-                continue;
-            }
-
-            fragment.Connection.IncomeBuffer.Enqueue(fragment);
+            _updateThreadConnections.Add(connection);
         }
     }
 
@@ -203,6 +179,8 @@ public class R2Udp : ISocketReceiver
         {
             try
             {
+                DateTimeOffset now = DateTimeOffset.Now;
+
                 ConsumeBufferFragment();
 
                 long ticks = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
@@ -211,9 +189,10 @@ public class R2Udp : ISocketReceiver
                 {
                     try
                     {
-                        while (connection.IncomeBuffer.TryDequeue(out var fragment))
+                        while (connection.IncomeBuffer.Dequeue(out var fragment))
                         {
                             connection.Receive(fragment.Buffer, fragment.Length, ticks);
+                            ReturnPtr(fragment.Buffer);
                         }
                     }
                     catch (Exception ex)
@@ -225,6 +204,11 @@ public class R2Udp : ISocketReceiver
                     connection.SendAck();
                 }
 
+                var d = DateTimeOffset.Now - now;
+                if (d > TimeSpan.FromMilliseconds(1))
+                {
+                    Console.WriteLine($"update cost {d}");
+                }
                 Thread.Sleep(1);
             }
             catch (Exception ex)
@@ -250,8 +234,7 @@ public class R2Udp : ISocketReceiver
         _connections.Add(new IPEndPoint(new IPAddress(ipEndPoint.Address.GetAddressBytes()), ipEndPoint.Port),
             _connection);
 
-        IncomeFragments.Enqueue(new BufferFragment { Connection = _connection });
-
+        _newConnections.Enqueue(_connection);
         return _connection;
     }
 
