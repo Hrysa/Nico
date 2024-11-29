@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Nico.Discovery.Abstractions;
 
 namespace Nico.Discovery;

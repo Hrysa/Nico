@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -79,43 +79,43 @@ public class R2Udp : ISocketReceiver
             switch (e.LastOperation)
             {
                 case SocketAsyncOperation.ReceiveFrom:
-                {
-                    if (e.BytesTransferred is > Mtu or < 12)
                     {
-                        break;
-                    }
-
-                    var endPoint = (IPEndPoint)e.RemoteEndPoint!;
-
-                    if (!_connections.TryGetValue(endPoint, out var connection))
-                    {
-                        Helper.Log($"new connection created {endPoint}");
-                        connection = new R2Connection(Mtu, endPoint.Serialize(), _socket)
+                        if (e.BytesTransferred is > Mtu or < 12)
                         {
-                            OnMessage = OnMessage
-                        };
+                            break;
+                        }
 
-                        _connections.Add(
-                            new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
-                            connection);
+                        var endPoint = (IPEndPoint)e.RemoteEndPoint!;
 
-                        _newConnections.Enqueue(connection);
-                    }
+                        if (!_connections.TryGetValue(endPoint, out var connection))
+                        {
+                            Helper.Log($"new connection created {endPoint}");
+                            connection = new R2Connection(Mtu, endPoint.Serialize(), _socket)
+                            {
+                                OnMessage = OnMessage
+                            };
 
-                    if (!_ptrStack.TryPop(out var ptr))
-                    {
-                        ptr = Marshal.AllocHGlobal(Mtu);
-                    }
+                            _connections.Add(
+                                new IPEndPoint(new IPAddress(endPoint.Address.GetAddressBytes()), endPoint.Port),
+                                connection);
 
-                    var span = MemoryMarshal.CreateSpan(
-                        ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
-                    e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
+                            _newConnections.Enqueue(connection);
+                        }
 
-                    connection.IncomeBuffer.Enqueue(new BufferFragment
+                        if (!_ptrStack.TryPop(out var ptr))
+                        {
+                            ptr = Marshal.AllocHGlobal(Mtu);
+                        }
+
+                        var span = MemoryMarshal.CreateSpan(
+                            ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)ptr), 0), Mtu);
+                        e.MemoryBuffer.Span.Slice(0, e.BytesTransferred).CopyTo(span);
+
+                        connection.IncomeBuffer.Enqueue(new BufferFragment
                         { Buffer = ptr, Length = e.BytesTransferred });
 
-                    break;
-                }
+                        break;
+                    }
                 default:
                     throw new InvalidOperationException();
             }

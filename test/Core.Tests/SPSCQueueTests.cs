@@ -1,4 +1,4 @@
-﻿using Nico.Core;
+using Nico.Core;
 
 namespace Core.Tests;
 

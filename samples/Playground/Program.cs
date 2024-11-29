@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using Nico.Net;
 
 var buffer = GC.AllocateUninitializedArray<A>(1024, pinned: true); // Create to pinned object heap

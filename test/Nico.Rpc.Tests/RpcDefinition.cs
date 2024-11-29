@@ -1,4 +1,4 @@
-﻿namespace Nico.Rpc.Tests;
+namespace Nico.Rpc.Tests;
 
 public interface IGreeting
 {

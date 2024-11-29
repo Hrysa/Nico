@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Nico.Net.Abstractions;
 
 namespace Nico.Net;

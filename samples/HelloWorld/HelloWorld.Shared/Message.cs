@@ -1,4 +1,4 @@
-﻿namespace HelloWorld.Shared;
+namespace HelloWorld.Shared;
 
 public class Message
 {

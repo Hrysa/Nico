@@ -1,4 +1,4 @@
-﻿namespace Nico.Core;
+namespace Nico.Core;
 
 public sealed class SPSCQueue<T>
 {

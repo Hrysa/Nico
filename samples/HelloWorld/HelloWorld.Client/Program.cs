@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using HelloWorld.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

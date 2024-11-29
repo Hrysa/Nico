@@ -1,4 +1,4 @@
-﻿namespace Nico.Net.Abstractions;
+namespace Nico.Net.Abstractions;
 
 public interface IMessageDispatcher
 {

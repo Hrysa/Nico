@@ -1,4 +1,4 @@
-﻿using Nico.Net.Abstractions;
+using Nico.Net.Abstractions;
 
 namespace Nico.Net;
 

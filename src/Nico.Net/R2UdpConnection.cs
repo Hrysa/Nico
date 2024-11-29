@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -107,96 +107,96 @@ public class R2Connection : IConnection
 
     internal unsafe void Receive(IntPtr buffer, int length, long ticks)
     {
-            var fragment = (MessageFragment*)buffer;
+        var fragment = (MessageFragment*)buffer;
 
-            var span = MemoryMarshal.CreateSpan(
-                ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)buffer), 12), length - 12);
+        var span = MemoryMarshal.CreateSpan(
+            ref Unsafe.AddByteOffset(ref Unsafe.AsRef<byte>((void*)buffer), 12), length - 12);
 
-            if (length < sizeof(MessageFragment))
-            {
-                Helper.Warn($"broken fragment, size: {length}");
-                return;
-            }
+        if (length < sizeof(MessageFragment))
+        {
+            Helper.Warn($"broken fragment, size: {length}");
+            return;
+        }
 
-            HandleAck(fragment->AckNo, ticks);
+        HandleAck(fragment->AckNo, ticks);
 
-            if (length == sizeof(MessageFragment))
-            {
-                return;
-            }
+        if (length == sizeof(MessageFragment))
+        {
+            return;
+        }
 
-            Helper.Log($"[rcv frag] {fragment->No}");
+        Helper.Log($"[rcv frag] {fragment->No}");
 
-            // received resend fragment
-            if (fragment->No == _curRcvNo)
-            {
-                Helper.Log($"ignore finished resend frag {fragment->No}");
-                MarkSendAck(_curRcvNo);
-                return;
-            }
-
-            // not valid increment id
-            if (fragment->No != (ushort)(_curRcvNo + 1))
-            {
-                Helper.Warn($"invalid fragment {fragment->No} > {_curRcvNo}");
-                return;
-            }
-
-            if (fragment->ChunkIndex == 0)
-            {
-                _bodySize = fragment->Opt;
-
-                // current fragment flags is broken
-                if (_bodySize == 0)
-                {
-                    Helper.Warn($"body size broken {fragment->ToString()}");
-                    return;
-                }
-
-                if (_bodySize > MaxBodySize)
-                {
-                    Helper.Warn("body size reached max body size limit");
-                    return;
-                }
-
-                // grow body size if coming message size larger than current body size
-                if (_bodySize > _body.Length)
-                {
-                    ArrayPool<byte>.Shared.Return(_body);
-                    _body = ArrayPool<byte>.Shared.Rent(_bodySize);
-                }
-
-                if (!CopyBody(span))
-                {
-                    return;
-                }
-
-                Helper.Log($"new msg, no {fragment->No} msg {fragment->MsgNo} size {fragment->Opt}");
-
-                _curRcvNo = fragment->No;
-            }
-            else
-            {
-                // TODO: verify chunk index computed data size equal received data size
-
-                if (!CopyBody(span))
-                {
-                    return;
-                }
-
-                _curRcvNo = fragment->No;
-            }
-
+        // received resend fragment
+        if (fragment->No == _curRcvNo)
+        {
+            Helper.Log($"ignore finished resend frag {fragment->No}");
             MarkSendAck(_curRcvNo);
+            return;
+        }
 
-            Helper.Log(
-                $"no {_curRcvNo} size {_bodySize}/{length} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
+        // not valid increment id
+        if (fragment->No != (ushort)(_curRcvNo + 1))
+        {
+            Helper.Warn($"invalid fragment {fragment->No} > {_curRcvNo}");
+            return;
+        }
 
-            if (_bodySize == _fetchedSize)
+        if (fragment->ChunkIndex == 0)
+        {
+            _bodySize = fragment->Opt;
+
+            // current fragment flags is broken
+            if (_bodySize == 0)
             {
-                _fetchedSize = 0;
-                OnMessage?.Invoke(this, _body, _bodySize);
+                Helper.Warn($"body size broken {fragment->ToString()}");
+                return;
             }
+
+            if (_bodySize > MaxBodySize)
+            {
+                Helper.Warn("body size reached max body size limit");
+                return;
+            }
+
+            // grow body size if coming message size larger than current body size
+            if (_bodySize > _body.Length)
+            {
+                ArrayPool<byte>.Shared.Return(_body);
+                _body = ArrayPool<byte>.Shared.Rent(_bodySize);
+            }
+
+            if (!CopyBody(span))
+            {
+                return;
+            }
+
+            Helper.Log($"new msg, no {fragment->No} msg {fragment->MsgNo} size {fragment->Opt}");
+
+            _curRcvNo = fragment->No;
+        }
+        else
+        {
+            // TODO: verify chunk index computed data size equal received data size
+
+            if (!CopyBody(span))
+            {
+                return;
+            }
+
+            _curRcvNo = fragment->No;
+        }
+
+        MarkSendAck(_curRcvNo);
+
+        Helper.Log(
+            $"no {_curRcvNo} size {_bodySize}/{length} fetched {_fetchedSize} rtt {_rtt} rto {_rto}");
+
+        if (_bodySize == _fetchedSize)
+        {
+            _fetchedSize = 0;
+            OnMessage?.Invoke(this, _body, _bodySize);
+        }
     }
 
     private void MarkSendAck(ushort fragment)

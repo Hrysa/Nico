@@ -21,4 +21,8 @@
         <Using Include="NUnit.Framework"/>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\..\src\Nico.Rpc\Nico.Rpc.csproj" />
+    </ItemGroup>
+
 </Project>

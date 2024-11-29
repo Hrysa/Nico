@@ -1,4 +1,4 @@
-﻿namespace Nico.Discovery;
+namespace Nico.Discovery;
 
 public class LocalHostClusteringOptions
 {

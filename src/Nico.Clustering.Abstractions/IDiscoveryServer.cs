@@ -1,4 +1,4 @@
-﻿namespace Nico.Discovery.Abstractions;
+namespace Nico.Discovery.Abstractions;
 
 public interface IDiscoveryServer
 {

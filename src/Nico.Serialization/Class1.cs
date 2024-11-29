@@ -1,4 +1,4 @@
-﻿namespace Nico.Serialization;
+namespace Nico.Serialization;
 
 public class Class1
 {

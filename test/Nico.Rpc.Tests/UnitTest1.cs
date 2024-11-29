@@ -10,6 +10,6 @@ public class Tests
     [Test]
     public void Test1()
     {
-        Assert.Pass();
+        Assert.That(new Class1().Add(1, 2), Is.EqualTo(3));
     }
 }

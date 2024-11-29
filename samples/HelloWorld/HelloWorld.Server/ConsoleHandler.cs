@@ -1,4 +1,4 @@
-﻿using HelloWorld.Shared;
+using HelloWorld.Shared;
 using Nico.Net.Abstractions;
 
 namespace HelloWorld.App;
