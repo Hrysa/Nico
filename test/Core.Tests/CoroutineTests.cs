@@ -16,14 +16,29 @@ public class CoroutineTests
     [Test]
     public void Test()
     {
-        IEnumerable Fn()
+        IEnumerable Fn1()
         {
-            yield return null;
+            for (int i = 0; i < 5; i++)
+            {
+                Console.WriteLine($"[{Thread.CurrentThread.ManagedThreadId}] 1 {DateTime.Now}");
+                yield return Coroutine.Wait(1000);
+            }
         }
 
-        _co.Start(Fn);
-        _co.Tick();
-        _co.Tick();
-        _co.Tick();
+        IEnumerable Fn2()
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                Console.WriteLine($"[{Thread.CurrentThread.ManagedThreadId}] 2 {DateTime.Now}");
+                yield return Coroutine.Wait(1000);
+            }
+        }
+
+        _co.StartTick();
+
+        _co.Start(Fn1);
+        _co.Start(Fn2);
+        // await Task.Delay(100);
+        // _co.StopTick();
     }
 }

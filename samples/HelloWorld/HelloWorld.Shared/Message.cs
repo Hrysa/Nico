@@ -2,5 +2,5 @@ namespace HelloWorld.Shared;
 
 public class Message
 {
-    public string Context;
+    public string? Context;
 }

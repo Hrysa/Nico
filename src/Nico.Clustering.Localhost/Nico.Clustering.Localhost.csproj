@@ -9,7 +9,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\Nico.Clustering.Abstractions\Nico.Clustering.Abstractions.csproj" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.*" />
     </ItemGroup>
-    
+
 </Project>

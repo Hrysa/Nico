@@ -1,26 +1,45 @@
 using System.Collections;
+using System.Collections.Concurrent;
 
 namespace Nico.Core;
 
 public class Coroutine
 {
-    private List<IEnumerator> _enumerators = new();
-    private Queue<IEnumerator> _queue = new();
+    private LinkedList<IEnumerator> _enumerators = new();
 
-    public bool Empty => !_enumerators.Any();
+    private BlockingCollection<IEnumerator> _blockingCollection = new();
 
-    public void Start(Func<Coroutine, IEnumerable> action)
-    {
-        _enumerators.Add(action(this).GetEnumerator());
-    }
+    private bool _ticking = false;
 
     public void Start(Func<IEnumerable> action)
     {
-        _enumerators.Add(action().GetEnumerator());
+        var enumerator = action().GetEnumerator();
+        _blockingCollection.Add(enumerator);
     }
 
-    public void Tick()
+
+    public void StartTick()
     {
+        _ticking = true;
+
+        Task.Run(() =>
+        {
+            while (_ticking || _enumerators.FirstOrDefault() is not null)
+            {
+                Tick();
+            }
+
+            Console.WriteLine("stop tick");
+        });
+    }
+
+    private void Tick()
+    {
+        while (_blockingCollection.TryTake(out var e))
+        {
+            _enumerators.AddLast(e);
+        }
+
         DateTimeOffset now = DateTimeOffset.Now;
         foreach (var enumerator in _enumerators)
         {
@@ -32,19 +51,16 @@ public class Coroutine
                 }
             }
 
-            if (!enumerator.MoveNext())
-            {
-                _queue.Enqueue(enumerator);
-            }
-        }
+            var r = enumerator.MoveNext();
 
-        while (_queue.TryDequeue(out var enumerator))
-        {
-            _enumerators.Remove(enumerator);
+            if (!r)
+            {
+                _enumerators.Remove(enumerator);
+            }
         }
     }
 
-    public Waiter Wait(int ms)
+    public static Waiter Wait(int ms)
     {
         return new Waiter { At = DateTimeOffset.Now.AddMilliseconds(ms) };
     }
@@ -52,5 +68,10 @@ public class Coroutine
     public struct Waiter
     {
         public DateTimeOffset At;
+    }
+
+    public void StopTick()
+    {
+        _ticking = false;
     }
 }
