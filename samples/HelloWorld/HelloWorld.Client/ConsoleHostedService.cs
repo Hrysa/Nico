@@ -1,37 +1,41 @@
-using System.Net;
-using System.Text;
 using Microsoft.Extensions.Hosting;
-using Nico.Net;
+using Microsoft.Extensions.Logging;
 
 namespace HelloWorld.Client;
 
 public class ConsoleHostedService : IHostedService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
-    {
-        _ = Task.Run(Execute);
+    private Task _task = default!;
+    private bool _running;
+    private readonly ILogger<ConsoleHostedService> _logger;
 
-        await Task.CompletedTask;
+    public ConsoleHostedService(ILogger<ConsoleHostedService> logger)
+    {
+        _logger = logger;
     }
 
-    void Execute()
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        var client = new R2Udp();
-        var connection = client.Connect(new IPEndPoint(IPAddress.Loopback, 10001));
-        connection.OnMessage = (conn, data, length) =>
-        {
-            Console.WriteLine("client rcv: " + Encoding.UTF8.GetString(data.AsSpan().Slice(0, length)));
-        };
+        _running = true;
+        _task = Task.Run(Execute, CancellationToken.None);
 
-        while (true)
+        _logger.LogInformation("Console Started");
+
+        return Task.CompletedTask;
+    }
+
+    private void Execute()
+    {
+        while (_running)
         {
-            byte[] buff = Encoding.UTF8.GetBytes(Console.ReadLine());
-            connection.Send(buff);
+            Console.ReadLine();
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        _running = false;
+        await _task;
+        _logger.LogInformation("Console Stopped");
     }
 }
