@@ -1,0 +1,9 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions"/>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\Nico.Core\Nico.Core.csproj"/>
+  </ItemGroup>
+</Project>

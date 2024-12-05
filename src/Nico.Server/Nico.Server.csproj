@@ -1,7 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <ItemGroup>
-    <PackageReference Include="MemoryPack"/>
+    <ProjectReference Include="..\Nico.Runtime\Nico.Runtime.csproj" />
   </ItemGroup>
-
 </Project>

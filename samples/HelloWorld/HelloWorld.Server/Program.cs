@@ -1,14 +1,7 @@
-using System.Net;
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Nico.Core;
-using Nico.Discovery;
-using Nico.Net;
-using Nico.Net.Abstractions;
+using Microsoft.Extensions.Logging;
+using Nico.Runtime.Hosting;
 
-await new HostBuilder()
-    .ConfigureServices(x =>
-    {
-    })
-    .UseLocalhostClustering(options => { }).Build().RunAsync();
+await new HostBuilder().ConfigureServices(x => { x.AddLogging(builder => builder.AddConsole()); })
+    .UseNico(builder => { builder.UseLocalhostClustering(); }).Build().RunAsync();

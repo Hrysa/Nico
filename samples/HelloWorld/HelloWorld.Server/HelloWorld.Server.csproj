@@ -2,23 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <RootNamespace>HelloWorld.App</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MemoryPack" Version="1.21.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.*" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\src\Nico.Clustering.Abstractions\Nico.Clustering.Abstractions.csproj" />
-    <ProjectReference Include="..\..\..\src\Nico.Clustering.Localhost\Nico.Clustering.Localhost.csproj" />
-    <ProjectReference Include="..\..\..\src\Nico.Core\Nico.Core.csproj" />
-    <ProjectReference Include="..\..\..\src\Nico.Net\Nico.Net.csproj" />
-    <ProjectReference Include="..\HelloWorld.Shared\HelloWorld.Shared.csproj" />
+    <ProjectReference Include="..\..\..\src\Nico.Server\Nico.Server.csproj"/>
   </ItemGroup>
 
 </Project>

@@ -4,16 +4,15 @@ namespace Core.Tests;
 
 public class SPSCQueueTests
 {
-    private SPSCQueue<int> _queue;
+    private SPSCQueue<int> _queue = SPSCQueue<int>.Create();
 
     [SetUp]
     public void Setup()
     {
-        _queue = SPSCQueue<int>.Create();
     }
 
     [Test]
-    public void Test()
+    public void Test_SPSCQueue_Cosume()
     {
         int l = 0;
         int r = 0;
