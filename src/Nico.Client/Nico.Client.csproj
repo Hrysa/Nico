@@ -1,11 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <TargetFrameworks>$(DefaultTargetFrameworks);netstandard2.1</TargetFrameworks>
-  </PropertyGroup>
-
   <ItemGroup>
-    <ProjectReference Include="..\Nico.Core\Nico.Core.csproj" />
+    <ProjectReference Include="..\Nico.Core\Nico.Core.csproj"/>
   </ItemGroup>
-  
 </Project>

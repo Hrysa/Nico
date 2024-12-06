@@ -17,14 +17,4 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Nico</RootNamespace>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageVersion Include="MemoryPack" Version="1.21.1"/>
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.0"/>
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.0"/>
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.0"/>
-
-    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
-  </ItemGroup>
 </Project>
