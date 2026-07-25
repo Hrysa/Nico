@@ -47,7 +47,7 @@ var sceneCamera = new PerspectiveCamera(
     aspect: sceneViewport.Width / sceneViewport.Height,
     near: 0.1f,
     far: 1000f);
-sceneCamera.Position = new Vector3(0, 0, 10);
+sceneCamera.Position = new Vector3(0, 0, 6);
 sceneCamera.Name = "SceneCamera";
 sceneViewport.Camera = sceneCamera;
 
@@ -101,9 +101,17 @@ Vertex[] cubeVertices =
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
+    var w = ctx.Width;
+    var h = ctx.Height;
+
     sceneAngle += 0.01f;
     var model = Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
-    var push = sceneCamera.GetPushConstants(model);
+    var view = Matrix4x4.Identity;
+    var aspect = w / h;
+    var halfHeight = 1.5f;
+    var halfWidth = halfHeight * aspect;
+    var projection = Matrix4x4.CreateOrthographicOffCenter(-halfWidth, halfWidth, -halfHeight, halfHeight, -10, 10);
+    var push = new PushConstants { Model = model, View = view, Projection = projection };
 
     window.DrawInViewport(sceneViewportId, cubeVertices, push);
 });
