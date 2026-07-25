@@ -92,4 +92,16 @@ public static class Debug
     {
         GetLogger("Editor").Log(level, message, args);
     }
+
+    // ── Input ─────────────────────────────────────────────────
+
+    /// <summary>Logs a message from the Input subsystem.</summary>
+    /// <param name="level">The log level.</param>
+    /// <param name="message">Log message with placeholders.</param>
+    /// <param name="args">Format arguments.</param>
+    [Conditional("DEBUG_INPUT")]
+    public static void Input(LogLevel level, string message, params object?[] args)
+    {
+        GetLogger("Input").Log(level, message, args);
+    }
 }

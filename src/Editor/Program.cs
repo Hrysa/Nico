@@ -52,7 +52,7 @@ void HitTest(Vector2 mousePos)
         hoveredElement?.SetHover(false);
         hoveredElement = hit;
         hoveredElement?.SetHover(true);
-        logger.LogDebug("Hover: {Name}", hoveredElement?.Name ?? "(none)");
+        Debug.Input(LogLevel.Debug, "Hover: {Name}", hoveredElement?.Name ?? "(none)");
         RefreshVertices();
     }
 }
@@ -83,18 +83,18 @@ void SetFocus(UIElement? element)
     focusedElement?.SetFocus(false);
     focusedElement = element;
     focusedElement?.SetFocus(true);
-    logger.LogDebug("Focus: {Name}", focusedElement?.Name ?? "(none)");
+    Debug.Input(LogLevel.Debug, "Focus: {Name}", focusedElement?.Name ?? "(none)");
 }
 
 window.MouseMove += pos =>
 {
-    logger.LogTrace("Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
+    Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
     HitTest(pos);
 };
 
 window.MouseDown += button =>
 {
-    logger.LogDebug("MouseDown: button={Button}", button);
+    Debug.Input(LogLevel.Debug, "MouseDown: button={Button}", button);
     SetFocus(hoveredElement);
     hoveredElement?.SetPressed(true);
     RefreshVertices();
@@ -102,7 +102,7 @@ window.MouseDown += button =>
 
 window.MouseUp += button =>
 {
-    logger.LogDebug("MouseUp: button={Button}", button);
+    Debug.Input(LogLevel.Debug, "MouseUp: button={Button}", button);
     if (hoveredElement != null)
     {
         hoveredElement.SetPressed(false);
@@ -113,28 +113,28 @@ window.MouseUp += button =>
 
 window.MouseDoubleClick += button =>
 {
-    logger.LogDebug("DoubleClick: button={Button}", button);
+    Debug.Input(LogLevel.Debug, "DoubleClick: button={Button}", button);
     hoveredElement?.InvokeDoubleClick();
     RefreshVertices();
 };
 
 window.MouseScroll += offset =>
 {
-    logger.LogDebug("Scroll: offset={Offset:F1}", offset);
+    Debug.Input(LogLevel.Debug, "Scroll: offset={Offset:F1}", offset);
     hoveredElement?.InvokeScroll(offset);
     RefreshVertices();
 };
 
 window.KeyDown += keyCode =>
 {
-    logger.LogDebug("KeyDown: key={Key}", keyCode);
+    Debug.Input(LogLevel.Debug, "KeyDown: key={Key}", keyCode);
     focusedElement?.InvokeKeyDown(keyCode);
     RefreshVertices();
 };
 
 window.KeyUp += keyCode =>
 {
-    logger.LogDebug("KeyUp: key={Key}", keyCode);
+    Debug.Input(LogLevel.Debug, "KeyUp: key={Key}", keyCode);
     focusedElement?.InvokeKeyUp(keyCode);
     RefreshVertices();
 };
