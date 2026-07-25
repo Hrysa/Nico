@@ -111,10 +111,8 @@ window.SetViewportRenderCallback(sceneViewportId, ctx =>
     var halfHeight = 1.5f;
     var halfWidth = halfHeight * aspect;
     var projection = Matrix4x4.CreateOrthographicOffCenter(-halfWidth, halfWidth, -halfHeight, halfHeight, -10, 10);
-    // Remap Z from OpenGL [-1,1] to Vulkan [0,1]
-    // OpenGL ortho has near=-1, far=+1; negate to flip, then scale+bias to [0,1]
-    projection.M33 = -projection.M33 * 0.5f;
-    projection.M43 = -projection.M43 * 0.5f + 0.5f;
+    // Remap Z for Vulkan: negate M33 so near→0, far→1 in Vulkan depth [0,1]
+    projection.M33 = -projection.M33;
     var push = new PushConstants { Model = model, View = view, Projection = projection };
 
     window.DrawInViewport(sceneViewportId, cubeVertices, push);
