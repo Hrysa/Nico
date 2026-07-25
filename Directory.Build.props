@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <DefineConstants>DEBUG_CORE;DEBUG_GRAPHICS;DEBUG_GRAPHICS_SILK;DEBUG_UI;DEBUG_EDITOR;DEBUG_INPUT</DefineConstants>
+  </PropertyGroup>
+</Project>

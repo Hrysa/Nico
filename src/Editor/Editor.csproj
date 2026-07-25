@@ -5,7 +5,6 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <DefineConstants>DEBUG_EDITOR;DEBUG_INPUT</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
