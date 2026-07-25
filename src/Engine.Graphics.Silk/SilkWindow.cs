@@ -45,6 +45,9 @@ public unsafe class SilkWindow : IWindow
 
     private Vk? _vk;
 
+    // Render graph for per-pass command buffers
+    private RenderGraph? _renderGraph;
+
     // New: Shader modules
     private ShaderModule _vertShaderModule;
     private ShaderModule _fragShaderModule;
@@ -189,6 +192,7 @@ public unsafe class SilkWindow : IWindow
         CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
+        _renderGraph = new RenderGraph(_vk!, _device, _graphicsQueue, FindQueueFamilies(_physicalDevice).GraphicsFamily!.Value);
         CreateSwapchain();
         CreateFboRenderPass();
         CreateRenderPass();
@@ -1430,15 +1434,19 @@ public unsafe class SilkWindow : IWindow
 
     private void EnsureViewportDrawBuffer(uint requiredVertices)
     {
-        // Always recreate to avoid GPU/CPU race condition
+        if (_viewportDrawBufferCapacity >= requiredVertices)
+            return;
+
         _vk!.DeviceWaitIdle(_device);
 
+        // Destroy old buffer
         if (_viewportDrawBuffer.Handle != 0)
         {
             _vk.DestroyBuffer(_device, _viewportDrawBuffer, null);
             _vk.FreeMemory(_device, _viewportDrawBufferMemory, null);
         }
 
+        // Create new larger buffer
         _viewportDrawBufferCapacity = Math.Max(requiredVertices, 1024);
         var bufferSize = (nuint)(_viewportDrawBufferCapacity * Vertex.Stride);
 
@@ -1464,6 +1472,8 @@ public unsafe class SilkWindow : IWindow
         void* mapped;
         _vk.MapMemory(_device, _viewportDrawBufferMemory, 0, bufferSize, 0, &mapped);
         _viewportDrawBufferMapped = mapped;
+
+        _logger.LogDebug("Viewport draw buffer created/recreated ({Capacity} vertices)", _viewportDrawBufferCapacity);
     }
 
     private void RecreateDirtyFbos()
@@ -1769,48 +1779,50 @@ public unsafe class SilkWindow : IWindow
         // Recreate any dirty viewport FBOs
         RecreateDirtyFbos();
 
-        var inFlightFence = _inFlightFences![_currentFrame];
-        _vk!.WaitForFences(_device, 1, &inFlightFence, new Bool32(true), ulong.MaxValue);
+        // ── Begin frame (waits for previous frame's fence) ──
+        var frameIndex = _renderGraph!.BeginFrame();
 
+        // ── Acquire swapchain image ──
         uint imageIndex = 0;
-        var imageAvailableSemaphore = _imageAvailableSemaphores![_currentFrame];
+        var imageAvailableSemaphore = _imageAvailableSemaphores![frameIndex];
         var result = _khrSwapchain!.AcquireNextImage(_device, _swapchain, ulong.MaxValue, imageAvailableSemaphore, default, &imageIndex);
 
         if (result == Result.ErrorOutOfDateKhr)
         {
             RecreateSwapchain();
+            _renderGraph.EndFrame();
             return;
         }
 
-        _vk.ResetFences(_device, 1, &inFlightFence);
-
-        RecordCommandBuffer(_commandBuffers![imageIndex], imageIndex);
-
-        var waitSemaphores = stackalloc[] { imageAvailableSemaphore };
-        var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-        var signalSemaphores = stackalloc[] { _renderFinishedSemaphores![_currentFrame] };
-
-        var cmdBuffer = _commandBuffers[imageIndex];
-        var submitInfo = new SubmitInfo
+        // ── Pass 1: Render viewport content into FBOs ──
         {
-            SType = StructureType.SubmitInfo,
-            WaitSemaphoreCount = 1,
-            PWaitSemaphores = waitSemaphores,
-            PWaitDstStageMask = waitStages,
-            CommandBufferCount = 1,
-            PCommandBuffers = &cmdBuffer,
-            SignalSemaphoreCount = 1,
-            PSignalSemaphores = signalSemaphores
-        };
+            var (cmdBuffer, sem) = _renderGraph.BeginPass();
 
-        _vk.QueueSubmit(_graphicsQueue, 1, &submitInfo, inFlightFence);
+            RecordFboPass(cmdBuffer);
 
+            _renderGraph.EndPass(cmdBuffer);
+            _renderGraph.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem, default);
+        }
+
+        // ── Pass 2: Render editor UI + viewport quads to swapchain ──
+        var fboPassSemaphore = _renderGraph._passSemaphores[0];
+        {
+            var (cmdBuffer, sem) = _renderGraph.BeginPass();
+
+            RecordSwapchainPass(cmdBuffer, imageIndex);
+
+            _renderGraph.EndPass(cmdBuffer);
+            _renderGraph.SubmitPass(cmdBuffer, fboPassSemaphore, sem, _renderGraph.GetCurrentFence());
+        }
+
+        // ── Present ──
+        var renderFinishedSemaphore = _renderGraph._passSemaphores[1];
         var swapchain = _swapchain;
         var presentInfo = new PresentInfoKHR
         {
             SType = StructureType.PresentInfoKhr,
             WaitSemaphoreCount = 1,
-            PWaitSemaphores = signalSemaphores,
+            PWaitSemaphores = &renderFinishedSemaphore,
             SwapchainCount = 1,
             PSwapchains = &swapchain,
             PImageIndices = &imageIndex
@@ -1824,20 +1836,13 @@ public unsafe class SilkWindow : IWindow
             RecreateSwapchain();
         }
 
-        _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
+        _renderGraph.EndFrame();
     }
 
-    private void RecordCommandBuffer(CommandBuffer commandBuffer, uint imageIndex)
+    private void RecordFboPass(CommandBuffer commandBuffer)
     {
-        var beginInfo = new CommandBufferBeginInfo
-        {
-            SType = StructureType.CommandBufferBeginInfo
-        };
-
-        _vk!.BeginCommandBuffer(commandBuffer, &beginInfo);
-
         // ═══════════════════════════════════════════════════════════════
-        // PASS 1: Render each viewport's content into its own FBO
+        // Render each viewport's content into its own FBO
         // ═══════════════════════════════════════════════════════════════
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
@@ -1887,14 +1892,14 @@ public unsafe class SilkWindow : IWindow
             };
             _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-            // Let the viewport's render callback draw its content
+            // Invoke render callback
             if (_viewportRenderCallbacks.TryGetValue(viewportId, out var callback))
             {
                 var context = CreateRenderContext(viewportId);
                 callback(context);
             }
 
-            // Replay pending draws queued by DrawInViewport
+            // Replay pending draws
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
                 // Count total vertices to ensure buffer is large enough
@@ -1909,7 +1914,6 @@ public unsafe class SilkWindow : IWindow
                 uint vertexOffset = 0;
                 foreach (var (verts, push) in draws)
                 {
-                    // Copy vertices into persistent buffer at current offset
                     var vertsSize = (nuint)(verts.Length * Vertex.Stride);
                     fixed (Vertex* pVerts = verts)
                     {
@@ -1934,9 +1938,12 @@ public unsafe class SilkWindow : IWindow
 
             _vk.CmdEndRenderPass(commandBuffer);
         }
+    }
 
+    private void RecordSwapchainPass(CommandBuffer commandBuffer, uint imageIndex)
+    {
         // ═══════════════════════════════════════════════════════════════
-        // PASS 2: Render editor UI + viewport quads to swapchain
+        // Render editor UI + viewport quads to swapchain
         // ═══════════════════════════════════════════════════════════════
         var clearColor = new ClearValue
         {
@@ -1974,7 +1981,7 @@ public unsafe class SilkWindow : IWindow
         };
         _vk.CmdSetScissor(commandBuffer, 0, 1, &windowScissor);
 
-        // ── Draw editor UI (colored quads for panels, buttons, etc.) ──
+        // Draw editor UI
         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
 
         var vertexBuffer = _vertexBuffer;
@@ -1987,7 +1994,7 @@ public unsafe class SilkWindow : IWindow
 
         _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
 
-        // ── Draw FBO textures for each viewport ──
+        // Draw FBO textures for each viewport
         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _texturePipeline);
 
         foreach (var (viewportId, fbo) in _viewportFbos)
@@ -2015,10 +2022,6 @@ public unsafe class SilkWindow : IWindow
         }
 
         _vk.CmdEndRenderPass(commandBuffer);
-
-        var result = _vk.EndCommandBuffer(commandBuffer);
-        if (result != Result.Success)
-            throw new Exception($"Failed to record command buffer: {result}");
     }
 
     private Format GetSwapchainImageFormat()
@@ -2092,17 +2095,8 @@ public unsafe class SilkWindow : IWindow
 
         CleanupSwapchain();
 
-        if (_inFlightFences != null)
-            foreach (var f in _inFlightFences)
-                _vk?.DestroyFence(_device, f, null);
-
-        if (_imageAvailableSemaphores != null)
-            foreach (var s in _imageAvailableSemaphores)
-                _vk?.DestroySemaphore(_device, s, null);
-
-        if (_renderFinishedSemaphores != null)
-            foreach (var s in _renderFinishedSemaphores)
-                _vk?.DestroySemaphore(_device, s, null);
+        // Destroy RenderGraph
+        _renderGraph?.Destroy();
 
         // Cleanup viewport FBOs and their vertex buffers
         foreach (var (id, fbo) in _viewportFbos)

@@ -83,13 +83,15 @@ public class PerspectiveCamera : Node, ICamera
         {
             // System.Numerics CreatePerspectiveFieldOfView uses OpenGL conventions
             // (Y-up, Z: -1→1). Vulkan needs Y-down, Z: 0→1.
-            // Apply a Y-flip and Z-adjust to convert.
             var proj = Matrix4x4.CreatePerspectiveFieldOfView(_fov, _aspect, _near, _far);
 
-            // Flip Y (row 1) and adjust Z range from [-1,1] to [0,1]
-            proj.M22 = -proj.M22;
-            proj.M33 = (_far / (_far - _near));
-            proj.M43 = -(_near * _far / (_far - _near));
+            // Convert OpenGL projection to Vulkan convention:
+            // 1. Flip Y for Vulkan's Y-down screen coordinates
+            // 2. Remap Z from [-1,1] to [0,1] for Vulkan depth range
+            proj.M22 = -proj.M22;                           // Y-flip
+            proj.M33 = _far / (_far - _near);               // Z scale
+            proj.M34 = _near * _far / (_far - _near);       // Z translation
+            proj.M43 = 1.0f;                                // w = z_eye
 
             _projectionMatrix = proj;
             _projectionDirty = false;

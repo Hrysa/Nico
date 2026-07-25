@@ -54,57 +54,23 @@ sceneViewport.Camera = sceneCamera;
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
-    sceneCamera.UpdateViewport(ctx.Width, ctx.Height);
+    var w = ctx.Width;
+    var h = ctx.Height;
+    var s = MathF.Min(w, h) * 0.25f;
 
     sceneAngle += 0.01f;
-    var model = Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
-    var push = sceneCamera.GetPushConstants(model);
+    var model = Matrix4x4.CreateRotationZ(sceneAngle);
+    var view = Matrix4x4.Identity;
+    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
+    var push = new PushConstants { Model = model, View = view, Projection = projection };
 
-    var s = 1.0f;
+    var cx = w / 2.0f;
+    var cy = h / 2.0f;
     var verts = new Vertex[]
     {
-        // Front face (Z+)
-        new(new Vector3(-s, -s,  s), new Vector3(1, 0, 0)),
-        new(new Vector3( s, -s,  s), new Vector3(1, 0, 0)),
-        new(new Vector3( s,  s,  s), new Vector3(1, 0, 0)),
-        new(new Vector3(-s, -s,  s), new Vector3(1, 0, 0)),
-        new(new Vector3( s,  s,  s), new Vector3(1, 0, 0)),
-        new(new Vector3(-s,  s,  s), new Vector3(1, 0, 0)),
-        // Back face (Z-)
-        new(new Vector3( s, -s, -s), new Vector3(0, 1, 0)),
-        new(new Vector3(-s, -s, -s), new Vector3(0, 1, 0)),
-        new(new Vector3(-s,  s, -s), new Vector3(0, 1, 0)),
-        new(new Vector3( s, -s, -s), new Vector3(0, 1, 0)),
-        new(new Vector3(-s,  s, -s), new Vector3(0, 1, 0)),
-        new(new Vector3( s,  s, -s), new Vector3(0, 1, 0)),
-        // Top face (Y+)
-        new(new Vector3(-s,  s,  s), new Vector3(0, 0, 1)),
-        new(new Vector3( s,  s,  s), new Vector3(0, 0, 1)),
-        new(new Vector3( s,  s, -s), new Vector3(0, 0, 1)),
-        new(new Vector3(-s,  s,  s), new Vector3(0, 0, 1)),
-        new(new Vector3( s,  s, -s), new Vector3(0, 0, 1)),
-        new(new Vector3(-s,  s, -s), new Vector3(0, 0, 1)),
-        // Bottom face (Y-)
-        new(new Vector3(-s, -s, -s), new Vector3(1, 1, 0)),
-        new(new Vector3( s, -s, -s), new Vector3(1, 1, 0)),
-        new(new Vector3( s, -s,  s), new Vector3(1, 1, 0)),
-        new(new Vector3(-s, -s, -s), new Vector3(1, 1, 0)),
-        new(new Vector3( s, -s,  s), new Vector3(1, 1, 0)),
-        new(new Vector3(-s, -s,  s), new Vector3(1, 1, 0)),
-        // Right face (X+)
-        new(new Vector3( s, -s,  s), new Vector3(1, 0, 1)),
-        new(new Vector3( s, -s, -s), new Vector3(1, 0, 1)),
-        new(new Vector3( s,  s, -s), new Vector3(1, 0, 1)),
-        new(new Vector3( s, -s,  s), new Vector3(1, 0, 1)),
-        new(new Vector3( s,  s, -s), new Vector3(1, 0, 1)),
-        new(new Vector3( s,  s,  s), new Vector3(1, 0, 1)),
-        // Left face (X-)
-        new(new Vector3(-s, -s, -s), new Vector3(0, 1, 1)),
-        new(new Vector3(-s, -s,  s), new Vector3(0, 1, 1)),
-        new(new Vector3(-s,  s,  s), new Vector3(0, 1, 1)),
-        new(new Vector3(-s, -s, -s), new Vector3(0, 1, 1)),
-        new(new Vector3(-s,  s,  s), new Vector3(0, 1, 1)),
-        new(new Vector3(-s,  s, -s), new Vector3(0, 1, 1)),
+        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0, 0)),
+        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0)),
+        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0, 1)),
     };
 
     window.DrawInViewport(sceneViewportId, verts, push);
