@@ -43,11 +43,11 @@ public readonly struct Color
     // ── Editor theme ───────────────────────────────────────────
 
     public static readonly Color EditorBackground     = new(0.15f, 0.15f, 0.15f); // #262626
-    public static readonly Color EditorMenuBar        = new(0.20f, 0.20f, 0.22f); // #333338
-    public static readonly Color EditorStatusBar      = new(0.18f, 0.18f, 0.20f); // #2E2E33
+    public static readonly Color EditorMenuBar        = Red; // #333338
+    public static readonly Color EditorStatusBar      = Green; // #2E2E33
     public static readonly Color EditorPanel          = new(0.17f, 0.17f, 0.19f); // #2C2C30
     public static readonly Color EditorPanelHeader    = new(0.22f, 0.22f, 0.25f); // #383840
     public static readonly Color EditorSeparator      = new(0.30f, 0.30f, 0.32f); // #4D4D52
-    public static readonly Color EditorViewport       = new(0.10f, 0.10f, 0.12f); // #1A1A1F
+    public static readonly Color EditorViewport       = Black; // #1A1A1F
     public static readonly Color EditorViewportBorder = new(0.35f, 0.35f, 0.38f); // #595961
 }

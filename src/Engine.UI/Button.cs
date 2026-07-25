@@ -1,4 +1,3 @@
-using System.Numerics;
 using Engine.Graphics;
 
 namespace Engine.UI;
@@ -14,12 +13,6 @@ public class Button : UIElement
 
     /// <summary>Gets or sets the button label text.</summary>
     public string Label { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets whether the mouse is hovering over this button.</summary>
-    public bool IsHovered { get; set; }
-
-    /// <summary>Gets or sets whether this button is currently pressed.</summary>
-    public bool IsPressed { get; set; }
 
     /// <summary>Gets or sets the normal (idle) background color.</summary>
     public Color NormalColor
@@ -46,9 +39,6 @@ public class Button : UIElement
         get => _pressedColor;
         set => _pressedColor = value;
     }
-
-    /// <summary>Occurs when the button is clicked (released after press).</summary>
-    public event Action? Click;
 
     /// <summary>
     /// Creates a new Button at the specified position and size.
@@ -82,61 +72,31 @@ public class Button : UIElement
     {
     }
 
-    /// <summary>
-    /// Sets the hover state and updates the background color accordingly.
-    /// </summary>
-    /// <param name="hovered">True if the mouse is hovering over this button.</param>
-    public void SetHover(bool hovered)
+    /// <inheritdoc/>
+    protected override void OnMouseEnter()
     {
-        IsHovered = hovered;
-        UpdateColor();
+        BackgroundColor = IsPressed ? _pressedColor : _hoverColor;
+        base.OnMouseEnter();
     }
 
-    /// <summary>
-    /// Sets the pressed state and updates the background color accordingly.
-    /// </summary>
-    /// <param name="pressed">True if the button is being pressed.</param>
-    public void SetPressed(bool pressed)
+    /// <inheritdoc/>
+    protected override void OnMouseLeave()
     {
-        IsPressed = pressed;
-        UpdateColor();
+        BackgroundColor = _normalColor;
+        base.OnMouseLeave();
     }
 
-    /// <summary>
-    /// Invokes the Click event if the button is in a valid press state.
-    /// </summary>
-    public void InvokeClick()
+    /// <inheritdoc/>
+    protected override void OnMouseDown()
     {
-        if (IsPressed)
-            Click?.Invoke();
+        BackgroundColor = _pressedColor;
+        base.OnMouseDown();
     }
 
-    /// <summary>
-    /// Generates vertex data for this button as a colored quad.
-    /// </summary>
-    /// <returns>An array of 6 vertices forming two triangles.</returns>
-    public override Vertex[] GetVertices()
+    /// <inheritdoc/>
+    protected override void OnMouseUp()
     {
-        var color = BackgroundColor;
-        return new Vertex[]
-        {
-            new(new Vector3(Left, Top, 0), color),
-            new(new Vector3(Left, Bottom, 0), color),
-            new(new Vector3(Right, Bottom, 0), color),
-
-            new(new Vector3(Right, Bottom, 0), color),
-            new(new Vector3(Right, Top, 0), color),
-            new(new Vector3(Left, Top, 0), color),
-        };
-    }
-
-    private void UpdateColor()
-    {
-        if (IsPressed)
-            BackgroundColor = _pressedColor;
-        else if (IsHovered)
-            BackgroundColor = _hoverColor;
-        else
-            BackgroundColor = _normalColor;
+        BackgroundColor = IsHovered ? _hoverColor : _normalColor;
+        base.OnMouseUp();
     }
 }
