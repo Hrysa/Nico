@@ -81,7 +81,17 @@ public class PerspectiveCamera : Node, ICamera
     {
         if (_projectionDirty)
         {
-            _projectionMatrix = Matrix4x4.CreatePerspectiveFieldOfView(_fov, _aspect, _near, _far);
+            // System.Numerics CreatePerspectiveFieldOfView uses OpenGL conventions
+            // (Y-up, Z: -1→1). Vulkan needs Y-down, Z: 0→1.
+            // Apply a Y-flip and Z-adjust to convert.
+            var proj = Matrix4x4.CreatePerspectiveFieldOfView(_fov, _aspect, _near, _far);
+
+            // Flip Y (row 1) and adjust Z range from [-1,1] to [0,1]
+            proj.M22 = -proj.M22;
+            proj.M33 = (_far / (_far - _near));
+            proj.M43 = -(_near * _far / (_far - _near));
+
+            _projectionMatrix = proj;
             _projectionDirty = false;
         }
         return _projectionMatrix;
