@@ -55,7 +55,7 @@ internal unsafe class ViewportFbo
 
     public void Create(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, uint deviceLocalMemoryType,
+        Format colorFormat, Format depthFormat, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         // ── Color image ────────────────────────────────────────
@@ -107,22 +107,69 @@ internal unsafe class ViewportFbo
         if (result != Result.Success)
             throw new Exception($"Failed to create viewport FBO color view: {result}");
 
-        // ── Framebuffer (color only, no depth) ──────────────────
+        // ── Depth image ────────────────────────────────────────
+        var depthInfo = new ImageCreateInfo
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Format = depthFormat,
+            Extent = new Extent3D { Width = Width, Height = Height, Depth = 1 },
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Samples = SampleCountFlags.Count1Bit,
+            Tiling = ImageTiling.Optimal,
+            Usage = ImageUsageFlags.DepthStencilAttachmentBit,
+            SharingMode = SharingMode.Exclusive,
+            InitialLayout = ImageLayout.Undefined
+        };
+
+        result = vk.CreateImage(device, &depthInfo, null, out DepthImage);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create viewport FBO depth image: {result}");
+
+        vk.GetImageMemoryRequirements(device, DepthImage, out var depthMemReqs);
+        var depthAllocInfo = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = depthMemReqs.Size,
+            MemoryTypeIndex = deviceLocalMemoryType
+        };
+        result = vk.AllocateMemory(device, &depthAllocInfo, null, out DepthMemory);
+        if (result != Result.Success)
+            throw new Exception($"Failed to allocate viewport FBO depth memory: {result}");
+        vk.BindImageMemory(device, DepthImage, DepthMemory, 0);
+
+        var depthViewInfo = new ImageViewCreateInfo
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = DepthImage,
+            ViewType = ImageViewType.Type2D,
+            Format = depthFormat,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.DepthBit,
+                BaseMipLevel = 0, LevelCount = 1,
+                BaseArrayLayer = 0, LayerCount = 1
+            }
+        };
+        result = vk.CreateImageView(device, &depthViewInfo, null, out DepthView);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create viewport FBO depth view: {result}");
+
+        // ── Framebuffer (color + depth) ────────────────────────
         var fbInfo = new FramebufferCreateInfo
         {
             SType = StructureType.FramebufferCreateInfo,
             RenderPass = fboRenderPass,
-            AttachmentCount = 1,
+            AttachmentCount = 2,
             Width = Width,
             Height = Height,
             Layers = 1
         };
 
-        fixed (ImageView* pColorView = &ColorView)
-        {
-            fbInfo.PAttachments = pColorView;
-            result = vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
-        }
+        var attachments = stackalloc[] { ColorView, DepthView };
+        fbInfo.PAttachments = attachments;
+        result = vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
         if (result != Result.Success)
             throw new Exception($"Failed to create viewport FBO framebuffer: {result}");
 
@@ -182,6 +229,9 @@ internal unsafe class ViewportFbo
     public void Destroy(Vk vk, Device device)
     {
         vk.DestroySampler(device, Sampler, null);
+        vk.DestroyImageView(device, DepthView, null);
+        vk.DestroyImage(device, DepthImage, null);
+        vk.FreeMemory(device, DepthMemory, null);
         vk.DestroyImageView(device, ColorView, null);
         vk.DestroyImage(device, ColorImage, null);
         vk.FreeMemory(device, ColorMemory, null);
@@ -190,11 +240,11 @@ internal unsafe class ViewportFbo
 
     public void Recreate(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, uint deviceLocalMemoryType,
+        Format colorFormat, Format depthFormat, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         Destroy(vk, device);
-        Create(vk, device, fboRenderPass, colorFormat, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
+        Create(vk, device, fboRenderPass, colorFormat, depthFormat, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
         IsDirty = false;
     }
 
