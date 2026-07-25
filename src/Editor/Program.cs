@@ -35,24 +35,70 @@ window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
-// Register Scene viewport
+// ── Scene viewport: rotating colored triangle ──────────────────
 var sceneViewport = EditorUI.GetSceneViewport()!;
 var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
 sceneViewport.ViewportId = sceneViewportId;
 window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+
+var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
-    // Scene viewport renders a dark background — replace with 3D scene later
+    sceneAngle += 0.01f;
+    var w = ctx.Width;
+    var h = ctx.Height;
+    var cx = w / 2.0f;
+    var cy = h / 2.0f;
+    var r = MathF.Min(w, h) * 0.3f;
+
+    var model = Matrix4x4.CreateRotationZ(sceneAngle);
+    var view = Matrix4x4.Identity;
+    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
+    var push = new PushConstants { Model = model, View = view, Projection = projection };
+
+    // Triangle vertices (centered at origin, rotated by model matrix)
+    var verts = new Vertex[]
+    {
+        new(new Vector3(0, r, 0), new Vector3(1, 0, 0)),       // top - red
+        new(new Vector3(-r * 0.866f, -r * 0.5f, 0), new Vector3(0, 1, 0)), // bottom-left - green
+        new(new Vector3(r * 0.866f, -r * 0.5f, 0), new Vector3(0, 0, 1)),  // bottom-right - blue
+    };
+
+    window.DrawInViewport(sceneViewportId, verts, push);
 });
 
-// Register Game viewport
+// ── Game viewport: static colored quad ─────────────────────────
 var gameViewport = EditorUI.GetGameViewport()!;
 var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
 gameViewport.ViewportId = gameViewportId;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+
 window.SetViewportRenderCallback(gameViewportId, ctx =>
 {
-    // Game viewport renders a slightly different background — replace with game camera later
+    var w = ctx.Width;
+    var h = ctx.Height;
+    var s = MathF.Min(w, h) * 0.25f;
+
+    var model = Matrix4x4.Identity;
+    var view = Matrix4x4.Identity;
+    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
+    var push = new PushConstants { Model = model, View = view, Projection = projection };
+
+    // Centered quad with gradient colors
+    var cx = w / 2.0f;
+    var cy = h / 2.0f;
+    var verts = new Vertex[]
+    {
+        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)), // orange
+        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0.5f)), // green
+        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)), // blue
+
+        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)),
+        new(new Vector3(cx + s, cy - s, 0), new Vector3(1, 0, 0.5f)), // pink
+        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)),
+    };
+
+    window.DrawInViewport(gameViewportId, verts, push);
 });
 
 UIElement? hoveredElement = null;

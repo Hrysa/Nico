@@ -58,4 +58,13 @@ public interface IWindow : IDisposable
     /// <param name="viewportId">The viewport ID.</param>
     /// <returns>A new ViewportRenderContext.</returns>
     ViewportRenderContext CreateRenderContext(uint viewportId);
+
+    /// <summary>
+    /// Queues vertices to be drawn during the current viewport's FBO pass.
+    /// Call this from a viewport render callback.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="vertices">The vertices to draw.</param>
+    /// <param name="pushConstants">Push constants (MVP matrices).</param>
+    void DrawInViewport(uint viewportId, Vertex[] vertices, PushConstants pushConstants);
 }

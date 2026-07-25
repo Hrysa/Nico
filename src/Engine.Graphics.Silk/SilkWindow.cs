@@ -72,6 +72,7 @@ public unsafe class SilkWindow : IWindow
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
     private readonly Dictionary<uint, Action<ViewportRenderContext>> _viewportRenderCallbacks = new();
     private readonly Dictionary<uint, (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint vertexCount)> _viewportQuadBuffers = new();
+    private readonly Dictionary<uint, List<(Vertex[] vertices, PushConstants pushConstants)>> _pendingViewportDraws = new();
     private uint _nextViewportId = 1;
     private RenderPass _fboRenderPass;
 
@@ -1238,6 +1239,14 @@ public unsafe class SilkWindow : IWindow
         };
     }
 
+    /// <inheritdoc/>
+    public void DrawInViewport(uint viewportId, Vertex[] vertices, PushConstants pushConstants)
+    {
+        if (!_pendingViewportDraws.ContainsKey(viewportId))
+            _pendingViewportDraws[viewportId] = new List<(Vertex[], PushConstants)>();
+        _pendingViewportDraws[viewportId].Add((vertices, pushConstants));
+    }
+
     private void RecreateDirtyFbos()
     {
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
@@ -1662,6 +1671,56 @@ public unsafe class SilkWindow : IWindow
             {
                 var context = CreateRenderContext(viewportId);
                 callback(context);
+            }
+
+            // Replay pending draws queued by DrawInViewport
+            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws))
+            {
+                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+
+                foreach (var (verts, push) in draws)
+                {
+                    // Create temporary vertex buffer
+                    var bufferSize = (nuint)(verts.Length * Vertex.Stride);
+                    var bufferInfo = new BufferCreateInfo
+                    {
+                        SType = StructureType.BufferCreateInfo,
+                        Size = bufferSize,
+                        Usage = BufferUsageFlags.VertexBufferBit,
+                        SharingMode = SharingMode.Exclusive
+                    };
+                    _vk.CreateBuffer(_device, &bufferInfo, null, out var tempBuffer);
+                    _vk.GetBufferMemoryRequirements(_device, tempBuffer, out var memReqs);
+                    var allocInfo = new MemoryAllocateInfo
+                    {
+                        SType = StructureType.MemoryAllocateInfo,
+                        AllocationSize = memReqs.Size,
+                        MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+                    };
+                    _vk.AllocateMemory(_device, &allocInfo, null, out var tempMemory);
+                    _vk.BindBufferMemory(_device, tempBuffer, tempMemory, 0);
+
+                    void* data;
+                    _vk.MapMemory(_device, tempMemory, 0, bufferSize, 0, &data);
+                    fixed (Vertex* pVerts = verts)
+                        System.Buffer.MemoryCopy(pVerts, data, bufferSize, bufferSize);
+                    _vk.UnmapMemory(_device, tempMemory);
+
+                    var vb = tempBuffer;
+                    ulong bufOffset = 0;
+                    _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
+
+                    var pc = push;
+                    _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
+
+                    _vk.CmdDraw(commandBuffer, (uint)verts.Length, 1, 0, 0);
+
+                    // Cleanup temp buffer
+                    _vk.DestroyBuffer(_device, tempBuffer, null);
+                    _vk.FreeMemory(_device, tempMemory, null);
+                }
+
+                draws.Clear();
             }
 
             _vk.CmdEndRenderPass(commandBuffer);
