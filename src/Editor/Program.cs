@@ -25,8 +25,8 @@ logger.LogInformation("Initializing window...");
 window.Initialize(options);
 
 logger.LogInformation("Setting up editor UI...");
-window.SetVertices(EditorGeometry.CreateVertices(width, height));
-window.SetPushConstants(EditorGeometry.CreatePushConstants(width, height));
+window.SetVertices(EditorUI.CreateVertices(width, height));
+window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
 logger.LogInformation("Running main loop...");

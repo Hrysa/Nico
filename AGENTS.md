@@ -8,31 +8,33 @@ C# game engine built on **Silk.NET 2.23.0**, targeting **.NET 11.0**. "Editor as
 
 ```
 GameEngine.slnx
-├── src/Engine.Core/         → pure abstractions (no Silk.NET)
-├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET)
+├── src/Engine.Core/         → pure abstractions (no Silk.NET): Node base class
+├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): IGraphicsContext, IRenderer, etc.
 ├── src/Engine.Graphics.Silk/ → Silk.NET implementations (Silk.NET lives here)
-├── src/Engine.Headless/     → engine without display (no Silk.NET, no graphics)
-├── src/Editor/              → Editor.csproj (editor app)
+├── src/Engine.UI/           → UI element types (UIElement, Panel)
+├── src/Engine/              → Silk.NET host (references Silk.NET directly)
+├── src/Editor/              → Editor.csproj (editor app, uses Engine.UI for layout)
 └── src/Player/              → Player.csproj (game runtime)
 ```
 
-**Current state:** `src/` does not exist yet. Only the solution file, `run.sh`, and `.gitignore` are present.
+**Current state:** `src/` has working projects. Editor builds a 2D UI layout using `Engine.UI` types rendered via the Vulkan pipeline.
 
 ## Dependency Rules (Iron Law)
 
 ```
 Editor → Engine (Core + Graphics)
 Player → Engine (Core + Graphics)
-Engine.Headless → Engine.Core
 Engine.Graphics → Engine.Core
 Engine.Graphics.Silk → Engine.Graphics
 Engine.Graphics.Silk → Silk.NET (NuGet)   ← ONLY project that references Silk.NET directly
+Engine.UI → Engine.Core
+Engine.UI → Engine.Graphics
 ```
 
-- `Engine.Core` contains pure abstractions and domain logic — no Silk.NET.
-- `Engine.Graphics` contains graphics abstractions (interfaces) — no Silk.NET.
+- `Engine.Core` contains pure abstractions and domain logic — no Silk.NET. Has `Node` base class.
+- `Engine.Graphics` contains graphics abstractions (interfaces) — no Silk.NET. Has `Color`, `Vertex`, `IGraphicsContext`, etc.
 - `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions.
-- `Engine.Headless` contains game logic without display — no Silk.NET, no graphics.
+- `Engine.UI` contains UI element types (`UIElement`, `Panel`) — extends `Node` from `Engine.Core`.
 - `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
@@ -59,6 +61,7 @@ Engine.Graphics.Silk → Silk.NET (NuGet)   ← ONLY project that references Sil
 - Private fields: `_camelCase`
 - GPU resources: implement `IDisposable`, use disposed-guard pattern
 - `null!` for uninitialized nullable properties
+- **XML documentation**: every public/private method must have `/// <summary>` doc comment with `<param>` tags for each parameter and `<returns>` for non-void methods
 
 ## Build & Run
 
