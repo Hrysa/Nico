@@ -68,6 +68,26 @@ public unsafe class SilkWindow : IWindow
     private DeviceMemory _uniformBufferMemory;
     private void* _uniformBufferMapped;
 
+    // FBO: Offscreen render target
+    private Image _fboImage;
+    private DeviceMemory _fboImageMemory;
+    private ImageView _fboImageView;
+    private Framebuffer _fboFramebuffer;
+    private RenderPass _fboRenderPass;
+    private Sampler _fboSampler;
+    private DescriptorSetLayout _textureDescriptorSetLayout;
+    private DescriptorPool _textureDescriptorPool;
+    private DescriptorSet _textureDescriptorSet;
+
+    // Textured quad pipeline
+    private ShaderModule _textureVertShaderModule;
+    private ShaderModule _textureFragShaderModule;
+    private PipelineLayout _texturePipelineLayout;
+    private Pipeline _texturePipeline;
+    private Silk.NET.Vulkan.Buffer _textureVertexBuffer;
+    private DeviceMemory _textureVertexBufferMemory;
+    private uint _textureVertexCount;
+
     public bool IsRunning => _window != null && !_window.IsClosing;
 
     /// <inheritdoc/>
@@ -168,6 +188,8 @@ public unsafe class SilkWindow : IWindow
         CreateCommandPool();
         CreateCommandBuffers();
         CreateSyncObjects();
+        CreateFboResources();
+        CreateTexturePipeline();
 
         _logger.LogInformation("Vulkan initialization complete");
     }
@@ -506,6 +528,12 @@ public unsafe class SilkWindow : IWindow
                 _vk!.DestroyImageView(_device, iv, null);
 
         _khrSwapchain?.DestroySwapchain(_device, _swapchain, null);
+
+        // Cleanup FBO resources
+        _vk?.DestroyFramebuffer(_device, _fboFramebuffer, null);
+        _vk?.DestroyImageView(_device, _fboImageView, null);
+        _vk?.DestroyImage(_device, _fboImage, null);
+        _vk?.FreeMemory(_device, _fboImageMemory, null);
     }
 
     private void CreateRenderPass()
@@ -779,6 +807,481 @@ public unsafe class SilkWindow : IWindow
         var result = new uint[bytes.Length / 4];
         System.Buffer.BlockCopy(bytes, 0, result, 0, bytes.Length);
         return result;
+    }
+
+    private void CreateFboResources()
+    {
+        _logger.LogDebug("Creating FBO resources");
+
+        var extent = _swapchainExtent;
+        var format = GetSwapchainImageFormat();
+
+        // Create FBO render pass (color → ShaderReadOnlyOptimal)
+        CreateFboRenderPass(format);
+
+        // Create offscreen image
+        var imageInfo = new ImageCreateInfo
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Format = format,
+            Extent = new Extent3D { Width = extent.Width, Height = extent.Height, Depth = 1 },
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Samples = SampleCountFlags.Count1Bit,
+            Tiling = ImageTiling.Optimal,
+            Usage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.SampledBit,
+            SharingMode = SharingMode.Exclusive,
+            InitialLayout = ImageLayout.Undefined
+        };
+
+        var result = _vk!.CreateImage(_device, &imageInfo, null, out _fboImage);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create FBO image: {result}");
+
+        // Allocate memory for FBO image
+        _vk.GetImageMemoryRequirements(_device, _fboImage, out var memReqs);
+        var allocInfo = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memReqs.Size,
+            MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+        };
+        result = _vk.AllocateMemory(_device, &allocInfo, null, out _fboImageMemory);
+        if (result != Result.Success)
+            throw new Exception($"Failed to allocate FBO image memory: {result}");
+        _vk.BindImageMemory(_device, _fboImage, _fboImageMemory, 0);
+
+        // Create image view
+        var viewInfo = new ImageViewCreateInfo
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = _fboImage,
+            ViewType = ImageViewType.Type2D,
+            Format = format,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            }
+        };
+        result = _vk.CreateImageView(_device, &viewInfo, null, out _fboImageView);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create FBO image view: {result}");
+
+        // Create FBO framebuffer
+        var fbInfo = new FramebufferCreateInfo
+        {
+            SType = StructureType.FramebufferCreateInfo,
+            RenderPass = _fboRenderPass,
+            AttachmentCount = 1,
+            Width = extent.Width,
+            Height = extent.Height,
+            Layers = 1
+        };
+
+        fixed (ImageView* pFboImageView = &_fboImageView)
+        {
+            fbInfo.PAttachments = pFboImageView;
+            result = _vk.CreateFramebuffer(_device, &fbInfo, null, out _fboFramebuffer);
+        }
+        if (result != Result.Success)
+            throw new Exception($"Failed to create FBO framebuffer: {result}");
+
+        // Create sampler
+        var samplerInfo = new SamplerCreateInfo
+        {
+            SType = StructureType.SamplerCreateInfo,
+            MagFilter = Filter.Nearest,
+            MinFilter = Filter.Nearest,
+            AddressModeU = SamplerAddressMode.ClampToEdge,
+            AddressModeV = SamplerAddressMode.ClampToEdge,
+            AddressModeW = SamplerAddressMode.ClampToEdge,
+            AnisotropyEnable = new Bool32(false),
+            MaxAnisotropy = 1,
+            BorderColor = BorderColor.IntOpaqueBlack,
+            UnnormalizedCoordinates = new Bool32(false),
+            CompareEnable = new Bool32(false),
+            CompareOp = CompareOp.Always,
+            MipmapMode = SamplerMipmapMode.Nearest
+        };
+        result = _vk.CreateSampler(_device, &samplerInfo, null, out _fboSampler);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create FBO sampler: {result}");
+
+        // Create descriptor set layout for combined image sampler
+        var binding = new DescriptorSetLayoutBinding
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+
+        var layoutInfo = new DescriptorSetLayoutCreateInfo
+        {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 1,
+            PBindings = &binding
+        };
+        result = _vk.CreateDescriptorSetLayout(_device, &layoutInfo, null, out _textureDescriptorSetLayout);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create texture descriptor set layout: {result}");
+
+        // Create descriptor pool
+        var poolSize = new DescriptorPoolSize
+        {
+            Type = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1
+        };
+        var poolInfo = new DescriptorPoolCreateInfo
+        {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            PoolSizeCount = 1,
+            PPoolSizes = &poolSize,
+            MaxSets = 1
+        };
+        result = _vk.CreateDescriptorPool(_device, &poolInfo, null, out _textureDescriptorPool);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create texture descriptor pool: {result}");
+
+        // Allocate descriptor set
+        var setLayout = _textureDescriptorSetLayout;
+        var setInfo = new DescriptorSetAllocateInfo
+        {
+            SType = StructureType.DescriptorSetAllocateInfo,
+            DescriptorPool = _textureDescriptorPool,
+            DescriptorSetCount = 1,
+            PSetLayouts = &setLayout
+        };
+        result = _vk.AllocateDescriptorSets(_device, &setInfo, out _textureDescriptorSet);
+        if (result != Result.Success)
+            throw new Exception($"Failed to allocate texture descriptor set: {result}");
+
+        // Update descriptor set with FBO image
+        var imageInfoDesc = new DescriptorImageInfo
+        {
+            Sampler = _fboSampler,
+            ImageView = _fboImageView,
+            ImageLayout = ImageLayout.ShaderReadOnlyOptimal
+        };
+        var writeDescriptor = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = _textureDescriptorSet,
+            DstBinding = 0,
+            DstArrayElement = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            PImageInfo = &imageInfoDesc
+        };
+        _vk.UpdateDescriptorSets(_device, 1, &writeDescriptor, 0, null);
+
+        _logger.LogInformation("FBO resources created ({Width}x{Height})", extent.Width, extent.Height);
+    }
+
+    private void CreateFboRenderPass(Format format)
+    {
+        _logger.LogDebug("Creating FBO render pass");
+
+        var colorAttachment = new AttachmentDescription
+        {
+            Format = format,
+            Samples = SampleCountFlags.Count1Bit,
+            LoadOp = AttachmentLoadOp.Clear,
+            StoreOp = AttachmentStoreOp.Store,
+            StencilLoadOp = AttachmentLoadOp.DontCare,
+            StencilStoreOp = AttachmentStoreOp.DontCare,
+            InitialLayout = ImageLayout.Undefined,
+            FinalLayout = ImageLayout.ShaderReadOnlyOptimal
+        };
+
+        var colorAttachmentRef = new AttachmentReference
+        {
+            Attachment = 0,
+            Layout = ImageLayout.ColorAttachmentOptimal
+        };
+
+        var subpassDescription = new SubpassDescription
+        {
+            PipelineBindPoint = PipelineBindPoint.Graphics,
+            ColorAttachmentCount = 1,
+            PColorAttachments = &colorAttachmentRef
+        };
+
+        var subpassDependency = new SubpassDependency
+        {
+            SrcSubpass = Vk.SubpassExternal,
+            DstSubpass = 0,
+            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+            SrcAccessMask = 0,
+            DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+            DstAccessMask = AccessFlags.ColorAttachmentWriteBit
+        };
+
+        var renderPassInfo = new RenderPassCreateInfo
+        {
+            SType = StructureType.RenderPassCreateInfo,
+            AttachmentCount = 1,
+            PAttachments = &colorAttachment,
+            SubpassCount = 1,
+            PSubpasses = &subpassDescription,
+            DependencyCount = 1,
+            PDependencies = &subpassDependency
+        };
+
+        var result = _vk!.CreateRenderPass(_device, &renderPassInfo, null, out _fboRenderPass);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create FBO render pass: {result}");
+
+        _logger.LogInformation("FBO render pass created");
+    }
+
+    private void CreateTexturePipeline()
+    {
+        _logger.LogDebug("Creating texture pipeline");
+
+        var vertCode = LoadSpirV("texture.vert.spv");
+        var fragCode = LoadSpirV("texture.frag.spv");
+
+        fixed (uint* pVertCode = vertCode)
+        {
+            var vertModuleInfo = new ShaderModuleCreateInfo
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)(vertCode.Length * sizeof(uint)),
+                PCode = pVertCode
+            };
+            var result = _vk!.CreateShaderModule(_device, &vertModuleInfo, null, out _textureVertShaderModule);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create texture vertex shader module: {result}");
+        }
+
+        fixed (uint* pFragCode = fragCode)
+        {
+            var fragModuleInfo = new ShaderModuleCreateInfo
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)(fragCode.Length * sizeof(uint)),
+                PCode = pFragCode
+            };
+            var result = _vk!.CreateShaderModule(_device, &fragModuleInfo, null, out _textureFragShaderModule);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create texture fragment shader module: {result}");
+        }
+
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+
+        var vertShaderStageInfo = new PipelineShaderStageCreateInfo
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.VertexBit,
+            Module = _textureVertShaderModule,
+            PName = (byte*)entryPointName
+        };
+
+        var fragShaderStageInfo = new PipelineShaderStageCreateInfo
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.FragmentBit,
+            Module = _textureFragShaderModule,
+            PName = (byte*)entryPointName
+        };
+
+        var shaderStages = new[] { vertShaderStageInfo, fragShaderStageInfo };
+
+        // Vertex input: binding 0 (stride = 5 floats = vec3 pos + vec2 uv)
+        var vertexInputBinding = new VertexInputBindingDescription
+        {
+            Binding = 0,
+            Stride = VertexT.Stride,
+            InputRate = VertexInputRate.Vertex
+        };
+
+        var vertexInputAttributes = new VertexInputAttributeDescription[2];
+        vertexInputAttributes[0] = new VertexInputAttributeDescription
+        {
+            Binding = 0,
+            Location = 0,
+            Format = Format.R32G32B32Sfloat,
+            Offset = 0
+        };
+        vertexInputAttributes[1] = new VertexInputAttributeDescription
+        {
+            Binding = 0,
+            Location = 1,
+            Format = Format.R32G32Sfloat,
+            Offset = (uint)(sizeof(float) * 3)
+        };
+
+        fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
+        {
+            var vertexInputInfo = new PipelineVertexInputStateCreateInfo
+            {
+                SType = StructureType.PipelineVertexInputStateCreateInfo,
+                VertexBindingDescriptionCount = 1,
+                PVertexBindingDescriptions = &vertexInputBinding,
+                VertexAttributeDescriptionCount = 2,
+                PVertexAttributeDescriptions = pAttributes
+            };
+
+            var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+            {
+                SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                Topology = PrimitiveTopology.TriangleList,
+                PrimitiveRestartEnable = new Bool32(false)
+            };
+
+            var dynamicStates = new[] { DynamicState.Viewport, DynamicState.Scissor };
+            fixed (DynamicState* pDynamicStates = dynamicStates)
+            {
+                var dynamicStateInfo = new PipelineDynamicStateCreateInfo
+                {
+                    SType = StructureType.PipelineDynamicStateCreateInfo,
+                    DynamicStateCount = 2,
+                    PDynamicStates = pDynamicStates
+                };
+
+                var viewportState = new PipelineViewportStateCreateInfo
+                {
+                    SType = StructureType.PipelineViewportStateCreateInfo,
+                    ViewportCount = 1,
+                    ScissorCount = 1
+                };
+
+                var rasterizer = new PipelineRasterizationStateCreateInfo
+                {
+                    SType = StructureType.PipelineRasterizationStateCreateInfo,
+                    DepthClampEnable = new Bool32(false),
+                    RasterizerDiscardEnable = new Bool32(false),
+                    PolygonMode = PolygonMode.Fill,
+                    LineWidth = 1.0f,
+                    CullMode = CullModeFlags.BackBit,
+                    FrontFace = FrontFace.CounterClockwise,
+                    DepthBiasEnable = new Bool32(false)
+                };
+
+                var multisampling = new PipelineMultisampleStateCreateInfo
+                {
+                    SType = StructureType.PipelineMultisampleStateCreateInfo,
+                    SampleShadingEnable = new Bool32(false),
+                    RasterizationSamples = SampleCountFlags.Count1Bit
+                };
+
+                var colorBlendAttachment = new PipelineColorBlendAttachmentState
+                {
+                    ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+                    BlendEnable = new Bool32(false)
+                };
+
+                var colorBlending = new PipelineColorBlendStateCreateInfo
+                {
+                    SType = StructureType.PipelineColorBlendStateCreateInfo,
+                    LogicOpEnable = new Bool32(false),
+                    AttachmentCount = 1,
+                    PAttachments = &colorBlendAttachment
+                };
+
+                var pushConstantRange = new PushConstantRange
+                {
+                    StageFlags = ShaderStageFlags.VertexBit,
+                    Offset = 0,
+                    Size = (uint)sizeof(PushConstants)
+                };
+
+                var pipelineLayoutInfo = new PipelineLayoutCreateInfo
+                {
+                    SType = StructureType.PipelineLayoutCreateInfo,
+                    PushConstantRangeCount = 1,
+                    PPushConstantRanges = &pushConstantRange,
+                    SetLayoutCount = 1
+                };
+
+                fixed (DescriptorSetLayout* pSetLayout = &_textureDescriptorSetLayout)
+                {
+                    pipelineLayoutInfo.PSetLayouts = pSetLayout;
+
+                    var layoutResult = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _texturePipelineLayout);
+                    if (layoutResult != Result.Success)
+                        throw new Exception($"Failed to create texture pipeline layout: {layoutResult}");
+                }
+
+                fixed (PipelineShaderStageCreateInfo* pStages = shaderStages)
+                {
+                    var pipelineInfo = new GraphicsPipelineCreateInfo
+                    {
+                        SType = StructureType.GraphicsPipelineCreateInfo,
+                        StageCount = 2,
+                        PStages = pStages,
+                        PVertexInputState = &vertexInputInfo,
+                        PInputAssemblyState = &inputAssembly,
+                        PViewportState = &viewportState,
+                        PRasterizationState = &rasterizer,
+                        PMultisampleState = &multisampling,
+                        PColorBlendState = &colorBlending,
+                        PDynamicState = &dynamicStateInfo,
+                        Layout = _texturePipelineLayout,
+                        RenderPass = _renderPass,
+                        Subpass = 0,
+                        BasePipelineHandle = default
+                    };
+
+                    var pipelineResult = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _texturePipeline);
+                    if (pipelineResult != Result.Success)
+                        throw new Exception($"Failed to create texture graphics pipeline: {pipelineResult}");
+                }
+            }
+        }
+
+        SilkMarshal.Free(entryPointName);
+
+        _logger.LogInformation("Texture pipeline created");
+    }
+
+    public void CreateTextureVertexBuffer(VertexT[] vertices)
+    {
+        _logger.LogDebug("Creating texture vertex buffer");
+
+        _textureVertexCount = (uint)vertices.Length;
+        var bufferSize = (nuint)(vertices.Length * VertexT.Stride);
+
+        var bufferInfo = new BufferCreateInfo
+        {
+            SType = StructureType.BufferCreateInfo,
+            Size = bufferSize,
+            Usage = BufferUsageFlags.VertexBufferBit,
+            SharingMode = SharingMode.Exclusive
+        };
+
+        var result = _vk!.CreateBuffer(_device, &bufferInfo, null, out _textureVertexBuffer);
+        if (result != Result.Success)
+            throw new Exception($"Failed to create texture vertex buffer: {result}");
+
+        _vk.GetBufferMemoryRequirements(_device, _textureVertexBuffer, out var memRequirements);
+
+        var allocInfo = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+        };
+
+        result = _vk.AllocateMemory(_device, &allocInfo, null, out _textureVertexBufferMemory);
+        if (result != Result.Success)
+            throw new Exception($"Failed to allocate texture vertex buffer memory: {result}");
+
+        _vk.BindBufferMemory(_device, _textureVertexBuffer, _textureVertexBufferMemory, 0);
+
+        void* data;
+        _vk.MapMemory(_device, _textureVertexBufferMemory, 0, bufferSize, 0, &data);
+        fixed (VertexT* pVertices = vertices)
+            System.Buffer.MemoryCopy(pVertices, data, bufferSize, bufferSize);
+        _vk.UnmapMemory(_device, _textureVertexBufferMemory);
+
+        _logger.LogInformation("Texture vertex buffer created ({Size} bytes)", bufferSize);
     }
 
     public void CreateVertexBuffer()
@@ -1131,6 +1634,57 @@ public unsafe class SilkWindow : IWindow
 
         _vk!.BeginCommandBuffer(commandBuffer, &beginInfo);
 
+        // ── Pass 1: Render to FBO ──────────────────────────────
+        var fboClearColor = new ClearValue
+        {
+            Color = new ClearColorValue { Float32_0 = 0.1f, Float32_1 = 0.1f, Float32_2 = 0.15f, Float32_3 = 1.0f }
+        };
+
+        var fboRenderPassInfo = new RenderPassBeginInfo
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = _fboRenderPass,
+            Framebuffer = _fboFramebuffer,
+            RenderArea = new Rect2D { Offset = new Offset2D { X = 0, Y = 0 }, Extent = _swapchainExtent },
+            ClearValueCount = 1,
+            PClearValues = &fboClearColor
+        };
+
+        _vk.CmdBeginRenderPass(commandBuffer, &fboRenderPassInfo, SubpassContents.Inline);
+
+        var fboViewport = new Viewport
+        {
+            X = 0,
+            Y = 0,
+            Width = _swapchainExtent.Width,
+            Height = _swapchainExtent.Height,
+            MinDepth = 0.0f,
+            MaxDepth = 1.0f
+        };
+        _vk.CmdSetViewport(commandBuffer, 0, 1, &fboViewport);
+
+        var fboScissor = new Rect2D
+        {
+            Offset = new Offset2D { X = 0, Y = 0 },
+            Extent = _swapchainExtent
+        };
+        _vk.CmdSetScissor(commandBuffer, 0, 1, &fboScissor);
+
+        // Draw colored quads to FBO (game world)
+        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+
+        var vertexBuffer = _vertexBuffer;
+        ulong offset = 0;
+        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+
+        var pushConstants = _pushConstants;
+        _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
+
+        _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
+
+        _vk.CmdEndRenderPass(commandBuffer);
+
+        // ── Pass 2: Render to swapchain (editor UI) ─────────────
         var clearColor = new ClearValue
         {
             Color = new ClearColorValue { Float32_0 = 0.0f, Float32_1 = 0.0f, Float32_2 = 0.0f, Float32_3 = 1.0f }
@@ -1148,7 +1702,6 @@ public unsafe class SilkWindow : IWindow
 
         _vk.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
 
-        // Set dynamic viewport
         var viewport = new Viewport
         {
             X = 0,
@@ -1160,7 +1713,6 @@ public unsafe class SilkWindow : IWindow
         };
         _vk.CmdSetViewport(commandBuffer, 0, 1, &viewport);
 
-        // Set dynamic scissor
         var scissor = new Rect2D
         {
             Offset = new Offset2D { X = 0, Y = 0 },
@@ -1168,20 +1720,36 @@ public unsafe class SilkWindow : IWindow
         };
         _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        // Bind graphics pipeline
+        // Draw editor UI (colored quads)
         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
 
-        // Bind vertex buffer
-        var vertexBuffer = _vertexBuffer;
-        ulong offset = 0;
+        vertexBuffer = _vertexBuffer;
+        offset = 0;
         _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
 
-        // Push MVP constants
-        var pushConstants = _pushConstants;
+        pushConstants = _pushConstants;
         _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
 
-        // Draw vertices
         _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
+
+        // Draw FBO texture as viewport quad
+        if (_textureVertexCount > 0)
+        {
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _texturePipeline);
+
+            fixed (DescriptorSet* pDescriptorSet = &_textureDescriptorSet)
+            {
+                _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, _texturePipelineLayout, 0, 1, pDescriptorSet, 0, null);
+            }
+
+            var texVertexBuffer = _textureVertexBuffer;
+            ulong texOffset = 0;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &texVertexBuffer, &texOffset);
+
+            _vk.CmdPushConstants(commandBuffer, _texturePipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
+
+            _vk.CmdDraw(commandBuffer, _textureVertexCount, 1, 0, 0);
+        }
 
         _vk.CmdEndRenderPass(commandBuffer);
 
@@ -1284,6 +1852,18 @@ public unsafe class SilkWindow : IWindow
         _vk?.DestroyPipelineLayout(_device, _pipelineLayout, null);
         _vk?.DestroyShaderModule(_device, _vertShaderModule, null);
         _vk?.DestroyShaderModule(_device, _fragShaderModule, null);
+
+        // Cleanup texture pipeline
+        _vk?.DestroySampler(_device, _fboSampler, null);
+        _vk?.DestroyDescriptorPool(_device, _textureDescriptorPool, null);
+        _vk?.DestroyDescriptorSetLayout(_device, _textureDescriptorSetLayout, null);
+        _vk?.DestroyPipeline(_device, _texturePipeline, null);
+        _vk?.DestroyPipelineLayout(_device, _texturePipelineLayout, null);
+        _vk?.DestroyShaderModule(_device, _textureVertShaderModule, null);
+        _vk?.DestroyShaderModule(_device, _textureFragShaderModule, null);
+        _vk?.DestroyBuffer(_device, _textureVertexBuffer, null);
+        _vk?.FreeMemory(_device, _textureVertexBufferMemory, null);
+        _vk?.DestroyRenderPass(_device, _fboRenderPass, null);
 
         _vk?.DestroyCommandPool(_device, _commandPool, null);
         _vk?.DestroyRenderPass(_device, _renderPass, null);

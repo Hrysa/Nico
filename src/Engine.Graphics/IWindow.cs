@@ -14,6 +14,10 @@ public interface IWindow : IDisposable
     /// <param name="vertices">The new vertices to upload.</param>
     void UpdateVertexBuffer(Vertex[] vertices);
 
+    /// <summary>Creates the GPU vertex buffer for textured quads.</summary>
+    /// <param name="vertices">The textured vertices to upload.</param>
+    void CreateTextureVertexBuffer(VertexT[] vertices);
+
     /// <summary>Occurs when the mouse moves. Provides screen-space position.</summary>
     event Action<Vector2>? MouseMove;
 

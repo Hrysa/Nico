@@ -108,4 +108,41 @@ public static class EditorUI
             Projection = projection
         };
     }
+
+    /// <summary>
+    /// Creates textured quad vertices for the viewport area.
+    /// </summary>
+    /// <param name="width">The window width in pixels.</param>
+    /// <param name="height">The window height in pixels.</param>
+    /// <returns>An array of <see cref="VertexT"/> for the viewport quad.</returns>
+    public static VertexT[] CreateViewportVertices(float width, float height)
+    {
+        const float menuBarHeight = 30;
+        const float statusBarHeight = 24;
+        const float separatorWidth = 2;
+        const float hierarchyWidth = 220;
+        const float inspectorWidth = 260;
+
+        var viewportTop = menuBarHeight;
+        var viewportBottom = height - statusBarHeight;
+        var viewportHeight = viewportBottom - viewportTop;
+        var viewportWidth = width - hierarchyWidth - inspectorWidth - (separatorWidth * 2);
+        var viewportX = hierarchyWidth + separatorWidth;
+
+        var left = viewportX;
+        var top = viewportTop;
+        var right = viewportX + viewportWidth;
+        var bottom = viewportTop + viewportHeight;
+
+        return new VertexT[]
+        {
+            new(new Vector3(left, top, 0), new Vector2(0, 0)),
+            new(new Vector3(left, bottom, 0), new Vector2(0, 1)),
+            new(new Vector3(right, bottom, 0), new Vector2(1, 1)),
+
+            new(new Vector3(right, bottom, 0), new Vector2(1, 1)),
+            new(new Vector3(right, top, 0), new Vector2(1, 0)),
+            new(new Vector3(left, top, 0), new Vector2(0, 0)),
+        };
+    }
 }

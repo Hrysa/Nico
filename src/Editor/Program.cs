@@ -34,6 +34,7 @@ var uiRoot = EditorUI.BuildUI(width, height);
 window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
+window.CreateTextureVertexBuffer(EditorUI.CreateViewportVertices(width, height));
 
 void RefreshVertices()
 {

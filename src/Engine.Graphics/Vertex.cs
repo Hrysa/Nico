@@ -16,6 +16,20 @@ public struct Vertex
     }
 }
 
+public struct VertexT
+{
+    public Vector3 Position;
+    public Vector2 TexCoord;
+
+    public static readonly uint Stride = (uint)(sizeof(float) * 5);
+
+    public VertexT(Vector3 position, Vector2 texCoord)
+    {
+        Position = position;
+        TexCoord = texCoord;
+    }
+}
+
 public struct PushConstants
 {
     public Matrix4x4 Model;
