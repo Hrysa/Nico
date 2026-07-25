@@ -35,46 +35,51 @@ window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
-// ── Scene viewport: dark gray background ───────────────────────
+// ── Scene viewport: PerspectiveCamera for 3D scene ────────────
 var sceneViewport = EditorUI.GetSceneViewport()!;
 var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
 sceneViewport.ViewportId = sceneViewportId;
 window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
-window.SetViewportClearColor(sceneViewportId, 0.15f, 0.15f, 0.18f); // dark gray
+window.SetViewportClearColor(sceneViewportId, 0.15f, 0.15f, 0.18f);
+
+var sceneCamera = new PerspectiveCamera(
+    fov: MathF.PI / 4f,
+    aspect: sceneViewport.Width / sceneViewport.Height,
+    near: 0.1f,
+    far: 1000f);
+sceneCamera.Position = new Vector3(0, 2, 5);
+sceneCamera.Name = "SceneCamera";
+sceneViewport.Camera = sceneCamera;
 
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
+    sceneCamera.UpdateViewport(ctx.Width, ctx.Height);
+
     sceneAngle += 0.01f;
-    var w = ctx.Width;
-    var h = ctx.Height;
-    var cx = w / 2.0f;
-    var cy = h / 2.0f;
-    var r = MathF.Min(w, h) * 0.3f;
-
     var model = Matrix4x4.CreateRotationZ(sceneAngle);
-    var view = Matrix4x4.Identity;
-    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
-    var push = new PushConstants { Model = model, View = view, Projection = projection };
 
-    // Triangle vertices (centered at origin, rotated by model matrix)
+    var push = sceneCamera.GetPushConstants(model);
+
+    var r = MathF.Min(ctx.Width, ctx.Height) * 0.3f;
     var verts = new Vertex[]
     {
-        new(new Vector3(0, r, 0), new Vector3(1, 0, 0)),       // top - red
-        new(new Vector3(-r * 0.866f, -r * 0.5f, 0), new Vector3(0, 1, 0)), // bottom-left - green
-        new(new Vector3(r * 0.866f, -r * 0.5f, 0), new Vector3(0, 0, 1)),  // bottom-right - blue
+        new(new Vector3(0, r, 0), new Vector3(1, 0, 0)),
+        new(new Vector3(-r * 0.866f, -r * 0.5f, 0), new Vector3(0, 1, 0)),
+        new(new Vector3(r * 0.866f, -r * 0.5f, 0), new Vector3(0, 0, 1)),
     };
 
     window.DrawInViewport(sceneViewportId, verts, push);
 });
 
-// ── Game viewport: dark blue background ────────────────────────
+// ── Game viewport: OrthographicCamera (future) ────────────────
 var gameViewport = EditorUI.GetGameViewport()!;
 var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
 gameViewport.ViewportId = gameViewportId;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
-window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f); // dark blue
+window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
 
+// TODO: Replace with OrthographicCamera when implemented
 window.SetViewportRenderCallback(gameViewportId, ctx =>
 {
     var w = ctx.Width;
@@ -86,17 +91,15 @@ window.SetViewportRenderCallback(gameViewportId, ctx =>
     var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
     var push = new PushConstants { Model = model, View = view, Projection = projection };
 
-    // Centered quad with gradient colors
     var cx = w / 2.0f;
     var cy = h / 2.0f;
     var verts = new Vertex[]
     {
-        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)), // orange
-        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0.5f)), // green
-        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)), // blue
-
+        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)),
+        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0.5f)),
         new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)),
-        new(new Vector3(cx + s, cy - s, 0), new Vector3(1, 0, 0.5f)), // pink
+        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)),
+        new(new Vector3(cx + s, cy - s, 0), new Vector3(1, 0, 0.5f)),
         new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)),
     };
 

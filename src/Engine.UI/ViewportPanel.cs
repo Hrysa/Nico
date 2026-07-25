@@ -19,6 +19,11 @@ public class ViewportPanel : Panel
     public uint ViewportId { get; set; }
 
     /// <summary>
+    /// Gets or sets the camera used for rendering this viewport's content.
+    /// </summary>
+    public ICamera? Camera { get; set; }
+
+    /// <summary>
     /// Gets or sets the render callback for this viewport.
     /// Called each frame during Pass 1 (FBO pass) with a render context.
     /// </summary>
