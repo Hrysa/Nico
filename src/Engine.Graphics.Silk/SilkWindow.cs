@@ -93,6 +93,9 @@ public unsafe class SilkWindow : IWindow
     private PipelineLayout _texturePipelineLayout;
     private Pipeline _texturePipeline;
 
+    // FBO pipeline
+    private PipelineLayout _fboPipelineLayout;
+
     public bool IsRunning => _window != null && !_window.IsClosing;
 
     /// <inheritdoc/>
@@ -190,6 +193,7 @@ public unsafe class SilkWindow : IWindow
         CreateFboRenderPass();
         CreateRenderPass();
         CreateGraphicsPipeline();
+        CreateFboGraphicsPipeline();
         CreateFramebuffers();
         CreateCommandPool();
         CreateCommandBuffers();
@@ -782,12 +786,6 @@ public unsafe class SilkWindow : IWindow
                     result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _graphicsPipeline);
                     if (result != Result.Success)
                         throw new Exception($"Failed to create graphics pipeline: {result}");
-
-                    // Create FBO-compatible pipeline (same shaders, different render pass)
-                    pipelineInfo.RenderPass = _fboRenderPass;
-                    result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _fboGraphicsPipeline);
-                    if (result != Result.Success)
-                        throw new Exception($"Failed to create FBO graphics pipeline: {result}");
                 }
             }
         }
@@ -795,6 +793,194 @@ public unsafe class SilkWindow : IWindow
         SilkMarshal.Free(entryPointName);
 
         _logger.LogInformation("Graphics pipeline created");
+    }
+
+    private void CreateFboGraphicsPipeline()
+    {
+        _logger.LogDebug("Creating FBO graphics pipeline");
+
+        // Load same shaders as main pipeline
+        var vertCode = LoadSpirV("basic.vert.spv");
+        var fragCode = LoadSpirV("basic.frag.spv");
+
+        ShaderModule fboVertModule, fboFragModule;
+
+        fixed (uint* pVertCode = vertCode)
+        {
+            var info = new ShaderModuleCreateInfo
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)(vertCode.Length * sizeof(uint)),
+                PCode = pVertCode
+            };
+            var r = _vk!.CreateShaderModule(_device, &info, null, out fboVertModule);
+            if (r != Result.Success) throw new Exception($"Failed to create FBO vert shader: {r}");
+        }
+
+        fixed (uint* pFragCode = fragCode)
+        {
+            var info = new ShaderModuleCreateInfo
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)(fragCode.Length * sizeof(uint)),
+                PCode = pFragCode
+            };
+            var r = _vk!.CreateShaderModule(_device, &info, null, out fboFragModule);
+            if (r != Result.Success) throw new Exception($"Failed to create FBO frag shader: {r}");
+        }
+
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+
+        var vertStage = new PipelineShaderStageCreateInfo
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.VertexBit,
+            Module = fboVertModule,
+            PName = (byte*)entryPointName
+        };
+
+        var fragStage = new PipelineShaderStageCreateInfo
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.FragmentBit,
+            Module = fboFragModule,
+            PName = (byte*)entryPointName
+        };
+
+        var shaderStages = new[] { vertStage, fragStage };
+
+        var vertexInputBinding = new VertexInputBindingDescription
+        {
+            Binding = 0,
+            Stride = Vertex.Stride,
+            InputRate = VertexInputRate.Vertex
+        };
+
+        var vertexInputAttributes = new VertexInputAttributeDescription[2];
+        vertexInputAttributes[0] = new VertexInputAttributeDescription
+        {
+            Binding = 0, Location = 0,
+            Format = Format.R32G32B32Sfloat, Offset = 0
+        };
+        vertexInputAttributes[1] = new VertexInputAttributeDescription
+        {
+            Binding = 0, Location = 1,
+            Format = Format.R32G32B32Sfloat, Offset = (uint)(sizeof(float) * 3)
+        };
+
+        fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
+        {
+            var vertexInputInfo = new PipelineVertexInputStateCreateInfo
+            {
+                SType = StructureType.PipelineVertexInputStateCreateInfo,
+                VertexBindingDescriptionCount = 1,
+                PVertexBindingDescriptions = &vertexInputBinding,
+                VertexAttributeDescriptionCount = 2,
+                PVertexAttributeDescriptions = pAttributes
+            };
+
+            var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+            {
+                SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                Topology = PrimitiveTopology.TriangleList,
+                PrimitiveRestartEnable = new Bool32(false)
+            };
+
+            var dynamicStates = new[] { DynamicState.Viewport, DynamicState.Scissor };
+            fixed (DynamicState* pDynamicStates = dynamicStates)
+            {
+                var dynamicStateInfo = new PipelineDynamicStateCreateInfo
+                {
+                    SType = StructureType.PipelineDynamicStateCreateInfo,
+                    DynamicStateCount = 2,
+                    PDynamicStates = pDynamicStates
+                };
+
+                var viewportState = new PipelineViewportStateCreateInfo
+                {
+                    SType = StructureType.PipelineViewportStateCreateInfo,
+                    ViewportCount = 1,
+                    ScissorCount = 1
+                };
+
+                var rasterizer = new PipelineRasterizationStateCreateInfo
+                {
+                    SType = StructureType.PipelineRasterizationStateCreateInfo,
+                    DepthClampEnable = new Bool32(false),
+                    RasterizerDiscardEnable = new Bool32(false),
+                    PolygonMode = PolygonMode.Fill,
+                    LineWidth = 1.0f,
+                    CullMode = CullModeFlags.None,
+                    FrontFace = FrontFace.CounterClockwise,
+                    DepthBiasEnable = new Bool32(false)
+                };
+
+                var multisampling = new PipelineMultisampleStateCreateInfo
+                {
+                    SType = StructureType.PipelineMultisampleStateCreateInfo,
+                    SampleShadingEnable = new Bool32(false),
+                    RasterizationSamples = SampleCountFlags.Count1Bit
+                };
+
+                var colorBlendAttachment = new PipelineColorBlendAttachmentState
+                {
+                    ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+                    BlendEnable = new Bool32(false)
+                };
+
+                var colorBlending = new PipelineColorBlendStateCreateInfo
+                {
+                    SType = StructureType.PipelineColorBlendStateCreateInfo,
+                    LogicOpEnable = new Bool32(false),
+                    AttachmentCount = 1,
+                    PAttachments = &colorBlendAttachment
+                };
+
+                var pushConstantRange = new PushConstantRange
+                {
+                    StageFlags = ShaderStageFlags.VertexBit,
+                    Offset = 0,
+                    Size = (uint)sizeof(PushConstants)
+                };
+
+                var pipelineLayoutInfo = new PipelineLayoutCreateInfo
+                {
+                    SType = StructureType.PipelineLayoutCreateInfo,
+                    PushConstantRangeCount = 1,
+                    PPushConstantRanges = &pushConstantRange
+                };
+
+                var r = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _fboPipelineLayout);
+                if (r != Result.Success) throw new Exception($"Failed to create FBO pipeline layout: {r}");
+
+                fixed (PipelineShaderStageCreateInfo* pStages = shaderStages)
+                {
+                    var pipelineInfo = new GraphicsPipelineCreateInfo
+                    {
+                        SType = StructureType.GraphicsPipelineCreateInfo,
+                        StageCount = 2,
+                        PStages = pStages,
+                        PVertexInputState = &vertexInputInfo,
+                        PInputAssemblyState = &inputAssembly,
+                        PViewportState = &viewportState,
+                        PRasterizationState = &rasterizer,
+                        PMultisampleState = &multisampling,
+                        PColorBlendState = &colorBlending,
+                        PDynamicState = &dynamicStateInfo,
+                        Layout = _fboPipelineLayout,
+                        RenderPass = _fboRenderPass,
+                        Subpass = 0,
+                        BasePipelineHandle = default
+                    };
+
+                    r = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _fboGraphicsPipeline);
+                    if (r != Result.Success) throw new Exception($"Failed to create FBO graphics pipeline: {r}");
+                }
+            }
+        }
+
+        SilkMarshal.Free(entryPointName);
+        _logger.LogInformation("FBO graphics pipeline created");
     }
 
     private uint[] LoadSpirV(string resourceName)
@@ -1715,8 +1901,9 @@ public unsafe class SilkWindow : IWindow
             }
 
             // Replay pending draws queued by DrawInViewport
-            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws))
+            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
+                _logger.LogWarning("Viewport {Id}: replaying {Count} draw batches", viewportId, draws.Count);
                 // Count total vertices to ensure buffer is large enough
                 uint totalVertices = 0;
                 foreach (var (verts, _) in draws)
@@ -1742,7 +1929,7 @@ public unsafe class SilkWindow : IWindow
                     _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
 
                     var pc = push;
-                    _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
+                    _vk.CmdPushConstants(commandBuffer, _fboPipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
 
                     _vk.CmdDraw(commandBuffer, (uint)verts.Length, 1, 0, 0);
 
@@ -1952,6 +2139,7 @@ public unsafe class SilkWindow : IWindow
         _vk?.DestroyDescriptorSetLayout(_device, _descriptorSetLayout, null);
         _vk?.DestroyPipeline(_device, _graphicsPipeline, null);
         _vk?.DestroyPipeline(_device, _fboGraphicsPipeline, null);
+        _vk?.DestroyPipelineLayout(_device, _fboPipelineLayout, null);
         _vk?.DestroyPipelineLayout(_device, _pipelineLayout, null);
         _vk?.DestroyShaderModule(_device, _vertShaderModule, null);
         _vk?.DestroyShaderModule(_device, _fragShaderModule, null);

@@ -54,18 +54,19 @@ sceneViewport.Camera = sceneCamera;
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
-    sceneCamera.UpdateViewport(ctx.Width, ctx.Height);
+    // Bypass camera — raw identity matrices
+    var push = new PushConstants
+    {
+        Model = Matrix4x4.Identity,
+        View = Matrix4x4.Identity,
+        Projection = Matrix4x4.Identity
+    };
 
-    // Identity model — just a static triangle
-    var model = Matrix4x4.Identity;
-    var push = sceneCamera.GetPushConstants(model);
-
-    // Simple triangle at origin
     var verts = new Vertex[]
     {
-        new(new Vector3(0, 1, 0), new Vector3(1, 0, 0)),
-        new(new Vector3(-1, -1, 0), new Vector3(0, 1, 0)),
-        new(new Vector3(1, -1, 0), new Vector3(0, 0, 1)),
+        new(new Vector3(0, 0.5f, 0), new Vector3(1, 0, 0)),
+        new(new Vector3(-0.5f, -0.5f, 0), new Vector3(0, 1, 0)),
+        new(new Vector3(0.5f, -0.5f, 0), new Vector3(0, 0, 1)),
     };
 
     window.DrawInViewport(sceneViewportId, verts, push);
