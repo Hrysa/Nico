@@ -102,11 +102,15 @@ public class PerspectiveCamera : Node, ICamera
     /// <inheritdoc/>
     public PushConstants GetPushConstants(Matrix4x4 model)
     {
+        // Transpose matrices because GLSL mat4 is column-major while
+        // System.Numerics Matrix4x4 is row-major. GLSL reads push constant
+        // bytes as columns, effectively transposing the data. By pushing
+        // the transpose, GLSL reconstructs the intended matrix.
         return new PushConstants
         {
-            Model = model,
-            View = GetViewMatrix(),
-            Projection = GetProjectionMatrix()
+            Model = Matrix4x4.Transpose(model),
+            View = Matrix4x4.Transpose(GetViewMatrix()),
+            Projection = Matrix4x4.Transpose(GetProjectionMatrix())
         };
     }
 

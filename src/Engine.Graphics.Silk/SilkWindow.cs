@@ -38,9 +38,6 @@ public unsafe class SilkWindow : IWindow
     private CommandPool _commandPool;
     private CommandBuffer[]? _commandBuffers;
     private Silk.NET.Vulkan.Semaphore[]? _imageAvailableSemaphores;
-    private Silk.NET.Vulkan.Semaphore[]? _renderFinishedSemaphores;
-    private Fence[]? _inFlightFences;
-    private uint _currentFrame;
     private bool _framebufferResized;
 
     private Vk? _vk;
@@ -1746,29 +1743,19 @@ public unsafe class SilkWindow : IWindow
     {
         _logger.LogDebug("Creating sync objects");
 
+        // Only imageAvailable semaphores are needed here (for swapchain image acquisition).
+        // RenderGraph manages its own fences and inter-pass semaphores.
         _imageAvailableSemaphores = new Silk.NET.Vulkan.Semaphore[MaxFramesInFlight];
-        _renderFinishedSemaphores = new Silk.NET.Vulkan.Semaphore[MaxFramesInFlight];
-        _inFlightFences = new Fence[MaxFramesInFlight];
 
         var semaphoreInfo = new SemaphoreCreateInfo
         {
             SType = StructureType.SemaphoreCreateInfo
         };
 
-        var fenceInfo = new FenceCreateInfo
-        {
-            SType = StructureType.FenceCreateInfo,
-            Flags = FenceCreateFlags.SignaledBit
-        };
-
         for (var i = 0; i < MaxFramesInFlight; i++)
         {
             if (_vk!.CreateSemaphore(_device, &semaphoreInfo, null, out _imageAvailableSemaphores[i]) != Result.Success)
                 throw new Exception("Failed to create image available semaphore");
-            if (_vk.CreateSemaphore(_device, &semaphoreInfo, null, out _renderFinishedSemaphores[i]) != Result.Success)
-                throw new Exception("Failed to create render finished semaphore");
-            if (_vk.CreateFence(_device, &fenceInfo, null, out _inFlightFences[i]) != Result.Success)
-                throw new Exception("Failed to create in-flight fence");
         }
 
         _logger.LogInformation("Sync objects created");
@@ -1795,8 +1782,10 @@ public unsafe class SilkWindow : IWindow
         }
 
         // ── Pass 1: Render viewport content into FBOs ──
+        Silk.NET.Vulkan.Semaphore pass1Semaphore;
         {
             var (cmdBuffer, sem) = _renderGraph.BeginPass();
+            pass1Semaphore = sem;
 
             RecordFboPass(cmdBuffer);
 
@@ -1805,24 +1794,24 @@ public unsafe class SilkWindow : IWindow
         }
 
         // ── Pass 2: Render editor UI + viewport quads to swapchain ──
-        var fboPassSemaphore = _renderGraph._passSemaphores[0];
+        Silk.NET.Vulkan.Semaphore pass2Semaphore;
         {
             var (cmdBuffer, sem) = _renderGraph.BeginPass();
+            pass2Semaphore = sem;
 
             RecordSwapchainPass(cmdBuffer, imageIndex);
 
             _renderGraph.EndPass(cmdBuffer);
-            _renderGraph.SubmitPass(cmdBuffer, fboPassSemaphore, sem, _renderGraph.GetCurrentFence());
+            _renderGraph.SubmitPass(cmdBuffer, pass1Semaphore, sem, _renderGraph.GetCurrentFence());
         }
 
         // ── Present ──
-        var renderFinishedSemaphore = _renderGraph._passSemaphores[1];
         var swapchain = _swapchain;
         var presentInfo = new PresentInfoKHR
         {
             SType = StructureType.PresentInfoKhr,
             WaitSemaphoreCount = 1,
-            PWaitSemaphores = &renderFinishedSemaphore,
+            PWaitSemaphores = &pass2Semaphore,
             SwapchainCount = 1,
             PSwapchains = &swapchain,
             PImageIndices = &imageIndex

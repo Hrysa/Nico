@@ -2,28 +2,28 @@
 
 ## Project Overview
 
-C# game engine built on **Silk.NET 2.23.0**, targeting **.NET 11.0**. "Editor as a Game" architecture: the Editor is a 3D world with an orthographic camera; the 3D Viewport renders to an FBO and displays as a textured quad inside the Editor world.
+C# game engine built on **Silk.NET 2.23.0**, targeting **.NET 11.0**. "Editor as a Game" architecture: the Editor is a 2D UI with multiple viewports (Scene, Game) each rendering to an FBO and displaying as a textured quad inside the Editor world.
 
 ## Solution Structure
 
 ```
 GameEngine.slnx
 ├── src/Engine.Core/         → pure abstractions (no Silk.NET): Node base class
-├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): IGraphicsContext, IRenderer, etc.
-├── src/Engine.Graphics.Silk/ → Silk.NET implementations (Silk.NET lives here)
+├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): ICamera, IWindow, Vertex, Color
+├── src/Engine.Graphics.Silk/ → Silk.NET implementations: SilkWindow, RenderGraph, ViewportFbo
 ├── src/Engine.UI/           → UI element types (UIElement, Panel, Button, ViewportPanel)
-├── src/Engine/              → Silk.NET host (references Silk.NET directly)
-├── src/Editor/              → Editor.csproj (editor app, uses Engine.UI for layout)
-└── src/Player/              → Player.csproj (game runtime)
+├── src/Engine/              → empty Silk.NET package aggregator (no source)
+├── src/Editor/              → editor app entry point (Program.cs, EditorUI.cs)
+└── src/Player/              → game runtime (Player.csproj)
 ```
 
-**Current state:** `src/` has working projects. Editor builds a 2D UI layout with multiple viewports (Scene, Game) rendered via the Vulkan pipeline. Each viewport has its own FBO with color attachment. Camera system with PerspectiveCamera (full) and OrthographicCamera (stubs).
+**Current state:** Working Vulkan renderer with 2-pass rendering (FBO pass + swapchain pass). Scene viewport renders a rotating 3D cube via PerspectiveCamera. Game viewport renders a static colored quad via orthographic projection. UI layout with menu bar, status bar, hierarchy, inspector panels.
 
 ## Dependency Rules (Iron Law)
 
 ```
-Editor → Engine (Core + Graphics)
-Player → Engine (Core + Graphics)
+Editor → Engine.Graphics, Engine.Graphics.Silk, Engine.UI
+Player → Engine
 Engine.Graphics → Engine.Core
 Engine.Graphics.Silk → Engine.Graphics
 Engine.Graphics.Silk → Silk.NET (NuGet)   ← ONLY project that references Silk.NET directly
@@ -33,12 +33,21 @@ Engine.UI → Engine.Graphics
 
 - `Engine.Core` contains pure abstractions and domain logic — no Silk.NET. Has `Node` base class.
 - `Engine.Graphics` contains graphics abstractions (interfaces) — no Silk.NET. Has `Color`, `Vertex`, `IGraphicsContext`, `ICamera`, `IWindow`, etc.
-- `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions.
+- `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions. Has `RenderGraph` for multi-pass command buffer management.
 - `Engine.UI` contains UI element types (`UIElement`, `Panel`, `Button`, `ViewportPanel`) — extends `Node` from `Engine.Core`.
 - `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
 ## Rendering Pipeline
+
+### RenderGraph
+
+`RenderGraph` (in `Engine.Graphics.Silk`) manages per-frame Vulkan synchronization:
+
+- **Per-frame resources:** Command pool + fence (2 frames in flight)
+- **Per-pass resources:** Allocated command buffer + semaphore (max 4 passes)
+- **Frame lifecycle:** `BeginFrame()` waits/resets fence → `BeginPass()` allocates command buffer → `EndPass()` ends recording → `SubmitPass()` submits with semaphore chain → `EndFrame()` advances frame counter
+- **Semaphore chain:** Pass N waits on pass N-1's semaphore (or imageAvailable for first pass); last pass's semaphore is waited on by present
 
 ### Pass 1: Per-viewport FBO rendering
 1. For each registered viewport:
@@ -61,11 +70,11 @@ Engine.UI → Engine.Graphics
 ## Camera System
 
 - `ICamera` interface in `Engine.Graphics` — `GetViewMatrix()`, `GetProjectionMatrix()`, `GetPushConstants(model)`, `UpdateViewport(w, h)`
-- `PerspectiveCamera` — full implementation with FOV/aspect/near/far, euler-angle rotation, movement, pitch clamping
+- `PerspectiveCamera` — full implementation with FOV/aspect/near/far, euler-angle rotation, movement, pitch clamping. Vulkan Y-flip and Z [0,1] remap applied in `GetProjectionMatrix()`.
 - `OrthographicCamera` — stubs with TODO methods (Pan, Zoom, Size)
 - Both extend `Node` (get Position/Rotation/Scale for free)
-- Vulkan Y-flip applied in `PerspectiveCamera.GetProjectionMatrix()`
 - ViewportPanel has `ICamera? Camera` property
+- Scene viewport uses PerspectiveCamera with a rotating cube (36 vertices, 12 triangles)
 
 ## Debug System
 
@@ -114,6 +123,29 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 - `null!` for uninitialized nullable properties
 - **XML documentation**: every public/private method must have `/// <summary>` doc comment with `<param>` tags for each parameter and `<returns>` for non-void methods
 
+## Known Pitfalls
+
+### Matrix4x4 Push Constants (Row-Major vs Column-Major)
+
+`System.Numerics.Matrix4x4` is **row-major**. GLSL `mat4` is **column-major**. When a C# `Matrix4x4` is pushed as raw bytes via `vkCmdPushConstants`, GLSL reads the memory as columns — effectively getting the **transpose** of the intended matrix.
+
+**Why it matters:** For orthographic projections + identity model/view (editor UI, Game viewport), this transpose is harmless — the matrix is nearly diagonal so transpose ≈ self. But for **perspective projections**, the `w` component (perspective divide) gets mangled, projecting vertices to garbage positions.
+
+**Rule:** Always call `Matrix4x4.Transpose()` on matrices in `PushConstants` when using perspective projection. The transpose in C# is un-transposed by GLSL's column-major read, recovering the correct matrix.
+
+```csharp
+// In ICamera.GetPushConstants() or any code that builds PushConstants
+// with a non-trivial (perspective) projection:
+return new PushConstants
+{
+    Model = Matrix4x4.Transpose(model),
+    View = Matrix4x4.Transpose(view),
+    Projection = Matrix4x4.Transpose(projection)
+};
+```
+
+The orthographic push constants in `EditorUI.CreatePushConstants` work without transposing because the orthographic matrix is symmetric enough that the transpose is benign.
+
 ## Build & Run
 
 ```bash
@@ -134,7 +166,7 @@ dotnet run --project src/Player        # run game directly
 - Silk.NET.Windowing/Input/Vulkan/Maths 2.23.0
 - Microsoft.Extensions.Logging + Console (verbose dev logging)
 - Vortice.Dxc 3.8.3 (HLSL → SPIR-V shader compilation)
-- Shaders: `src/Shaders/` (basic.vert/frag, texture.vert/frag) → compile SPIR-V to same directory
+- Shaders: `src/Shaders/` (basic.vert/frag, texture.vert/frag) → compile SPI-RV to same directory
 
 ## Logging
 
@@ -154,5 +186,5 @@ var logger = loggerFactory.CreateLogger<MyClass>();
 When modifying rendering code:
 1. Define/modify interfaces in `Engine.Graphics`
 2. Implement concrete logic in `Engine.Graphics.Silk`
-3. Wire up in `Editor/EditorApp.cs` or `Player/GameApp.cs`
+3. Wire up in `Editor/Program.cs` or `Player/` entry point
 4. Never modify `Engine.Core`-style pure logic (no graphics refs there)

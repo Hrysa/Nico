@@ -47,33 +47,65 @@ var sceneCamera = new PerspectiveCamera(
     aspect: sceneViewport.Width / sceneViewport.Height,
     near: 0.1f,
     far: 1000f);
-sceneCamera.Position = new Vector3(0, 0, 15);
+sceneCamera.Position = new Vector3(0, 0, 10);
 sceneCamera.Name = "SceneCamera";
 sceneViewport.Camera = sceneCamera;
+
+// Unit cube centered at origin (36 vertices = 12 triangles)
+Vertex[] cubeVertices =
+[
+    // Front face (z = +0.5)
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
+    // Back face (z = -0.5)
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
+    // Top face (y = +0.5)
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
+    // Bottom face (y = -0.5)
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
+    // Right face (x = +0.5)
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 1)),
+    // Left face (x = -0.5)
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 1)),
+];
 
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
-    var w = ctx.Width;
-    var h = ctx.Height;
-    var s = MathF.Min(w, h) * 0.25f;
-
     sceneAngle += 0.01f;
-    var model = Matrix4x4.CreateRotationZ(sceneAngle);
-    var view = Matrix4x4.Identity;
-    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
-    var push = new PushConstants { Model = model, View = view, Projection = projection };
+    var model = Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
+    var push = sceneCamera.GetPushConstants(model);
 
-    var cx = w / 2.0f;
-    var cy = h / 2.0f;
-    var verts = new Vertex[]
-    {
-        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0, 0)),
-        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0)),
-        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0, 1)),
-    };
-
-    window.DrawInViewport(sceneViewportId, verts, push);
+    window.DrawInViewport(sceneViewportId, cubeVertices, push);
 });
 
 // ── Game viewport: OrthographicCamera (future) ────────────────
