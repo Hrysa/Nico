@@ -38,8 +38,17 @@ public static class EditorUI
 
         _background = new Panel(0, 0, width, height, Color.EditorBackground) { Name = "Background" };
 
-        _menuBar = new Panel(0, 0, width, menuBarHeight, Color.Red) { Name = "MenuBar" };
-        _statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.Green) { Name = "StatusBar" };
+        _menuBar = new Panel(0, 0, width, menuBarHeight, Color.EditorMenuBar) { Name = "MenuBar" };
+
+        var fileButton = new Button(4, 3, 60, 24, "File", Color.EditorPanelHeader) { Name = "FileMenu" };
+        var editButton = new Button(68, 3, 60, 24, "Edit", Color.EditorPanelHeader) { Name = "EditMenu" };
+        var viewButton = new Button(132, 3, 60, 24, "View", Color.EditorPanelHeader) { Name = "ViewMenu" };
+
+        _menuBar.AddChild(fileButton);
+        _menuBar.AddChild(editButton);
+        _menuBar.AddChild(viewButton);
+
+        _statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.EditorStatusBar) { Name = "StatusBar" };
 
         _hierarchyPanel = new Panel(0, viewportTop, hierarchyWidth, viewportHeight, Color.Blue) { Name = "Hierarchy" };
         _inspectorPanel = new Panel(width - inspectorWidth, viewportTop, inspectorWidth, viewportHeight, Color.Black) { Name = "Inspector" };
