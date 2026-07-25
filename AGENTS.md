@@ -17,7 +17,7 @@ GameEngine.slnx
 └── src/Player/              → Player.csproj (game runtime)
 ```
 
-**Current state:** `src/` has working projects. Editor builds a 2D UI layout using `Engine.UI` types rendered via the Vulkan pipeline.
+**Current state:** `src/` has working projects. Editor builds a 2D UI layout with multiple viewports (Scene, Game) rendered via the Vulkan pipeline. Each viewport has its own FBO with color + depth attachments.
 
 ## Dependency Rules (Iron Law)
 
@@ -38,20 +38,24 @@ Engine.UI → Engine.Graphics
 - `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
-## Rendering Pipeline (Design, Not Yet Implemented)
+## Rendering Pipeline
 
-### Pass 1: Game world → FBO
-1. Bind FBO (offscreen texture)
-2. Use perspective camera
-3. Submit game object draw commands
-4. Unbind FBO
+### Pass 1: Per-viewport FBO rendering
+1. For each registered viewport:
+   - Bind FBO framebuffer (color + depth attachments)
+   - Set viewport scissor to FBO dimensions
+   - Call viewport render callback (draws 3D scene content)
+   - End render pass
 
-### Pass 2: Editor world → Screen
-1. Restore default framebuffer
-2. Use orthographic camera
-3. Draw editor UI
-4. Draw a quad textured with the Pass 1 FBO result
-5. Draw gizmos on top
+### Pass 2: Editor UI → Screen
+1. Bind swapchain framebuffer
+2. Draw editor UI (colored quads for panels, buttons, separators)
+3. For each viewport:
+   - Bind texture pipeline
+   - Bind viewport's FBO texture descriptor set
+   - Bind viewport's textured quad vertex buffer
+   - Draw textured quad (6 vertices)
+4. End render pass
 
 ## Coding Conventions
 
