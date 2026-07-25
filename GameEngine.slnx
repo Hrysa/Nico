@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Engine.Core/Engine.Core.csproj" />
+    <Project Path="src/Engine.Graphics/Engine.Graphics.csproj" />
+    <Project Path="src/Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
+    <Project Path="src/Engine/Engine.csproj" />
+    <Project Path="src/Editor/Editor.csproj" />
+    <Project Path="src/Player/Player.csproj" />
+  </Folder>
+</Solution>
