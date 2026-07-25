@@ -61,8 +61,8 @@ window.SetViewportRenderCallback(sceneViewportId, ctx =>
 
     var push = sceneCamera.GetPushConstants(model);
 
-    // Unit cube centered at origin
-    var s = 0.5f;
+    // Unit cube centered at origin — HUGE to guarantee visibility
+    var s = 5.0f;
     var verts = new Vertex[]
     {
         // Front face (Z+)

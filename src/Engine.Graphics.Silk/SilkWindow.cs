@@ -52,6 +52,7 @@ public unsafe class SilkWindow : IWindow
     // New: Graphics pipeline
     private PipelineLayout _pipelineLayout;
     private Pipeline _graphicsPipeline;
+    private Pipeline _fboGraphicsPipeline;
 
     // New: Vertex buffer
     private Silk.NET.Vulkan.Buffer _vertexBuffer;
@@ -781,6 +782,12 @@ public unsafe class SilkWindow : IWindow
                     result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _graphicsPipeline);
                     if (result != Result.Success)
                         throw new Exception($"Failed to create graphics pipeline: {result}");
+
+                    // Create FBO-compatible pipeline (same shaders, different render pass)
+                    pipelineInfo.RenderPass = _fboRenderPass;
+                    result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _fboGraphicsPipeline);
+                    if (result != Result.Success)
+                        throw new Exception($"Failed to create FBO graphics pipeline: {result}");
                 }
             }
         }
@@ -1746,7 +1753,7 @@ public unsafe class SilkWindow : IWindow
 
                 EnsureViewportDrawBuffer(totalVertices);
 
-                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _fboGraphicsPipeline);
 
                 uint vertexOffset = 0;
                 foreach (var (verts, push) in draws)
@@ -1973,6 +1980,7 @@ public unsafe class SilkWindow : IWindow
         _vk?.DestroyDescriptorPool(_device, _descriptorPool, null);
         _vk?.DestroyDescriptorSetLayout(_device, _descriptorSetLayout, null);
         _vk?.DestroyPipeline(_device, _graphicsPipeline, null);
+        _vk?.DestroyPipeline(_device, _fboGraphicsPipeline, null);
         _vk?.DestroyPipelineLayout(_device, _pipelineLayout, null);
         _vk?.DestroyShaderModule(_device, _vertShaderModule, null);
         _vk?.DestroyShaderModule(_device, _fragShaderModule, null);
