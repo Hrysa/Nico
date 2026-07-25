@@ -3,6 +3,7 @@ using System.Reflection;
 using Microsoft.Extensions.Logging;
 using Silk.NET.Core;
 using Silk.NET.Core.Native;
+using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
@@ -16,6 +17,8 @@ public unsafe class SilkWindow : IWindow
 
     private readonly ILogger _logger;
     private Silk.NET.Windowing.IWindow? _window;
+    private IInputContext? _input;
+    private IMouse? _mouse;
 
     private Instance _instance;
     private SurfaceKHR _surface;
@@ -66,6 +69,15 @@ public unsafe class SilkWindow : IWindow
 
     public bool IsRunning => _window != null && !_window.IsClosing;
 
+    /// <inheritdoc/>
+    public event Action<Vector2>? MouseMove;
+
+    /// <inheritdoc/>
+    public event Action<int>? MouseDown;
+
+    /// <inheritdoc/>
+    public event Action<int>? MouseUp;
+
     public SilkWindow(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<SilkWindow>();
@@ -110,6 +122,16 @@ public unsafe class SilkWindow : IWindow
     {
         _logger.LogInformation("Window.Load fired — initializing Vulkan");
 
+        _input = _window!.CreateInput();
+        _mouse = _input.Mice.Count > 0 ? _input.Mice[0] : null;
+        if (_mouse != null)
+        {
+            _mouse.MouseMove += OnMouseMove;
+            _mouse.MouseDown += OnMouseDown;
+            _mouse.MouseUp += OnMouseUp;
+            _logger.LogInformation("Mouse input attached");
+        }
+
         _vk = Vk.GetApi();
         CreateInstance();
         CreateSurface();
@@ -143,6 +165,21 @@ public unsafe class SilkWindow : IWindow
     private void OnResize(Vector2D<int> size)
     {
         _framebufferResized = true;
+    }
+
+    private void OnMouseMove(IMouse mouse, Vector2 pos)
+    {
+        MouseMove?.Invoke(new Vector2(pos.X, pos.Y));
+    }
+
+    private void OnMouseDown(IMouse mouse, MouseButton button)
+    {
+        MouseDown?.Invoke((int)button);
+    }
+
+    private void OnMouseUp(IMouse mouse, MouseButton button)
+    {
+        MouseUp?.Invoke((int)button);
     }
 
     private void CreateInstance()
@@ -1197,6 +1234,8 @@ public unsafe class SilkWindow : IWindow
         _khrSurface?.DestroySurface(_instance, _surface, null);
         _vk?.DestroyDevice(_device, null);
         _vk?.DestroyInstance(_instance, null);
+
+        _input?.Dispose();
 
         _logger.LogInformation("Shutdown complete");
     }
