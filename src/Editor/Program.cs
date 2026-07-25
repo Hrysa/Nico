@@ -51,43 +51,52 @@ sceneCamera.Position = new Vector3(0, 0, 6);
 sceneCamera.Name = "SceneCamera";
 sceneViewport.Camera = sceneCamera;
 
-// Unit cube: 6 faces, each with 2 triangles (6 vertices)
-Vector3[][] cubeFaceVertices =
+// Unit cube centered at origin (36 vertices = 12 triangles)
+Vertex[] cubeVertices =
 [
     // Front face (z = +0.5)
-    [new(-0.5f, -0.5f,  0.5f), new( 0.5f, -0.5f,  0.5f), new( 0.5f,  0.5f,  0.5f),
-     new( 0.5f,  0.5f,  0.5f), new(-0.5f,  0.5f,  0.5f), new(-0.5f, -0.5f,  0.5f)],
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(1, 0, 0)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
     // Back face (z = -0.5)
-    [new(-0.5f, -0.5f, -0.5f), new( 0.5f, -0.5f, -0.5f), new( 0.5f,  0.5f, -0.5f),
-     new( 0.5f,  0.5f, -0.5f), new(-0.5f,  0.5f, -0.5f), new(-0.5f, -0.5f, -0.5f)],
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
     // Top face (y = +0.5)
-    [new(-0.5f,  0.5f,  0.5f), new( 0.5f,  0.5f,  0.5f), new( 0.5f,  0.5f, -0.5f),
-     new( 0.5f,  0.5f, -0.5f), new(-0.5f,  0.5f, -0.5f), new(-0.5f,  0.5f,  0.5f)],
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 0, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),
     // Bottom face (y = -0.5)
-    [new(-0.5f, -0.5f, -0.5f), new( 0.5f, -0.5f, -0.5f), new( 0.5f, -0.5f,  0.5f),
-     new( 0.5f, -0.5f,  0.5f), new(-0.5f, -0.5f,  0.5f), new(-0.5f, -0.5f, -0.5f)],
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 1, 0)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(1, 1, 0)),
     // Right face (x = +0.5)
-    [new( 0.5f, -0.5f,  0.5f), new( 0.5f, -0.5f, -0.5f), new( 0.5f,  0.5f, -0.5f),
-     new( 0.5f,  0.5f, -0.5f), new( 0.5f,  0.5f,  0.5f), new( 0.5f, -0.5f,  0.5f)],
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f,  0.5f,  0.5f), new Vector3(1, 0, 1)),
+    new(new Vector3( 0.5f, -0.5f,  0.5f), new Vector3(1, 0, 1)),
     // Left face (x = -0.5)
-    [new(-0.5f, -0.5f, -0.5f), new(-0.5f, -0.5f,  0.5f), new(-0.5f,  0.5f,  0.5f),
-     new(-0.5f,  0.5f,  0.5f), new(-0.5f,  0.5f, -0.5f), new(-0.5f, -0.5f, -0.5f)],
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 1)),
+    new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 1)),
 ];
-
-Vector3[] cubeFaceColors =
-[
-    new(1, 0, 0), new(0, 1, 0), new(0, 0, 1),
-    new(1, 1, 0), new(1, 0, 1), new(0, 1, 1)
-];
-
-Vector3[] cubeFaceCentroids =
-[
-    new(0, 0, 0.5f), new(0, 0, -0.5f), new(0, 0.5f, 0),
-    new(0, -0.5f, 0), new(0.5f, 0, 0), new(-0.5f, 0, 0)
-];
-
-int[] faceOrder = [0, 1, 2, 3, 4, 5];
-Vertex[] sortedVertices = new Vertex[36];
 
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
@@ -97,49 +106,17 @@ window.SetViewportRenderCallback(sceneViewportId, ctx =>
 
     sceneAngle += 0.01f;
     var model = Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
-
-    // Sort faces back-to-front (painter's algorithm)
-    // Camera is at -Z looking toward +Z in view space, so sort by centroid Z descending
-    for (int i = 0; i < 6; i++)
-    {
-        var centroid = Vector3.Transform(cubeFaceCentroids[i], model);
-        faceOrder[i] = i;
-        // Store distance as sort key via a simple insertion sort
-    }
-    // Insertion sort by -Z (farthest first)
-    for (int i = 1; i < 6; i++)
-    {
-        int key = faceOrder[i];
-        var keyCentroid = Vector3.Transform(cubeFaceCentroids[key], model);
-        int j = i - 1;
-        while (j >= 0)
-        {
-            var compCentroid = Vector3.Transform(cubeFaceCentroids[faceOrder[j]], model);
-            if (compCentroid.Z >= keyCentroid.Z)
-                break;
-            faceOrder[j + 1] = faceOrder[j];
-            j--;
-        }
-        faceOrder[j + 1] = key;
-    }
-
-    // Build sorted vertex array
-    for (int i = 0; i < 6; i++)
-    {
-        int face = faceOrder[i];
-        var color = cubeFaceColors[face];
-        for (int v = 0; v < 6; v++)
-            sortedVertices[i * 6 + v] = new Vertex(cubeFaceVertices[face][v], color);
-    }
-
     var view = Matrix4x4.Identity;
     var aspect = w / h;
     var halfHeight = 1.5f;
     var halfWidth = halfHeight * aspect;
     var projection = Matrix4x4.CreateOrthographicOffCenter(-halfWidth, halfWidth, -halfHeight, halfHeight, -10, 10);
+    // Remap Z from OpenGL [-1,1] to Vulkan [0,1]
+    projection.M33 = projection.M33 * 0.5f;
+    projection.M43 = projection.M43 * 0.5f + 0.5f;
     var push = new PushConstants { Model = model, View = view, Projection = projection };
 
-    window.DrawInViewport(sceneViewportId, sortedVertices, push);
+    window.DrawInViewport(sceneViewportId, cubeVertices, push);
 });
 
 // ── Game viewport: OrthographicCamera (future) ────────────────
