@@ -14,28 +14,48 @@ public interface IWindow : IDisposable
     /// <param name="vertices">The new vertices to upload.</param>
     void UpdateVertexBuffer(Vertex[] vertices);
 
-    /// <summary>Creates the GPU vertex buffer for textured quads.</summary>
-    /// <param name="vertices">The textured vertices to upload.</param>
-    void CreateTextureVertexBuffer(VertexT[] vertices);
+    // ── Viewport FBO Management ────────────────────────────────
 
-    /// <summary>Occurs when the mouse moves. Provides screen-space position.</summary>
-    event Action<Vector2>? MouseMove;
+    /// <summary>
+    /// Registers a viewport and creates its FBO resources.
+    /// </summary>
+    /// <param name="width">Initial viewport width in pixels.</param>
+    /// <param name="height">Initial viewport height in pixels.</param>
+    /// <returns>A unique viewport ID.</returns>
+    uint RegisterViewport(float width, float height);
 
-    /// <summary>Occurs when a mouse button is pressed. Provides button index.</summary>
-    event Action<int>? MouseDown;
+    /// <summary>
+    /// Unregisters a viewport and destroys its FBO resources.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID to unregister.</param>
+    void UnregisterViewport(uint viewportId);
 
-    /// <summary>Occurs when a mouse button is released. Provides button index.</summary>
-    event Action<int>? MouseUp;
+    /// <summary>
+    /// Resizes a viewport's FBO. Actual GPU recreation is deferred to the next frame.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="width">New width in pixels.</param>
+    /// <param name="height">New height in pixels.</param>
+    void ResizeViewport(uint viewportId, float width, float height);
 
-    /// <summary>Occurs when a mouse button is double-clicked. Provides button index.</summary>
-    event Action<int>? MouseDoubleClick;
+    /// <summary>
+    /// Sets the render callback invoked during Pass 1 for this viewport.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="callback">The render callback receiving a ViewportRenderContext.</param>
+    void SetViewportRenderCallback(uint viewportId, Action<ViewportRenderContext> callback);
 
-    /// <summary>Occurs when the mouse wheel scrolls. Provides scroll offset (Y axis).</summary>
-    event Action<float>? MouseScroll;
+    /// <summary>
+    /// Sets the textured-quad vertices for a viewport's display quad.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="vertices">The textured quad vertices.</param>
+    void SetViewportQuadVertices(uint viewportId, VertexT[] vertices);
 
-    /// <summary>Occurs when a key is pressed. Provides key code.</summary>
-    event Action<int>? KeyDown;
-
-    /// <summary>Occurs when a key is released. Provides key code.</summary>
-    event Action<int>? KeyUp;
+    /// <summary>
+    /// Creates a render context for the specified viewport.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <returns>A new ViewportRenderContext.</returns>
+    ViewportRenderContext CreateRenderContext(uint viewportId);
 }

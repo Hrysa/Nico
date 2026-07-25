@@ -34,15 +34,34 @@ var uiRoot = EditorUI.BuildUI(width, height);
 window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
-window.CreateTextureVertexBuffer(EditorUI.CreateViewportVertices(width, height));
+
+// Register Scene viewport
+var sceneViewport = EditorUI.GetSceneViewport()!;
+var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
+sceneViewport.ViewportId = sceneViewportId;
+window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+window.SetViewportRenderCallback(sceneViewportId, ctx =>
+{
+    // Scene viewport renders a dark background — replace with 3D scene later
+});
+
+// Register Game viewport
+var gameViewport = EditorUI.GetGameViewport()!;
+var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
+gameViewport.ViewportId = gameViewportId;
+window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+window.SetViewportRenderCallback(gameViewportId, ctx =>
+{
+    // Game viewport renders a slightly different background — replace with game camera later
+});
+
+UIElement? hoveredElement = null;
+UIElement? focusedElement = null;
 
 void RefreshVertices()
 {
     window.UpdateVertexBuffer(uiRoot.CollectVertices().ToArray());
 }
-
-UIElement? hoveredElement = null;
-UIElement? focusedElement = null;
 
 void HitTest(Vector2 mousePos)
 {
