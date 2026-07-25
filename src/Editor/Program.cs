@@ -1,5 +1,6 @@
 using System.Numerics;
 using Editor;
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 using Microsoft.Extensions.Logging;
@@ -9,6 +10,8 @@ var loggerFactory = LoggerFactory.Create(b =>
     b.AddConsole();
     b.SetMinimumLevel(LogLevel.Trace);
 });
+
+Debug.SetLoggerFactory(loggerFactory);
 
 var logger = loggerFactory.CreateLogger<Program>();
 logger.LogInformation("Starting Editor...");

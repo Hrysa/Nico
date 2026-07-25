@@ -48,6 +48,8 @@ public static class EditorUI
         _menuBar.AddChild(editButton);
         _menuBar.AddChild(viewButton);
 
+        fileButton.Click += () => { Console.WriteLine("File menu clicked"); };
+
         _statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.EditorStatusBar) { Name = "StatusBar" };
 
         _hierarchyPanel = new Panel(0, viewportTop, hierarchyWidth, viewportHeight, Color.Blue) { Name = "Hierarchy" };
