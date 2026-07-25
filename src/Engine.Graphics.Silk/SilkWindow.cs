@@ -816,11 +816,11 @@ public unsafe class SilkWindow : IWindow
 
     private void CreateFboRenderPass()
     {
-        _logger.LogDebug("Creating FBO render pass with depth");
+        _logger.LogDebug("Creating FBO render pass (color only)");
 
         var format = GetSwapchainImageFormat();
 
-        // Attachment 0: Color
+        // Attachment 0: Color only (no depth for now)
         var colorAttachment = new AttachmentDescription
         {
             Format = format,
@@ -833,59 +833,34 @@ public unsafe class SilkWindow : IWindow
             FinalLayout = ImageLayout.ShaderReadOnlyOptimal
         };
 
-        // Attachment 1: Depth
-        var depthAttachment = new AttachmentDescription
-        {
-            Format = Format.D32Sfloat,
-            Samples = SampleCountFlags.Count1Bit,
-            LoadOp = AttachmentLoadOp.Clear,
-            StoreOp = AttachmentStoreOp.DontCare,
-            StencilLoadOp = AttachmentLoadOp.DontCare,
-            StencilStoreOp = AttachmentStoreOp.DontCare,
-            InitialLayout = ImageLayout.Undefined,
-            FinalLayout = ImageLayout.DepthStencilAttachmentOptimal
-        };
-
-        var attachments = stackalloc AttachmentDescription[2] { colorAttachment, depthAttachment };
-
         var colorAttachmentRef = new AttachmentReference
         {
             Attachment = 0,
             Layout = ImageLayout.ColorAttachmentOptimal
         };
 
-        var depthAttachmentRef = new AttachmentReference
-        {
-            Attachment = 1,
-            Layout = ImageLayout.DepthStencilAttachmentOptimal
-        };
-
-        var colorAttachmentRefSpan = colorAttachmentRef;
-        var depthAttachmentRefSpan = depthAttachmentRef;
-
         var subpassDescription = new SubpassDescription
         {
             PipelineBindPoint = PipelineBindPoint.Graphics,
             ColorAttachmentCount = 1,
-            PColorAttachments = &colorAttachmentRefSpan,
-            PDepthStencilAttachment = &depthAttachmentRefSpan
+            PColorAttachments = &colorAttachmentRef
         };
 
         var subpassDependency = new SubpassDependency
         {
             SrcSubpass = Vk.SubpassExternal,
             DstSubpass = 0,
-            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
+            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
             SrcAccessMask = 0,
-            DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
-            DstAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit
+            DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+            DstAccessMask = AccessFlags.ColorAttachmentWriteBit
         };
 
         var renderPassInfo = new RenderPassCreateInfo
         {
             SType = StructureType.RenderPassCreateInfo,
-            AttachmentCount = 2,
-            PAttachments = attachments,
+            AttachmentCount = 1,
+            PAttachments = &colorAttachment,
             SubpassCount = 1,
             PSubpasses = &subpassDescription,
             DependencyCount = 1,
@@ -896,7 +871,7 @@ public unsafe class SilkWindow : IWindow
         if (result != Result.Success)
             throw new Exception($"Failed to create FBO render pass: {result}");
 
-        _logger.LogInformation("FBO render pass created (color + depth)");
+        _logger.LogInformation("FBO render pass created (color only)");
     }
 
     private void CreateTexturePipeline()
@@ -1689,7 +1664,7 @@ public unsafe class SilkWindow : IWindow
             if (fbo.IsDirty)
                 continue;
 
-            var clearValues = stackalloc ClearValue[2];
+            var clearValues = stackalloc ClearValue[1];
             clearValues[0] = new ClearValue
             {
                 Color = new ClearColorValue
@@ -1699,10 +1674,6 @@ public unsafe class SilkWindow : IWindow
                     Float32_2 = fbo.ClearColor.Z,
                     Float32_3 = fbo.ClearColor.W
                 }
-            };
-            clearValues[1] = new ClearValue
-            {
-                DepthStencil = new ClearDepthStencilValue { Depth = 1.0f, Stencil = 0 }
             };
 
             var fboRenderPassInfo = new RenderPassBeginInfo
@@ -1715,7 +1686,7 @@ public unsafe class SilkWindow : IWindow
                     Offset = new Offset2D { X = 0, Y = 0 },
                     Extent = new Extent2D { Width = fbo.Width, Height = fbo.Height }
                 },
-                ClearValueCount = 2,
+                ClearValueCount = 1,
                 PClearValues = clearValues
             };
 

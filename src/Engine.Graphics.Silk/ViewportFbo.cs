@@ -107,68 +107,22 @@ internal unsafe class ViewportFbo
         if (result != Result.Success)
             throw new Exception($"Failed to create viewport FBO color view: {result}");
 
-        // ── Depth image ────────────────────────────────────────
-        var depthInfo = new ImageCreateInfo
-        {
-            SType = StructureType.ImageCreateInfo,
-            ImageType = ImageType.Type2D,
-            Format = Format.D32Sfloat,
-            Extent = new Extent3D { Width = Width, Height = Height, Depth = 1 },
-            MipLevels = 1,
-            ArrayLayers = 1,
-            Samples = SampleCountFlags.Count1Bit,
-            Tiling = ImageTiling.Optimal,
-            Usage = ImageUsageFlags.DepthStencilAttachmentBit,
-            SharingMode = SharingMode.Exclusive,
-            InitialLayout = ImageLayout.Undefined
-        };
-
-        result = vk.CreateImage(device, &depthInfo, null, out DepthImage);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create viewport FBO depth image: {result}");
-
-        vk.GetImageMemoryRequirements(device, DepthImage, out var depthMemReqs);
-        var depthAllocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = depthMemReqs.Size,
-            MemoryTypeIndex = deviceLocalMemoryType
-        };
-        result = vk.AllocateMemory(device, &depthAllocInfo, null, out DepthMemory);
-        if (result != Result.Success)
-            throw new Exception($"Failed to allocate viewport FBO depth memory: {result}");
-        vk.BindImageMemory(device, DepthImage, DepthMemory, 0);
-
-        var depthViewInfo = new ImageViewCreateInfo
-        {
-            SType = StructureType.ImageViewCreateInfo,
-            Image = DepthImage,
-            ViewType = ImageViewType.Type2D,
-            Format = Format.D32Sfloat,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = ImageAspectFlags.DepthBit,
-                BaseMipLevel = 0, LevelCount = 1,
-                BaseArrayLayer = 0, LayerCount = 1
-            }
-        };
-        result = vk.CreateImageView(device, &depthViewInfo, null, out DepthView);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create viewport FBO depth view: {result}");
-
-        // ── Framebuffer (color + depth attachments) ─────────────
-        var attachments = stackalloc ImageView[2] { ColorView, DepthView };
+        // ── Framebuffer (color only, no depth) ──────────────────
         var fbInfo = new FramebufferCreateInfo
         {
             SType = StructureType.FramebufferCreateInfo,
             RenderPass = fboRenderPass,
-            AttachmentCount = 2,
-            PAttachments = attachments,
+            AttachmentCount = 1,
             Width = Width,
             Height = Height,
             Layers = 1
         };
-        result = vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
+
+        fixed (ImageView* pColorView = &ColorView)
+        {
+            fbInfo.PAttachments = pColorView;
+            result = vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
+        }
         if (result != Result.Success)
             throw new Exception($"Failed to create viewport FBO framebuffer: {result}");
 
@@ -231,9 +185,6 @@ internal unsafe class ViewportFbo
         vk.DestroyImageView(device, ColorView, null);
         vk.DestroyImage(device, ColorImage, null);
         vk.FreeMemory(device, ColorMemory, null);
-        vk.DestroyImageView(device, DepthView, null);
-        vk.DestroyImage(device, DepthImage, null);
-        vk.FreeMemory(device, DepthMemory, null);
         vk.DestroyFramebuffer(device, Framebuffer, null);
     }
 
