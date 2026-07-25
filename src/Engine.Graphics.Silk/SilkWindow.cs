@@ -783,6 +783,19 @@ public unsafe class SilkWindow : IWindow
         _logger.LogInformation("Vertex buffer created ({Size} bytes)", bufferSize);
     }
 
+    public void UpdateVertexBuffer(Vertex[] vertices)
+    {
+        _vertices = vertices;
+        _vertexCount = (uint)vertices.Length;
+
+        var bufferSize = (nuint)(vertices.Length * Vertex.Stride);
+        void* data;
+        _vk!.MapMemory(_device, _vertexBufferMemory, 0, bufferSize, 0, &data);
+        fixed (Vertex* pVertices = _vertices)
+            System.Buffer.MemoryCopy(pVertices, data, bufferSize, bufferSize);
+        _vk.UnmapMemory(_device, _vertexBufferMemory);
+    }
+
     public void CreateUniformBuffer()
     {
         _logger.LogDebug("Creating uniform buffer");

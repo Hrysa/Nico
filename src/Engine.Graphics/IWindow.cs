@@ -10,6 +10,10 @@ public interface IWindow : IDisposable
     bool IsRunning { get; }
     void ProcessEvents();
 
+    /// <summary>Updates the GPU vertex buffer with new vertex data.</summary>
+    /// <param name="vertices">The new vertices to upload.</param>
+    void UpdateVertexBuffer(Vertex[] vertices);
+
     /// <summary>Occurs when the mouse moves. Provides screen-space position.</summary>
     event Action<Vector2>? MouseMove;
 

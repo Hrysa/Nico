@@ -32,8 +32,12 @@ window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
+void RefreshVertices()
+{
+    window.UpdateVertexBuffer(uiRoot.CollectVertices().ToArray());
+}
+
 UIElement? hoveredElement = null;
-bool mouseIsDown = false;
 
 void HitTest(Vector2 mousePos)
 {
@@ -45,6 +49,7 @@ void HitTest(Vector2 mousePos)
         hoveredElement = hit;
         hoveredElement?.SetHover(true);
         logger.LogDebug("Hover: {Name}", hoveredElement?.Name ?? "(none)");
+        RefreshVertices();
     }
 }
 
@@ -53,7 +58,6 @@ UIElement? HitTestElement(UIElement element, Vector2 pos)
     if (!element.IsVisible || !element.ContainsPoint(pos))
         return null;
 
-    // Check children back-to-front (last child = topmost)
     for (int i = element.Children.Count - 1; i >= 0; i--)
     {
         if (element.Children[i] is UIElement child)
@@ -75,19 +79,19 @@ window.MouseMove += pos =>
 
 window.MouseDown += button =>
 {
-    mouseIsDown = true;
     logger.LogDebug("MouseDown: button={Button}", button);
     hoveredElement?.SetPressed(true);
+    RefreshVertices();
 };
 
 window.MouseUp += button =>
 {
-    mouseIsDown = false;
     logger.LogDebug("MouseUp: button={Button}", button);
     if (hoveredElement != null)
     {
         hoveredElement.SetPressed(false);
         hoveredElement.InvokeClick();
+        RefreshVertices();
     }
 };
 
