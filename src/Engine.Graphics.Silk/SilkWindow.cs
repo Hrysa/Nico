@@ -1430,19 +1430,15 @@ public unsafe class SilkWindow : IWindow
 
     private void EnsureViewportDrawBuffer(uint requiredVertices)
     {
-        if (_viewportDrawBufferCapacity >= requiredVertices)
-            return;
-
+        // Always recreate to avoid GPU/CPU race condition
         _vk!.DeviceWaitIdle(_device);
 
-        // Destroy old buffer
         if (_viewportDrawBuffer.Handle != 0)
         {
             _vk.DestroyBuffer(_device, _viewportDrawBuffer, null);
             _vk.FreeMemory(_device, _viewportDrawBufferMemory, null);
         }
 
-        // Create new larger buffer
         _viewportDrawBufferCapacity = Math.Max(requiredVertices, 1024);
         var bufferSize = (nuint)(_viewportDrawBufferCapacity * Vertex.Stride);
 
@@ -1468,8 +1464,6 @@ public unsafe class SilkWindow : IWindow
         void* mapped;
         _vk.MapMemory(_device, _viewportDrawBufferMemory, 0, bufferSize, 0, &mapped);
         _viewportDrawBufferMapped = mapped;
-
-        _logger.LogDebug("Viewport draw buffer created/recreated ({Capacity} vertices)", _viewportDrawBufferCapacity);
     }
 
     private void RecreateDirtyFbos()
@@ -1903,7 +1897,6 @@ public unsafe class SilkWindow : IWindow
             // Replay pending draws queued by DrawInViewport
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
-                _logger.LogWarning("Viewport {Id}: replaying {Count} draw batches", viewportId, draws.Count);
                 // Count total vertices to ensure buffer is large enough
                 uint totalVertices = 0;
                 foreach (var (verts, _) in draws)
