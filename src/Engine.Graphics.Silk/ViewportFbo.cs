@@ -51,7 +51,7 @@ internal unsafe class ViewportFbo
 
     public void Create(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, uint memoryTypeBits,
+        Format colorFormat, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         // ── Color image ────────────────────────────────────────
@@ -79,7 +79,7 @@ internal unsafe class ViewportFbo
         {
             SType = StructureType.MemoryAllocateInfo,
             AllocationSize = colorMemReqs.Size,
-            MemoryTypeIndex = FindMemoryType(vk, memoryTypeBits, colorMemReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+            MemoryTypeIndex = deviceLocalMemoryType
         };
         result = vk.AllocateMemory(device, &colorAllocInfo, null, out ColorMemory);
         if (result != Result.Success)
@@ -128,7 +128,7 @@ internal unsafe class ViewportFbo
         {
             SType = StructureType.MemoryAllocateInfo,
             AllocationSize = depthMemReqs.Size,
-            MemoryTypeIndex = FindMemoryType(vk, memoryTypeBits, depthMemReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+            MemoryTypeIndex = deviceLocalMemoryType
         };
         result = vk.AllocateMemory(device, &depthAllocInfo, null, out DepthMemory);
         if (result != Result.Success)
@@ -235,24 +235,13 @@ internal unsafe class ViewportFbo
 
     public void Recreate(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, uint memoryTypeBits,
+        Format colorFormat, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         Destroy(vk, device);
-        Create(vk, device, fboRenderPass, colorFormat, memoryTypeBits, descriptorSetLayout, descriptorPool);
+        Create(vk, device, fboRenderPass, colorFormat, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
         IsDirty = false;
     }
 
-    private static uint FindMemoryType(Vk vk, uint hostMemoryTypeBits, uint deviceMemoryTypeBits, MemoryPropertyFlags properties)
-    {
-        // Use device memory type bits since FBO images are device-local
-        vk.GetPhysicalDeviceMemoryProperties(default, out var memProperties);
-        for (var i = 0; i < (int)memProperties.MemoryTypeCount; i++)
-        {
-            if ((deviceMemoryTypeBits & (1 << i)) != 0 &&
-                ((uint)memProperties.MemoryTypes[i].PropertyFlags & (uint)properties) == (uint)properties)
-                return (uint)i;
-        }
-        throw new Exception("Failed to find suitable memory type");
-    }
+    public void Dispose() { /* destroys image, view, framebuffer, sampler */ }
 }

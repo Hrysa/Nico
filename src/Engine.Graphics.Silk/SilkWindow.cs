@@ -1130,8 +1130,9 @@ public unsafe class SilkWindow : IWindow
     {
         var id = _nextViewportId++;
         var fbo = new ViewportFbo(id, (uint)width, (uint)height);
+        var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
         fbo.Create(_vk!, _device, _fboRenderPass, GetSwapchainImageFormat(),
-            FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit),
+            deviceLocalMemoryType,
             _textureDescriptorSetLayout, _textureDescriptorPool);
         _viewportFbos[id] = fbo;
         _logger.LogInformation("Viewport {Id} registered ({Width}x{Height})", id, (uint)width, (uint)height);
@@ -1239,13 +1240,14 @@ public unsafe class SilkWindow : IWindow
 
     private void RecreateDirtyFbos()
     {
+        var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
         foreach (var (id, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty)
             {
                 _logger.LogDebug("Recreating viewport {Id} FBO ({Width}x{Height})", id, fbo.Width, fbo.Height);
                 fbo.Recreate(_vk!, _device, _fboRenderPass, GetSwapchainImageFormat(),
-                    FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit),
+                    deviceLocalMemoryType,
                     _textureDescriptorSetLayout, _textureDescriptorPool);
             }
         }
