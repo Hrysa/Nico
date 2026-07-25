@@ -1,3 +1,4 @@
+using System.Numerics;
 using Silk.NET.Core;
 using Silk.NET.Vulkan;
 
@@ -18,6 +19,9 @@ internal unsafe class ViewportFbo
 
     /// <summary>Current height in pixels.</summary>
     public uint Height { get; private set; }
+
+    /// <summary>Clear color for this viewport's FBO.</summary>
+    public Vector4 ClearColor { get; set; } = new(0.1f, 0.1f, 0.15f, 1.0f);
 
     /// <summary>True when the FBO needs to be recreated at a new size.</summary>
     public bool IsDirty { get; set; }

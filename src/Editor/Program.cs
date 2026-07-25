@@ -35,11 +35,12 @@ window.SetVertices(uiRoot.CollectVertices().ToArray());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
-// ── Scene viewport: rotating colored triangle ──────────────────
+// ── Scene viewport: dark gray background ───────────────────────
 var sceneViewport = EditorUI.GetSceneViewport()!;
 var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
 sceneViewport.ViewportId = sceneViewportId;
 window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+window.SetViewportClearColor(sceneViewportId, 0.15f, 0.15f, 0.18f); // dark gray
 
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
@@ -67,11 +68,12 @@ window.SetViewportRenderCallback(sceneViewportId, ctx =>
     window.DrawInViewport(sceneViewportId, verts, push);
 });
 
-// ── Game viewport: static colored quad ─────────────────────────
+// ── Game viewport: dark blue background ────────────────────────
 var gameViewport = EditorUI.GetGameViewport()!;
 var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
 gameViewport.ViewportId = gameViewportId;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f); // dark blue
 
 window.SetViewportRenderCallback(gameViewportId, ctx =>
 {

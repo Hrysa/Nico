@@ -1253,6 +1253,13 @@ public unsafe class SilkWindow : IWindow
         _pendingViewportDraws[viewportId].Add((vertices, pushConstants));
     }
 
+    /// <inheritdoc/>
+    public void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f)
+    {
+        if (_viewportFbos.TryGetValue(viewportId, out var fbo))
+            fbo.ClearColor = new Vector4(r, g, b, a);
+    }
+
     private void EnsureViewportDrawBuffer(uint requiredVertices)
     {
         if (_viewportDrawBufferCapacity >= requiredVertices)
@@ -1678,7 +1685,13 @@ public unsafe class SilkWindow : IWindow
             var clearValues = stackalloc ClearValue[2];
             clearValues[0] = new ClearValue
             {
-                Color = new ClearColorValue { Float32_0 = 0.1f, Float32_1 = 0.1f, Float32_2 = 0.15f, Float32_3 = 1.0f }
+                Color = new ClearColorValue
+                {
+                    Float32_0 = fbo.ClearColor.X,
+                    Float32_1 = fbo.ClearColor.Y,
+                    Float32_2 = fbo.ClearColor.Z,
+                    Float32_3 = fbo.ClearColor.W
+                }
             };
             clearValues[1] = new ClearValue
             {

@@ -67,4 +67,14 @@ public interface IWindow : IDisposable
     /// <param name="vertices">The vertices to draw.</param>
     /// <param name="pushConstants">Push constants (MVP matrices).</param>
     void DrawInViewport(uint viewportId, Vertex[] vertices, PushConstants pushConstants);
+
+    /// <summary>
+    /// Sets the clear color for a viewport's FBO.
+    /// </summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="r">Red component (0-1).</param>
+    /// <param name="g">Green component (0-1).</param>
+    /// <param name="b">Blue component (0-1).</param>
+    /// <param name="a">Alpha component (0-1).</param>
+    void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f);
 }
