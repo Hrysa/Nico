@@ -11,7 +11,7 @@ GameEngine.slnx
 ├── src/Engine.Core/         → pure abstractions (no Silk.NET): Node base class
 ├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): IGraphicsContext, IRenderer, etc.
 ├── src/Engine.Graphics.Silk/ → Silk.NET implementations (Silk.NET lives here)
-├── src/Engine.UI/           → UI element types (UIElement, Panel)
+├── src/Engine.UI/           → UI element types (UIElement, Panel, Button)
 ├── src/Engine/              → Silk.NET host (references Silk.NET directly)
 ├── src/Editor/              → Editor.csproj (editor app, uses Engine.UI for layout)
 └── src/Player/              → Player.csproj (game runtime)
@@ -34,7 +34,7 @@ Engine.UI → Engine.Graphics
 - `Engine.Core` contains pure abstractions and domain logic — no Silk.NET. Has `Node` base class.
 - `Engine.Graphics` contains graphics abstractions (interfaces) — no Silk.NET. Has `Color`, `Vertex`, `IGraphicsContext`, etc.
 - `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions.
-- `Engine.UI` contains UI element types (`UIElement`, `Panel`) — extends `Node` from `Engine.Core`.
+- `Engine.UI` contains UI element types (`UIElement`, `Panel`, `Button`) — extends `Node` from `Engine.Core`.
 - `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
