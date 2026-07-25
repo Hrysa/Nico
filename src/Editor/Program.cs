@@ -61,7 +61,8 @@ window.SetViewportRenderCallback(sceneViewportId, ctx =>
 
     var push = sceneCamera.GetPushConstants(model);
 
-    var r = MathF.Min(ctx.Width, ctx.Height) * 0.3f;
+    // Triangle in world-space units (radius = 1.0)
+    var r = 1.0f;
     var verts = new Vertex[]
     {
         new(new Vector3(0, r, 0), new Vector3(1, 0, 0)),
