@@ -22,4 +22,16 @@ public interface IWindow : IDisposable
 
     /// <summary>Occurs when a mouse button is released. Provides button index.</summary>
     event Action<int>? MouseUp;
+
+    /// <summary>Occurs when a mouse button is double-clicked. Provides button index.</summary>
+    event Action<int>? MouseDoubleClick;
+
+    /// <summary>Occurs when the mouse wheel scrolls. Provides scroll offset (Y axis).</summary>
+    event Action<float>? MouseScroll;
+
+    /// <summary>Occurs when a key is pressed. Provides key code.</summary>
+    event Action<int>? KeyDown;
+
+    /// <summary>Occurs when a key is released. Provides key code.</summary>
+    event Action<int>? KeyUp;
 }

@@ -19,6 +19,7 @@ public unsafe class SilkWindow : IWindow
     private Silk.NET.Windowing.IWindow? _window;
     private IInputContext? _input;
     private IMouse? _mouse;
+    private IKeyboard? _keyboard;
 
     private Instance _instance;
     private SurfaceKHR _surface;
@@ -78,6 +79,18 @@ public unsafe class SilkWindow : IWindow
     /// <inheritdoc/>
     public event Action<int>? MouseUp;
 
+    /// <inheritdoc/>
+    public event Action<int>? MouseDoubleClick;
+
+    /// <inheritdoc/>
+    public event Action<float>? MouseScroll;
+
+    /// <inheritdoc/>
+    public event Action<int>? KeyDown;
+
+    /// <inheritdoc/>
+    public event Action<int>? KeyUp;
+
     public SilkWindow(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<SilkWindow>();
@@ -124,12 +137,23 @@ public unsafe class SilkWindow : IWindow
 
         _input = _window!.CreateInput();
         _mouse = _input.Mice.Count > 0 ? _input.Mice[0] : null;
+        _keyboard = _input.Keyboards.Count > 0 ? _input.Keyboards[0] : null;
+
         if (_mouse != null)
         {
             _mouse.MouseMove += OnMouseMove;
             _mouse.MouseDown += OnMouseDown;
             _mouse.MouseUp += OnMouseUp;
+            _mouse.DoubleClick += OnMouseDoubleClick;
+            _mouse.Scroll += OnMouseScroll;
             _logger.LogInformation("Mouse input attached");
+        }
+
+        if (_keyboard != null)
+        {
+            _keyboard.KeyDown += OnKeyDown;
+            _keyboard.KeyUp += OnKeyUp;
+            _logger.LogInformation("Keyboard input attached");
         }
 
         _vk = Vk.GetApi();
@@ -180,6 +204,26 @@ public unsafe class SilkWindow : IWindow
     private void OnMouseUp(IMouse mouse, MouseButton button)
     {
         MouseUp?.Invoke((int)button);
+    }
+
+    private void OnMouseDoubleClick(IMouse mouse, MouseButton button, Vector2 pos)
+    {
+        MouseDoubleClick?.Invoke((int)button);
+    }
+
+    private void OnMouseScroll(IMouse mouse, ScrollWheel scroll)
+    {
+        MouseScroll?.Invoke(scroll.Y);
+    }
+
+    private void OnKeyDown(IKeyboard keyboard, Key key, int keyCode)
+    {
+        KeyDown?.Invoke((int)key);
+    }
+
+    private void OnKeyUp(IKeyboard keyboard, Key key, int keyCode)
+    {
+        KeyUp?.Invoke((int)key);
     }
 
     private void CreateInstance()

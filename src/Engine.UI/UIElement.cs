@@ -30,6 +30,9 @@ public class UIElement : Node
     /// <summary>Gets or sets whether this element is currently pressed.</summary>
     public bool IsPressed { get; set; }
 
+    /// <summary>Gets or sets whether this element has keyboard focus.</summary>
+    public bool IsFocused { get; set; }
+
     /// <summary>Occurs when the mouse enters this element.</summary>
     public event Action? MouseEnter;
 
@@ -44,6 +47,24 @@ public class UIElement : Node
 
     /// <summary>Occurs when this element is clicked (released after press).</summary>
     public event Action? Click;
+
+    /// <summary>Occurs when this element is double-clicked.</summary>
+    public event Action? DoubleClick;
+
+    /// <summary>Occurs when the mouse wheel scrolls over this element. Provides scroll offset.</summary>
+    public event Action<float>? Scroll;
+
+    /// <summary>Occurs when this element gains keyboard focus.</summary>
+    public event Action? Focus;
+
+    /// <summary>Occurs when this element loses keyboard focus.</summary>
+    public event Action? Blur;
+
+    /// <summary>Occurs when a key is pressed while this element is focused. Provides key code.</summary>
+    public event Action<int>? KeyDown;
+
+    /// <summary>Occurs when a key is released while this element is focused. Provides key code.</summary>
+    public event Action<int>? KeyUp;
 
     /// <summary>Gets the left edge position (Position.X).</summary>
     public float Left => Position.X;
@@ -124,6 +145,58 @@ public class UIElement : Node
         OnClick();
     }
 
+    /// <summary>
+    /// Raises the <see cref="DoubleClick"/> event.
+    /// </summary>
+    public void InvokeDoubleClick()
+    {
+        OnDoubleClick();
+    }
+
+    /// <summary>
+    /// Raises the <see cref="Scroll"/> event.
+    /// </summary>
+    /// <param name="offset">The scroll offset.</param>
+    public void InvokeScroll(float offset)
+    {
+        OnScroll(offset);
+    }
+
+    /// <summary>
+    /// Sets the focus state and raises <see cref="Focus"/> / <see cref="Blur"/> as appropriate.
+    /// </summary>
+    /// <param name="focused">True to give this element focus.</param>
+    public void SetFocus(bool focused)
+    {
+        if (IsFocused == focused)
+            return;
+
+        IsFocused = focused;
+
+        if (focused)
+            OnFocus();
+        else
+            OnBlur();
+    }
+
+    /// <summary>
+    /// Raises <see cref="KeyDown"/> event for this element.
+    /// </summary>
+    /// <param name="keyCode">The key code.</param>
+    public void InvokeKeyDown(int keyCode)
+    {
+        OnKeyDown(keyCode);
+    }
+
+    /// <summary>
+    /// Raises <see cref="KeyUp"/> event for this element.
+    /// </summary>
+    /// <param name="keyCode">The key code.</param>
+    public void InvokeKeyUp(int keyCode)
+    {
+        OnKeyUp(keyCode);
+    }
+
     /// <summary>Called when the mouse enters this element. Override for custom hover-on behavior.</summary>
     protected virtual void OnMouseEnter()
     {
@@ -152,6 +225,45 @@ public class UIElement : Node
     protected virtual void OnClick()
     {
         Click?.Invoke();
+    }
+
+    /// <summary>Called when this element is double-clicked. Override for custom double-click behavior.</summary>
+    protected virtual void OnDoubleClick()
+    {
+        DoubleClick?.Invoke();
+    }
+
+    /// <summary>Called when the mouse wheel scrolls over this element. Override for custom scroll behavior.</summary>
+    /// <param name="offset">The scroll offset.</param>
+    protected virtual void OnScroll(float offset)
+    {
+        Scroll?.Invoke(offset);
+    }
+
+    /// <summary>Called when this element gains keyboard focus. Override for custom focus behavior.</summary>
+    protected virtual void OnFocus()
+    {
+        Focus?.Invoke();
+    }
+
+    /// <summary>Called when this element loses keyboard focus. Override for custom blur behavior.</summary>
+    protected virtual void OnBlur()
+    {
+        Blur?.Invoke();
+    }
+
+    /// <summary>Called when a key is pressed while focused. Override for custom key-down behavior.</summary>
+    /// <param name="keyCode">The key code.</param>
+    protected virtual void OnKeyDown(int keyCode)
+    {
+        KeyDown?.Invoke(keyCode);
+    }
+
+    /// <summary>Called when a key is released while focused. Override for custom key-up behavior.</summary>
+    /// <param name="keyCode">The key code.</param>
+    protected virtual void OnKeyUp(int keyCode)
+    {
+        KeyUp?.Invoke(keyCode);
     }
 
     /// <summary>

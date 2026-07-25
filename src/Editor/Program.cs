@@ -38,6 +38,7 @@ void RefreshVertices()
 }
 
 UIElement? hoveredElement = null;
+UIElement? focusedElement = null;
 
 void HitTest(Vector2 mousePos)
 {
@@ -71,6 +72,17 @@ UIElement? HitTestElement(UIElement element, Vector2 pos)
     return element;
 }
 
+void SetFocus(UIElement? element)
+{
+    if (element == focusedElement)
+        return;
+
+    focusedElement?.SetFocus(false);
+    focusedElement = element;
+    focusedElement?.SetFocus(true);
+    logger.LogDebug("Focus: {Name}", focusedElement?.Name ?? "(none)");
+}
+
 window.MouseMove += pos =>
 {
     logger.LogTrace("Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
@@ -80,6 +92,7 @@ window.MouseMove += pos =>
 window.MouseDown += button =>
 {
     logger.LogDebug("MouseDown: button={Button}", button);
+    SetFocus(hoveredElement);
     hoveredElement?.SetPressed(true);
     RefreshVertices();
 };
@@ -93,6 +106,34 @@ window.MouseUp += button =>
         hoveredElement.InvokeClick();
         RefreshVertices();
     }
+};
+
+window.MouseDoubleClick += button =>
+{
+    logger.LogDebug("DoubleClick: button={Button}", button);
+    hoveredElement?.InvokeDoubleClick();
+    RefreshVertices();
+};
+
+window.MouseScroll += offset =>
+{
+    logger.LogDebug("Scroll: offset={Offset:F1}", offset);
+    hoveredElement?.InvokeScroll(offset);
+    RefreshVertices();
+};
+
+window.KeyDown += keyCode =>
+{
+    logger.LogDebug("KeyDown: key={Key}", keyCode);
+    focusedElement?.InvokeKeyDown(keyCode);
+    RefreshVertices();
+};
+
+window.KeyUp += keyCode =>
+{
+    logger.LogDebug("KeyUp: key={Key}", keyCode);
+    focusedElement?.InvokeKeyUp(keyCode);
+    RefreshVertices();
 };
 
 logger.LogInformation("Running main loop...");
