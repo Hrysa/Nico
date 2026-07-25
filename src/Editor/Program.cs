@@ -1,3 +1,4 @@
+using Editor;
 using Engine.Graphics;
 using Microsoft.Extensions.Logging;
 
@@ -20,6 +21,12 @@ var options = new Engine.Graphics.WindowOptions
 
 logger.LogInformation("Initializing window...");
 window.Initialize(options);
-logger.LogInformation("Window initialized. Running main loop...");
+
+logger.LogInformation("Setting up geometry...");
+window.SetVertices(Triangle.CreateVertices());
+window.SetPushConstants(Triangle.CreatePushConstants());
+window.CreateVertexBuffer();
+
+logger.LogInformation("Running main loop...");
 window.Run();
 logger.LogInformation("Done.");

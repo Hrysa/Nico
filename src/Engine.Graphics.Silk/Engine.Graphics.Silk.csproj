@@ -23,4 +23,9 @@
     <PackageReference Include="Silk.NET.Maths" Version="2.23.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="../Shaders/basic.vert.spv" LogicalName="basic.vert.spv" />
+    <EmbeddedResource Include="../Shaders/basic.frag.spv" LogicalName="basic.frag.spv" />
+  </ItemGroup>
+
 </Project>
