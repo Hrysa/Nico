@@ -245,6 +245,16 @@ float ProjectRayOntoAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 lineOrigin, 
     return (b * e - c * d) / denom;
 }
 
+bool IsInSceneViewport(Vector2 screenPos)
+{
+    var vpX = sceneViewport.Position.X;
+    var vpY = sceneViewport.Position.Y;
+    var vpW = sceneViewport.Width;
+    var vpH = sceneViewport.Height;
+    return screenPos.X >= vpX && screenPos.X <= vpX + vpW
+        && screenPos.Y >= vpY && screenPos.Y <= vpY + vpH;
+}
+
 window.MouseMove += pos =>
 {
     lastMousePos = pos;
@@ -272,7 +282,11 @@ window.MouseDown += button =>
     RefreshVertices();
 
     if (button != 0) return;
-    if (hoveredElement is not ViewportPanel vp || vp.ViewportId != sceneViewportId) return;
+
+    // Check if mouse is over scene viewport (hoveredElement is the viewport panel, or null if over gizmo)
+    bool overSceneViewport = (hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+                          || (hoveredElement == null && IsInSceneViewport(lastMousePos));
+    if (!overSceneViewport) return;
 
     // Try gizmo axis first
     if (selectedObject != null)
