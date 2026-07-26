@@ -259,6 +259,16 @@ float ProjectRayOntoAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 lineOrigin, 
     return (b * e - c * d) / denom;
 }
 
+bool IsInSceneViewport(Vector2 screenPos)
+{
+    var vpX = sceneViewport.Position.X;
+    var vpY = sceneViewport.Position.Y;
+    var vpW = sceneViewport.Width;
+    var vpH = sceneViewport.Height;
+    return screenPos.X >= vpX && screenPos.X <= vpX + vpW
+        && screenPos.Y >= vpY && screenPos.Y <= vpY + vpH;
+}
+
 window.MouseMove += pos =>
 {
     lastMousePos = pos;
@@ -293,16 +303,16 @@ window.MouseDown += button =>
 
     if (button != 0) return;
 
-    if (hoveredElement is not ViewportPanel vp || vp.ViewportId != sceneViewportId) return;
+    // Must be in scene viewport area
+    bool inSceneViewport = (hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+                        || (hoveredElement == null && IsInSceneViewport(lastMousePos));
+    if (!inSceneViewport) return;
 
-    // Try gizmo axis first (only when mouse is over the viewport panel itself)
+    // Try gizmo axis first (gizmo is not a UI element, so hoveredElement may be null)
     if (selectedObject != null)
     {
-        Debug.Input(LogLevel.Debug, "Gizmo check: objPos=({X:F2},{Y:F2},{Z:F2})",
-            selectedObject.Position.X, selectedObject.Position.Y, selectedObject.Position.Z);
         var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
 
-        // Compute rotated axis directions from object rotation
         var rot = selectedObject.Rotation;
         var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
         var localX = Vector3.Transform(Vector3.UnitX, rotMatrix);
@@ -311,8 +321,8 @@ window.MouseDown += button =>
         var localAxes = new[] { localX, localY, localZ };
         var axisNames = new[] { "X", "Y", "Z" };
 
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.15f, localAxes);
-        Debug.Input(LogLevel.Debug, "Gizmo result: axis={Axis}", axis >= 0 ? axisNames[axis] : "miss");
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.25f, localAxes);
+        Debug.Input(LogLevel.Debug, "Gizmo axis: {Result}", axis >= 0 ? axisNames[axis] : "miss");
         if (axis >= 0)
         {
             dragAxis = axis;
