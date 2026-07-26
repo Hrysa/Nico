@@ -167,9 +167,9 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
     var vpW = sceneViewport.Width;
     var vpH = sceneViewport.Height;
 
-    // Screen → NDC
+    // Screen → NDC (projection already has Y-flip via M22=-M22, so no extra flip here)
     var ndcX = ((screenPos.X - vpX) / vpW) * 2f - 1f;
-    var ndcY = (1f - (screenPos.Y - vpY) / vpH) * 2f - 1f;
+    var ndcY = ((screenPos.Y - vpY) / vpH) * 2f - 1f;
 
     Debug.Input(LogLevel.Trace, "ScreenToRay: screen=({SX:F0},{SY:F0}) vp=({VPX:F0},{VPY:F0},{VPW:F0},{VPH:F0}) ndc=({NX:F3},{NY:F3})",
         screenPos.X, screenPos.Y, vpX, vpY, vpW, vpH, ndcX, ndcY);
@@ -324,7 +324,7 @@ window.MouseDown += button =>
         var localAxes = new[] { localX, localY, localZ };
         var axisNames = new[] { "X", "Y", "Z" };
 
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 1.0f, localAxes);
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 2.0f, localAxes);
         Debug.Input(LogLevel.Debug, "Gizmo result: axis={Axis}", axis >= 0 ? axisNames[axis] : "miss");
         if (axis >= 0)
         {
@@ -399,8 +399,8 @@ window.Update += delta =>
     // LogicUpdate: Scene viewport
     sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
     sceneAngle += 0.01f;
-    cube.Rotation = new Vector3(sceneAngle * 0.7f, sceneAngle, 0);
-    cube.Scale = new Vector3(0.5f);
+    // cube.Rotation = new Vector3(sceneAngle * 0.7f, sceneAngle, 0);
+    // cube.Scale = new Vector3(0.5f);
     var scenePush = sceneCamera.GetPushConstants(cube.GetModelMatrix());
     window.DrawInViewport(sceneViewportId, cube.Mesh!.Vertices, scenePush);
 
