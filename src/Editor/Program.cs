@@ -171,6 +171,9 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
     var ndcX = ((screenPos.X - vpX) / vpW) * 2f - 1f;
     var ndcY = (1f - (screenPos.Y - vpY) / vpH) * 2f - 1f;
 
+    Debug.Input(LogLevel.Trace, "ScreenToRay: screen=({SX:F0},{SY:F0}) vp=({VPX:F0},{VPY:F0},{VPW:F0},{VPH:F0}) ndc=({NX:F3},{NY:F3})",
+        screenPos.X, screenPos.Y, vpX, vpY, vpW, vpH, ndcX, ndcY);
+
     // NDC → clip → world (near plane)
     Matrix4x4.Invert(view * proj, out var invViewProj);
     var nearPoint = Vector4.Transform(new Vector4(ndcX, ndcY, 0, 1), invViewProj);
@@ -180,6 +183,8 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
 
     var origin = new Vector3(nearPoint.X, nearPoint.Y, nearPoint.Z);
     var direction = Vector3.Normalize(new Vector3(farPoint.X, farPoint.Y, farPoint.Z) - origin);
+    Debug.Input(LogLevel.Trace, "ScreenToRay: origin=({OX:F3},{OY:F3},{OZ:F3}) dir=({DX:F3},{DY:F3},{DZ:F3})",
+        origin.X, origin.Y, origin.Z, direction.X, direction.Y, direction.Z);
     return (origin, direction);
 }
 
@@ -187,15 +192,16 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
 /// Finds the closest axis (0=X, 1=Y, 2=Z) to the given ray.
 /// Returns -1 if no axis is within threshold.
 /// </summary>
-int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float threshold)
+int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float threshold, Vector3[]? axisDirs = null)
 {
-    var axisDirs = new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ };
+    axisDirs ??= new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ };
+    var axisNames = new[] { "X", "Y", "Z" };
     int bestAxis = -1;
     float bestDist = threshold;
 
     for (int i = 0; i < 3; i++)
     {
-        var u = axisDirs[i];
+        var u = Vector3.Normalize(axisDirs[i]);
         var a = gizmoPos;
         var v = rayDir;
         var w = rayOrigin - a;
@@ -206,14 +212,21 @@ int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float t
         float dotWV = Vector3.Dot(w, v);
 
         float denom = dotUU * dotVV - dotUV * dotUV;
-        if (MathF.Abs(denom) < 1e-6f) continue;
+        if (MathF.Abs(denom) < 1e-6f)
+        {
+            Debug.Input(LogLevel.Trace, "Gizmo axis {Axis}: denom≈0 (parallel)", axisNames[i]);
+            continue;
+        }
 
-        float s = Math.Clamp((dotUV * dotWV - dotVV * dotWU) / denom, 0f, 1f);
+        float s = Math.Clamp((dotUV * dotWV - dotVV * dotWU) / denom, 0f, 2f);
         float t = (dotUV * dotWU - dotUU * dotWV) / denom;
 
         var closestOnAxis = a + s * u;
         var closestOnRay = rayOrigin + t * v;
         float dist = Vector3.Distance(closestOnAxis, closestOnRay);
+
+        Debug.Input(LogLevel.Trace, "Gizmo axis {Axis}: s={S:F3} t={T:F3} dist={Dist:F3} best={Best:F3}",
+            axisNames[i], s, t, dist, bestDist);
 
         if (dist < bestDist)
         {
@@ -221,6 +234,7 @@ int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float t
             bestAxis = i;
         }
     }
+    Debug.Input(LogLevel.Debug, "Gizmo hit test: bestAxis={Axis} dist={Dist:F3}", bestAxis >= 0 ? axisNames[bestAxis] : "none", bestDist);
     return bestAxis;
 }
 
@@ -265,7 +279,13 @@ window.MouseMove += pos =>
     if (isDragging && selectedObject != null && dragAxis >= 0)
     {
         var (rayOrig, rayDir) = ScreenToRay(pos);
-        var axisDir = dragAxis == 0 ? Vector3.UnitX : dragAxis == 1 ? Vector3.UnitY : Vector3.UnitZ;
+        var rot = selectedObject.Rotation;
+        var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
+        var axisDir = dragAxis == 0
+            ? Vector3.Transform(Vector3.UnitX, rotMatrix)
+            : dragAxis == 1
+                ? Vector3.Transform(Vector3.UnitY, rotMatrix)
+                : Vector3.Transform(Vector3.UnitZ, rotMatrix);
         float currentT = ProjectRayOntoAxis(rayOrig, rayDir, selectedObject.Position, axisDir);
         float startT = Vector3.Dot(dragStartWorld, axisDir);
         float delta = currentT - startT;
@@ -291,16 +311,28 @@ window.MouseDown += button =>
     // Try gizmo axis first
     if (selectedObject != null)
     {
+        Debug.Input(LogLevel.Debug, "Gizmo check: objPos=({X:F2},{Y:F2},{Z:F2})",
+            selectedObject.Position.X, selectedObject.Position.Y, selectedObject.Position.Z);
         var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.5f);
+
+        // Compute rotated axis directions from object rotation
+        var rot = selectedObject.Rotation;
+        var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
+        var localX = Vector3.Transform(Vector3.UnitX, rotMatrix);
+        var localY = Vector3.Transform(Vector3.UnitY, rotMatrix);
+        var localZ = Vector3.Transform(Vector3.UnitZ, rotMatrix);
+        var localAxes = new[] { localX, localY, localZ };
+        var axisNames = new[] { "X", "Y", "Z" };
+
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 1.0f, localAxes);
+        Debug.Input(LogLevel.Debug, "Gizmo result: axis={Axis}", axis >= 0 ? axisNames[axis] : "miss");
         if (axis >= 0)
         {
             dragAxis = axis;
             isDragging = true;
             dragOrigPos = selectedObject.Position;
-            var axisDir = axis == 0 ? Vector3.UnitX : axis == 1 ? Vector3.UnitY : Vector3.UnitZ;
-            dragStartWorld = ProjectRayOntoAxis(rayOrig, rayDir, selectedObject.Position, axisDir) * axisDir;
-            Debug.Input(LogLevel.Information, "Drag start: axis={Axis}", axis == 0 ? "X" : axis == 1 ? "Y" : "Z");
+            dragStartWorld = ProjectRayOntoAxis(rayOrig, rayDir, selectedObject.Position, localAxes[axis]) * localAxes[axis];
+            Debug.Input(LogLevel.Information, "Drag start: axis={Axis}", axisNames[axis]);
             return;
         }
     }
@@ -376,7 +408,7 @@ window.Update += delta =>
     if (selectedObject != null)
     {
         gizmo.Position = selectedObject.Position;
-        gizmo.Rotation = Vector3.Zero;
+        gizmo.Rotation = selectedObject.Rotation;
         gizmo.Scale = Vector3.One;
         var gizmoPush = sceneCamera.GetPushConstants(gizmo.GetModelMatrix());
         window.DrawInViewport(sceneViewportId, gizmo.Mesh.Vertices, gizmoPush);
