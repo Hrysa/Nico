@@ -9,7 +9,7 @@ namespace Engine.Graphics;
 public class AxisGizmo : Node3D
 {
     private const float AxisLength = 2.0f;
-    private const float LineWidth = 0.02f;
+    private const float LineWidth = 0.06f;
 
     /// <summary>Gets the combined mesh containing all three axis lines.</summary>
     public Mesh Mesh { get; }

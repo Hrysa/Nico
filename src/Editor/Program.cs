@@ -278,7 +278,7 @@ window.MouseDown += button =>
     if (selectedObject != null)
     {
         var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.3f);
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.5f);
         if (axis >= 0)
         {
             dragAxis = axis;
