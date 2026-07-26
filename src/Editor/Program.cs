@@ -577,7 +577,7 @@ window.Update += delta =>
             rotGizmoHL == 1 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 1, 0),
             rotGizmoHL == 2 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 0, 1)
         };
-        float ringWidth = 1.5f;
+        float ringWidth = 1.0f;
 
         for (int ci = 0; ci < 3; ci++)
         {
