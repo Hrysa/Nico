@@ -57,6 +57,12 @@ MeshInstance3D? selectedObject = null;
 var gizmo = new AxisGizmo();
 var sceneAngle = 0.0f;
 
+// Gizmo drag state
+int dragAxis = -1; // -1 = none, 0=X, 1=Y, 2=Z
+bool isDragging = false;
+Vector3 dragOrigPos = Vector3.Zero;
+Vector3 dragStartWorld = Vector3.Zero;
+
 // ── Game viewport: OrthographicCamera (future) ────────────────
 var gameViewport = EditorUI.GetGameViewport()!;
 var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
@@ -152,11 +158,110 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
     return closest;
 }
 
+(Vector3 origin, Vector3 direction) ScreenToRay(Vector2 screenPos)
+{
+    var view = sceneCamera.GetViewMatrix();
+    var proj = sceneCamera.GetProjectionMatrix();
+    var vpX = sceneViewport.Position.X;
+    var vpY = sceneViewport.Position.Y;
+    var vpW = sceneViewport.Width;
+    var vpH = sceneViewport.Height;
+
+    // Screen → NDC
+    var ndcX = ((screenPos.X - vpX) / vpW) * 2f - 1f;
+    var ndcY = (1f - (screenPos.Y - vpY) / vpH) * 2f - 1f;
+
+    // NDC → clip → world (near plane)
+    Matrix4x4.Invert(view * proj, out var invViewProj);
+    var nearPoint = Vector4.Transform(new Vector4(ndcX, ndcY, 0, 1), invViewProj);
+    var farPoint = Vector4.Transform(new Vector4(ndcX, ndcY, 1, 1), invViewProj);
+    nearPoint /= nearPoint.W;
+    farPoint /= farPoint.W;
+
+    var origin = new Vector3(nearPoint.X, nearPoint.Y, nearPoint.Z);
+    var direction = Vector3.Normalize(new Vector3(farPoint.X, farPoint.Y, farPoint.Z) - origin);
+    return (origin, direction);
+}
+
+/// <summary>
+/// Finds the closest axis (0=X, 1=Y, 2=Z) to the given ray.
+/// Returns -1 if no axis is within threshold.
+/// </summary>
+int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float threshold)
+{
+    var axisDirs = new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ };
+    int bestAxis = -1;
+    float bestDist = threshold;
+
+    for (int i = 0; i < 3; i++)
+    {
+        var u = axisDirs[i];
+        var a = gizmoPos;
+        var v = rayDir;
+        var w = rayOrigin - a;
+        float dotUU = Vector3.Dot(u, u);
+        float dotUV = Vector3.Dot(u, v);
+        float dotVV = Vector3.Dot(v, v);
+        float dotWU = Vector3.Dot(w, u);
+        float dotWV = Vector3.Dot(w, v);
+
+        float denom = dotUU * dotVV - dotUV * dotUV;
+        if (MathF.Abs(denom) < 1e-6f) continue;
+
+        float s = Math.Clamp((dotUV * dotWV - dotVV * dotWU) / denom, 0f, 1f);
+        float t = (dotUV * dotWU - dotUU * dotWV) / denom;
+
+        var closestOnAxis = a + s * u;
+        var closestOnRay = rayOrigin + t * v;
+        float dist = Vector3.Distance(closestOnAxis, closestOnRay);
+
+        if (dist < bestDist)
+        {
+            bestDist = dist;
+            bestAxis = i;
+        }
+    }
+    return bestAxis;
+}
+
+/// <summary>
+/// Returns the parameter t along the axis line (origin + t * axisDir)
+/// that is closest to the given ray. t can be any value (unbounded).
+/// </summary>
+float ProjectRayOntoAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 lineOrigin, Vector3 axisDir)
+{
+    // Solve for closest points between two lines:
+    // L1(t) = lineOrigin + t * axisDir
+    // L2(s) = rayOrigin + s * rayDir
+    var w = lineOrigin - rayOrigin;
+    float a = Vector3.Dot(axisDir, axisDir);
+    float b = Vector3.Dot(axisDir, rayDir);
+    float c = Vector3.Dot(rayDir, rayDir);
+    float d = Vector3.Dot(axisDir, w);
+    float e = Vector3.Dot(rayDir, w);
+
+    float denom = a * c - b * b;
+    if (MathF.Abs(denom) < 1e-6f) return 0f;
+    return (b * e - c * d) / denom;
+}
+
 window.MouseMove += pos =>
 {
     lastMousePos = pos;
     Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
     HitTest(pos);
+
+    // Gizmo drag
+    if (isDragging && selectedObject != null && dragAxis >= 0)
+    {
+        var (rayOrig, rayDir) = ScreenToRay(pos);
+        var axisDir = dragAxis == 0 ? Vector3.UnitX : dragAxis == 1 ? Vector3.UnitY : Vector3.UnitZ;
+        float currentT = ProjectRayOntoAxis(rayOrig, rayDir, selectedObject.Position, axisDir);
+        float startT = Vector3.Dot(dragStartWorld, axisDir);
+        float delta = currentT - startT;
+
+        selectedObject.Position = dragOrigPos + axisDir * delta;
+    }
 };
 
 window.MouseDown += button =>
@@ -166,21 +271,46 @@ window.MouseDown += button =>
     hoveredElement?.SetPressed(true);
     RefreshVertices();
 
-    // 3D object selection: if click is inside scene viewport, try to select
-    if (button == 0 && hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+    if (button != 0) return;
+    if (hoveredElement is not ViewportPanel vp || vp.ViewportId != sceneViewportId) return;
+
+    // Try gizmo axis first
+    if (selectedObject != null)
     {
-        var hit = FindObjectAtScreen(lastMousePos);
-        if (hit != selectedObject)
+        var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.3f);
+        if (axis >= 0)
         {
-            selectedObject = hit;
-            Debug.Input(LogLevel.Information, "Selected: {Name}", selectedObject?.Name ?? "(none)");
+            dragAxis = axis;
+            isDragging = true;
+            dragOrigPos = selectedObject.Position;
+            var axisDir = axis == 0 ? Vector3.UnitX : axis == 1 ? Vector3.UnitY : Vector3.UnitZ;
+            dragStartWorld = ProjectRayOntoAxis(rayOrig, rayDir, selectedObject.Position, axisDir) * axisDir;
+            Debug.Input(LogLevel.Information, "Drag start: axis={Axis}", axis == 0 ? "X" : axis == 1 ? "Y" : "Z");
+            return;
         }
+    }
+
+    // Otherwise, try object selection
+    var hit = FindObjectAtScreen(lastMousePos);
+    if (hit != selectedObject)
+    {
+        selectedObject = hit;
+        Debug.Input(LogLevel.Information, "Selected: {Name}", selectedObject?.Name ?? "(none)");
     }
 };
 
 window.MouseUp += button =>
 {
     Debug.Input(LogLevel.Debug, "MouseUp: button={Button}", button);
+
+    if (isDragging)
+    {
+        isDragging = false;
+        dragAxis = -1;
+        Debug.Input(LogLevel.Information, "Drag end");
+    }
+
     if (hoveredElement != null)
     {
         hoveredElement.SetPressed(false);
