@@ -52,6 +52,9 @@ sceneCamera.Name = "SceneCamera";
 sceneViewport.Camera = sceneCamera;
 
 var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
+var sceneObjects = new List<MeshInstance3D> { cube };
+MeshInstance3D? selectedObject = null;
+var gizmo = new AxisGizmo();
 var sceneAngle = 0.0f;
 
 // ── Game viewport: OrthographicCamera (future) ────────────────
@@ -63,6 +66,7 @@ window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
 
 UIElement? hoveredElement = null;
 UIElement? focusedElement = null;
+Vector2 lastMousePos = Vector2.Zero;
 
 void RefreshVertices()
 {
@@ -112,8 +116,45 @@ void SetFocus(UIElement? element)
     Debug.Input(LogLevel.Debug, "Focus: {Name}", focusedElement?.Name ?? "(none)");
 }
 
+Vector2 WorldToScreen(Vector3 worldPos, Matrix4x4 view, Matrix4x4 projection, float vpX, float vpY, float vpW, float vpH)
+{
+    var clip = Vector4.Transform(new Vector4(worldPos, 1), view * projection);
+    if (MathF.Abs(clip.W) < 0.001f) return new Vector2(-1, -1);
+    var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
+    var sx = vpX + (ndc.X + 1f) * 0.5f * vpW;
+    var sy = vpY + (1f - ndc.Y) * 0.5f * vpH;
+    return new Vector2(sx, sy);
+}
+
+MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
+{
+    var view = sceneCamera.GetViewMatrix();
+    var proj = sceneCamera.GetProjectionMatrix();
+    var vpX = sceneViewport.Position.X;
+    var vpY = sceneViewport.Position.Y;
+    var vpW = sceneViewport.Width;
+    var vpH = sceneViewport.Height;
+
+    MeshInstance3D? closest = null;
+    var closestDist = 30f; // pixel threshold
+
+    foreach (var obj in sceneObjects)
+    {
+        var screen = WorldToScreen(obj.Position, view, proj, vpX, vpY, vpW, vpH);
+        if (screen.X < 0) continue;
+        var dist = Vector2.Distance(mousePos, screen);
+        if (dist < closestDist)
+        {
+            closestDist = dist;
+            closest = obj;
+        }
+    }
+    return closest;
+}
+
 window.MouseMove += pos =>
 {
+    lastMousePos = pos;
     Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
     HitTest(pos);
 };
@@ -124,6 +165,17 @@ window.MouseDown += button =>
     SetFocus(hoveredElement);
     hoveredElement?.SetPressed(true);
     RefreshVertices();
+
+    // 3D object selection: if click is inside scene viewport, try to select
+    if (button == 0 && hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+    {
+        var hit = FindObjectAtScreen(lastMousePos);
+        if (hit != selectedObject)
+        {
+            selectedObject = hit;
+            Debug.Input(LogLevel.Information, "Selected: {Name}", selectedObject?.Name ?? "(none)");
+        }
+    }
 };
 
 window.MouseUp += button =>
@@ -175,6 +227,16 @@ window.Update += delta =>
     cube.Scale = new Vector3(0.5f);
     var scenePush = sceneCamera.GetPushConstants(cube.GetModelMatrix());
     window.DrawInViewport(sceneViewportId, cube.Mesh!.Vertices, scenePush);
+
+    // Render selection gizmo
+    if (selectedObject != null)
+    {
+        gizmo.Position = selectedObject.Position;
+        gizmo.Rotation = Vector3.Zero;
+        gizmo.Scale = Vector3.One;
+        var gizmoPush = sceneCamera.GetPushConstants(gizmo.GetModelMatrix());
+        window.DrawInViewport(sceneViewportId, gizmo.Mesh.Vertices, gizmoPush);
+    }
 
     // LogicUpdate: Game viewport
     var gw = gameViewport.Width;
