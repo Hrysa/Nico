@@ -128,7 +128,7 @@ Vector2 WorldToScreen(Vector3 worldPos, Matrix4x4 view, Matrix4x4 projection, fl
     if (MathF.Abs(clip.W) < 0.001f) return new Vector2(-1, -1);
     var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
     var sx = vpX + (ndc.X + 1f) * 0.5f * vpW;
-    var sy = vpY + (1f - ndc.Y) * 0.5f * vpH;
+    var sy = vpY + (ndc.Y + 1f) * 0.5f * vpH;
     return new Vector2(sx, sy);
 }
 
@@ -142,7 +142,7 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
     var vpH = sceneViewport.Height;
 
     MeshInstance3D? closest = null;
-    var closestDist = 30f; // pixel threshold
+    var closestDist = 50f; // pixel threshold
 
     foreach (var obj in sceneObjects)
     {
