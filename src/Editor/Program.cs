@@ -259,16 +259,6 @@ float ProjectRayOntoAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 lineOrigin, 
     return (b * e - c * d) / denom;
 }
 
-bool IsInSceneViewport(Vector2 screenPos)
-{
-    var vpX = sceneViewport.Position.X;
-    var vpY = sceneViewport.Position.Y;
-    var vpW = sceneViewport.Width;
-    var vpH = sceneViewport.Height;
-    return screenPos.X >= vpX && screenPos.X <= vpX + vpW
-        && screenPos.Y >= vpY && screenPos.Y <= vpY + vpH;
-}
-
 window.MouseMove += pos =>
 {
     lastMousePos = pos;
@@ -303,12 +293,9 @@ window.MouseDown += button =>
 
     if (button != 0) return;
 
-    // Check if mouse is over scene viewport (hoveredElement is the viewport panel, or null if over gizmo)
-    bool overSceneViewport = (hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
-                          || (hoveredElement == null && IsInSceneViewport(lastMousePos));
-    if (!overSceneViewport) return;
+    if (hoveredElement is not ViewportPanel vp || vp.ViewportId != sceneViewportId) return;
 
-    // Try gizmo axis first
+    // Try gizmo axis first (only when mouse is over the viewport panel itself)
     if (selectedObject != null)
     {
         Debug.Input(LogLevel.Debug, "Gizmo check: objPos=({X:F2},{Y:F2},{Z:F2})",
@@ -324,7 +311,7 @@ window.MouseDown += button =>
         var localAxes = new[] { localX, localY, localZ };
         var axisNames = new[] { "X", "Y", "Z" };
 
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 2.0f, localAxes);
+        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.15f, localAxes);
         Debug.Input(LogLevel.Debug, "Gizmo result: axis={Axis}", axis >= 0 ? axisNames[axis] : "miss");
         if (axis >= 0)
         {
