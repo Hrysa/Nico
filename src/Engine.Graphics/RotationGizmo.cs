@@ -10,7 +10,7 @@ namespace Engine.Graphics;
 public class RotationGizmo : Node3D
 {
     private const float Radius = 1.5f;
-    private const float RingWidth = 0.04f;
+    private const float RingWidth = 0.08f;
     private const int Segments = 64;
 
     private int _highlightedAxis = -1;

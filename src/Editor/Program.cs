@@ -255,19 +255,18 @@ int FindClosestRotationCircle(Vector2 mousePos, Vector3 gizmoPos, Matrix4x4 rotM
     var center = WorldToScreen(gizmoPos, view, proj, vpX, vpY, vpW, vpH);
 
     var axisNames = new[] { "X", "Y", "Z" };
-    // Local axis directions (rotated)
     var localAxes = new[] {
         Vector3.Transform(Vector3.UnitX, rotMatrix),
         Vector3.Transform(Vector3.UnitY, rotMatrix),
         Vector3.Transform(Vector3.UnitZ, rotMatrix)
     };
 
+    float mouseDist = Vector2.Distance(mousePos, center);
     int bestAxis = -1;
-    float bestDist = threshold;
+    float bestScore = float.MaxValue;
 
     for (int i = 0; i < 3; i++)
     {
-        // Find two perpendicular vectors in the circle's plane
         var axis = localAxes[i];
         Vector3 perp1, perp2;
         if (MathF.Abs(axis.Y) < 0.99f)
@@ -288,18 +287,30 @@ int FindClosestRotationCircle(Vector2 mousePos, Vector3 gizmoPos, Matrix4x4 rotM
         float thisRadius = (r1 + r2) * 0.5f;
         if (thisRadius < 1f) continue;
 
-        float dist = MathF.Abs(Vector2.Distance(mousePos, center) - thisRadius);
+        // Check if mouse is within the ring area (between inner and outer radius)
+        float ringPixelWidth = ringWidth * thisRadius / ringRadius;
+        float outerR = thisRadius + ringPixelWidth;
+        float innerR = thisRadius - ringPixelWidth;
+        if (innerR < 0) innerR = 0;
 
-        Debug.Input(LogLevel.Trace, "RotCircle {Axis}: projectedR={PR:F0} dist={RD:F1}",
-            axisNames[i], thisRadius, dist);
+        // Score: 0 if mouse is on the ring, increases as mouse moves away
+        float dist = MathF.Abs(mouseDist - thisRadius);
+        float score = dist / threshold;
 
-        if (dist < bestDist)
+        // Penalize circles that are nearly edge-on (thin projected ring)
+        float thinness = MathF.Min(r1, r2) / MathF.Max(r1, r2);
+        if (thinness < 0.3f) score += (0.3f - thinness) * 5f;
+
+        Debug.Input(LogLevel.Trace, "RotCircle {Axis}: R={R:F0} thin={T:F2} score={S:F2}",
+            axisNames[i], thisRadius, thinness, score);
+
+        if (score < bestScore && dist < threshold)
         {
-            bestDist = dist;
+            bestScore = score;
             bestAxis = i;
         }
     }
-    Debug.Input(LogLevel.Debug, "RotCircle hit: {Result} (dist={Dist:F1})", bestAxis >= 0 ? axisNames[bestAxis] : "miss", bestDist);
+    Debug.Input(LogLevel.Debug, "RotCircle hit: {Result} (score={Score:F2})", bestAxis >= 0 ? axisNames[bestAxis] : "miss", bestScore);
     return bestAxis;
 }
 
@@ -421,7 +432,7 @@ window.MouseDown += button =>
         var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
 
         // Try rotation circle first
-        int rotAxis = FindClosestRotationCircle(lastMousePos, selectedObject.Position, rotMatrix, 1.5f, 0.04f, 15f);
+        int rotAxis = FindClosestRotationCircle(lastMousePos, selectedObject.Position, rotMatrix, 1.5f, 0.08f, 20f);
         if (rotAxis >= 0)
         {
             isRotating = true;
@@ -537,7 +548,7 @@ window.Update += delta =>
             var localZ = Vector3.Transform(Vector3.UnitZ, rotMatrix);
             var localAxes = new[] { localX, localY, localZ };
 
-            int hoverCircle = FindClosestRotationCircle(lastMousePos, selectedObject.Position, rotMatrix, 1.5f, 0.04f, 25f);
+            int hoverCircle = FindClosestRotationCircle(lastMousePos, selectedObject.Position, rotMatrix, 1.5f, 0.08f, 30f);
             int hoverAxis = FindClosestAxis(lastMousePos, selectedObject.Position, 30f, localAxes);
 
             if (hoverCircle >= 0) rotGizmoHighlight = hoverCircle;
