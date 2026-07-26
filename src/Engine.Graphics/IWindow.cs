@@ -10,6 +10,9 @@ public interface IWindow : IDisposable
     bool IsRunning { get; }
     void ProcessEvents();
 
+    /// <summary>Fired each frame with delta time in seconds, before rendering.</summary>
+    event Action<double>? Update;
+
     /// <summary>Updates the GPU vertex buffer with new vertex data.</summary>
     /// <param name="vertices">The new vertices to upload.</param>
     void UpdateVertexBuffer(Vertex[] vertices);
@@ -39,13 +42,6 @@ public interface IWindow : IDisposable
     void ResizeViewport(uint viewportId, float width, float height);
 
     /// <summary>
-    /// Sets the render callback invoked during Pass 1 for this viewport.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <param name="callback">The render callback receiving a ViewportRenderContext.</param>
-    void SetViewportRenderCallback(uint viewportId, Action<ViewportRenderContext> callback);
-
-    /// <summary>
     /// Sets the textured-quad vertices for a viewport's display quad.
     /// </summary>
     /// <param name="viewportId">The viewport ID.</param>
@@ -61,7 +57,7 @@ public interface IWindow : IDisposable
 
     /// <summary>
     /// Queues vertices to be drawn during the current viewport's FBO pass.
-    /// Call this from a viewport render callback.
+    /// Call this from the Update event handler.
     /// </summary>
     /// <param name="viewportId">The viewport ID.</param>
     /// <param name="vertices">The vertices to draw.</param>

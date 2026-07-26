@@ -24,12 +24,6 @@ public class ViewportPanel : Panel
     public ICamera? Camera { get; set; }
 
     /// <summary>
-    /// Gets or sets the render callback for this viewport.
-    /// Called each frame during Pass 1 (FBO pass) with a render context.
-    /// </summary>
-    public Action<ViewportRenderContext>? RenderCallback { get; set; }
-
-    /// <summary>
     /// Gets whether the viewport panel has changed size since the
     /// last call to <see cref="CheckAndReportResize"/>.
     /// </summary>

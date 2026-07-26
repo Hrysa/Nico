@@ -71,7 +71,6 @@ public unsafe class SilkWindow : IWindow
 
     // Viewport FBO management
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
-    private readonly Dictionary<uint, Action<ViewportRenderContext>> _viewportRenderCallbacks = new();
     private readonly Dictionary<uint, (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint vertexCount)> _viewportQuadBuffers = new();
     private readonly Dictionary<uint, List<(Vertex[] vertices, PushConstants pushConstants)>> _pendingViewportDraws = new();
     private uint _nextViewportId = 1;
@@ -118,6 +117,9 @@ public unsafe class SilkWindow : IWindow
 
     /// <inheritdoc/>
     public event Action<int>? KeyUp;
+
+    /// <inheritdoc/>
+    public event Action<double>? Update;
 
     public SilkWindow(ILoggerFactory loggerFactory)
     {
@@ -206,6 +208,7 @@ public unsafe class SilkWindow : IWindow
 
     private void OnUpdate(double delta)
     {
+        Update?.Invoke(delta);
     }
 
     private void OnRender(double delta)
@@ -1360,7 +1363,6 @@ public unsafe class SilkWindow : IWindow
             _viewportQuadBuffers.Remove(viewportId);
         }
 
-        _viewportRenderCallbacks.Remove(viewportId);
         _logger.LogInformation("Viewport {Id} unregistered", viewportId);
     }
 
@@ -1369,12 +1371,6 @@ public unsafe class SilkWindow : IWindow
     {
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
             fbo.Resize((uint)width, (uint)height);
-    }
-
-    /// <inheritdoc/>
-    public void SetViewportRenderCallback(uint viewportId, Action<ViewportRenderContext> callback)
-    {
-        _viewportRenderCallbacks[viewportId] = callback;
     }
 
     /// <inheritdoc/>
@@ -1873,18 +1869,12 @@ public unsafe class SilkWindow : IWindow
         // Render each viewport's content into its own FBO
         // ═══════════════════════════════════════════════════════════════
 
-        // First pass: count total vertices across all viewports and invoke callbacks
+        // First pass: count total vertices across all viewports
         uint totalVertices = 0;
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty)
                 continue;
-
-            if (_viewportRenderCallbacks.TryGetValue(viewportId, out var callback))
-            {
-                var context = CreateRenderContext(viewportId);
-                callback(context);
-            }
 
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws))
             {

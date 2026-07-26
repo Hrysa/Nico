@@ -53,7 +53,6 @@ Engine.UI → Engine.Graphics
 1. For each registered viewport:
    - Bind FBO framebuffer (color attachment)
    - Set viewport scissor to FBO dimensions
-   - Call viewport render callback (draws 3D scene content via `DrawInViewport`)
    - Replay queued draw calls with `_fboGraphicsPipeline`
    - End render pass
 
@@ -109,8 +108,8 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 - `ViewportPanel` extends `Panel` — tracks `ViewportId`, `Camera`, resize detection
 - `ViewportFbo` — per-viewport Vulkan resources (color image, framebuffer, sampler, descriptor set)
 - `IWindow.RegisterViewport()` / `UnregisterViewport()` / `ResizeViewport()`
-- `IWindow.SetViewportRenderCallback()` — callback receives `ViewportRenderContext`
-- `IWindow.DrawInViewport()` — queues vertices for FBO pass
+- `IWindow.Update` — event fired each frame with delta time (logic goes here)
+- `IWindow.DrawInViewport()` — queues vertices for FBO pass (call from Update handler)
 - `IWindow.SetViewportClearColor()` — per-viewport clear color
 
 ## Coding Conventions
@@ -131,7 +130,7 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 
 **Why it matters:** This automatic transpose is actually **correct** for the MVP transform. The C# row-vector convention is `v' = v * M`. The column-vector equivalent is `v' = M^T * v`. Since GLSL naturally reads the transpose, no explicit `Transpose()` call is needed — just push the raw `Matrix4x4` bytes directly.
 
-**Rule:** Push `Matrix4x4` values directly to `PushConstants` without calling `Transpose()`. The game viewport's orthographic projection (`EditorUI.CreatePushConstants` and the Game viewport callback) already does this correctly. The `PerspectiveCamera.GetPushConstants` must follow the same pattern.
+**Rule:** Push `Matrix4x4` values directly to `PushConstants` without calling `Transpose()`. The game viewport's orthographic projection already does this correctly. The `PerspectiveCamera.GetPushConstants` must follow the same pattern.
 
 ```csharp
 // Correct — no transpose needed:

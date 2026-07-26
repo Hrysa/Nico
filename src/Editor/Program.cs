@@ -99,16 +99,6 @@ Vertex[] cubeVertices =
 ];
 
 var sceneAngle = 0.0f;
-window.SetViewportRenderCallback(sceneViewportId, ctx =>
-{
-    sceneCamera.UpdateViewport(ctx.Width, ctx.Height);
-
-    sceneAngle += 0.01f;
-    var model = Matrix4x4.CreateScale(0.5f) * Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
-    var push = sceneCamera.GetPushConstants(model);
-
-    window.DrawInViewport(sceneViewportId, cubeVertices, push);
-});
 
 // ── Game viewport: OrthographicCamera (future) ────────────────
 var gameViewport = EditorUI.GetGameViewport()!;
@@ -116,33 +106,6 @@ var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.He
 gameViewport.ViewportId = gameViewportId;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
 window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
-
-// TODO: Replace with OrthographicCamera when implemented
-window.SetViewportRenderCallback(gameViewportId, ctx =>
-{
-    var w = ctx.Width;
-    var h = ctx.Height;
-    var s = MathF.Min(w, h) * 0.25f;
-
-    var model = Matrix4x4.Identity;
-    var view = Matrix4x4.Identity;
-    var projection = Matrix4x4.CreateOrthographicOffCenter(0, w, 0, h, -1, 1);
-    var push = new PushConstants { Model = model, View = view, Projection = projection };
-
-    var cx = w / 2.0f;
-    var cy = h / 2.0f;
-    var verts = new Vertex[]
-    {
-        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)),
-        new(new Vector3(cx - s, cy + s, 0), new Vector3(0, 1, 0.5f)),
-        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)),
-        new(new Vector3(cx + s, cy + s, 0), new Vector3(0, 0.5f, 1)),
-        new(new Vector3(cx + s, cy - s, 0), new Vector3(1, 0, 0.5f)),
-        new(new Vector3(cx - s, cy - s, 0), new Vector3(1, 0.5f, 0)),
-    };
-
-    window.DrawInViewport(gameViewportId, verts, push);
-});
 
 UIElement? hoveredElement = null;
 UIElement? focusedElement = null;
@@ -246,6 +209,40 @@ window.KeyUp += keyCode =>
     Debug.Input(LogLevel.Debug, "KeyUp: key={Key}", keyCode);
     focusedElement?.InvokeKeyUp(keyCode);
     RefreshVertices();
+};
+
+// ── Game loop: Update → Render ──────────────────────────────
+window.Update += delta =>
+{
+    // LogicUpdate: Scene viewport
+    sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
+    sceneAngle += 0.01f;
+    var sceneModel = Matrix4x4.CreateScale(0.5f) * Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
+    var scenePush = sceneCamera.GetPushConstants(sceneModel);
+    window.DrawInViewport(sceneViewportId, cubeVertices, scenePush);
+
+    // LogicUpdate: Game viewport
+    var gw = gameViewport.Width;
+    var gh = gameViewport.Height;
+    var gs = MathF.Min(gw, gh) * 0.25f;
+    var gamePush = new PushConstants
+    {
+        Model = Matrix4x4.Identity,
+        View = Matrix4x4.Identity,
+        Projection = Matrix4x4.CreateOrthographicOffCenter(0, gw, 0, gh, -1, 1)
+    };
+    var gcx = gw / 2.0f;
+    var gcy = gh / 2.0f;
+    var gameVerts = new Vertex[]
+    {
+        new(new Vector3(gcx - gs, gcy - gs, 0), new Vector3(1, 0.5f, 0)),
+        new(new Vector3(gcx - gs, gcy + gs, 0), new Vector3(0, 1, 0.5f)),
+        new(new Vector3(gcx + gs, gcy + gs, 0), new Vector3(0, 0.5f, 1)),
+        new(new Vector3(gcx + gs, gcy + gs, 0), new Vector3(0, 0.5f, 1)),
+        new(new Vector3(gcx + gs, gcy - gs, 0), new Vector3(1, 0, 0.5f)),
+        new(new Vector3(gcx - gs, gcy - gs, 0), new Vector3(1, 0.5f, 0)),
+    };
+    window.DrawInViewport(gameViewportId, gameVerts, gamePush);
 };
 
 logger.LogInformation("Running main loop...");
