@@ -82,6 +82,13 @@ public unsafe class SilkWindow : IWindow
     private void* _viewportDrawBufferMapped;
     private uint _viewportDrawBufferCapacity;
 
+    // 2D overlay vertices (drawn on top of everything in swapchain pass)
+    private Vertex[] _overlayVertices = [];
+    private Silk.NET.Vulkan.Buffer _overlayBuffer;
+    private DeviceMemory _overlayBufferMemory;
+    private void* _overlayBufferMapped;
+    private uint _overlayBufferCapacity;
+
     // Shared texture pipeline resources
     private DescriptorSetLayout _textureDescriptorSetLayout;
     private DescriptorPool _textureDescriptorPool;
@@ -1446,6 +1453,12 @@ public unsafe class SilkWindow : IWindow
     }
 
     /// <inheritdoc/>
+    public void DrawOverlay(Vertex[] vertices)
+    {
+        _overlayVertices = vertices;
+    }
+
+    /// <inheritdoc/>
     public void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f)
     {
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
@@ -1494,6 +1507,46 @@ public unsafe class SilkWindow : IWindow
         _viewportDrawBufferMapped = mapped;
 
         _logger.LogDebug("Viewport draw buffer created/recreated ({Capacity} vertices)", _viewportDrawBufferCapacity);
+    }
+
+    private void EnsureOverlayBuffer(uint requiredVertices)
+    {
+        if (_overlayBufferCapacity >= requiredVertices)
+            return;
+
+        _vk!.DeviceWaitIdle(_device);
+
+        if (_overlayBuffer.Handle != 0)
+        {
+            _vk.DestroyBuffer(_device, _overlayBuffer, null);
+            _vk.FreeMemory(_device, _overlayBufferMemory, null);
+        }
+
+        _overlayBufferCapacity = Math.Max(requiredVertices, 256);
+        var bufferSize = (nuint)(_overlayBufferCapacity * Vertex.Stride);
+
+        var bufferInfo = new BufferCreateInfo
+        {
+            SType = StructureType.BufferCreateInfo,
+            Size = bufferSize,
+            Usage = BufferUsageFlags.VertexBufferBit,
+            SharingMode = SharingMode.Exclusive
+        };
+        _vk.CreateBuffer(_device, &bufferInfo, null, out _overlayBuffer);
+
+        _vk.GetBufferMemoryRequirements(_device, _overlayBuffer, out var memReqs);
+        var allocInfo = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memReqs.Size,
+            MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+        };
+        _vk.AllocateMemory(_device, &allocInfo, null, out _overlayBufferMemory);
+        _vk.BindBufferMemory(_device, _overlayBuffer, _overlayBufferMemory, 0);
+
+        void* mapped;
+        _vk.MapMemory(_device, _overlayBufferMemory, 0, bufferSize, 0, &mapped);
+        _overlayBufferMapped = mapped;
     }
 
     private void RecreateDirtyFbos()
@@ -2052,6 +2105,29 @@ public unsafe class SilkWindow : IWindow
 
                 _vk.CmdDraw(commandBuffer, quadBuf.vertexCount, 1, 0, 0);
             }
+        }
+
+        // Draw 2D overlay (gizmo lines, etc.)
+        if (_overlayVertices.Length > 0)
+        {
+            EnsureOverlayBuffer((uint)_overlayVertices.Length);
+
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+
+            var ovSize = (nuint)(_overlayVertices.Length * Vertex.Stride);
+            fixed (Vertex* pVerts = _overlayVertices)
+            {
+                System.Buffer.MemoryCopy(pVerts, _overlayBufferMapped, ovSize, ovSize);
+            }
+
+            var ovB = _overlayBuffer;
+            ulong ovOffset = 0;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &ovB, &ovOffset);
+
+            _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit,
+                0, (uint)sizeof(PushConstants), &pushConstants);
+
+            _vk.CmdDraw(commandBuffer, (uint)_overlayVertices.Length, 1, 0, 0);
         }
 
         _vk.CmdEndRenderPass(commandBuffer);

@@ -73,4 +73,12 @@ public interface IWindow : IDisposable
     /// <param name="b">Blue component (0-1).</param>
     /// <param name="a">Alpha component (0-1).</param>
     void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f);
+
+    /// <summary>
+    /// Queues vertices to be drawn as a 2D overlay in the swapchain pass.
+    /// Vertices are in screen pixel coordinates (0,0 = top-left).
+    /// Drawn on top of all viewport FBO quads.
+    /// </summary>
+    /// <param name="vertices">The screen-space vertices to draw.</param>
+    void DrawOverlay(Vertex[] vertices);
 }

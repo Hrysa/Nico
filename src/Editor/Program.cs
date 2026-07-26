@@ -522,8 +522,104 @@ window.KeyUp += keyCode =>
 };
 
 // ── Game loop: Update → Render ──────────────────────────────
+// ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
+    Vertex[] GenerateGizmoOverlay(Vector3 worldPos, Vector3 rotation, int gizmoHL, int rotGizmoHL)
+    {
+        var view = sceneCamera.GetViewMatrix();
+        var proj = sceneCamera.GetProjectionMatrix();
+        var vpX = sceneViewport.Position.X;
+        var vpY = sceneViewport.Position.Y;
+        var vpW = sceneViewport.Width;
+        var vpH = sceneViewport.Height;
+
+        var rotMatrix = Matrix4x4.CreateRotationY(rotation.Y) * Matrix4x4.CreateRotationX(rotation.X);
+        var verts = new List<Vertex>();
+
+        // Axis lines (screen-space quads)
+        var axisDirs = new[] {
+            Vector3.Transform(Vector3.UnitX, rotMatrix),
+            Vector3.Transform(Vector3.UnitY, rotMatrix),
+            Vector3.Transform(Vector3.UnitZ, rotMatrix)
+        };
+        var axisColors = new[] {
+            gizmoHL == 0 ? new Vector3(1, 1, 0.5f) : new Vector3(1, 0, 0),
+            gizmoHL == 1 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 1, 0),
+            gizmoHL == 2 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 0, 1)
+        };
+        float lineWidth = 2.5f;
+
+        for (int i = 0; i < 3; i++)
+        {
+            var start = WorldToScreen(worldPos, view, proj, vpX, vpY, vpW, vpH);
+            var end = WorldToScreen(worldPos + axisDirs[i] * 2f, view, proj, vpX, vpY, vpW, vpH);
+            var dir = end - start;
+            float len = dir.Length();
+            if (len < 1f) continue;
+            var normal = new Vector2(-dir.Y, dir.X) / len * lineWidth * 0.5f;
+
+            var c = axisColors[i];
+            verts.Add(new Vertex(new Vector3(start.X + normal.X, start.Y + normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(start.X - normal.X, start.Y - normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(end.X + normal.X, end.Y + normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(end.X + normal.X, end.Y + normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(start.X - normal.X, start.Y - normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(end.X - normal.X, end.Y - normal.Y, 0), c));
+        }
+
+        // Rotation circles (screen-space line segments)
+        float circleRadius = 1.5f;
+        int segments = 64;
+        var circleColors = new[] {
+            rotGizmoHL == 0 ? new Vector3(1, 1, 0.5f) : new Vector3(1, 0, 0),
+            rotGizmoHL == 1 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 1, 0),
+            rotGizmoHL == 2 ? new Vector3(1, 1, 0.5f) : new Vector3(0, 0, 1)
+        };
+        float ringWidth = 1.5f;
+
+        for (int ci = 0; ci < 3; ci++)
+        {
+            var axis = axisDirs[ci];
+            Vector3 perp1, perp2;
+            if (MathF.Abs(axis.Y) < 0.99f)
+            {
+                perp1 = Vector3.Normalize(Vector3.Cross(axis, Vector3.UnitY));
+                perp2 = Vector3.Cross(axis, perp1);
+            }
+            else
+            {
+                perp1 = Vector3.Normalize(Vector3.Cross(axis, Vector3.UnitX));
+                perp2 = Vector3.Cross(axis, perp1);
+            }
+
+            var color = circleColors[ci];
+            float step = MathF.PI * 2f / segments;
+
+            for (int s = 0; s < segments; s++)
+            {
+                float a0 = s * step;
+                float a1 = (s + 1) * step;
+
+                var p0 = WorldToScreen(worldPos + (perp1 * MathF.Cos(a0) + perp2 * MathF.Sin(a0)) * circleRadius, view, proj, vpX, vpY, vpW, vpH);
+                var p1 = WorldToScreen(worldPos + (perp1 * MathF.Cos(a1) + perp2 * MathF.Sin(a1)) * circleRadius, view, proj, vpX, vpY, vpW, vpH);
+
+                var dir = p1 - p0;
+                float len = dir.Length();
+                if (len < 0.5f) continue;
+                var normal = new Vector2(-dir.Y, dir.X) / len * ringWidth * 0.5f;
+
+                verts.Add(new Vertex(new Vector3(p0.X + normal.X, p0.Y + normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p0.X - normal.X, p0.Y - normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p1.X + normal.X, p1.Y + normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p1.X + normal.X, p1.Y + normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p0.X - normal.X, p0.Y - normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p1.X - normal.X, p1.Y - normal.Y, 0), color));
+            }
+        }
+
+        return verts.ToArray();
+    }
     // LogicUpdate: Scene viewport
     sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
 
@@ -564,22 +660,15 @@ window.Update += delta =>
     var scenePush = sceneCamera.GetPushConstants(cube.GetModelMatrix());
     window.DrawInViewport(sceneViewportId, cube.Mesh!.Vertices, scenePush);
 
-    // Render selection gizmo
+    // Render selection gizmo as 2D overlay
     if (selectedObject != null)
     {
-        // Rotation gizmo (render first, behind axis lines)
-        rotationGizmo.Position = selectedObject.Position;
-        rotationGizmo.Rotation = selectedObject.Rotation;
-        rotationGizmo.Scale = Vector3.One;
-        var rotGizmoPush = sceneCamera.GetPushConstants(rotationGizmo.GetModelMatrix());
-        window.DrawInViewport(sceneViewportId, rotationGizmo.Mesh.Vertices, rotGizmoPush);
-
-        // Axis gizmo (render second, on top of circles)
-        gizmo.Position = selectedObject.Position;
-        gizmo.Rotation = selectedObject.Rotation;
-        gizmo.Scale = Vector3.One;
-        var gizmoPush = sceneCamera.GetPushConstants(gizmo.GetModelMatrix());
-        window.DrawInViewport(sceneViewportId, gizmo.Mesh.Vertices, gizmoPush);
+        var gizmoVerts = GenerateGizmoOverlay(selectedObject.Position, selectedObject.Rotation, gizmoHighlight, rotGizmoHighlight);
+        window.DrawOverlay(gizmoVerts);
+    }
+    else
+    {
+        window.DrawOverlay([]);
     }
 
     // LogicUpdate: Game viewport
