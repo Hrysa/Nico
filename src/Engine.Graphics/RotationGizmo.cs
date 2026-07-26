@@ -5,12 +5,15 @@ namespace Engine.Graphics;
 /// <summary>
 /// Renders a 3-axis rotation gizmo (RGB = XYZ) using circle rings.
 /// Each circle lies in the plane perpendicular to its rotation axis.
+/// Supports hover highlighting via <see cref="SetHighlight"/>.
 /// </summary>
 public class RotationGizmo : Node3D
 {
     private const float Radius = 1.5f;
     private const float RingWidth = 0.04f;
     private const int Segments = 64;
+
+    private int _highlightedAxis = -1;
 
     /// <summary>Gets the combined mesh containing all three rotation circles.</summary>
     public Mesh Mesh { get; }
@@ -21,29 +24,42 @@ public class RotationGizmo : Node3D
     public RotationGizmo()
     {
         Name = "RotationGizmo";
-        Mesh = new Mesh { Name = "RotationGizmoMesh", Vertices = GenerateCircles() };
+        Mesh = new Mesh { Name = "RotationGizmoMesh", Vertices = GenerateCircles(-1) };
     }
 
-    private static Vertex[] GenerateCircles()
+    /// <summary>
+    /// Sets the highlighted axis index (0=X, 1=Y, 2=Z) or -1 for none.
+    /// Regenerates the mesh with brighter colors for the highlighted circle.
+    /// </summary>
+    /// <param name="axis">The axis to highlight, or -1 to clear.</param>
+    public void SetHighlight(int axis)
+    {
+        if (axis == _highlightedAxis) return;
+        _highlightedAxis = axis;
+        Mesh.Vertices = GenerateCircles(axis);
+    }
+
+    private static Vertex[] GenerateCircles(int highlightAxis)
     {
         var outerR = Radius;
         var innerR = Radius - RingWidth;
-        var verts = new Vertex[Segments * 6 * 3]; // 6 verts per segment * 3 circles
+        var verts = new Vertex[Segments * 6 * 3];
+
+        var dimRed = new Vector3(1, 0, 0);
+        var dimGreen = new Vector3(0, 1, 0);
+        var dimBlue = new Vector3(0, 0, 1);
+        var bright = new Vector3(1, 1, 0.5f);
 
         int offset = 0;
-        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitX, new Vector3(1, 0, 0)); // X = red, YZ plane
-        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitY, new Vector3(0, 1, 0)); // Y = green, XZ plane
-        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitZ, new Vector3(0, 0, 1)); // Z = blue, XY plane
+        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitX, highlightAxis == 0 ? bright : dimRed);
+        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitY, highlightAxis == 1 ? bright : dimGreen);
+        offset = GenerateCircle(verts, offset, outerR, innerR, Vector3.UnitZ, highlightAxis == 2 ? bright : dimBlue);
 
         return verts;
     }
 
-    /// <summary>
-    /// Generates a circle ring mesh in the plane perpendicular to the given axis.
-    /// </summary>
     private static int GenerateCircle(Vertex[] verts, int offset, float outerR, float innerR, Vector3 axis, Vector3 color)
     {
-        // Two basis vectors perpendicular to the axis
         Vector3 u, v;
         if (MathF.Abs(axis.Y) < 0.99f)
         {
@@ -68,13 +84,11 @@ public class RotationGizmo : Node3D
             var cos1 = MathF.Cos(a1);
             var sin1 = MathF.Sin(a1);
 
-            // Inner and outer points
             var i0 = u * (innerR * cos0) + v * (innerR * sin0);
             var o0 = u * (outerR * cos0) + v * (outerR * sin0);
             var i1 = u * (innerR * cos1) + v * (innerR * sin1);
             var o1 = u * (outerR * cos1) + v * (outerR * sin1);
 
-            // Two triangles per segment
             verts[offset++] = new Vertex(i0, color);
             verts[offset++] = new Vertex(o0, color);
             verts[offset++] = new Vertex(o1, color);

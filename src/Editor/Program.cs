@@ -506,6 +506,42 @@ window.Update += delta =>
 {
     // LogicUpdate: Scene viewport
     sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
+
+    // Gizmo hover detection
+    if (selectedObject != null && !isDragging && !isRotating)
+    {
+        var rot = selectedObject.Rotation;
+        var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
+        var localX = Vector3.Transform(Vector3.UnitX, rotMatrix);
+        var localY = Vector3.Transform(Vector3.UnitY, rotMatrix);
+        var localZ = Vector3.Transform(Vector3.UnitZ, rotMatrix);
+        var localAxes = new[] { localX, localY, localZ };
+
+        int hoverAxis = FindClosestAxis(lastMousePos, selectedObject.Position, 30f, localAxes);
+        int hoverCircle = FindClosestRotationCircle(lastMousePos, selectedObject.Position, 1.5f, 0.04f, 25f);
+
+        // Rotation circles take priority over axis lines
+        if (hoverCircle >= 0)
+        {
+            gizmo.SetHighlight(-1);
+            rotationGizmo.SetHighlight(hoverCircle);
+        }
+        else if (hoverAxis >= 0)
+        {
+            gizmo.SetHighlight(hoverAxis);
+            rotationGizmo.SetHighlight(-1);
+        }
+        else
+        {
+            gizmo.SetHighlight(-1);
+            rotationGizmo.SetHighlight(-1);
+        }
+    }
+    else
+    {
+        gizmo.SetHighlight(-1);
+        rotationGizmo.SetHighlight(-1);
+    }
     sceneAngle += 0.01f;
     // cube.Rotation = new Vector3(sceneAngle * 0.7f, sceneAngle, 0);
     // cube.Scale = new Vector3(0.5f);
