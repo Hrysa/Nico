@@ -189,44 +189,41 @@ MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
 }
 
 /// <summary>
-/// Finds the closest axis (0=X, 1=Y, 2=Z) to the given ray.
-/// Returns -1 if no axis is within threshold.
+/// Finds the closest axis (0=X, 1=Y, 2=Z) using screen-space distance.
+/// Projects axis line segments to 2D and checks pixel distance to mouse.
 /// </summary>
-int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float threshold, Vector3[]? axisDirs = null)
+int FindClosestAxis(Vector2 mousePos, Vector3 gizmoPos, float threshold, Vector3[]? axisDirs = null)
 {
     axisDirs ??= new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ };
     var axisNames = new[] { "X", "Y", "Z" };
+    var view = sceneCamera.GetViewMatrix();
+    var proj = sceneCamera.GetProjectionMatrix();
+    var vpX = sceneViewport.Position.X;
+    var vpY = sceneViewport.Position.Y;
+    var vpW = sceneViewport.Width;
+    var vpH = sceneViewport.Height;
+
     int bestAxis = -1;
     float bestDist = threshold;
 
     for (int i = 0; i < 3; i++)
     {
-        var u = Vector3.Normalize(axisDirs[i]);
-        var a = gizmoPos;
-        var v = rayDir;
-        var w = rayOrigin - a;
-        float dotUU = Vector3.Dot(u, u);
-        float dotUV = Vector3.Dot(u, v);
-        float dotVV = Vector3.Dot(v, v);
-        float dotWU = Vector3.Dot(w, u);
-        float dotWV = Vector3.Dot(w, v);
+        var dir = Vector3.Normalize(axisDirs[i]);
+        var start = gizmoPos;
+        var end = gizmoPos + dir * 2f;
 
-        float denom = dotUU * dotVV - dotUV * dotUV;
-        if (MathF.Abs(denom) < 1e-6f)
-        {
-            Debug.Input(LogLevel.Trace, "Gizmo axis {Axis}: denom≈0 (parallel)", axisNames[i]);
-            continue;
-        }
+        var screenStart = WorldToScreen(start, view, proj, vpX, vpY, vpW, vpH);
+        var screenEnd = WorldToScreen(end, view, proj, vpX, vpY, vpW, vpH);
 
-        float s = Math.Clamp((dotUV * dotWV - dotVV * dotWU) / denom, 0f, 2f);
-        float t = (dotUV * dotWU - dotUU * dotWV) / denom;
+        // Distance from mouse to line segment in screen space
+        var seg = screenEnd - screenStart;
+        float segLenSq = Vector2.Dot(seg, seg);
+        float t = segLenSq > 1e-6f ? Math.Clamp(Vector2.Dot(mousePos - screenStart, seg) / segLenSq, 0f, 1f) : 0f;
+        var closest = screenStart + seg * t;
+        float dist = Vector2.Distance(mousePos, closest);
 
-        var closestOnAxis = a + s * u;
-        var closestOnRay = rayOrigin + t * v;
-        float dist = Vector3.Distance(closestOnAxis, closestOnRay);
-
-        Debug.Input(LogLevel.Trace, "Gizmo axis {Axis}: s={S:F3} t={T:F3} dist={Dist:F3} best={Best:F3}",
-            axisNames[i], s, t, dist, bestDist);
+        Debug.Input(LogLevel.Trace, "Gizmo axis {Axis}: screen=({SX1:F0},{SY1:F0})→({SX2:F0},{SY2:F0}) dist={Dist:F1}",
+            axisNames[i], screenStart.X, screenStart.Y, screenEnd.X, screenEnd.Y, dist);
 
         if (dist < bestDist)
         {
@@ -234,7 +231,7 @@ int FindClosestAxis(Vector3 rayOrigin, Vector3 rayDir, Vector3 gizmoPos, float t
             bestAxis = i;
         }
     }
-    Debug.Input(LogLevel.Debug, "Gizmo hit test: bestAxis={Axis} dist={Dist:F3}", bestAxis >= 0 ? axisNames[bestAxis] : "none", bestDist);
+    Debug.Input(LogLevel.Debug, "Gizmo hit: {Result} (dist={Dist:F1})", bestAxis >= 0 ? axisNames[bestAxis] : "miss", bestDist);
     return bestAxis;
 }
 
@@ -311,8 +308,6 @@ window.MouseDown += button =>
     // Try gizmo axis first (gizmo is not a UI element, so hoveredElement may be null)
     if (selectedObject != null)
     {
-        var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
-
         var rot = selectedObject.Rotation;
         var rotMatrix = Matrix4x4.CreateRotationY(rot.Y) * Matrix4x4.CreateRotationX(rot.X);
         var localX = Vector3.Transform(Vector3.UnitX, rotMatrix);
@@ -321,10 +316,10 @@ window.MouseDown += button =>
         var localAxes = new[] { localX, localY, localZ };
         var axisNames = new[] { "X", "Y", "Z" };
 
-        int axis = FindClosestAxis(rayOrig, rayDir, selectedObject.Position, 0.25f, localAxes);
-        Debug.Input(LogLevel.Debug, "Gizmo axis: {Result}", axis >= 0 ? axisNames[axis] : "miss");
+        int axis = FindClosestAxis(lastMousePos, selectedObject.Position, 20f, localAxes);
         if (axis >= 0)
         {
+            var (rayOrig, rayDir) = ScreenToRay(lastMousePos);
             dragAxis = axis;
             isDragging = true;
             dragOrigPos = selectedObject.Position;
