@@ -560,11 +560,12 @@ window.Update += delta =>
             var normal = new Vector2(-dir.Y, dir.X) / len * lineWidth * 0.5f;
 
             var c = axisColors[i];
+            // CCW winding for Vulkan (Y-down NDC, front-face = CCW)
+            verts.Add(new Vertex(new Vector3(start.X - normal.X, start.Y - normal.Y, 0), c));
             verts.Add(new Vertex(new Vector3(start.X + normal.X, start.Y + normal.Y, 0), c));
-            verts.Add(new Vertex(new Vector3(start.X - normal.X, start.Y - normal.Y, 0), c));
-            verts.Add(new Vertex(new Vector3(end.X + normal.X, end.Y + normal.Y, 0), c));
             verts.Add(new Vertex(new Vector3(end.X + normal.X, end.Y + normal.Y, 0), c));
             verts.Add(new Vertex(new Vector3(start.X - normal.X, start.Y - normal.Y, 0), c));
+            verts.Add(new Vertex(new Vector3(end.X + normal.X, end.Y + normal.Y, 0), c));
             verts.Add(new Vertex(new Vector3(end.X - normal.X, end.Y - normal.Y, 0), c));
         }
 
@@ -609,11 +610,12 @@ window.Update += delta =>
                 if (len < 0.5f) continue;
                 var normal = new Vector2(-dir.Y, dir.X) / len * ringWidth * 0.5f;
 
+                // CCW winding for Vulkan (Y-down NDC, front-face = CCW)
+                verts.Add(new Vertex(new Vector3(p0.X - normal.X, p0.Y - normal.Y, 0), color));
                 verts.Add(new Vertex(new Vector3(p0.X + normal.X, p0.Y + normal.Y, 0), color));
-                verts.Add(new Vertex(new Vector3(p0.X - normal.X, p0.Y - normal.Y, 0), color));
-                verts.Add(new Vertex(new Vector3(p1.X + normal.X, p1.Y + normal.Y, 0), color));
                 verts.Add(new Vertex(new Vector3(p1.X + normal.X, p1.Y + normal.Y, 0), color));
                 verts.Add(new Vertex(new Vector3(p0.X - normal.X, p0.Y - normal.Y, 0), color));
+                verts.Add(new Vertex(new Vector3(p1.X + normal.X, p1.Y + normal.Y, 0), color));
                 verts.Add(new Vertex(new Vector3(p1.X - normal.X, p1.Y - normal.Y, 0), color));
             }
         }
