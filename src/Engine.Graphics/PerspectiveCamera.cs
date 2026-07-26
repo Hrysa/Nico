@@ -81,17 +81,12 @@ public class PerspectiveCamera : Node, ICamera
     {
         if (_projectionDirty)
         {
-            // System.Numerics CreatePerspectiveFieldOfView uses OpenGL conventions
-            // (Y-up, Z: -1→1). Vulkan needs Y-down, Z: 0→1.
+            // System.Numerics CreatePerspectiveFieldOfView produces a row-major
+            // matrix. When pushed as raw bytes (no transpose), GLSL reads it
+            // as column-major, effectively getting the correct column-vector
+            // equivalent. Only Vulkan Y-flip needed.
             var proj = Matrix4x4.CreatePerspectiveFieldOfView(_fov, _aspect, _near, _far);
-
-            // Convert OpenGL projection to Vulkan convention:
-            // 1. Flip Y for Vulkan's Y-down screen coordinates
-            // 2. Remap Z from [-1,1] to [0,1] for Vulkan depth range
-            proj.M22 = -proj.M22;                           // Y-flip
-            proj.M33 = _far / (_far - _near);               // Z scale
-            proj.M34 = _near * _far / (_far - _near);       // Z translation
-            proj.M43 = 1.0f;                                // w = z_eye
+            proj.M22 = -proj.M22;  // Y-flip for Vulkan
 
             _projectionMatrix = proj;
             _projectionDirty = false;
@@ -102,15 +97,15 @@ public class PerspectiveCamera : Node, ICamera
     /// <inheritdoc/>
     public PushConstants GetPushConstants(Matrix4x4 model)
     {
-        // Transpose matrices because GLSL mat4 is column-major while
-        // System.Numerics Matrix4x4 is row-major. GLSL reads push constant
-        // bytes as columns, effectively transposing the data. By pushing
-        // the transpose, GLSL reconstructs the intended matrix.
+        // System.Numerics Matrix4x4 is row-major. When pushed as raw bytes
+        // via vkCmdPushConstants, GLSL reads them as column-major — effectively
+        // getting the transpose, which is the correct column-vector equivalent.
+        // No explicit transpose needed (consistent with game viewport usage).
         return new PushConstants
         {
-            Model = Matrix4x4.Transpose(model),
-            View = Matrix4x4.Transpose(GetViewMatrix()),
-            Projection = Matrix4x4.Transpose(GetProjectionMatrix())
+            Model = model,
+            View = GetViewMatrix(),
+            Projection = GetProjectionMatrix()
         };
     }
 

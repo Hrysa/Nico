@@ -129,22 +129,21 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 
 `System.Numerics.Matrix4x4` is **row-major**. GLSL `mat4` is **column-major**. When a C# `Matrix4x4` is pushed as raw bytes via `vkCmdPushConstants`, GLSL reads the memory as columns — effectively getting the **transpose** of the intended matrix.
 
-**Why it matters:** For orthographic projections + identity model/view (editor UI, Game viewport), this transpose is harmless — the matrix is nearly diagonal so transpose ≈ self. But for **perspective projections**, the `w` component (perspective divide) gets mangled, projecting vertices to garbage positions.
+**Why it matters:** This automatic transpose is actually **correct** for the MVP transform. The C# row-vector convention is `v' = v * M`. The column-vector equivalent is `v' = M^T * v`. Since GLSL naturally reads the transpose, no explicit `Transpose()` call is needed — just push the raw `Matrix4x4` bytes directly.
 
-**Rule:** Always call `Matrix4x4.Transpose()` on matrices in `PushConstants` when using perspective projection. The transpose in C# is un-transposed by GLSL's column-major read, recovering the correct matrix.
+**Rule:** Push `Matrix4x4` values directly to `PushConstants` without calling `Transpose()`. The game viewport's orthographic projection (`EditorUI.CreatePushConstants` and the Game viewport callback) already does this correctly. The `PerspectiveCamera.GetPushConstants` must follow the same pattern.
 
 ```csharp
-// In ICamera.GetPushConstants() or any code that builds PushConstants
-// with a non-trivial (perspective) projection:
+// Correct — no transpose needed:
 return new PushConstants
 {
-    Model = Matrix4x4.Transpose(model),
-    View = Matrix4x4.Transpose(view),
-    Projection = Matrix4x4.Transpose(projection)
+    Model = model,
+    View = view,
+    Projection = projection
 };
 ```
 
-The orthographic push constants in `EditorUI.CreatePushConstants` work without transposing because the orthographic matrix is symmetric enough that the transpose is benign.
+The only Vulkan-specific correction is the **Y-flip** (`M22 = -M22`) on the perspective projection matrix, to account for Vulkan's Y-down screen coordinates.
 
 ## Build & Run
 

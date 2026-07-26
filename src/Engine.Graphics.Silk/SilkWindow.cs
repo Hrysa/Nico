@@ -1872,6 +1872,32 @@ public unsafe class SilkWindow : IWindow
         // ═══════════════════════════════════════════════════════════════
         // Render each viewport's content into its own FBO
         // ═══════════════════════════════════════════════════════════════
+
+        // First pass: count total vertices across all viewports and invoke callbacks
+        uint totalVertices = 0;
+        foreach (var (viewportId, fbo) in _viewportFbos)
+        {
+            if (fbo.IsDirty)
+                continue;
+
+            if (_viewportRenderCallbacks.TryGetValue(viewportId, out var callback))
+            {
+                var context = CreateRenderContext(viewportId);
+                callback(context);
+            }
+
+            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws))
+            {
+                foreach (var (verts, _) in draws)
+                    totalVertices += (uint)verts.Length;
+            }
+        }
+
+        if (totalVertices > 0)
+            EnsureViewportDrawBuffer(totalVertices);
+
+        // Second pass: record draw commands into the shared buffer
+        uint vertexOffset = 0;
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty)
@@ -1924,26 +1950,11 @@ public unsafe class SilkWindow : IWindow
             };
             _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-            // Invoke render callback
-            if (_viewportRenderCallbacks.TryGetValue(viewportId, out var callback))
-            {
-                var context = CreateRenderContext(viewportId);
-                callback(context);
-            }
-
             // Replay pending draws
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
-                // Count total vertices to ensure buffer is large enough
-                uint totalVertices = 0;
-                foreach (var (verts, _) in draws)
-                    totalVertices += (uint)verts.Length;
-
-                EnsureViewportDrawBuffer(totalVertices);
-
                 _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _fboGraphicsPipeline);
 
-                uint vertexOffset = 0;
                 foreach (var (verts, push) in draws)
                 {
                     var vertsSize = (nuint)(verts.Length * Vertex.Stride);

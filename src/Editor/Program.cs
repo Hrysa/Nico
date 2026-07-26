@@ -101,19 +101,11 @@ Vertex[] cubeVertices =
 var sceneAngle = 0.0f;
 window.SetViewportRenderCallback(sceneViewportId, ctx =>
 {
-    var w = ctx.Width;
-    var h = ctx.Height;
+    sceneCamera.UpdateViewport(ctx.Width, ctx.Height);
 
     sceneAngle += 0.01f;
-    var model = Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
-    var view = Matrix4x4.Identity;
-    var aspect = w / h;
-    var halfHeight = 1.5f;
-    var halfWidth = halfHeight * aspect;
-    var projection = Matrix4x4.CreateOrthographicOffCenter(-halfWidth, halfWidth, -halfHeight, halfHeight, -10, 10);
-    // Remap Z for Vulkan: negate M33 so near→0, far→1 in Vulkan depth [0,1]
-    projection.M33 = -projection.M33;
-    var push = new PushConstants { Model = model, View = view, Projection = projection };
+    var model = Matrix4x4.CreateScale(0.5f) * Matrix4x4.CreateRotationY(sceneAngle) * Matrix4x4.CreateRotationX(sceneAngle * 0.7f);
+    var push = sceneCamera.GetPushConstants(model);
 
     window.DrawInViewport(sceneViewportId, cubeVertices, push);
 });
