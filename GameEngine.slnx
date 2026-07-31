@@ -8,4 +8,7 @@
     <Project Path="src/Editor/Editor.csproj" />
     <Project Path="src/Player/Player.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Engine.Graphics.Tests/Engine.Graphics.Tests.csproj" />
+  </Folder>
 </Solution>
