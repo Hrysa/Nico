@@ -47,7 +47,8 @@ var sceneCamera = new PerspectiveCamera(
     aspect: sceneViewport.Width / sceneViewport.Height,
     near: 0.1f,
     far: 1000f);
-sceneCamera.Position = new Vector3(0, 0, 6);
+sceneCamera.Position = new Vector3(4f, 3f, 6f);
+sceneCamera.LookAt(Vector3.Zero);
 sceneCamera.Name = "SceneCamera";
 sceneViewport.Camera = sceneCamera;
 
