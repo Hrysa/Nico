@@ -155,6 +155,25 @@ public class PerspectiveCamera : Node, ICamera
         _viewDirty = true;
     }
 
+    /// <summary>
+    /// Aims the camera at a world-space target while keeping roll at zero.
+    /// </summary>
+    /// <param name="target">World-space point to face.</param>
+    public void LookAt(Vector3 target)
+    {
+        var direction = target - Position;
+        var lengthSquared = direction.LengthSquared();
+        if (!IsFinite(direction) || !float.IsFinite(lengthSquared) || lengthSquared <= float.Epsilon)
+            return;
+
+        direction /= MathF.Sqrt(lengthSquared);
+        Rotation = new Vector3(
+            MathF.Asin(Math.Clamp(direction.Y, -1f, 1f)),
+            MathF.Atan2(direction.X, -direction.Z),
+            0f);
+        _viewDirty = true;
+    }
+
     /// <summary>Gets the camera's forward direction vector (local -Z in world space).</summary>
     /// <returns>The normalized forward vector.</returns>
     public Vector3 GetForwardVector()
@@ -188,5 +207,15 @@ public class PerspectiveCamera : Node, ICamera
         var up = GetUpVector();
 
         return Matrix4x4.CreateLookAt(eye, target, up);
+    }
+
+    /// <summary>
+    /// Determines whether every vector component is finite.
+    /// </summary>
+    /// <param name="value">Vector to inspect.</param>
+    /// <returns>True when every component is finite.</returns>
+    private static bool IsFinite(Vector3 value)
+    {
+        return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
     }
 }
