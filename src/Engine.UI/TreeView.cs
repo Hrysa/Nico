@@ -71,6 +71,20 @@ public sealed class TreeView : Panel
         RebuildRows();
     }
 
+    /// <summary>Expands a node and refreshes the visible rows.</summary>
+    /// <param name="item">Node to expand.</param>
+    public void Expand(Node item)
+    {
+        _expanded.Add(item);
+        RebuildRows();
+    }
+
+    /// <summary>Refreshes rows after the bound node hierarchy changes.</summary>
+    public void Refresh()
+    {
+        RebuildRows();
+    }
+
     /// <summary>Scrolls by wheel rows.</summary>
     /// <param name="offset">Wheel offset.</param>
     private void ScrollRows(float offset)

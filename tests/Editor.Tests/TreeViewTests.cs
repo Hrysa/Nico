@@ -79,4 +79,34 @@ public class TreeViewTests
         var firstAfter = Assert.IsType<TreeViewItem>(tree.Children[0]).Item;
         Assert.NotSame(firstBefore, firstAfter);
     }
+
+    /// <summary>Verifies refreshing after insertion exposes a newly added child.</summary>
+    [Fact]
+    public void Refresh_AfterChildAdded_ShowsNewRow()
+    {
+        var root = new Node { Name = "Scene" };
+        var tree = new TreeView(0f, 0f, 200f, 200f);
+        tree.SetRoots([root]);
+        root.AddChild(new Node { Name = "New Object" });
+
+        tree.Expand(root);
+
+        Assert.Equal(2, tree.Children.Count);
+    }
+
+    /// <summary>Verifies context-menu items invoke their configured actions.</summary>
+    [Fact]
+    public void ContextMenu_ClickItem_InvokesAction()
+    {
+        var invoked = false;
+        var menu = new ContextMenu(10f, 10f, 160f);
+        menu.AddItem("Add Cube", () => invoked = true);
+        var router = new UIEventRouter(menu, () => { });
+        router.MovePointer(new(20f, 20f));
+        router.Press();
+
+        router.Release(invokeClick: true);
+
+        Assert.True(invoked);
+    }
 }

@@ -55,8 +55,7 @@ sceneViewport.Camera = sceneCamera;
 
 var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
 var sceneObjects = new List<MeshInstance3D> { cube };
-var sceneRoot = new Node { Name = "Scene" };
-sceneRoot.AddChild(sceneCamera);
+var sceneRoot = new Node3D { Name = "Scene" };
 sceneRoot.AddChild(cube);
 var hierarchyTree = editorView.HierarchyTree;
 hierarchyTree.SetRoots([sceneRoot]);
@@ -85,7 +84,61 @@ var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, sceneObjects, selection);
 
 var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
+ContextMenu? hierarchyContextMenu = null;
+var createdObjectIndex = 1;
 RefreshVertices();
+
+void CloseHierarchyContextMenu()
+{
+    if (hierarchyContextMenu is null)
+        return;
+    uiRoot.RemoveChild(hierarchyContextMenu);
+    hierarchyContextMenu = null;
+    RefreshVertices();
+}
+
+void AddSceneNode(Node parent, bool withCubeMesh)
+{
+    Node child;
+    if (withCubeMesh)
+    {
+        var meshInstance = new MeshInstance3D(new CubeMesh()) { Name = $"Cube {createdObjectIndex++}" };
+        sceneObjects.Add(meshInstance);
+        child = meshInstance;
+    }
+    else
+    {
+        child = new Node3D { Name = $"Object {createdObjectIndex++}" };
+    }
+
+    parent.AddChild(child);
+    hierarchyTree.Expand(parent);
+    hierarchyTree.Select(child);
+    CloseHierarchyContextMenu();
+}
+
+void ShowHierarchyContextMenu()
+{
+    if (lastMousePos.X < hierarchyTree.Left || lastMousePos.X > hierarchyTree.Right
+        || lastMousePos.Y < hierarchyTree.Top || lastMousePos.Y > hierarchyTree.Bottom)
+        return;
+
+    CloseHierarchyContextMenu();
+    var target = uiEventRouter.HoveredElement is TreeViewItem row ? row.Item : sceneRoot;
+    hierarchyTree.Select(target);
+
+    const float menuWidth = 160f;
+    const float menuHeight = 56f;
+    var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
+    var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
+    var menu = new ContextMenu(menuX, menuY, menuWidth) { Name = "HierarchyContextMenu" };
+    menu.AddItem("Add Empty Object", () => AddSceneNode(target, withCubeMesh: false));
+    menu.AddItem("Add Cube", () => AddSceneNode(target, withCubeMesh: true));
+    hierarchyContextMenu = menu;
+    uiRoot.AddChild(menu);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
 
 void AttachHierarchy(TreeView tree)
 {
@@ -106,6 +159,7 @@ void ResizeEditor(int newWidth, int newHeight)
 
     width = newWidth;
     height = newHeight;
+    hierarchyContextMenu = null;
     editorView = EditorUI.BuildView(width, height);
     uiRoot = editorView.Root;
     uiEventRouter.SetRoot(uiRoot);
@@ -169,9 +223,20 @@ window.MouseDown += button =>
         return;
 
     Debug.Input(LogLevel.Debug, "MouseDown: button={Button}", button);
-    uiEventRouter.Press();
+    if (button == 1)
+    {
+        ShowHierarchyContextMenu();
+        return;
+    }
 
-    if (button != 0) return;
+    if (button != 0)
+        return;
+
+    if (hierarchyContextMenu is not null
+        && uiEventRouter.HoveredElement is not ContextMenuItem)
+        CloseHierarchyContextMenu();
+
+    uiEventRouter.Press();
 
     // Must be in scene viewport area
     bool inSceneViewport = (uiEventRouter.HoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
@@ -188,7 +253,10 @@ window.MouseUp += button =>
 
     Debug.Input(LogLevel.Debug, "MouseUp: button={Button}", button);
 
-    var consumedByGizmo = button == 0 && selection.PrimaryUp();
+    if (button != 0)
+        return;
+
+    var consumedByGizmo = selection.PrimaryUp();
 
     uiEventRouter.Release(!consumedByGizmo);
 };
@@ -199,7 +267,8 @@ window.MouseDoubleClick += button =>
         return;
 
     Debug.Input(LogLevel.Debug, "DoubleClick: button={Button}", button);
-    uiEventRouter.DoubleClick();
+    if (button == 0)
+        uiEventRouter.DoubleClick();
 };
 
 window.MouseScroll += offset =>
