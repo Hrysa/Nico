@@ -10,6 +10,7 @@ public sealed class UIEventRouter
 {
     private UIElement _root;
     private readonly Action _invalidate;
+    private UIElement? _pressedElement;
 
     /// <summary>Gets the element currently under the pointer.</summary>
     public UIElement? HoveredElement { get; private set; }
@@ -32,8 +33,10 @@ public sealed class UIEventRouter
     /// <param name="root">New root UI element.</param>
     public void SetRoot(UIElement root)
     {
+        _pressedElement?.SetPressed(false);
         HoveredElement?.SetHover(false);
         FocusedElement?.SetFocus(false);
+        _pressedElement = null;
         HoveredElement = null;
         FocusedElement = null;
         _root = root;
@@ -56,8 +59,10 @@ public sealed class UIEventRouter
     /// <summary>Focuses and presses the hovered element.</summary>
     public void Press()
     {
+        _pressedElement?.SetPressed(false);
+        _pressedElement = HoveredElement;
         SetFocus(HoveredElement);
-        HoveredElement?.SetPressed(true);
+        _pressedElement?.SetPressed(true);
         _invalidate();
     }
 
@@ -65,12 +70,14 @@ public sealed class UIEventRouter
     /// <param name="invokeClick">Whether to invoke the click event.</param>
     public void Release(bool invokeClick)
     {
-        if (HoveredElement is null)
+        if (_pressedElement is null)
             return;
 
-        HoveredElement.SetPressed(false);
-        if (invokeClick)
-            HoveredElement.InvokeClick();
+        var pressedElement = _pressedElement;
+        _pressedElement = null;
+        pressedElement.SetPressed(false);
+        if (invokeClick && ReferenceEquals(pressedElement, HoveredElement))
+            pressedElement.InvokeClick();
         _invalidate();
     }
 
@@ -105,6 +112,14 @@ public sealed class UIEventRouter
         _invalidate();
     }
 
+    /// <summary>Dispatches a text-input character to the focused element.</summary>
+    /// <param name="character">Produced text character.</param>
+    public void TextInput(char character)
+    {
+        FocusedElement?.InvokeTextInput(character);
+        _invalidate();
+    }
+
     /// <summary>Changes keyboard focus.</summary>
     /// <param name="element">Element to focus, or null to clear focus.</param>
     private void SetFocus(UIElement? element)
@@ -132,6 +147,6 @@ public sealed class UIEventRouter
                 return childHit;
         }
 
-        return element;
+        return element.IsHitTestVisible ? element : null;
     }
 }

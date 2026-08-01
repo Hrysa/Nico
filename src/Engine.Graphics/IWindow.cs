@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Engine.Graphics;
 
 /// <summary>
@@ -20,6 +22,29 @@ public interface IWindow : IDisposable
 
     /// <summary>Processes pending native events.</summary>
     void ProcessEvents();
+
+    /// <summary>Begins moving a borderless window from a client-area pointer position.</summary>
+    /// <param name="pointerPosition">Pointer position inside the client area.</param>
+    void BeginWindowDrag(Vector2 pointerPosition);
+
+    /// <summary>Updates an active borderless-window drag.</summary>
+    /// <param name="pointerPosition">Current pointer position inside the client area.</param>
+    void UpdateWindowDrag(Vector2 pointerPosition);
+
+    /// <summary>Ends an active borderless-window drag.</summary>
+    void EndWindowDrag();
+
+    /// <summary>Minimizes the native window.</summary>
+    void Minimize();
+
+    /// <summary>Toggles between normal and maximized native window state.</summary>
+    void ToggleMaximize();
+
+    /// <summary>Toggles native fullscreen presentation.</summary>
+    void ToggleFullScreen();
+
+    /// <summary>Requests native window closure.</summary>
+    void Close();
 
     /// <summary>Occurs before rendering each frame.</summary>
     event Action<double>? Update;

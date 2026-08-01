@@ -7,6 +7,9 @@ namespace Engine.UI;
 /// </summary>
 public class Panel : UIElement
 {
+    /// <summary>Gets or sets whether the panel emits a background rectangle.</summary>
+    public bool PaintBackground { get; set; } = true;
+
     /// <summary>
     /// Creates a new Panel at the specified position and size.
     /// </summary>
@@ -19,5 +22,12 @@ public class Panel : UIElement
         : base(x, y, width, height)
     {
         BackgroundColor = backgroundColor;
+    }
+
+    /// <inheritdoc/>
+    protected override void Paint(UIDrawList drawList)
+    {
+        if (PaintBackground)
+            base.Paint(drawList);
     }
 }

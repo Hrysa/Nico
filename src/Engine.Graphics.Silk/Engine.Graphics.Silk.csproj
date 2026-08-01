@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageReference Include="StbTrueTypeSharp" Version="1.26.12" />
     <PackageReference Include="Silk.NET" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.23.0" />
@@ -30,6 +31,7 @@
     <EmbeddedResource Include="../Shaders/texture.frag.spv" LogicalName="texture.frag.spv" />
     <EmbeddedResource Include="../Shaders/grid.vert.spv" LogicalName="grid.vert.spv" />
     <EmbeddedResource Include="../Shaders/grid.frag.spv" LogicalName="grid.frag.spv" />
+    <EmbeddedResource Include="Assets/Inter-Regular.ttf" LogicalName="Inter-Regular.ttf" />
   </ItemGroup>
 
 </Project>

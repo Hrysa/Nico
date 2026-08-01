@@ -41,4 +41,28 @@ public class UIEventRouterTests
         Assert.Equal(1, clicks);
         Assert.False(button.IsPressed);
     }
+
+    /// <summary>Verifies releasing outside a pressed element clears its captured press state.</summary>
+    [Fact]
+    public void Release_AfterPointerLeavesPressedElement_ClearsOriginalPressWithoutClick()
+    {
+        var root = new Panel(0f, 0f, 200f, 100f, Color.Black);
+        var button = new Button(0f, 0f, 100f, 100f, "Test", Color.Black);
+        var clicks = 0;
+        button.Click += () => clicks++;
+        root.AddChild(button);
+        var router = new UIEventRouter(root, () => { });
+        router.MovePointer(new(50f, 50f));
+        router.Press();
+
+        router.MovePointer(new(150f, 50f));
+        router.Release(invokeClick: true);
+
+        Assert.False(button.IsPressed);
+        Assert.Equal(0, clicks);
+
+        router.MovePointer(new(50f, 50f));
+        router.Press();
+        Assert.True(button.IsPressed);
+    }
 }

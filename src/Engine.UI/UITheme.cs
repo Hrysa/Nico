@@ -1,0 +1,75 @@
+using Engine.Graphics;
+
+namespace Engine.UI;
+
+/// <summary>
+/// Defines the visual tokens shared by the engine's UI component pack.
+/// </summary>
+public sealed record UITheme
+{
+    /// <summary>Gets the default modern dark editor theme.</summary>
+    public static UITheme Dark { get; } = new();
+
+    /// <summary>Gets the application background color.</summary>
+    public Color Canvas { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
+
+    /// <summary>Gets the primary surface color.</summary>
+    public Color Surface { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
+
+    /// <summary>Gets the raised surface color.</summary>
+    public Color SurfaceRaised { get; init; } = Color.FromSrgb(0x29, 0x29, 0x29);
+
+    /// <summary>Gets the recessed input-field color.</summary>
+    public Color Field { get; init; } = Color.FromSrgb(0x1C, 0x1C, 0x1C);
+
+    /// <summary>Gets the hover surface color.</summary>
+    public Color SurfaceHover { get; init; } = Color.FromSrgb(0x23, 0x24, 0x25);
+
+    /// <summary>Gets the pressed surface color.</summary>
+    public Color SurfacePressed { get; init; } = Color.FromSrgb(0x2C, 0x2D, 0x2E);
+
+    /// <summary>Gets the viewport background color.</summary>
+    public Color Viewport { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
+
+    /// <summary>Gets the subtle border and separator color.</summary>
+    public Color Border { get; init; } = Color.FromSrgb(0x14, 0x14, 0x14);
+
+    /// <summary>Gets the strong border color.</summary>
+    public Color BorderStrong { get; init; } = Color.FromSrgb(0x4A, 0x4A, 0x4A);
+
+    /// <summary>Gets the primary text color.</summary>
+    public Color TextPrimary { get; init; } = Color.FromSrgb(0xC9, 0xC9, 0xC9);
+
+    /// <summary>Gets the secondary text color.</summary>
+    public Color TextSecondary { get; init; } = Color.FromSrgb(0xA0, 0xA0, 0xA0);
+
+    /// <summary>Gets the muted text color.</summary>
+    public Color TextMuted { get; init; } = Color.FromSrgb(0x70, 0x70, 0x70);
+
+    /// <summary>Gets the primary accent color.</summary>
+    public Color Accent { get; init; } = Color.FromSrgb(0x68, 0x9C, 0xF8);
+
+    /// <summary>Gets the hovered accent color.</summary>
+    public Color AccentHover { get; init; } = Color.FromSrgb(0x78, 0xAA, 0xFF);
+
+    /// <summary>Gets the pressed accent color.</summary>
+    public Color AccentPressed { get; init; } = Color.FromSrgb(0x4C, 0x75, 0xC7);
+
+    /// <summary>Gets the standard body font size.</summary>
+    public float FontSize { get; init; } = 17.5f;
+
+    /// <summary>Gets the compact caption font size.</summary>
+    public float CaptionFontSize { get; init; } = 15f;
+
+    /// <summary>Gets the font size used by panel titles.</summary>
+    public float PanelTitleFontSize { get; init; } = 18f;
+
+    /// <summary>Gets the normal control height.</summary>
+    public float ControlHeight { get; init; } = 30f;
+
+    /// <summary>Gets the standard small spacing unit.</summary>
+    public float SpacingSmall { get; init; } = 6f;
+
+    /// <summary>Gets the standard spacing unit.</summary>
+    public float Spacing { get; init; } = 10f;
+}

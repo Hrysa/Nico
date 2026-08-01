@@ -7,4 +7,9 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     export DYLD_FALLBACK_LIBRARY_PATH="${DYLD_FALLBACK_LIBRARY_PATH:-/opt/homebrew/lib:/usr/local/lib}"
 fi
 
-dotnet run --project src/Editor "$@"
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./run.sh <game-project-root>" >&2
+    exit 2
+fi
+
+dotnet run --project src/Editor -- "$1"

@@ -35,6 +35,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private RenderPass _renderPass;
     private Silk.NET.Vulkan.Semaphore[]? _imageAvailableSemaphores;
     private bool _framebufferResized;
+    private bool _windowDragging;
+    private Vector2 _windowDragOffset;
+    private bool _macFullScreen;
+    private float _uiFramebufferScale = 1f;
+    private long _lastLiveResizeFrameTimestamp;
+    private bool _renderingFrame;
 
     private Vk? _vk;
 
@@ -42,18 +48,21 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private FrameScheduler? _frameScheduler;
 
     private PipelineResources _pipelines = null!;
+    private readonly TrueTypeFontRasterizer _fontRasterizer = new();
 
     // New: Vertex buffer
-    private Silk.NET.Vulkan.Buffer _vertexBuffer;
-    private DeviceMemory _vertexBufferMemory;
     private Vertex[] _vertices = [];
     private uint _vertexCount;
+    private uint _contentUiVertexCount;
+    private uint _overlayUiFirstVertex;
+    private uint _overlayUiVertexCount;
     private PushConstants _pushConstants;
-    private uint _vertexBufferCapacity;
+    private FrameVertexBuffers? _uiBuffers;
 
     // Viewport FBO management
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
-    private readonly Dictionary<uint, (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint vertexCount)> _viewportQuadBuffers = new();
+    private readonly Dictionary<uint, FrameVertexBuffers> _viewportQuadBuffers = new();
+    private readonly Dictionary<uint, VertexT[]> _viewportQuadVertices = new();
     private readonly Dictionary<uint, List<(Vertex[] vertices, PushConstants pushConstants)>> _pendingViewportDraws = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private uint _nextViewportId = 1;
@@ -89,6 +98,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     /// <inheritdoc/>
     public event Action<InputKey>? KeyUp;
+
+    /// <inheritdoc/>
+    public event Action<char>? TextInput;
 
     /// <inheritdoc/>
     public event Action<double>? Update;
@@ -127,7 +139,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Title = options.Title,
             API = new GraphicsAPI(ContextAPI.Vulkan, new APIVersion(1, 1)),
             ShouldSwapAutomatically = false,
-            IsVisible = true
+            IsVisible = true,
+            WindowBorder = options.CustomTitleBar && !OperatingSystem.IsMacOS()
+                ? WindowBorder.Hidden
+                : WindowBorder.Resizable,
+            TransparentFramebuffer = options.CustomTitleBar && OperatingSystem.IsMacOS()
         };
 
         _window = Window.Create(settings);
@@ -136,8 +152,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _window.Render += OnRender;
         _window.Closing += OnClosing;
         _window.Resize += OnResize;
+        _window.FramebufferResize += OnFramebufferResize;
 
         _window.Initialize();
+        _uiFramebufferScale = CalculateFramebufferScale();
+        if (options.CustomTitleBar)
+            MacOSWindowChrome.Apply(_window);
         _logger.LogInformation("Window initialized");
     }
 
@@ -175,6 +195,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         {
             _keyboard.KeyDown += OnKeyDown;
             _keyboard.KeyUp += OnKeyUp;
+            _keyboard.KeyChar += OnKeyChar;
             _logger.LogInformation("Keyboard input attached");
         }
 
@@ -209,7 +230,18 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnRender(double delta)
     {
-        DrawFrame();
+        if (_renderingFrame)
+            return;
+
+        _renderingFrame = true;
+        try
+        {
+            DrawFrame();
+        }
+        finally
+        {
+            _renderingFrame = false;
+        }
     }
 
     private void OnClosing()
@@ -219,8 +251,30 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnResize(Vector2D<int> size)
     {
+        // Logical layout changes are dispatched from OnFramebufferResize so layout and
+        // swapchain dimensions always originate from the same native resize event.
+    }
+
+    /// <summary>Marks swapchain resources stale after the physical framebuffer changes size.</summary>
+    /// <param name="size">New physical framebuffer size.</param>
+    private void OnFramebufferResize(Vector2D<int> size)
+    {
+        if (size.X <= 0 || size.Y <= 0)
+            return;
+
+        var logicalWidth = Math.Max(1, (int)MathF.Round(size.X / _uiFramebufferScale));
+        var logicalHeight = Math.Max(1, (int)MathF.Round(size.Y / _uiFramebufferScale));
+        Resized?.Invoke(logicalWidth, logicalHeight);
         _framebufferResized = true;
-        Resized?.Invoke(size.X, size.Y);
+        var liveFrameDue = _lastLiveResizeFrameTimestamp == 0
+            || System.Diagnostics.Stopwatch.GetElapsedTime(_lastLiveResizeFrameTimestamp)
+                >= TimeSpan.FromMilliseconds(16);
+        if (!liveFrameDue || _window is null || _renderingFrame)
+            return;
+
+        _lastLiveResizeFrameTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        _window.DoUpdate();
+        _window.DoRender();
     }
 
     private void OnMouseMove(IMouse mouse, Vector2 pos)
@@ -258,6 +312,14 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         KeyUp?.Invoke(ToInputKey(key));
     }
 
+    /// <summary>Forwards one device text-input character.</summary>
+    /// <param name="keyboard">Keyboard producing the character.</param>
+    /// <param name="character">Produced Unicode character.</param>
+    private void OnKeyChar(IKeyboard keyboard, char character)
+    {
+        TextInput?.Invoke(character);
+    }
+
     /// <inheritdoc/>
     public void SetMouseCaptured(bool captured)
     {
@@ -274,6 +336,97 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         cursor.CursorMode = cursor.IsSupported(CursorMode.Raw)
             ? CursorMode.Raw
             : CursorMode.Disabled;
+    }
+
+    /// <inheritdoc/>
+    public void BeginWindowDrag(Vector2 pointerPosition)
+    {
+        if (_window is null || _window.WindowState != WindowState.Normal)
+            return;
+        if (MacOSWindowChrome.TryBeginWindowDrag(_window))
+        {
+            _windowDragging = false;
+            return;
+        }
+
+        _windowDragging = true;
+        _windowDragOffset = pointerPosition;
+    }
+
+    /// <inheritdoc/>
+    public void UpdateWindowDrag(Vector2 pointerPosition)
+    {
+        if (!_windowDragging || _window is null)
+            return;
+        if (!float.IsFinite(pointerPosition.X) || !float.IsFinite(pointerPosition.Y))
+            return;
+
+        var pointerScreenX = _window.Position.X + pointerPosition.X;
+        var pointerScreenY = _window.Position.Y + pointerPosition.Y;
+        var targetX = pointerScreenX - _windowDragOffset.X;
+        var targetY = pointerScreenY - _windowDragOffset.Y;
+        _window.Position = new Vector2D<int>(
+            ClampWindowCoordinate(targetX),
+            ClampWindowCoordinate(targetY));
+    }
+
+    /// <summary>Rounds a finite window coordinate while protecting the native backend from overflow.</summary>
+    /// <param name="coordinate">Floating-point screen coordinate.</param>
+    /// <returns>A safely rounded native window coordinate.</returns>
+    private static int ClampWindowCoordinate(float coordinate)
+    {
+        var rounded = Math.Round((double)coordinate);
+        return (int)Math.Clamp(rounded, int.MinValue, int.MaxValue);
+    }
+
+    /// <inheritdoc/>
+    public void EndWindowDrag()
+    {
+        _windowDragging = false;
+    }
+
+    /// <inheritdoc/>
+    public void Minimize()
+    {
+        if (_window is not null)
+            _window.WindowState = WindowState.Minimized;
+    }
+
+    /// <inheritdoc/>
+    public void ToggleMaximize()
+    {
+        if (_window is null)
+            return;
+        _windowDragging = false;
+        _window.WindowState = _window.WindowState == WindowState.Maximized
+            ? WindowState.Normal
+            : WindowState.Maximized;
+        MacOSWindowChrome.SetRounded(_window, _window.WindowState == WindowState.Normal);
+    }
+
+    /// <inheritdoc/>
+    public void ToggleFullScreen()
+    {
+        if (_window is null)
+            return;
+        _windowDragging = false;
+        if (MacOSWindowChrome.TryToggleFullScreen(_window))
+        {
+            _macFullScreen = !_macFullScreen;
+            MacOSWindowChrome.SetRounded(_window, !_macFullScreen);
+            return;
+        }
+
+        _window.WindowState = _window.WindowState == WindowState.Fullscreen
+            ? WindowState.Normal
+            : WindowState.Fullscreen;
+    }
+
+    /// <inheritdoc/>
+    public void Close()
+    {
+        if (_window is not null)
+            _window.IsClosing = true;
     }
 
     /// <summary>
@@ -295,6 +448,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Key.ControlRight => InputKey.RightControl,
             Key.ShiftLeft => InputKey.LeftShift,
             Key.ShiftRight => InputKey.RightShift,
+            Key.Backspace => InputKey.Backspace,
+            Key.Delete => InputKey.Delete,
+            Key.Left => InputKey.Left,
+            Key.Right => InputKey.Right,
+            Key.Home => InputKey.Home,
+            Key.End => InputKey.End,
             Key.Escape => InputKey.Escape,
             _ => InputKey.Unknown
         };
@@ -1504,12 +1663,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _viewportFbos.Remove(viewportId);
         }
 
-        if (_viewportQuadBuffers.TryGetValue(viewportId, out var buf))
+        if (_viewportQuadBuffers.TryGetValue(viewportId, out var buffers))
         {
-            _vk.DestroyBuffer(_device, buf.buffer, null);
-            _vk.FreeMemory(_device, buf.memory, null);
+            buffers.Destroy();
             _viewportQuadBuffers.Remove(viewportId);
         }
+        _viewportQuadVertices.Remove(viewportId);
 
         _pendingGridDraws.Remove(viewportId);
 
@@ -1526,53 +1685,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <inheritdoc/>
     public void SetViewportQuadVertices(uint viewportId, VertexT[] vertices)
     {
-        _vk!.DeviceWaitIdle(_device);
-
-        // Destroy old buffer if exists
-        if (_viewportQuadBuffers.TryGetValue(viewportId, out var old))
+        ArgumentNullException.ThrowIfNull(vertices);
+        if (!_viewportQuadBuffers.ContainsKey(viewportId))
         {
-            _vk.DestroyBuffer(_device, old.buffer, null);
-            _vk.FreeMemory(_device, old.memory, null);
+            _viewportQuadBuffers[viewportId] = new FrameVertexBuffers(
+                _vk!, _device, MaxFramesInFlight, 6, $"viewport {viewportId} quad",
+                FindMemoryType, _logger);
         }
 
-        var vertexCount = (uint)vertices.Length;
-        var bufferSize = (nuint)(vertices.Length * VertexT.Stride);
-
-        var bufferInfo = new BufferCreateInfo
-        {
-            SType = StructureType.BufferCreateInfo,
-            Size = bufferSize,
-            Usage = BufferUsageFlags.VertexBufferBit,
-            SharingMode = SharingMode.Exclusive
-        };
-
-        var result = _vk.CreateBuffer(_device, &bufferInfo, null, out var buffer);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create viewport quad buffer: {result}");
-
-        _vk.GetBufferMemoryRequirements(_device, buffer, out var memRequirements);
-
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
-        };
-
-        result = _vk.AllocateMemory(_device, &allocInfo, null, out var memory);
-        if (result != Result.Success)
-            throw new Exception($"Failed to allocate viewport quad memory: {result}");
-
-        _vk.BindBufferMemory(_device, buffer, memory, 0);
-
-        void* data;
-        _vk.MapMemory(_device, memory, 0, bufferSize, 0, &data);
-        fixed (VertexT* pVertices = vertices)
-            System.Buffer.MemoryCopy(pVertices, data, bufferSize, bufferSize);
-        _vk.UnmapMemory(_device, memory);
-
-        _viewportQuadBuffers[viewportId] = (buffer, memory, vertexCount);
-        _logger.LogDebug("Viewport {Id} quad vertices set ({Count} vertices)", viewportId, vertexCount);
+        _viewportQuadVertices[viewportId] = vertices;
     }
 
     /// <inheritdoc/>
@@ -1631,6 +1752,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void RecreateDirtyFbos()
     {
+        if (!_viewportFbos.Values.Any(fbo => fbo.IsDirty))
+            return;
+
+        _vk!.DeviceWaitIdle(_device);
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
         foreach (var (id, fbo) in _viewportFbos)
         {
@@ -1648,49 +1773,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     public void CreateVertexBuffer()
     {
-        _logger.LogDebug("Creating vertex buffer");
-
-        var bufferSize = (nuint)(_vertices.Length * Vertex.Stride);
-        _vertexBufferCapacity = (uint)_vertices.Length;
-
-        // Create buffer
-        var bufferInfo = new BufferCreateInfo
-        {
-            SType = StructureType.BufferCreateInfo,
-            Size = bufferSize,
-            Usage = BufferUsageFlags.VertexBufferBit,
-            SharingMode = SharingMode.Exclusive
-        };
-
-        var result = _vk!.CreateBuffer(_device, &bufferInfo, null, out _vertexBuffer);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create vertex buffer: {result}");
-
-        // Query memory requirements
-        _vk.GetBufferMemoryRequirements(_device, _vertexBuffer, out var memRequirements);
-
-        // Find suitable memory type
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
-        };
-
-        result = _vk.AllocateMemory(_device, &allocInfo, null, out _vertexBufferMemory);
-        if (result != Result.Success)
-            throw new Exception($"Failed to allocate vertex buffer memory: {result}");
-
-        _vk.BindBufferMemory(_device, _vertexBuffer, _vertexBufferMemory, 0);
-
-        // Map and copy vertex data
-        void* data;
-        _vk.MapMemory(_device, _vertexBufferMemory, 0, bufferSize, 0, &data);
-        fixed (Vertex* pVertices = _vertices)
-            System.Buffer.MemoryCopy(pVertices, data, bufferSize, bufferSize);
-        _vk.UnmapMemory(_device, _vertexBufferMemory);
-
-        _logger.LogInformation("Vertex buffer created ({Size} bytes)", bufferSize);
+        _uiBuffers ??= new FrameVertexBuffers(
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Length),
+            "UI", FindMemoryType, _logger);
     }
 
     /// <inheritdoc/>
@@ -1698,41 +1783,103 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     {
         _vertices = BuildUIVertices(drawList);
         _vertexCount = (uint)_vertices.Length;
-
-        if (_vertexCount > _vertexBufferCapacity)
-        {
-            _vk!.DeviceWaitIdle(_device);
-            _vk.DestroyBuffer(_device, _vertexBuffer, null);
-            _vk.FreeMemory(_device, _vertexBufferMemory, null);
-            CreateVertexBuffer();
-            return;
-        }
-
-        var bufferSize = (nuint)(_vertices.Length * Vertex.Stride);
-        void* data;
-        _vk!.MapMemory(_device, _vertexBufferMemory, 0, bufferSize, 0, &data);
-        fixed (Vertex* pVertices = _vertices)
-            System.Buffer.MemoryCopy(pVertices, data, bufferSize, bufferSize);
-        _vk.UnmapMemory(_device, _vertexBufferMemory);
     }
 
     /// <summary>Translates semantic UI rectangles into backend triangle vertices.</summary>
     /// <param name="drawList">UI draw list.</param>
     /// <returns>Colored triangle vertices.</returns>
-    private static Vertex[] BuildUIVertices(UIDrawList drawList)
+    private Vertex[] BuildUIVertices(UIDrawList drawList)
     {
         ArgumentNullException.ThrowIfNull(drawList);
-        var vertices = new List<Vertex>(drawList.Commands.Count * 6);
+        var framebufferScale = GetFramebufferScale();
+        var contentVertices = new List<Vertex>(drawList.Commands.Count * 6);
+        var overlayVertices = new List<Vertex>();
         foreach (var command in drawList.Commands)
         {
-            vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
-            vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), command.Color));
-            vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
-            vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
-            vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), command.Color));
-            vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+            var target = command.Layer == UIDrawLayer.Overlay ? overlayVertices : contentVertices;
+            AppendUICommandVertices(target, command, framebufferScale);
         }
-        return vertices.ToArray();
+        _contentUiVertexCount = (uint)contentVertices.Count;
+        _overlayUiFirstVertex = _contentUiVertexCount;
+        _overlayUiVertexCount = (uint)overlayVertices.Count;
+        contentVertices.AddRange(overlayVertices);
+        return contentVertices.ToArray();
+    }
+
+    /// <summary>Translates one semantic UI command into triangle vertices.</summary>
+    /// <param name="vertices">Destination vertex collection.</param>
+    /// <param name="command">Semantic UI command.</param>
+    /// <param name="framebufferScale">Physical framebuffer scale used for font rasterization.</param>
+    private void AppendUICommandVertices(
+        List<Vertex> vertices,
+        UIDrawCommand command,
+        float framebufferScale)
+    {
+        if (command.Type == UIDrawCommandType.Text)
+        {
+            _fontRasterizer.AppendVertices(vertices, command, framebufferScale);
+            return;
+        }
+
+        if (command.Type == UIDrawCommandType.Ellipse)
+        {
+            AppendEllipseVertices(vertices, command);
+            return;
+        }
+
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), command.Color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), command.Color));
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+    }
+
+    /// <summary>Tessellates one filled UI ellipse into triangles.</summary>
+    /// <param name="vertices">Destination vertex collection.</param>
+    /// <param name="command">Ellipse command and bounds.</param>
+    private static void AppendEllipseVertices(List<Vertex> vertices, UIDrawCommand command)
+    {
+        const int SegmentCount = 24;
+        var centerX = (command.Left + command.Right) / 2f;
+        var centerY = (command.Top + command.Bottom) / 2f;
+        var radiusX = MathF.Max(0f, (command.Right - command.Left) / 2f);
+        var radiusY = MathF.Max(0f, (command.Bottom - command.Top) / 2f);
+        var center = new Vector3(centerX, centerY, 0f);
+        for (var index = 0; index < SegmentCount; index++)
+        {
+            var angleA = index * MathF.Tau / SegmentCount;
+            var angleB = (index + 1) * MathF.Tau / SegmentCount;
+            vertices.Add(new Vertex(center, command.Color));
+            vertices.Add(new Vertex(new Vector3(
+                centerX + MathF.Cos(angleB) * radiusX,
+                centerY + MathF.Sin(angleB) * radiusY,
+                0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(
+                centerX + MathF.Cos(angleA) * radiusX,
+                centerY + MathF.Sin(angleA) * radiusY,
+                0f), command.Color));
+        }
+    }
+
+    /// <summary>Gets physical framebuffer pixels per logical UI pixel.</summary>
+    /// <returns>The larger positive framebuffer scale axis, or one before window creation.</returns>
+    private float GetFramebufferScale()
+    {
+        return _uiFramebufferScale;
+    }
+
+    /// <summary>Calculates the stable physical-pixel density of the initialized window.</summary>
+    /// <returns>The larger positive framebuffer-to-window scale axis.</returns>
+    private float CalculateFramebufferScale()
+    {
+        if (_window is null || _window.Size.X <= 0 || _window.Size.Y <= 0)
+            return 1f;
+
+        var framebufferSize = _window.FramebufferSize;
+        var scaleX = framebufferSize.X / (float)_window.Size.X;
+        var scaleY = framebufferSize.Y / (float)_window.Size.Y;
+        return MathF.Max(1f, MathF.Max(scaleX, scaleY));
     }
 
     private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties)
@@ -1790,6 +1937,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void DrawFrame()
     {
+        if (_framebufferResized)
+        {
+            _framebufferResized = false;
+            RecreateSwapchain();
+        }
+
         // Recreate any dirty viewport FBOs
         RecreateDirtyFbos();
 
@@ -1849,9 +2002,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         result = _swapchainManager.Extension.QueuePresent(_presentQueue, &presentInfo);
 
-        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr || _framebufferResized)
+        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr)
         {
-            _framebufferResized = false;
             RecreateSwapchain();
         }
 
@@ -2021,18 +2173,30 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         };
         _vk.CmdSetScissor(commandBuffer, 0, 1, &windowScissor);
 
-        // Draw editor UI
-        var pushConstants = _pushConstants;
+        Silk.NET.Vulkan.Buffer uiFrameBuffer = default;
         if (_vertexCount > 0)
+        {
+            _uiBuffers!.Ensure(_activeFrameIndex, _vertexCount, Vertex.Stride);
+            var uiSize = (nuint)(_vertices.Length * Vertex.Stride);
+            fixed (Vertex* source = _vertices)
+            {
+                System.Buffer.MemoryCopy(source,
+                    _uiBuffers.GetMappedPointer(_activeFrameIndex), uiSize, uiSize);
+            }
+            uiFrameBuffer = _uiBuffers.GetBuffer(_activeFrameIndex);
+        }
+
+        // Draw persistent editor chrome below viewport textures.
+        var pushConstants = _pushConstants;
+        if (_contentUiVertexCount > 0)
         {
             _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
-            var vertexBuffer = _vertexBuffer;
             ulong offset = 0;
-            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &uiFrameBuffer, &offset);
             _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
                 0, (uint)sizeof(PushConstants), &pushConstants);
-            _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
+            _vk.CmdDraw(commandBuffer, _contentUiVertexCount, 1, 0, 0);
         }
 
         // Draw FBO textures for each viewport
@@ -2043,22 +2207,31 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             if (fbo.IsDirty)
                 continue;
 
-            if (_viewportQuadBuffers.TryGetValue(viewportId, out var quadBuf))
+            if (_viewportQuadBuffers.TryGetValue(viewportId, out var quadBuffers)
+                && _viewportQuadVertices.TryGetValue(viewportId, out var quadVertices))
             {
+                var vertexCount = (uint)quadVertices.Length;
+                quadBuffers.Ensure(_activeFrameIndex, vertexCount, VertexT.Stride);
+                var quadSize = (nuint)(quadVertices.Length * VertexT.Stride);
+                fixed (VertexT* source = quadVertices)
+                {
+                    System.Buffer.MemoryCopy(source,
+                        quadBuffers.GetMappedPointer(_activeFrameIndex), quadSize, quadSize);
+                }
                 fixed (DescriptorSet* pDescSet = &fbo.DescriptorSet)
                 {
                     _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                         _pipelines.TextureLayout, 0, 1, pDescSet, 0, null);
                 }
 
-                var texVb = quadBuf.buffer;
+                var texVb = quadBuffers.GetBuffer(_activeFrameIndex);
                 ulong texOffset = 0;
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &texVb, &texOffset);
 
                 _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout,
                     ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
 
-                _vk.CmdDraw(commandBuffer, quadBuf.vertexCount, 1, 0, 0);
+                _vk.CmdDraw(commandBuffer, vertexCount, 1, 0, 0);
             }
         }
 
@@ -2083,6 +2256,18 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 0, (uint)sizeof(PushConstants), &pushConstants);
 
             _vk.CmdDraw(commandBuffer, (uint)_overlayVertices.Length, 1, 0, 0);
+        }
+
+        // Draw floating UI last so menus and dialogs cover viewport textures and gizmos.
+        if (_overlayUiVertexCount > 0)
+        {
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
+
+            ulong uiOffset = 0;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &uiFrameBuffer, &uiOffset);
+            _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
+                0, (uint)sizeof(PushConstants), &pushConstants);
+            _vk.CmdDraw(commandBuffer, _overlayUiVertexCount, 1, _overlayUiFirstVertex, 0);
         }
 
         _vk.CmdEndRenderPass(commandBuffer);
@@ -2120,20 +2305,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             fbo.Destroy(_vk!, _device);
         _viewportFbos.Clear();
 
-        foreach (var (id, buf) in _viewportQuadBuffers)
-        {
-            _vk?.DestroyBuffer(_device, buf.buffer, null);
-            _vk?.FreeMemory(_device, buf.memory, null);
-        }
+        foreach (var buffers in _viewportQuadBuffers.Values)
+            buffers.Destroy();
         _viewportQuadBuffers.Clear();
+        _viewportQuadVertices.Clear();
 
         // Cleanup persistent viewport draw buffer
         _viewportDrawBuffers?.Destroy();
         _overlayBuffers?.Destroy();
 
         // Cleanup shared resources
-        _vk?.DestroyBuffer(_device, _vertexBuffer, null);
-        _vk?.FreeMemory(_device, _vertexBufferMemory, null);
+        _uiBuffers?.Destroy();
         _pipelines?.Dispose();
         _vk?.DestroyRenderPass(_device, _fboRenderPass, null);
 
@@ -2143,6 +2325,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _vk?.DestroyInstance(_instance, null);
 
         _input?.Dispose();
+        _fontRasterizer.Dispose();
 
         _logger.LogInformation("Shutdown complete");
     }

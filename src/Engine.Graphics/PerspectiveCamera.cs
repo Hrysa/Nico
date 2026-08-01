@@ -1,6 +1,4 @@
 using System.Numerics;
-using Engine.Core;
-
 namespace Engine.Graphics;
 
 /// <summary>
@@ -8,7 +6,7 @@ namespace Engine.Graphics;
 /// for perspective-correct rendering. Extends Node for scene-graph
 /// integration (Position = eye, Rotation = euler angles).
 /// </summary>
-public class PerspectiveCamera : Node, ICamera
+public class PerspectiveCamera : Node3D, ICamera
 {
     private float _fov;
     private float _aspect;

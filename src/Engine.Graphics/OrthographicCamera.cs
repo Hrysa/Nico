@@ -1,13 +1,11 @@
 using System.Numerics;
-using Engine.Core;
-
 namespace Engine.Graphics;
 
 /// <summary>
 /// A 2D orthographic camera for editor UI rendering and 2D game views.
 /// Supports position-based panning and size-based zooming.
 /// </summary>
-public class OrthographicCamera : Node, ICamera
+public class OrthographicCamera : Node3D, ICamera
 {
     private float _size;
     private float _aspect;

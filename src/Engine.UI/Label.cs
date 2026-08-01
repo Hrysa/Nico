@@ -3,15 +3,15 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>
-/// Displays text using the built-in renderer-independent pixel font.
+/// Displays renderer-independent TrueType text.
 /// </summary>
 public class Label : UIElement
 {
     /// <summary>Gets or sets the displayed text.</summary>
     public string Text { get; set; }
 
-    /// <summary>Gets or sets the size of one font pixel.</summary>
-    public float PixelSize { get; set; } = 2f;
+    /// <summary>Gets or sets the font height in logical pixels.</summary>
+    public float FontSize { get; set; } = UITheme.Dark.FontSize;
 
     /// <summary>Gets or sets the left text inset.</summary>
     public float PaddingLeft { get; set; } = 4f;
@@ -39,8 +39,8 @@ public class Label : UIElement
         if (PaintBackground)
             base.Paint(drawList);
 
-        var textHeight = 7f * PixelSize;
+        var textHeight = FontSize;
         drawList.AddText(Text, Left + PaddingLeft, Top + MathF.Max(0f, (Height - textHeight) / 2f),
-            PixelSize, ForegroundColor);
+            FontSize, ForegroundColor, BackgroundColor);
     }
 }

@@ -24,6 +24,12 @@ public class UIElement : Node
     /// <summary>Gets or sets whether this element is visible.</summary>
     public bool IsVisible { get; set; } = true;
 
+    /// <summary>Gets or sets whether this element can receive pointer hit tests.</summary>
+    public bool IsHitTestVisible { get; set; } = true;
+
+    /// <summary>Gets or sets whether this subtree is composited above viewport textures.</summary>
+    public bool IsOverlay { get; set; }
+
     /// <summary>Gets or sets whether the mouse is hovering over this element.</summary>
     public bool IsHovered { get; set; }
 
@@ -65,6 +71,9 @@ public class UIElement : Node
 
     /// <summary>Occurs when a key is released while this element is focused. Provides key code.</summary>
     public event Action<int>? KeyUp;
+
+    /// <summary>Occurs when text input produces a character while this element is focused.</summary>
+    public event Action<char>? TextInput;
 
     /// <summary>Gets the absolute left edge after applying parent layout positions.</summary>
     public float Left => GetParentLeft() + Position.X;
@@ -211,6 +220,13 @@ public class UIElement : Node
         OnKeyUp(keyCode);
     }
 
+    /// <summary>Raises the <see cref="TextInput"/> event for this element.</summary>
+    /// <param name="character">Produced text character.</param>
+    public void InvokeTextInput(char character)
+    {
+        OnTextInput(character);
+    }
+
     /// <summary>Called when the mouse enters this element. Override for custom hover-on behavior.</summary>
     protected virtual void OnMouseEnter()
     {
@@ -280,6 +296,13 @@ public class UIElement : Node
         KeyUp?.Invoke(keyCode);
     }
 
+    /// <summary>Called when text input produces a character while focused.</summary>
+    /// <param name="character">Produced text character.</param>
+    protected virtual void OnTextInput(char character)
+    {
+        TextInput?.Invoke(character);
+    }
+
     /// <summary>
     /// Appends paint commands for this element.
     /// </summary>
@@ -296,23 +319,26 @@ public class UIElement : Node
     public UIDrawList BuildDrawList()
     {
         var drawList = new UIDrawList();
-        PaintRecursive(drawList);
+        PaintRecursive(drawList, inheritedOverlay: false);
         return drawList;
     }
 
     /// <summary>Recursively appends visible paint commands.</summary>
     /// <param name="drawList">Draw list receiving paint commands.</param>
-    private void PaintRecursive(UIDrawList drawList)
+    /// <param name="inheritedOverlay">Whether an ancestor establishes overlay composition.</param>
+    private void PaintRecursive(UIDrawList drawList, bool inheritedOverlay)
     {
         if (!IsVisible)
             return;
 
+        var overlay = inheritedOverlay || IsOverlay;
+        drawList.CurrentLayer = overlay ? UIDrawLayer.Overlay : UIDrawLayer.Content;
         Paint(drawList);
 
         foreach (var child in Children)
         {
             if (child is UIElement ui)
-                ui.PaintRecursive(drawList);
+                ui.PaintRecursive(drawList, overlay);
         }
     }
 }

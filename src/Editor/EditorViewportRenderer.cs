@@ -13,6 +13,7 @@ public sealed class EditorViewportRenderer
     private readonly uint _sceneViewportId;
     private readonly uint _gameViewportId;
     private readonly PerspectiveCamera _sceneCamera;
+    private ICamera _gameCamera;
     private readonly IReadOnlyList<MeshInstance3D> _sceneObjects;
     private readonly SceneSelectionController _selection;
     private readonly OriginAxesMesh _originAxes = new();
@@ -26,6 +27,7 @@ public sealed class EditorViewportRenderer
     /// <param name="sceneViewportId">Scene viewport identifier.</param>
     /// <param name="gameViewportId">Game viewport identifier.</param>
     /// <param name="sceneCamera">Scene camera.</param>
+    /// <param name="gameCamera">Scene-owned camera used by the Game viewport.</param>
     /// <param name="sceneObjects">Objects rendered in the Scene viewport.</param>
     /// <param name="selection">Selection and gizmo controller.</param>
     public EditorViewportRenderer(
@@ -33,6 +35,7 @@ public sealed class EditorViewportRenderer
         uint sceneViewportId,
         uint gameViewportId,
         PerspectiveCamera sceneCamera,
+        ICamera gameCamera,
         IReadOnlyList<MeshInstance3D> sceneObjects,
         SceneSelectionController selection)
     {
@@ -40,8 +43,17 @@ public sealed class EditorViewportRenderer
         _sceneViewportId = sceneViewportId;
         _gameViewportId = gameViewportId;
         _sceneCamera = sceneCamera;
+        _gameCamera = gameCamera;
         _sceneObjects = sceneObjects;
         _selection = selection;
+    }
+
+    /// <summary>Changes the scene-owned camera used by the Game viewport.</summary>
+    /// <param name="gameCamera">New active game camera.</param>
+    public void SetGameCamera(ICamera gameCamera)
+    {
+        ArgumentNullException.ThrowIfNull(gameCamera);
+        _gameCamera = gameCamera;
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>
@@ -84,30 +96,17 @@ public sealed class EditorViewportRenderer
         _renderer.Submit(_sceneViewportId, _sceneQueue);
     }
 
-    /// <summary>Builds and submits the temporary Game viewport queue.</summary>
+    /// <summary>Builds and submits the scene through the active Game camera.</summary>
     /// <param name="width">Game viewport width.</param>
     /// <param name="height">Game viewport height.</param>
     private void RenderGameViewport(float width, float height)
     {
-        var size = MathF.Min(width, height) * 0.25f;
-        var centerX = width * 0.5f;
-        var centerY = height * 0.5f;
-        var pushConstants = new PushConstants
+        _gameCamera.UpdateViewport(width, height);
+        foreach (var instance in _sceneObjects)
         {
-            Model = Matrix4x4.Identity,
-            View = Matrix4x4.Identity,
-            Projection = Matrix4x4.CreateOrthographicOffCenter(0f, width, 0f, height, -1f, 1f)
-        };
-        var vertices = new[]
-        {
-            new Vertex(new Vector3(centerX - size, centerY - size, 0f), new Vector3(1f, 0.5f, 0f)),
-            new Vertex(new Vector3(centerX - size, centerY + size, 0f), new Vector3(0f, 1f, 0.5f)),
-            new Vertex(new Vector3(centerX + size, centerY + size, 0f), new Vector3(0f, 0.5f, 1f)),
-            new Vertex(new Vector3(centerX + size, centerY + size, 0f), new Vector3(0f, 0.5f, 1f)),
-            new Vertex(new Vector3(centerX + size, centerY - size, 0f), new Vector3(1f, 0f, 0.5f)),
-            new Vertex(new Vector3(centerX - size, centerY - size, 0f), new Vector3(1f, 0.5f, 0f))
-        };
-        _gameQueue.Add(vertices, pushConstants);
+            if (instance.Mesh is { } mesh)
+                _gameQueue.Add(mesh.Vertices, _gameCamera.GetPushConstants(instance.GetModelMatrix()));
+        }
         _renderer.Submit(_gameViewportId, _gameQueue);
     }
 }

@@ -48,7 +48,8 @@ internal unsafe class ViewportFbo
     public void Create(
         Vk vk, Device device, RenderPass fboRenderPass,
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
-        DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
+        DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool,
+        bool allocateDescriptorSet = true)
     {
         // ── Color image ────────────────────────────────────────
         var colorInfo = new ImageCreateInfo
@@ -142,12 +143,19 @@ internal unsafe class ViewportFbo
         vk.CreateSampler(device, in samplerInfo, null, out Sampler);
 
         // ── Descriptor set ──────────────────────────────────────
-        var setLayout = descriptorSetLayout;
-        var descriptorSetInfo = new DescriptorSetAllocateInfo
+        if (allocateDescriptorSet)
         {
-            SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = descriptorPool, DescriptorSetCount = 1, PSetLayouts = &setLayout
-        };
-        vk.AllocateDescriptorSets(device, in descriptorSetInfo, out DescriptorSet);
+            var setLayout = descriptorSetLayout;
+            var descriptorSetInfo = new DescriptorSetAllocateInfo
+            {
+                SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = descriptorPool,
+                DescriptorSetCount = 1, PSetLayouts = &setLayout
+            };
+            var allocationResult = vk.AllocateDescriptorSets(device, in descriptorSetInfo, out DescriptorSet);
+            if (allocationResult != Result.Success)
+                throw new InvalidOperationException(
+                    $"Failed to allocate viewport {Id} texture descriptor: {allocationResult}");
+        }
         var imageInfoDesc = new DescriptorImageInfo { Sampler = Sampler, ImageView = ColorView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
         var writeDescriptor = new WriteDescriptorSet
         {
@@ -178,7 +186,8 @@ internal unsafe class ViewportFbo
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         Destroy(vk, device);
-        Create(vk, device, fboRenderPass, colorFormat, depthFormat, samples, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
+        Create(vk, device, fboRenderPass, colorFormat, depthFormat, samples, deviceLocalMemoryType,
+            descriptorSetLayout, descriptorPool, allocateDescriptorSet: false);
         IsDirty = false;
     }
 }

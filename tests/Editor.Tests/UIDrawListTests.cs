@@ -49,4 +49,19 @@ public class UIDrawListTests
         Assert.Equal(110f, command.Left);
         Assert.Equal(220f, command.Top);
     }
+
+    /// <summary>Verifies text remains a semantic command for backend TrueType rasterization.</summary>
+    [Fact]
+    public void AddText_WithBackground_EmitsTrueTypeCommand()
+    {
+        var drawList = new UIDrawList();
+
+        drawList.AddText("A", 0f, 0f, 14f, Color.White, Color.Black);
+
+        var command = Assert.Single(drawList.Commands);
+        Assert.Equal(UIDrawCommandType.Text, command.Type);
+        Assert.Equal("A", command.Text);
+        Assert.Equal(14f, command.FontPixelHeight);
+        Assert.Equal(Color.Black, command.BackgroundColor);
+    }
 }

@@ -13,6 +13,7 @@ public sealed class TreeView : Panel
     private readonly HashSet<Node> _expanded = [];
     private Node? _selectedItem;
     private int _scrollRow;
+    private readonly UITheme _theme;
 
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
     public float RowHeight { get; set; } = 24f;
@@ -30,9 +31,13 @@ public sealed class TreeView : Panel
     /// <param name="y">Local Y position.</param>
     /// <param name="width">Tree width.</param>
     /// <param name="height">Tree height.</param>
-    public TreeView(float x, float y, float width, float height)
-        : base(x, y, width, height, Color.EditorPanel)
+    /// <param name="theme">Theme supplying tree colors and typography.</param>
+    public TreeView(float x, float y, float width, float height, UITheme? theme = null)
+        : base(x, y, width, height, (theme ?? UITheme.Dark).Surface)
     {
+        _theme = theme ?? UITheme.Dark;
+        ForegroundColor = _theme.TextPrimary;
+        PaintBackground = false;
         Scroll += ScrollRows;
     }
 
@@ -104,7 +109,7 @@ public sealed class TreeView : Panel
         var visibleCount = Math.Max(1, (int)MathF.Ceiling(Height / RowHeight));
         foreach (var (item, depth) in rows.Skip(_scrollRow).Take(visibleCount))
         {
-            var row = new TreeViewItem(Width, RowHeight, item, depth, _expanded.Contains(item))
+            var row = new TreeViewItem(Width, RowHeight, item, depth, _expanded.Contains(item), _theme)
             {
                 Position = new Vector3(0f, Children.Count * RowHeight, 0f),
                 IsSelected = ReferenceEquals(item, _selectedItem)

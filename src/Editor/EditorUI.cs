@@ -18,70 +18,166 @@ public static class EditorUI
     /// <returns>The root <see cref="Panel"/> containing all editor UI elements.</returns>
     public static EditorView BuildView(float width, float height)
     {
-        const float menuBarHeight = 30;
-        const float statusBarHeight = 24;
-        const float separatorWidth = 2;
-        const float hierarchyWidth = 220;
-        const float inspectorWidth = 260;
+        var theme = UITheme.Dark;
+        const float titleBarHeight = 30f;
+        const float toolbarHeight = 48f;
+        const float bottomDockHeight = 30f;
+        const float separatorWidth = 1f;
+        const float hierarchyWidth = 252f;
+        const float inspectorWidth = 300f;
+        const float panelHeaderHeight = 36f;
+        const float viewportToolbarHeight = 36f;
+        const float gameHeaderHeight = 30f;
 
-        var viewportTop = menuBarHeight;
-        var viewportBottom = height - statusBarHeight;
-        var viewportHeight = viewportBottom - viewportTop;
-        var halfViewportHeight = viewportHeight / 2;
+        var workspaceTop = titleBarHeight + toolbarHeight;
+        var workspaceHeight = MathF.Max(0f, height - workspaceTop - bottomDockHeight);
+        var hierarchyHeight = MathF.Floor(workspaceHeight * 0.58f);
+        var filesystemHeight = MathF.Max(0f, workspaceHeight - hierarchyHeight - separatorWidth);
 
-        var background = new Panel(0, 0, width, height, Color.EditorBackground) { Name = "Background" };
-
-        var menuBar = new Panel(0, 0, width, menuBarHeight, Color.EditorMenuBar) { Name = "MenuBar" };
-
-        var fileButton = new Button(4, 3, 60, 24, "File", Color.EditorPanelHeader) { Name = "FileMenu" };
-        var editButton = new Button(68, 3, 60, 24, "Edit", Color.EditorPanelHeader) { Name = "EditMenu" };
-        var viewButton = new Button(132, 3, 60, 24, "View", Color.EditorPanelHeader) { Name = "ViewMenu" };
-
-        menuBar.AddChild(fileButton);
-        menuBar.AddChild(editButton);
-        menuBar.AddChild(viewButton);
-
-        fileButton.Click += () => { Console.WriteLine("File menu clicked"); };
-
-        var statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.EditorStatusBar) { Name = "StatusBar" };
-
-        var hierarchyPanel = new Panel(0, viewportTop, hierarchyWidth, viewportHeight, Color.EditorPanel) { Name = "Hierarchy" };
-        var hierarchyHeader = new Label(0, 0, hierarchyWidth, 30, "Hierarchy")
+        var background = new Panel(0, 0, width, height, theme.Canvas)
         {
-            Name = "HierarchyHeader",
-            BackgroundColor = Color.EditorPanelHeader,
-            PaintBackground = true,
-            PixelSize = 2f,
-            PaddingLeft = 8f
+            Name = "Background",
+            ForegroundColor = theme.TextPrimary
         };
-        var hierarchyTree = new TreeView(0, 30, hierarchyWidth, viewportHeight - 30)
+
+        var titleBar = new TitleBar(width, titleBarHeight, "scene.json — Game Engine", theme);
+        var toolbar = new Surface(0, titleBarHeight, width, toolbarHeight, theme.Canvas, theme.Border)
+        {
+            Name = "Toolbar"
+        };
+        var fileButton = new Button(8f, 8f, 54f, 32f, "File", theme) { Name = "FileMenu" };
+        var projectLabel = new Label(72f, 0f, 180f, toolbarHeight, "scene.json")
+        {
+            Name = "ProjectLabel",
+            FontSize = theme.FontSize,
+            ForegroundColor = theme.TextSecondary,
+            PaddingLeft = 0f
+        };
+        var modeX = MathF.Max(270f, width / 2f - 176f);
+        var sceneMode = new Button(modeX, 8f, 76f, 32f, "3D", theme, ButtonStyle.Primary)
+            { Name = "SceneMode" };
+        var scriptMode = new Button(modeX + 80f, 8f, 82f, 32f, "Script", theme)
+            { Name = "ScriptMode" };
+        var gameMode = new Button(modeX + 166f, 8f, 78f, 32f, "Game", theme)
+            { Name = "GameMode" };
+        var playButton = new Button(width - 68f, 8f, 58f, 32f, "Play", theme, ButtonStyle.Primary)
+            { Name = "Play" };
+
+        toolbar.AddChild(fileButton);
+        toolbar.AddChild(projectLabel);
+        toolbar.AddChild(sceneMode);
+        toolbar.AddChild(scriptMode);
+        toolbar.AddChild(gameMode);
+        toolbar.AddChild(playButton);
+
+        var bottomDock = new Surface(hierarchyWidth + separatorWidth, height - bottomDockHeight,
+            MathF.Max(0f, width - hierarchyWidth - inspectorWidth - separatorWidth * 2f),
+            bottomDockHeight, theme.Surface, theme.Border) { Name = "BottomDock" };
+        bottomDock.AddChild(new Label(14f, 0f, bottomDock.Width - 28f, bottomDockHeight,
+            "Output    Debugger    Audio    Animation")
+        {
+            Name = "BottomDockTabs",
+            FontSize = theme.CaptionFontSize,
+            ForegroundColor = theme.TextSecondary,
+            PaddingLeft = 0f
+        });
+
+        var hierarchyPanel = new Surface(0, workspaceTop, hierarchyWidth, hierarchyHeight,
+            theme.Surface, theme.Border) { Name = "Hierarchy", PaintBackground = false };
+        var hierarchyHeader = new SectionHeader(0, 0, hierarchyWidth, panelHeaderHeight, "Scene", theme)
+            { Name = "HierarchyHeader" };
+        var hierarchyTree = new TreeView(0, panelHeaderHeight, hierarchyWidth,
+            MathF.Max(0f, hierarchyHeight - panelHeaderHeight), theme)
         {
             Name = "HierarchyTree"
         };
         hierarchyPanel.AddChild(hierarchyHeader);
         hierarchyPanel.AddChild(hierarchyTree);
-        var inspectorPanel = new Panel(width - inspectorWidth, viewportTop, inspectorWidth, viewportHeight, Color.EditorPanel) { Name = "Inspector" };
 
-        var separatorLeft = new Panel(hierarchyWidth, viewportTop, separatorWidth, viewportHeight, Color.EditorSeparator) { Name = "SeparatorLeft" };
-        var separatorRight = new Panel(width - inspectorWidth - separatorWidth, viewportTop, separatorWidth, viewportHeight, Color.EditorSeparator) { Name = "SeparatorRight" };
+        var filesystemY = workspaceTop + hierarchyHeight + separatorWidth;
+        var filesystemPanel = new Surface(0, filesystemY, hierarchyWidth, filesystemHeight,
+            theme.Surface, theme.Border) { Name = "FileSystem", PaintBackground = false };
+        filesystemPanel.AddChild(new SectionHeader(0f, 0f, hierarchyWidth, panelHeaderHeight,
+            "FileSystem", theme) { Name = "FileSystemHeader" });
+        filesystemPanel.AddChild(new Label(10f, panelHeaderHeight, hierarchyWidth - 20f, 30f, "res://")
+        {
+            Name = "ProjectRootPath",
+            ForegroundColor = theme.TextSecondary,
+            BackgroundColor = theme.SurfaceRaised,
+            PaintBackground = true,
+            PaddingLeft = 8f,
+            FontSize = theme.FontSize
+        });
+        var fileList = new ListView(0f, panelHeaderHeight + 34f, hierarchyWidth,
+            MathF.Max(0f, filesystemHeight - panelHeaderHeight - 34f), theme) { Name = "ProjectFiles" };
+        fileList.SetItems(["scene.json", "assets", "scripts"]);
+        filesystemPanel.AddChild(fileList);
 
-        var viewportWidth = width - hierarchyWidth - inspectorWidth - (separatorWidth * 2);
+        var inspectorPanel = new Surface(width - inspectorWidth, workspaceTop, inspectorWidth, workspaceHeight,
+            theme.Surface, theme.Border) { Name = "Inspector", PaintBackground = false };
+        inspectorPanel.AddChild(new SectionHeader(0, 0, inspectorWidth, panelHeaderHeight, "Inspector", theme)
+            { Name = "InspectorHeader" });
+        inspectorPanel.AddChild(new TextField(10f, panelHeaderHeight + 8f, inspectorWidth - 20f, 32f, theme)
+        {
+            Name = "PropertyFilter",
+            Placeholder = "Filter Properties"
+        });
+        inspectorPanel.AddChild(new Label(12f, panelHeaderHeight + 52f, inspectorWidth - 24f, 28f,
+            "Select an object to inspect")
+        {
+            Name = "InspectorEmptyState",
+            ForegroundColor = theme.TextMuted,
+            FontSize = theme.FontSize,
+            PaddingLeft = 0f
+        });
+
+        var separatorLeft = new Separator(hierarchyWidth, workspaceTop, separatorWidth, workspaceHeight, theme)
+            { Name = "SeparatorLeft" };
+        var separatorRight = new Separator(width - inspectorWidth - separatorWidth, workspaceTop,
+            separatorWidth, workspaceHeight, theme) { Name = "SeparatorRight" };
+
+        var viewportWidth = MathF.Max(0f, width - hierarchyWidth - inspectorWidth - (separatorWidth * 2f));
         var viewportX = hierarchyWidth + separatorWidth;
-
-        var sceneViewport = new ViewportPanel(viewportX, viewportTop, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "SceneViewport" };
-        var gameViewport = new ViewportPanel(viewportX, viewportTop + halfViewportHeight, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "GameViewport" };
+        var sceneSlotHeight = MathF.Floor(workspaceHeight * 0.73f);
+        var gameSlotHeight = MathF.Max(0f, workspaceHeight - sceneSlotHeight - separatorWidth);
+        var sceneTools = new Surface(viewportX, workspaceTop, viewportWidth, viewportToolbarHeight,
+            theme.SurfaceRaised, theme.Border) { Name = "SceneToolbar" };
+        sceneTools.AddChild(new Button(8f, 4f, 62f, 28f, "Select", theme, ButtonStyle.Primary));
+        sceneTools.AddChild(new Button(74f, 4f, 54f, 28f, "Move", theme));
+        sceneTools.AddChild(new Button(132f, 4f, 62f, 28f, "Rotate", theme));
+        sceneTools.AddChild(new Button(198f, 4f, 58f, 28f, "Scale", theme));
+        sceneTools.AddChild(new Label(viewportWidth - 104f, 0f, 96f, viewportToolbarHeight,
+            "Perspective")
+        {
+            ForegroundColor = theme.TextSecondary,
+            FontSize = theme.CaptionFontSize,
+            PaddingLeft = 0f
+        });
+        var sceneViewport = new ViewportPanel(viewportX, workspaceTop + viewportToolbarHeight,
+            viewportWidth, MathF.Max(0f, sceneSlotHeight - viewportToolbarHeight), theme.Viewport)
+            { Name = "SceneViewport" };
+        var gameHeaderY = workspaceTop + sceneSlotHeight + separatorWidth;
+        var gameHeader = new SectionHeader(viewportX, gameHeaderY, viewportWidth,
+            gameHeaderHeight, "Game", theme) { Name = "GameHeader" };
+        var gameViewport = new ViewportPanel(viewportX, gameHeaderY + gameHeaderHeight,
+            viewportWidth, MathF.Max(0f, gameSlotHeight - gameHeaderHeight), theme.Viewport)
+            { Name = "GameViewport" };
 
         // Assemble tree
-        background.AddChild(menuBar);
-        background.AddChild(statusBar);
+        background.AddChild(titleBar);
+        background.AddChild(toolbar);
+        background.AddChild(bottomDock);
         background.AddChild(hierarchyPanel);
+        background.AddChild(filesystemPanel);
         background.AddChild(inspectorPanel);
         background.AddChild(separatorLeft);
         background.AddChild(separatorRight);
+        background.AddChild(sceneTools);
         background.AddChild(sceneViewport);
+        background.AddChild(gameHeader);
         background.AddChild(gameViewport);
 
-        return new EditorView(background, sceneViewport, gameViewport, hierarchyTree);
+        return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileButton, titleBar);
     }
 
     /// <summary>
@@ -148,8 +244,12 @@ public static class EditorUI
 /// <param name="SceneViewport">Scene viewport panel.</param>
 /// <param name="GameViewport">Game viewport panel.</param>
 /// <param name="HierarchyTree">Scene hierarchy tree.</param>
+/// <param name="FileButton">Button opening scene file actions.</param>
+/// <param name="TitleBar">Custom native-window title bar.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
     ViewportPanel GameViewport,
-    TreeView HierarchyTree);
+    TreeView HierarchyTree,
+    Button FileButton,
+    TitleBar TitleBar);

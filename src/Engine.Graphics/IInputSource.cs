@@ -28,6 +28,9 @@ public interface IInputSource
     /// <summary>Occurs when a key is released.</summary>
     event Action<InputKey>? KeyUp;
 
+    /// <summary>Occurs when keyboard input produces a text character.</summary>
+    event Action<char>? TextInput;
+
     /// <summary>Captures or releases the mouse cursor.</summary>
     /// <param name="captured">True to capture the cursor; otherwise false.</param>
     void SetMouseCaptured(bool captured);

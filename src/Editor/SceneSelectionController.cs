@@ -14,11 +14,11 @@ public sealed class SceneSelectionController
     private readonly EditorGizmo _gizmo = new();
     private bool _consumedPrimaryDown;
 
-    /// <summary>Gets the currently selected scene object.</summary>
-    public MeshInstance3D? SelectedObject { get; private set; }
+    /// <summary>Gets the currently selected transformable scene node.</summary>
+    public Node3D? SelectedNode { get; private set; }
 
-    /// <summary>Occurs when the selected scene object changes.</summary>
-    public event Action<MeshInstance3D?>? SelectionChanged;
+    /// <summary>Occurs when the selected transformable scene node changes.</summary>
+    public event Action<Node3D?>? SelectionChanged;
 
     /// <summary>
     /// Creates a scene-selection controller.
@@ -40,13 +40,13 @@ public sealed class SceneSelectionController
     /// <param name="position">Pointer position.</param>
     public void MovePointer(Vector2 position)
     {
-        if (SelectedObject is null)
+        if (SelectedNode is null)
             return;
 
         if (_gizmo.IsDragging && _gizmo.TryUpdateDrag(position, out var updated))
         {
-            SelectedObject.Position = updated.Position;
-            SelectedObject.Rotation = updated.Rotation;
+            SelectedNode.Position = updated.Position;
+            SelectedNode.Rotation = updated.Rotation;
         }
         else if (!_gizmo.IsDragging)
         {
@@ -63,9 +63,9 @@ public sealed class SceneSelectionController
         if (!insideViewport)
             return;
 
-        if (SelectedObject is not null)
+        if (SelectedNode is not null)
         {
-            var transform = new GizmoTransform(SelectedObject.Position, SelectedObject.Rotation);
+            var transform = new GizmoTransform(SelectedNode.Position, SelectedNode.Rotation);
             if (_gizmo.BeginDrag(position, transform))
             {
                 _consumedPrimaryDown = true;
@@ -76,7 +76,7 @@ public sealed class SceneSelectionController
         var viewport = _getViewport();
         var hit = MeshPicker.Pick(_objects, _camera,
             viewport.X, viewport.Y, viewport.Width, viewport.Height, position);
-        if (ReferenceEquals(hit, SelectedObject))
+        if (ReferenceEquals(hit, SelectedNode))
             return;
 
         Select(hit);
@@ -97,7 +97,7 @@ public sealed class SceneSelectionController
     /// <param name="pointerPosition">Current pointer position.</param>
     public void Update(Vector2 pointerPosition)
     {
-        if (SelectedObject is null)
+        if (SelectedNode is null)
         {
             _gizmo.CancelDrag();
             return;
@@ -105,7 +105,7 @@ public sealed class SceneSelectionController
 
         var viewport = _getViewport();
         _gizmo.UpdateLayout(
-            new GizmoTransform(SelectedObject.Position, SelectedObject.Rotation),
+            new GizmoTransform(SelectedNode.Position, SelectedNode.Rotation),
             _camera.GetViewMatrix(), _camera.GetProjectionMatrix(), viewport);
         if (!_gizmo.IsDragging)
             _gizmo.UpdateHover(pointerPosition);
@@ -115,7 +115,7 @@ public sealed class SceneSelectionController
     /// <returns>Overlay geometry, or an empty array when nothing is selected.</returns>
     public Vertex[] BuildOverlay()
     {
-        return SelectedObject is null ? [] : _gizmo.BuildOverlay();
+        return SelectedNode is null ? [] : _gizmo.BuildOverlay();
     }
 
     /// <summary>Cancels active gizmo interaction.</summary>
@@ -127,12 +127,12 @@ public sealed class SceneSelectionController
 
     /// <summary>Selects a scene object from an external editor surface.</summary>
     /// <param name="item">Object to select, or null to clear selection.</param>
-    public void Select(MeshInstance3D? item)
+    public void Select(Node3D? item)
     {
-        if (ReferenceEquals(item, SelectedObject))
+        if (ReferenceEquals(item, SelectedNode))
             return;
         _gizmo.CancelDrag();
-        SelectedObject = item;
+        SelectedNode = item;
         SelectionChanged?.Invoke(item);
     }
 }

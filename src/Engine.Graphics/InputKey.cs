@@ -16,5 +16,11 @@ public enum InputKey
     RightControl,
     LeftShift,
     RightShift,
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
     Escape
 }
