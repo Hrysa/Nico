@@ -209,6 +209,12 @@ public class PerspectiveCamera : Node, ICamera
         return Matrix4x4.CreateLookAt(eye, target, up);
     }
 
+    /// <inheritdoc/>
+    protected override void OnTransformChanged()
+    {
+        _viewDirty = true;
+    }
+
     /// <summary>
     /// Determines whether every vector component is finite.
     /// </summary>

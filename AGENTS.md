@@ -10,9 +10,9 @@ C# game engine built on **Silk.NET 2.23.0**, targeting **.NET 11.0**. "Editor as
 GameEngine.slnx
 ├── src/Engine.Core/         → pure abstractions (no Silk.NET): Node base class
 ├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): ICamera, IWindow, Vertex, Color
-├── src/Engine.Graphics.Silk/ → Silk.NET implementations: SilkWindow, RenderGraph, ViewportFbo
+├── src/Engine.Graphics.Silk/ → Silk.NET implementations: SilkWindow, FrameScheduler, ViewportFbo
 ├── src/Engine.UI/           → UI element types (UIElement, Panel, Button, ViewportPanel)
-├── src/Engine/              → empty Silk.NET package aggregator (no source)
+├── src/Engine/              → runtime composition facade (EngineHost)
 ├── src/Editor/              → editor app entry point (Program.cs, EditorUI.cs)
 └── src/Player/              → game runtime (Player.csproj)
 ```
@@ -32,17 +32,17 @@ Engine.UI → Engine.Graphics
 ```
 
 - `Engine.Core` contains pure abstractions and domain logic — no Silk.NET. Has `Node` base class.
-- `Engine.Graphics` contains graphics abstractions (interfaces) — no Silk.NET. Has `Color`, `Vertex`, `IGraphicsContext`, `ICamera`, `IWindow`, etc.
-- `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions. Has `RenderGraph` for multi-pass command buffer management.
+- `Engine.Graphics` contains graphics abstractions and renderer-independent scene/render data — no Silk.NET. Has `Color`, `Vertex`, `ICamera`, `IWindow`, `IInputSource`, `IRenderer`, and `RenderQueue`.
+- `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions. `FrameScheduler`, `SwapchainManager`, `FrameVertexBuffers`, and `PipelineResources` own focused Vulkan lifecycles.
 - `Engine.UI` contains UI element types (`UIElement`, `Panel`, `Button`, `ViewportPanel`) — extends `Node` from `Engine.Core`.
 - `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
 ## Rendering Pipeline
 
-### RenderGraph
+### FrameScheduler
 
-`RenderGraph` (in `Engine.Graphics.Silk`) manages per-frame Vulkan synchronization:
+`FrameScheduler` (in `Engine.Graphics.Silk`) manages per-frame Vulkan synchronization:
 
 - **Per-frame resources:** Command pool + fence (2 frames in flight)
 - **Per-pass resources:** Allocated command buffer + semaphore (max 4 passes)
@@ -70,7 +70,7 @@ Engine.UI → Engine.Graphics
 
 - `ICamera` interface in `Engine.Graphics` — `GetViewMatrix()`, `GetProjectionMatrix()`, `GetPushConstants(model)`, `UpdateViewport(w, h)`
 - `PerspectiveCamera` — full implementation with FOV/aspect/near/far, euler-angle rotation, movement, pitch clamping. Vulkan Y-flip and Z [0,1] remap applied in `GetProjectionMatrix()`.
-- `OrthographicCamera` — stubs with TODO methods (Pan, Zoom, Size)
+- `OrthographicCamera` — orthographic projection with viewport updates, panning, and zooming
 - Both extend `Node` (get Position/Rotation/Scale for free)
 - ViewportPanel has `ICamera? Camera` property
 - Scene viewport uses PerspectiveCamera with a rotating cube (36 vertices, 12 triangles)
@@ -99,18 +99,18 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 
 ## Input System
 
-- `IWindow` events: `MouseMove`, `MouseDown`, `MouseUp`, `MouseDoubleClick`, `MouseScroll`, `KeyDown`, `KeyUp`
+- `IInputSource` events: `MouseMove`, `MouseDown`, `MouseUp`, `MouseDoubleClick`, `MouseScroll`, `KeyDown`, `KeyUp`
 - `SilkWindow` subscribes to Silk.NET `IMouse` / `IKeyboard` after window creation
-- Editor `Program.cs` does recursive hit testing against UI tree, dispatches to elements via `SetHover()` / `SetPressed()` / `InvokeClick()`
+- `UIEventRouter` performs recursive hit testing and dispatches hover, press, click, and scroll state.
 
 ## Viewport System
 
 - `ViewportPanel` extends `Panel` — tracks `ViewportId`, `Camera`, resize detection
 - `ViewportFbo` — per-viewport Vulkan resources (color image, framebuffer, sampler, descriptor set)
-- `IWindow.RegisterViewport()` / `UnregisterViewport()` / `ResizeViewport()`
+- `IRenderer.RegisterViewport()` / `UnregisterViewport()` / `ResizeViewport()`
 - `IWindow.Update` — event fired each frame with delta time (logic goes here)
-- `IWindow.DrawInViewport()` — queues vertices for FBO pass (call from Update handler)
-- `IWindow.SetViewportClearColor()` — per-viewport clear color
+- `IRenderer.DrawInViewport()` — queues vertices for FBO pass (call from Update handler)
+- `IRenderer.SetViewportClearColor()` — per-viewport clear color
 
 ## Coding Conventions
 

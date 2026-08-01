@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.Core;
 using Silk.NET.Core.Native;
 using Silk.NET.Input;
@@ -11,11 +12,12 @@ using Silk.NET.Windowing;
 
 namespace Engine.Graphics;
 
-public unsafe class SilkWindow : IWindow
+public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 {
     private const uint MaxFramesInFlight = 2;
 
     private readonly ILogger _logger;
+    private bool _shutdown;
     private Silk.NET.Windowing.IWindow? _window;
     private IInputContext? _input;
     private IMouse? _mouse;
@@ -24,35 +26,22 @@ public unsafe class SilkWindow : IWindow
     private Instance _instance;
     private SurfaceKHR _surface;
     private PhysicalDevice _physicalDevice;
+    private SampleCountFlags _msaaSamples = SampleCountFlags.Count1Bit;
     private Device _device;
     private Queue _graphicsQueue;
     private Queue _presentQueue;
     private KhrSurface? _khrSurface;
-    private KhrSwapchain? _khrSwapchain;
-    private SwapchainKHR _swapchain;
-    private Extent2D _swapchainExtent;
-    private Image[]? _swapchainImages;
-    private ImageView[]? _swapchainImageViews;
+    private SwapchainManager? _swapchainManager;
     private RenderPass _renderPass;
-    private Framebuffer[]? _framebuffers;
-    private CommandPool _commandPool;
-    private CommandBuffer[]? _commandBuffers;
     private Silk.NET.Vulkan.Semaphore[]? _imageAvailableSemaphores;
     private bool _framebufferResized;
 
     private Vk? _vk;
 
     // Render graph for per-pass command buffers
-    private RenderGraph? _renderGraph;
+    private FrameScheduler? _frameScheduler;
 
-    // New: Shader modules
-    private ShaderModule _vertShaderModule;
-    private ShaderModule _fragShaderModule;
-
-    // New: Graphics pipeline
-    private PipelineLayout _pipelineLayout;
-    private Pipeline _graphicsPipeline;
-    private Pipeline _fboGraphicsPipeline;
+    private PipelineResources _pipelines = null!;
 
     // New: Vertex buffer
     private Silk.NET.Vulkan.Buffer _vertexBuffer;
@@ -60,47 +49,23 @@ public unsafe class SilkWindow : IWindow
     private Vertex[] _vertices = [];
     private uint _vertexCount;
     private PushConstants _pushConstants;
-
-    // New: Uniform buffer + descriptor set
-    private DescriptorSetLayout _descriptorSetLayout;
-    private DescriptorPool _descriptorPool;
-    private DescriptorSet _descriptorSet;
-    private Silk.NET.Vulkan.Buffer _uniformBuffer;
-    private DeviceMemory _uniformBufferMemory;
-    private void* _uniformBufferMapped;
+    private uint _vertexBufferCapacity;
 
     // Viewport FBO management
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
     private readonly Dictionary<uint, (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint vertexCount)> _viewportQuadBuffers = new();
     private readonly Dictionary<uint, List<(Vertex[] vertices, PushConstants pushConstants)>> _pendingViewportDraws = new();
+    private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private uint _nextViewportId = 1;
     private RenderPass _fboRenderPass;
 
     // Persistent buffer for viewport draws (reused each frame)
-    private Silk.NET.Vulkan.Buffer _viewportDrawBuffer;
-    private DeviceMemory _viewportDrawBufferMemory;
-    private void* _viewportDrawBufferMapped;
-    private uint _viewportDrawBufferCapacity;
+    private FrameVertexBuffers? _viewportDrawBuffers;
 
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
-    private Silk.NET.Vulkan.Buffer _overlayBuffer;
-    private DeviceMemory _overlayBufferMemory;
-    private void* _overlayBufferMapped;
-    private uint _overlayBufferCapacity;
-
-    // Shared texture pipeline resources
-    private DescriptorSetLayout _textureDescriptorSetLayout;
-    private DescriptorPool _textureDescriptorPool;
-
-    // Textured quad pipeline
-    private ShaderModule _textureVertShaderModule;
-    private ShaderModule _textureFragShaderModule;
-    private PipelineLayout _texturePipelineLayout;
-    private Pipeline _texturePipeline;
-
-    // FBO pipeline
-    private PipelineLayout _fboPipelineLayout;
+    private FrameVertexBuffers? _overlayBuffers;
+    private uint _activeFrameIndex;
 
     public bool IsRunning => _window != null && !_window.IsClosing;
 
@@ -120,14 +85,29 @@ public unsafe class SilkWindow : IWindow
     public event Action<float>? MouseScroll;
 
     /// <inheritdoc/>
-    public event Action<int>? KeyDown;
+    public event Action<InputKey>? KeyDown;
 
     /// <inheritdoc/>
-    public event Action<int>? KeyUp;
+    public event Action<InputKey>? KeyUp;
 
     /// <inheritdoc/>
     public event Action<double>? Update;
 
+    /// <inheritdoc/>
+    public event Action<int, int>? Resized;
+
+    /// <summary>
+    /// Creates a window using a disabled logger.
+    /// </summary>
+    public SilkWindow()
+        : this(NullLoggerFactory.Instance)
+    {
+    }
+
+    /// <summary>
+    /// Creates a window using the supplied logger factory.
+    /// </summary>
+    /// <param name="loggerFactory">Factory used to create backend loggers.</param>
     public SilkWindow(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<SilkWindow>();
@@ -135,6 +115,10 @@ public unsafe class SilkWindow : IWindow
 
     public void Initialize(WindowOptions options)
     {
+        if (_window is not null)
+            throw new InvalidOperationException("The window has already been initialized.");
+
+        _shutdown = false;
         _logger.LogInformation("Creating window '{Title}' ({Width}x{Height}) [Vulkan]", options.Title, options.Width, options.Height);
 
         var settings = new Silk.NET.Windowing.WindowOptions
@@ -157,10 +141,11 @@ public unsafe class SilkWindow : IWindow
         _logger.LogInformation("Window initialized");
     }
 
-    public void SetVertices(Vertex[] vertices)
+    /// <inheritdoc/>
+    public void SetUI(UIDrawList drawList)
     {
-        _vertices = vertices;
-        _vertexCount = (uint)vertices.Length;
+        _vertices = BuildUIVertices(drawList);
+        _vertexCount = (uint)_vertices.Length;
     }
 
     public void SetPushConstants(PushConstants pushConstants)
@@ -198,15 +183,19 @@ public unsafe class SilkWindow : IWindow
         CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
-        _renderGraph = new RenderGraph(_vk!, _device, _graphicsQueue, FindQueueFamilies(_physicalDevice).GraphicsFamily!.Value);
+        _pipelines = new PipelineResources(_vk!, _device);
+        _frameScheduler = new FrameScheduler(_vk!, _device, _graphicsQueue, FindQueueFamilies(_physicalDevice).GraphicsFamily!.Value);
+        _viewportDrawBuffers = new FrameVertexBuffers(_vk, _device, MaxFramesInFlight, 1024,
+            "viewport draw", FindMemoryType, _logger);
+        _overlayBuffers = new FrameVertexBuffers(_vk, _device, MaxFramesInFlight, 256,
+            "overlay", FindMemoryType, _logger);
         CreateSwapchain();
         CreateFboRenderPass();
         CreateRenderPass();
         CreateGraphicsPipeline();
         CreateFboGraphicsPipeline();
+        CreateGridPipeline();
         CreateFramebuffers();
-        CreateCommandPool();
-        CreateCommandBuffers();
         CreateSyncObjects();
         CreateTexturePipeline();
 
@@ -231,6 +220,7 @@ public unsafe class SilkWindow : IWindow
     private void OnResize(Vector2D<int> size)
     {
         _framebufferResized = true;
+        Resized?.Invoke(size.X, size.Y);
     }
 
     private void OnMouseMove(IMouse mouse, Vector2 pos)
@@ -260,12 +250,54 @@ public unsafe class SilkWindow : IWindow
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int keyCode)
     {
-        KeyDown?.Invoke((int)key);
+        KeyDown?.Invoke(ToInputKey(key));
     }
 
     private void OnKeyUp(IKeyboard keyboard, Key key, int keyCode)
     {
-        KeyUp?.Invoke((int)key);
+        KeyUp?.Invoke(ToInputKey(key));
+    }
+
+    /// <inheritdoc/>
+    public void SetMouseCaptured(bool captured)
+    {
+        if (_mouse is null)
+            return;
+
+        var cursor = _mouse.Cursor;
+        if (!captured)
+        {
+            cursor.CursorMode = CursorMode.Normal;
+            return;
+        }
+
+        cursor.CursorMode = cursor.IsSupported(CursorMode.Raw)
+            ? CursorMode.Raw
+            : CursorMode.Disabled;
+    }
+
+    /// <summary>
+    /// Maps a Silk.NET key to the engine input abstraction.
+    /// </summary>
+    /// <param name="key">Silk.NET keyboard key.</param>
+    /// <returns>The corresponding engine key.</returns>
+    private static InputKey ToInputKey(Key key)
+    {
+        return key switch
+        {
+            Key.A => InputKey.A,
+            Key.D => InputKey.D,
+            Key.F => InputKey.F,
+            Key.S => InputKey.S,
+            Key.W => InputKey.W,
+            Key.Space => InputKey.Space,
+            Key.ControlLeft => InputKey.LeftControl,
+            Key.ControlRight => InputKey.RightControl,
+            Key.ShiftLeft => InputKey.LeftShift,
+            Key.ShiftRight => InputKey.RightShift,
+            Key.Escape => InputKey.Escape,
+            _ => InputKey.Unknown
+        };
     }
 
     private void CreateInstance()
@@ -313,7 +345,8 @@ public unsafe class SilkWindow : IWindow
 
     private string[] GetRequiredInstanceExtensions()
     {
-        var windowExts = _window!.VkSurface.GetRequiredExtensions(out var count);
+        var surface = _window!.VkSurface ?? throw new InvalidOperationException("Window does not expose a Vulkan surface.");
+        var windowExts = surface.GetRequiredExtensions(out var count);
         var extensions = new string[count];
         for (var i = 0; i < count; i++)
             extensions[i] = SilkMarshal.PtrToString((nint)windowExts[i], NativeStringEncoding.UTF8)!;
@@ -324,7 +357,8 @@ public unsafe class SilkWindow : IWindow
     {
         _logger.LogDebug("Creating VkSurfaceKHR");
 
-        var surfaceHandle = _window!.VkSurface.Create<AllocationCallbacks>(new VkHandle(_instance.Handle), null);
+        var surface = _window!.VkSurface ?? throw new InvalidOperationException("Window does not expose a Vulkan surface.");
+        var surfaceHandle = surface.Create<AllocationCallbacks>(new VkHandle(_instance.Handle), null);
         _surface = new SurfaceKHR(surfaceHandle.Handle);
 
         _logger.LogInformation("VkSurfaceKHR created");
@@ -349,7 +383,9 @@ public unsafe class SilkWindow : IWindow
             {
                 _physicalDevice = device;
                 var props = _vk.GetPhysicalDeviceProperties(device);
+                _msaaSamples = SelectMsaaSamples(props);
                 _logger.LogInformation("Using GPU: {Name}", SilkMarshal.PtrToString((nint)props.DeviceName, NativeStringEncoding.UTF8));
+                _logger.LogInformation("Viewport MSAA: {Samples}", _msaaSamples);
                 return;
             }
         }
@@ -357,10 +393,30 @@ public unsafe class SilkWindow : IWindow
         throw new Exception("No suitable Vulkan physical device found");
     }
 
+    /// <summary>
+    /// Selects the highest color/depth sample count up to four samples.
+    /// </summary>
+    /// <param name="properties">Physical-device properties.</param>
+    /// <returns>The selected sample count.</returns>
+    private static SampleCountFlags SelectMsaaSamples(PhysicalDeviceProperties properties)
+    {
+        var supported = properties.Limits.FramebufferColorSampleCounts
+            & properties.Limits.FramebufferDepthSampleCounts;
+        if ((supported & SampleCountFlags.Count4Bit) != 0)
+            return SampleCountFlags.Count4Bit;
+        if ((supported & SampleCountFlags.Count2Bit) != 0)
+            return SampleCountFlags.Count2Bit;
+        return SampleCountFlags.Count1Bit;
+    }
+
     private bool IsDeviceSuitable(PhysicalDevice device)
     {
         var indices = FindQueueFamilies(device);
-        return indices.GraphicsFamily.HasValue && indices.PresentFamily.HasValue;
+        if (!indices.GraphicsFamily.HasValue || !indices.PresentFamily.HasValue)
+            return false;
+
+        var support = SwapchainManager.QuerySupport(_khrSurface!, device, _surface);
+        return support.Formats.Length > 0 && support.PresentModes.Length > 0;
     }
 
     private QueueFamilyIndices FindQueueFamilies(PhysicalDevice device)
@@ -428,98 +484,19 @@ public unsafe class SilkWindow : IWindow
                 throw new Exception($"Failed to create logical device: {result}");
         }
 
-        _vk.GetDeviceQueue(_device, indices.GraphicsFamily.Value, 0, out _graphicsQueue);
-        _vk.GetDeviceQueue(_device, indices.PresentFamily.Value, 0, out _presentQueue);
+        _vk.GetDeviceQueue(_device, indices.GraphicsFamily!.Value, 0, out _graphicsQueue);
+        _vk.GetDeviceQueue(_device, indices.PresentFamily!.Value, 0, out _presentQueue);
 
         _logger.LogInformation("Logical device created");
     }
 
     private void CreateSwapchain()
     {
-        _logger.LogDebug("Creating swapchain");
-
-        var support = QuerySwapchainSupport(_physicalDevice);
-        var surfaceFormat = ChooseSwapSurfaceFormat(support.Formats);
-        var presentMode = ChooseSwapPresentMode(support.PresentModes);
-        var extent = ChooseSwapExtent(support.Capabilities);
-
-        uint imageCount = support.Capabilities.MinImageCount + 1;
-        if (support.Capabilities.MaxImageCount > 0 && imageCount > support.Capabilities.MaxImageCount)
-            imageCount = support.Capabilities.MaxImageCount;
-
-        var createInfo = new SwapchainCreateInfoKHR
-        {
-            SType = StructureType.SwapchainCreateInfoKhr,
-            Surface = _surface,
-            MinImageCount = imageCount,
-            ImageFormat = surfaceFormat.Format,
-            ImageColorSpace = surfaceFormat.ColorSpace,
-            ImageExtent = extent,
-            ImageArrayLayers = 1,
-            ImageUsage = ImageUsageFlags.ColorAttachmentBit
-        };
-
+        var windowSize = _window!.Size;
         var indices = FindQueueFamilies(_physicalDevice);
-
-        if (indices.GraphicsFamily != indices.PresentFamily)
-        {
-            var queueFamilyIndices = new[] { indices.GraphicsFamily!.Value, indices.PresentFamily!.Value };
-            fixed (uint* p = queueFamilyIndices)
-            {
-                createInfo.ImageSharingMode = SharingMode.Concurrent;
-                createInfo.QueueFamilyIndexCount = 2;
-                createInfo.PQueueFamilyIndices = p;
-            }
-        }
-        else
-        {
-            createInfo.ImageSharingMode = SharingMode.Exclusive;
-        }
-
-        createInfo.PreTransform = support.Capabilities.CurrentTransform;
-        createInfo.CompositeAlpha = CompositeAlphaFlagsKHR.OpaqueBitKhr;
-        createInfo.PresentMode = presentMode;
-        createInfo.Clipped = new Bool32(true);
-        createInfo.OldSwapchain = default;
-
-        _khrSwapchain ??= new KhrSwapchain(_vk!.Context);
-
-        var result = _khrSwapchain.CreateSwapchain(_device, &createInfo, null, out _swapchain);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create swapchain: {result}");
-
-        _khrSwapchain.GetSwapchainImages(_device, _swapchain, &imageCount, null);
-        _swapchainImages = new Image[imageCount];
-        fixed (Image* pImages = _swapchainImages)
-            _khrSwapchain.GetSwapchainImages(_device, _swapchain, &imageCount, pImages);
-
-        _swapchainExtent = extent;
-        _swapchainImageViews = new ImageView[imageCount];
-
-        for (var i = 0u; i < imageCount; i++)
-        {
-            var imageViewInfo = new ImageViewCreateInfo
-            {
-                SType = StructureType.ImageViewCreateInfo,
-                Image = _swapchainImages[i],
-                ViewType = ImageViewType.Type2D,
-                Format = surfaceFormat.Format,
-                SubresourceRange = new ImageSubresourceRange
-                {
-                    AspectMask = ImageAspectFlags.ColorBit,
-                    BaseMipLevel = 0,
-                    LevelCount = 1,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1
-                }
-            };
-
-            result = _vk!.CreateImageView(_device, &imageViewInfo, null, out _swapchainImageViews[i]);
-            if (result != Result.Success)
-                throw new Exception($"Failed to create swapchain image view: {result}");
-        }
-
-        _logger.LogInformation("Swapchain created ({Width}x{Height}, {Count} images)", extent.Width, extent.Height, imageCount);
+        _swapchainManager = new SwapchainManager(_vk!, _device, _physicalDevice, _surface,
+            _khrSurface!, indices.GraphicsFamily!.Value, indices.PresentFamily!.Value, _logger);
+        _swapchainManager.Create((uint)Math.Max(windowSize.X, 0), (uint)Math.Max(windowSize.Y, 0));
     }
 
     private void RecreateSwapchain()
@@ -532,22 +509,12 @@ public unsafe class SilkWindow : IWindow
         }
 
         _vk!.DeviceWaitIdle(_device);
-        CleanupSwapchain();
-        CreateSwapchain();
-        CreateFramebuffers();
+        _swapchainManager!.Recreate((uint)size.X, (uint)size.Y, _renderPass);
     }
 
     private void CleanupSwapchain()
     {
-        if (_framebuffers != null)
-            foreach (var fb in _framebuffers)
-                _vk!.DestroyFramebuffer(_device, fb, null);
-
-        if (_swapchainImageViews != null)
-            foreach (var iv in _swapchainImageViews)
-                _vk!.DestroyImageView(_device, iv, null);
-
-        _khrSwapchain?.DestroySwapchain(_device, _swapchain, null);
+        _swapchainManager?.Destroy();
     }
 
     private void CreateRenderPass()
@@ -556,7 +523,7 @@ public unsafe class SilkWindow : IWindow
 
         var colorAttachment = new AttachmentDescription
         {
-            Format = GetSwapchainImageFormat(),
+            Format = _swapchainManager!.ImageFormat,
             Samples = SampleCountFlags.Count1Bit,
             LoadOp = AttachmentLoadOp.Clear,
             StoreOp = AttachmentStoreOp.Store,
@@ -622,7 +589,7 @@ public unsafe class SilkWindow : IWindow
                 CodeSize = (nuint)(vertCode.Length * sizeof(uint)),
                 PCode = pVertCode
             };
-            var result = _vk!.CreateShaderModule(_device, &vertModuleInfo, null, out _vertShaderModule);
+            var result = _vk!.CreateShaderModule(_device, &vertModuleInfo, null, out _pipelines.UiVertexShader);
             if (result != Result.Success)
                 throw new Exception($"Failed to create vertex shader module: {result}");
         }
@@ -635,7 +602,7 @@ public unsafe class SilkWindow : IWindow
                 CodeSize = (nuint)(fragCode.Length * sizeof(uint)),
                 PCode = pFragCode
             };
-            var result = _vk!.CreateShaderModule(_device, &fragModuleInfo, null, out _fragShaderModule);
+            var result = _vk!.CreateShaderModule(_device, &fragModuleInfo, null, out _pipelines.UiFragmentShader);
             if (result != Result.Success)
                 throw new Exception($"Failed to create fragment shader module: {result}");
         }
@@ -646,7 +613,7 @@ public unsafe class SilkWindow : IWindow
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
-            Module = _vertShaderModule,
+            Module = _pipelines.UiVertexShader,
             PName = (byte*)entryPointName
         };
 
@@ -654,7 +621,7 @@ public unsafe class SilkWindow : IWindow
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.FragmentBit,
-            Module = _fragShaderModule,
+            Module = _pipelines.UiFragmentShader,
             PName = (byte*)entryPointName
         };
 
@@ -768,7 +735,7 @@ public unsafe class SilkWindow : IWindow
                     PPushConstantRanges = &pushConstantRange
                 };
 
-                var result = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _pipelineLayout);
+                var result = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _pipelines.UiLayout);
                 if (result != Result.Success)
                     throw new Exception($"Failed to create pipeline layout: {result}");
 
@@ -787,13 +754,13 @@ public unsafe class SilkWindow : IWindow
                         PMultisampleState = &multisampling,
                         PColorBlendState = &colorBlending,
                         PDynamicState = &dynamicStateInfo,
-                        Layout = _pipelineLayout,
+                        Layout = _pipelines.UiLayout,
                         RenderPass = _renderPass,
                         Subpass = 0,
                         BasePipelineHandle = default
                     };
 
-                    result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _graphicsPipeline);
+                    result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _pipelines.UiPipeline);
                     if (result != Result.Success)
                         throw new Exception($"Failed to create graphics pipeline: {result}");
                 }
@@ -929,7 +896,7 @@ public unsafe class SilkWindow : IWindow
                 {
                     SType = StructureType.PipelineMultisampleStateCreateInfo,
                     SampleShadingEnable = new Bool32(false),
-                    RasterizationSamples = SampleCountFlags.Count1Bit
+                    RasterizationSamples = _msaaSamples
                 };
 
                 var depthStencilState = new PipelineDepthStencilStateCreateInfo
@@ -970,7 +937,7 @@ public unsafe class SilkWindow : IWindow
                     PPushConstantRanges = &pushConstantRange
                 };
 
-                var r = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _fboPipelineLayout);
+                var r = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _pipelines.ViewportLayout);
                 if (r != Result.Success) throw new Exception($"Failed to create FBO pipeline layout: {r}");
 
                 fixed (PipelineShaderStageCreateInfo* pStages = shaderStages)
@@ -988,13 +955,13 @@ public unsafe class SilkWindow : IWindow
                         PDepthStencilState = &depthStencilState,
                         PColorBlendState = &colorBlending,
                         PDynamicState = &dynamicStateInfo,
-                        Layout = _fboPipelineLayout,
+                        Layout = _pipelines.ViewportLayout,
                         RenderPass = _fboRenderPass,
                         Subpass = 0,
                         BasePipelineHandle = default
                     };
 
-                    r = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _fboGraphicsPipeline);
+                    r = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _pipelines.ViewportPipeline);
                     if (r != Result.Success) throw new Exception($"Failed to create FBO graphics pipeline: {r}");
                 }
             }
@@ -1002,6 +969,163 @@ public unsafe class SilkWindow : IWindow
 
         SilkMarshal.Free(entryPointName);
         _logger.LogInformation("FBO graphics pipeline created");
+    }
+
+    /// <summary>
+    /// Creates the fullscreen procedural ground-grid pipeline for viewport FBOs.
+    /// </summary>
+    private void CreateGridPipeline()
+    {
+        _logger.LogDebug("Creating procedural grid pipeline");
+
+        _pipelines.GridVertexShader = CreateShaderModule("grid.vert.spv");
+        _pipelines.GridFragmentShader = CreateShaderModule("grid.frag.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+
+        var shaderStages = new[]
+        {
+            new PipelineShaderStageCreateInfo
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = ShaderStageFlags.VertexBit,
+                Module = _pipelines.GridVertexShader,
+                PName = (byte*)entryPointName
+            },
+            new PipelineShaderStageCreateInfo
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = ShaderStageFlags.FragmentBit,
+                Module = _pipelines.GridFragmentShader,
+                PName = (byte*)entryPointName
+            }
+        };
+
+        var vertexInputInfo = new PipelineVertexInputStateCreateInfo
+        {
+            SType = StructureType.PipelineVertexInputStateCreateInfo
+        };
+        var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+        {
+            SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+            Topology = PrimitiveTopology.TriangleList
+        };
+        var dynamicStates = new[] { DynamicState.Viewport, DynamicState.Scissor };
+
+        fixed (DynamicState* pDynamicStates = dynamicStates)
+        fixed (PipelineShaderStageCreateInfo* pStages = shaderStages)
+        {
+            var dynamicStateInfo = new PipelineDynamicStateCreateInfo
+            {
+                SType = StructureType.PipelineDynamicStateCreateInfo,
+                DynamicStateCount = (uint)dynamicStates.Length,
+                PDynamicStates = pDynamicStates
+            };
+            var viewportState = new PipelineViewportStateCreateInfo
+            {
+                SType = StructureType.PipelineViewportStateCreateInfo,
+                ViewportCount = 1,
+                ScissorCount = 1
+            };
+            var rasterizer = new PipelineRasterizationStateCreateInfo
+            {
+                SType = StructureType.PipelineRasterizationStateCreateInfo,
+                PolygonMode = PolygonMode.Fill,
+                CullMode = CullModeFlags.None,
+                FrontFace = FrontFace.CounterClockwise,
+                LineWidth = 1f
+            };
+            var multisampling = new PipelineMultisampleStateCreateInfo
+            {
+                SType = StructureType.PipelineMultisampleStateCreateInfo,
+                RasterizationSamples = _msaaSamples
+            };
+            var depthStencilState = new PipelineDepthStencilStateCreateInfo
+            {
+                SType = StructureType.PipelineDepthStencilStateCreateInfo,
+                DepthTestEnable = new Bool32(true),
+                DepthWriteEnable = new Bool32(true),
+                DepthCompareOp = CompareOp.LessOrEqual
+            };
+            var blendAttachment = new PipelineColorBlendAttachmentState
+            {
+                ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+                BlendEnable = new Bool32(true),
+                SrcColorBlendFactor = BlendFactor.SrcAlpha,
+                DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                ColorBlendOp = BlendOp.Add,
+                SrcAlphaBlendFactor = BlendFactor.One,
+                DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                AlphaBlendOp = BlendOp.Add
+            };
+            var colorBlending = new PipelineColorBlendStateCreateInfo
+            {
+                SType = StructureType.PipelineColorBlendStateCreateInfo,
+                AttachmentCount = 1,
+                PAttachments = &blendAttachment
+            };
+            var pushConstantRange = new PushConstantRange
+            {
+                StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                Size = (uint)sizeof(GridPushConstants)
+            };
+            var pipelineLayoutInfo = new PipelineLayoutCreateInfo
+            {
+                SType = StructureType.PipelineLayoutCreateInfo,
+                PushConstantRangeCount = 1,
+                PPushConstantRanges = &pushConstantRange
+            };
+
+            var result = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _pipelines.GridLayout);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create grid pipeline layout: {result}");
+
+            var pipelineInfo = new GraphicsPipelineCreateInfo
+            {
+                SType = StructureType.GraphicsPipelineCreateInfo,
+                StageCount = (uint)shaderStages.Length,
+                PStages = pStages,
+                PVertexInputState = &vertexInputInfo,
+                PInputAssemblyState = &inputAssembly,
+                PViewportState = &viewportState,
+                PRasterizationState = &rasterizer,
+                PMultisampleState = &multisampling,
+                PDepthStencilState = &depthStencilState,
+                PColorBlendState = &colorBlending,
+                PDynamicState = &dynamicStateInfo,
+                Layout = _pipelines.GridLayout,
+                RenderPass = _fboRenderPass
+            };
+
+            result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _pipelines.GridPipeline);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create grid pipeline: {result}");
+        }
+
+        SilkMarshal.Free(entryPointName);
+        _logger.LogInformation("Procedural grid pipeline created");
+    }
+
+    /// <summary>
+    /// Creates one Vulkan shader module from an embedded SPIR-V resource.
+    /// </summary>
+    /// <param name="resourceName">Embedded SPIR-V resource name.</param>
+    /// <returns>The created shader module.</returns>
+    private ShaderModule CreateShaderModule(string resourceName)
+    {
+        var code = LoadSpirV(resourceName);
+        fixed (uint* pCode = code)
+        {
+            var createInfo = new ShaderModuleCreateInfo
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)(code.Length * sizeof(uint)),
+                PCode = pCode
+            };
+            var result = _vk!.CreateShaderModule(_device, &createInfo, null, out var shaderModule);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create shader module '{resourceName}': {result}");
+            return shaderModule;
+        }
     }
 
     private uint[] LoadSpirV(string resourceName)
@@ -1023,31 +1147,41 @@ public unsafe class SilkWindow : IWindow
 
     private void CreateFboRenderPass()
     {
-        _logger.LogDebug("Creating FBO render pass (color only)");
+        _logger.LogDebug("Creating multisampled FBO render pass");
 
-        var format = GetSwapchainImageFormat();
+        var format = _swapchainManager!.ImageFormat;
         var depthFormat = FindDepthFormat();
 
         var attachments = stackalloc[] { new AttachmentDescription
         {
             Format = format,
-            Samples = SampleCountFlags.Count1Bit,
+            Samples = _msaaSamples,
             LoadOp = AttachmentLoadOp.Clear,
-            StoreOp = AttachmentStoreOp.Store,
+            StoreOp = AttachmentStoreOp.DontCare,
             StencilLoadOp = AttachmentLoadOp.DontCare,
             StencilStoreOp = AttachmentStoreOp.DontCare,
             InitialLayout = ImageLayout.Undefined,
-            FinalLayout = ImageLayout.ShaderReadOnlyOptimal
+            FinalLayout = ImageLayout.ColorAttachmentOptimal
         }, new AttachmentDescription
         {
             Format = depthFormat,
-            Samples = SampleCountFlags.Count1Bit,
+            Samples = _msaaSamples,
             LoadOp = AttachmentLoadOp.Clear,
             StoreOp = AttachmentStoreOp.DontCare,
             StencilLoadOp = AttachmentLoadOp.DontCare,
             StencilStoreOp = AttachmentStoreOp.DontCare,
             InitialLayout = ImageLayout.Undefined,
             FinalLayout = ImageLayout.DepthStencilAttachmentOptimal
+        }, new AttachmentDescription
+        {
+            Format = format,
+            Samples = SampleCountFlags.Count1Bit,
+            LoadOp = AttachmentLoadOp.DontCare,
+            StoreOp = AttachmentStoreOp.Store,
+            StencilLoadOp = AttachmentLoadOp.DontCare,
+            StencilStoreOp = AttachmentStoreOp.DontCare,
+            InitialLayout = ImageLayout.Undefined,
+            FinalLayout = ImageLayout.ShaderReadOnlyOptimal
         } };
 
         var colorAttachmentRef = new AttachmentReference
@@ -1062,11 +1196,18 @@ public unsafe class SilkWindow : IWindow
             Layout = ImageLayout.DepthStencilAttachmentOptimal
         };
 
+        var resolveAttachmentRef = new AttachmentReference
+        {
+            Attachment = 2,
+            Layout = ImageLayout.ColorAttachmentOptimal
+        };
+
         var subpassDescription = new SubpassDescription
         {
             PipelineBindPoint = PipelineBindPoint.Graphics,
             ColorAttachmentCount = 1,
             PColorAttachments = &colorAttachmentRef,
+            PResolveAttachments = &resolveAttachmentRef,
             PDepthStencilAttachment = &depthAttachmentRef
         };
 
@@ -1083,7 +1224,7 @@ public unsafe class SilkWindow : IWindow
         var renderPassInfo = new RenderPassCreateInfo
         {
             SType = StructureType.RenderPassCreateInfo,
-            AttachmentCount = 2,
+            AttachmentCount = 3,
             PAttachments = attachments,
             SubpassCount = 1,
             PSubpasses = &subpassDescription,
@@ -1095,7 +1236,7 @@ public unsafe class SilkWindow : IWindow
         if (result != Result.Success)
             throw new Exception($"Failed to create FBO render pass: {result}");
 
-        _logger.LogInformation("FBO render pass created (color + depth)");
+        _logger.LogInformation("FBO render pass created ({Samples} MSAA + resolve + depth)", _msaaSamples);
     }
 
     private void CreateTexturePipeline()
@@ -1117,7 +1258,7 @@ public unsafe class SilkWindow : IWindow
             BindingCount = 1,
             PBindings = &binding
         };
-        var result = _vk!.CreateDescriptorSetLayout(_device, &layoutInfo, null, out _textureDescriptorSetLayout);
+        var result = _vk!.CreateDescriptorSetLayout(_device, &layoutInfo, null, out _pipelines.TextureDescriptorSetLayout);
         if (result != Result.Success)
             throw new Exception($"Failed to create texture descriptor set layout: {result}");
 
@@ -1135,7 +1276,7 @@ public unsafe class SilkWindow : IWindow
             PPoolSizes = &poolSize,
             MaxSets = maxViewports
         };
-        result = _vk.CreateDescriptorPool(_device, &poolInfo, null, out _textureDescriptorPool);
+        result = _vk.CreateDescriptorPool(_device, &poolInfo, null, out _pipelines.TextureDescriptorPool);
         if (result != Result.Success)
             throw new Exception($"Failed to create texture descriptor pool: {result}");
 
@@ -1150,7 +1291,7 @@ public unsafe class SilkWindow : IWindow
                 CodeSize = (nuint)(vertCode.Length * sizeof(uint)),
                 PCode = pVertCode
             };
-            var vertResult = _vk!.CreateShaderModule(_device, &vertModuleInfo, null, out _textureVertShaderModule);
+            var vertResult = _vk!.CreateShaderModule(_device, &vertModuleInfo, null, out _pipelines.TextureVertexShader);
             if (vertResult != Result.Success)
                 throw new Exception($"Failed to create texture vertex shader module: {vertResult}");
         }
@@ -1163,7 +1304,7 @@ public unsafe class SilkWindow : IWindow
                 CodeSize = (nuint)(fragCode.Length * sizeof(uint)),
                 PCode = pFragCode
             };
-            var fragResult = _vk!.CreateShaderModule(_device, &fragModuleInfo, null, out _textureFragShaderModule);
+            var fragResult = _vk!.CreateShaderModule(_device, &fragModuleInfo, null, out _pipelines.TextureFragmentShader);
             if (fragResult != Result.Success)
                 throw new Exception($"Failed to create texture fragment shader module: {fragResult}");
         }
@@ -1174,7 +1315,7 @@ public unsafe class SilkWindow : IWindow
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
-            Module = _textureVertShaderModule,
+            Module = _pipelines.TextureVertexShader,
             PName = (byte*)entryPointName
         };
 
@@ -1182,7 +1323,7 @@ public unsafe class SilkWindow : IWindow
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.FragmentBit,
-            Module = _textureFragShaderModule,
+            Module = _pipelines.TextureFragmentShader,
             PName = (byte*)entryPointName
         };
 
@@ -1295,11 +1436,11 @@ public unsafe class SilkWindow : IWindow
                     SetLayoutCount = 1
                 };
 
-                fixed (DescriptorSetLayout* pSetLayout = &_textureDescriptorSetLayout)
+                fixed (DescriptorSetLayout* pSetLayout = &_pipelines.TextureDescriptorSetLayout)
                 {
                     pipelineLayoutInfo.PSetLayouts = pSetLayout;
 
-                    var layoutResult = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _texturePipelineLayout);
+                    var layoutResult = _vk!.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, out _pipelines.TextureLayout);
                     if (layoutResult != Result.Success)
                         throw new Exception($"Failed to create texture pipeline layout: {layoutResult}");
                 }
@@ -1318,13 +1459,13 @@ public unsafe class SilkWindow : IWindow
                         PMultisampleState = &multisampling,
                         PColorBlendState = &colorBlending,
                         PDynamicState = &dynamicStateInfo,
-                        Layout = _texturePipelineLayout,
+                        Layout = _pipelines.TextureLayout,
                         RenderPass = _renderPass,
                         Subpass = 0,
                         BasePipelineHandle = default
                     };
 
-                    var pipelineResult = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _texturePipeline);
+                    var pipelineResult = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _pipelines.TexturePipeline);
                     if (pipelineResult != Result.Success)
                         throw new Exception($"Failed to create texture graphics pipeline: {pipelineResult}");
                 }
@@ -1344,9 +1485,9 @@ public unsafe class SilkWindow : IWindow
         var id = _nextViewportId++;
         var fbo = new ViewportFbo(id, (uint)width, (uint)height);
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
-        fbo.Create(_vk!, _device, _fboRenderPass, GetSwapchainImageFormat(), FindDepthFormat(),
+        fbo.Create(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
             deviceLocalMemoryType,
-            _textureDescriptorSetLayout, _textureDescriptorPool);
+            _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
         _viewportFbos[id] = fbo;
         _logger.LogInformation("Viewport {Id} registered ({Width}x{Height})", id, (uint)width, (uint)height);
         return id;
@@ -1369,6 +1510,8 @@ public unsafe class SilkWindow : IWindow
             _vk.FreeMemory(_device, buf.memory, null);
             _viewportQuadBuffers.Remove(viewportId);
         }
+
+        _pendingGridDraws.Remove(viewportId);
 
         _logger.LogInformation("Viewport {Id} unregistered", viewportId);
     }
@@ -1445,11 +1588,32 @@ public unsafe class SilkWindow : IWindow
     }
 
     /// <inheritdoc/>
-    public void DrawInViewport(uint viewportId, Vertex[] vertices, PushConstants pushConstants)
+    public void Submit(uint viewportId, RenderQueue renderQueue)
     {
+        ArgumentNullException.ThrowIfNull(renderQueue);
+        if (!_viewportFbos.ContainsKey(viewportId))
+            throw new ArgumentOutOfRangeException(nameof(viewportId), viewportId, "Viewport is not registered.");
+
         if (!_pendingViewportDraws.ContainsKey(viewportId))
             _pendingViewportDraws[viewportId] = new List<(Vertex[], PushConstants)>();
-        _pendingViewportDraws[viewportId].Add((vertices, pushConstants));
+
+        foreach (var command in renderQueue.Commands)
+            _pendingViewportDraws[viewportId].Add((command.Vertices, command.PushConstants));
+    }
+
+    /// <inheritdoc/>
+    public void DrawGroundGrid(uint viewportId, Matrix4x4 view, Matrix4x4 projection)
+    {
+        var viewProjection = view * projection;
+        if (!_viewportFbos.ContainsKey(viewportId)
+            || !Matrix4x4.Invert(viewProjection, out var inverseViewProjection))
+            return;
+
+        _pendingGridDraws[viewportId] = new GridPushConstants
+        {
+            ViewProjection = viewProjection,
+            InverseViewProjection = inverseViewProjection
+        };
     }
 
     /// <inheritdoc/>
@@ -1465,90 +1629,6 @@ public unsafe class SilkWindow : IWindow
             fbo.ClearColor = new Vector4(r, g, b, a);
     }
 
-    private void EnsureViewportDrawBuffer(uint requiredVertices)
-    {
-        if (_viewportDrawBufferCapacity >= requiredVertices)
-            return;
-
-        _vk!.DeviceWaitIdle(_device);
-
-        // Destroy old buffer
-        if (_viewportDrawBuffer.Handle != 0)
-        {
-            _vk.DestroyBuffer(_device, _viewportDrawBuffer, null);
-            _vk.FreeMemory(_device, _viewportDrawBufferMemory, null);
-        }
-
-        // Create new larger buffer
-        _viewportDrawBufferCapacity = Math.Max(requiredVertices, 1024);
-        var bufferSize = (nuint)(_viewportDrawBufferCapacity * Vertex.Stride);
-
-        var bufferInfo = new BufferCreateInfo
-        {
-            SType = StructureType.BufferCreateInfo,
-            Size = bufferSize,
-            Usage = BufferUsageFlags.VertexBufferBit,
-            SharingMode = SharingMode.Exclusive
-        };
-        _vk.CreateBuffer(_device, &bufferInfo, null, out _viewportDrawBuffer);
-
-        _vk.GetBufferMemoryRequirements(_device, _viewportDrawBuffer, out var memReqs);
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memReqs.Size,
-            MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
-        };
-        _vk.AllocateMemory(_device, &allocInfo, null, out _viewportDrawBufferMemory);
-        _vk.BindBufferMemory(_device, _viewportDrawBuffer, _viewportDrawBufferMemory, 0);
-
-        void* mapped;
-        _vk.MapMemory(_device, _viewportDrawBufferMemory, 0, bufferSize, 0, &mapped);
-        _viewportDrawBufferMapped = mapped;
-
-        _logger.LogDebug("Viewport draw buffer created/recreated ({Capacity} vertices)", _viewportDrawBufferCapacity);
-    }
-
-    private void EnsureOverlayBuffer(uint requiredVertices)
-    {
-        if (_overlayBufferCapacity >= requiredVertices)
-            return;
-
-        _vk!.DeviceWaitIdle(_device);
-
-        if (_overlayBuffer.Handle != 0)
-        {
-            _vk.DestroyBuffer(_device, _overlayBuffer, null);
-            _vk.FreeMemory(_device, _overlayBufferMemory, null);
-        }
-
-        _overlayBufferCapacity = Math.Max(requiredVertices, 256);
-        var bufferSize = (nuint)(_overlayBufferCapacity * Vertex.Stride);
-
-        var bufferInfo = new BufferCreateInfo
-        {
-            SType = StructureType.BufferCreateInfo,
-            Size = bufferSize,
-            Usage = BufferUsageFlags.VertexBufferBit,
-            SharingMode = SharingMode.Exclusive
-        };
-        _vk.CreateBuffer(_device, &bufferInfo, null, out _overlayBuffer);
-
-        _vk.GetBufferMemoryRequirements(_device, _overlayBuffer, out var memReqs);
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memReqs.Size,
-            MemoryTypeIndex = FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
-        };
-        _vk.AllocateMemory(_device, &allocInfo, null, out _overlayBufferMemory);
-        _vk.BindBufferMemory(_device, _overlayBuffer, _overlayBufferMemory, 0);
-
-        void* mapped;
-        _vk.MapMemory(_device, _overlayBufferMemory, 0, bufferSize, 0, &mapped);
-        _overlayBufferMapped = mapped;
-    }
-
     private void RecreateDirtyFbos()
     {
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
@@ -1557,9 +1637,9 @@ public unsafe class SilkWindow : IWindow
             if (fbo.IsDirty)
             {
                 _logger.LogDebug("Recreating viewport {Id} FBO ({Width}x{Height})", id, fbo.Width, fbo.Height);
-                fbo.Recreate(_vk!, _device, _fboRenderPass, GetSwapchainImageFormat(), FindDepthFormat(),
+                fbo.Recreate(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
                     deviceLocalMemoryType,
-                    _textureDescriptorSetLayout, _textureDescriptorPool);
+                    _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
             }
         }
     }
@@ -1571,6 +1651,7 @@ public unsafe class SilkWindow : IWindow
         _logger.LogDebug("Creating vertex buffer");
 
         var bufferSize = (nuint)(_vertices.Length * Vertex.Stride);
+        _vertexBufferCapacity = (uint)_vertices.Length;
 
         // Create buffer
         var bufferInfo = new BufferCreateInfo
@@ -1612,12 +1693,22 @@ public unsafe class SilkWindow : IWindow
         _logger.LogInformation("Vertex buffer created ({Size} bytes)", bufferSize);
     }
 
-    public void UpdateVertexBuffer(Vertex[] vertices)
+    /// <inheritdoc/>
+    public void UpdateUI(UIDrawList drawList)
     {
-        _vertices = vertices;
-        _vertexCount = (uint)vertices.Length;
+        _vertices = BuildUIVertices(drawList);
+        _vertexCount = (uint)_vertices.Length;
 
-        var bufferSize = (nuint)(vertices.Length * Vertex.Stride);
+        if (_vertexCount > _vertexBufferCapacity)
+        {
+            _vk!.DeviceWaitIdle(_device);
+            _vk.DestroyBuffer(_device, _vertexBuffer, null);
+            _vk.FreeMemory(_device, _vertexBufferMemory, null);
+            CreateVertexBuffer();
+            return;
+        }
+
+        var bufferSize = (nuint)(_vertices.Length * Vertex.Stride);
         void* data;
         _vk!.MapMemory(_device, _vertexBufferMemory, 0, bufferSize, 0, &data);
         fixed (Vertex* pVertices = _vertices)
@@ -1625,110 +1716,23 @@ public unsafe class SilkWindow : IWindow
         _vk.UnmapMemory(_device, _vertexBufferMemory);
     }
 
-    public void CreateUniformBuffer()
+    /// <summary>Translates semantic UI rectangles into backend triangle vertices.</summary>
+    /// <param name="drawList">UI draw list.</param>
+    /// <returns>Colored triangle vertices.</returns>
+    private static Vertex[] BuildUIVertices(UIDrawList drawList)
     {
-        _logger.LogDebug("Creating uniform buffer");
-
-        var bufferSize = (nuint)sizeof(PushConstants);
-
-        var bufferInfo = new BufferCreateInfo
+        ArgumentNullException.ThrowIfNull(drawList);
+        var vertices = new List<Vertex>(drawList.Commands.Count * 6);
+        foreach (var command in drawList.Commands)
         {
-            SType = StructureType.BufferCreateInfo,
-            Size = bufferSize,
-            Usage = BufferUsageFlags.UniformBufferBit,
-            SharingMode = SharingMode.Exclusive
-        };
-
-        var result = _vk!.CreateBuffer(_device, &bufferInfo, null, out _uniformBuffer);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create uniform buffer: {result}");
-
-        _vk.GetBufferMemoryRequirements(_device, _uniformBuffer, out var memRequirements);
-
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
-        };
-
-        result = _vk.AllocateMemory(_device, &allocInfo, null, out _uniformBufferMemory);
-        if (result != Result.Success)
-            throw new Exception($"Failed to allocate uniform buffer memory: {result}");
-
-        _vk.BindBufferMemory(_device, _uniformBuffer, _uniformBufferMemory, 0);
-        void* mapped;
-        _vk.MapMemory(_device, _uniformBufferMemory, 0, bufferSize, 0, &mapped);
-        _uniformBufferMapped = mapped;
-
-        _logger.LogInformation("Uniform buffer created ({Size} bytes)", bufferSize);
-    }
-
-    public void CreateDescriptorResources()
-    {
-        _logger.LogDebug("Creating descriptor resources");
-
-        // Descriptor pool
-        var poolSize = new DescriptorPoolSize
-        {
-            Type = DescriptorType.UniformBuffer,
-            DescriptorCount = 1
-        };
-
-        var poolInfo = new DescriptorPoolCreateInfo
-        {
-            SType = StructureType.DescriptorPoolCreateInfo,
-            PoolSizeCount = 1,
-            PPoolSizes = &poolSize,
-            MaxSets = 1
-        };
-
-        var result = _vk!.CreateDescriptorPool(_device, &poolInfo, null, out _descriptorPool);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create descriptor pool: {result}");
-
-        // Descriptor set
-        var setLayout = _descriptorSetLayout;
-        var setInfo = new DescriptorSetAllocateInfo
-        {
-            SType = StructureType.DescriptorSetAllocateInfo,
-            DescriptorPool = _descriptorPool,
-            DescriptorSetCount = 1,
-            PSetLayouts = &setLayout
-        };
-
-        result = _vk.AllocateDescriptorSets(_device, &setInfo, out _descriptorSet);
-        if (result != Result.Success)
-            throw new Exception($"Failed to allocate descriptor set: {result}");
-
-        // Update descriptor set
-        var bufferInfo = new DescriptorBufferInfo
-        {
-            Buffer = _uniformBuffer,
-            Offset = 0,
-            Range = (nuint)sizeof(PushConstants)
-        };
-
-        var writeDescriptor = new WriteDescriptorSet
-        {
-            SType = StructureType.WriteDescriptorSet,
-            DstSet = _descriptorSet,
-            DstBinding = 0,
-            DstArrayElement = 0,
-            DescriptorType = DescriptorType.UniformBuffer,
-            DescriptorCount = 1,
-            PBufferInfo = &bufferInfo
-        };
-
-        _vk.UpdateDescriptorSets(_device, 1, &writeDescriptor, 0, null);
-
-        _logger.LogInformation("Descriptor resources created");
-    }
-
-    public void UpdateUniformBuffer()
-    {
-        fixed (PushConstants* pPush = &_pushConstants)
-            System.Buffer.MemoryCopy(pPush, _uniformBufferMapped, sizeof(PushConstants), sizeof(PushConstants));
+            vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), command.Color));
+            vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+        }
+        return vertices.ToArray();
     }
 
     private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties)
@@ -1759,72 +1763,7 @@ public unsafe class SilkWindow : IWindow
 
     private void CreateFramebuffers()
     {
-        _logger.LogDebug("Creating framebuffers");
-
-        _framebuffers = new Framebuffer[_swapchainImageViews!.Length];
-
-        for (var i = 0; i < _swapchainImageViews.Length; i++)
-        {
-            var imageView = _swapchainImageViews[i];
-            var framebufferInfo = new FramebufferCreateInfo
-            {
-                SType = StructureType.FramebufferCreateInfo,
-                RenderPass = _renderPass,
-                AttachmentCount = 1,
-                PAttachments = &imageView,
-                Width = _swapchainExtent.Width,
-                Height = _swapchainExtent.Height,
-                Layers = 1
-            };
-
-            var result = _vk!.CreateFramebuffer(_device, &framebufferInfo, null, out _framebuffers[i]);
-            if (result != Result.Success)
-                throw new Exception($"Failed to create framebuffer: {result}");
-        }
-
-        _logger.LogInformation("Framebuffers created");
-    }
-
-    private void CreateCommandPool()
-    {
-        _logger.LogDebug("Creating command pool");
-
-        var indices = FindQueueFamilies(_physicalDevice);
-        var poolInfo = new CommandPoolCreateInfo
-        {
-            SType = StructureType.CommandPoolCreateInfo,
-            Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
-            QueueFamilyIndex = indices.GraphicsFamily!.Value
-        };
-
-        var result = _vk!.CreateCommandPool(_device, &poolInfo, null, out _commandPool);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create command pool: {result}");
-
-        _logger.LogInformation("Command pool created");
-    }
-
-    private void CreateCommandBuffers()
-    {
-        _logger.LogDebug("Creating command buffers");
-
-        _commandBuffers = new CommandBuffer[_framebuffers!.Length];
-        var allocInfo = new CommandBufferAllocateInfo
-        {
-            SType = StructureType.CommandBufferAllocateInfo,
-            CommandPool = _commandPool,
-            Level = CommandBufferLevel.Primary,
-            CommandBufferCount = (uint)_commandBuffers.Length
-        };
-
-        fixed (CommandBuffer* pBuffers = _commandBuffers)
-        {
-            var result = _vk!.AllocateCommandBuffers(_device, &allocInfo, pBuffers);
-            if (result != Result.Success)
-                throw new Exception($"Failed to allocate command buffers: {result}");
-        }
-
-        _logger.LogInformation("Command buffers allocated");
+        _swapchainManager!.CreateFramebuffers(_renderPass);
     }
 
     private void CreateSyncObjects()
@@ -1832,7 +1771,7 @@ public unsafe class SilkWindow : IWindow
         _logger.LogDebug("Creating sync objects");
 
         // Only imageAvailable semaphores are needed here (for swapchain image acquisition).
-        // RenderGraph manages its own fences and inter-pass semaphores.
+        // FrameScheduler manages its own fences and inter-pass semaphores.
         _imageAvailableSemaphores = new Silk.NET.Vulkan.Semaphore[MaxFramesInFlight];
 
         var semaphoreInfo = new SemaphoreCreateInfo
@@ -1855,46 +1794,49 @@ public unsafe class SilkWindow : IWindow
         RecreateDirtyFbos();
 
         // ── Begin frame (waits for previous frame's fence) ──
-        var frameIndex = _renderGraph!.BeginFrame();
+        var frameIndex = _frameScheduler!.BeginFrame();
+        _activeFrameIndex = frameIndex;
 
         // ── Acquire swapchain image ──
         uint imageIndex = 0;
         var imageAvailableSemaphore = _imageAvailableSemaphores![frameIndex];
-        var result = _khrSwapchain!.AcquireNextImage(_device, _swapchain, ulong.MaxValue, imageAvailableSemaphore, default, &imageIndex);
+        var result = _swapchainManager!.Extension.AcquireNextImage(
+            _device, _swapchainManager.Handle, ulong.MaxValue, imageAvailableSemaphore, default, &imageIndex);
 
         if (result == Result.ErrorOutOfDateKhr)
         {
             RecreateSwapchain();
-            _renderGraph.EndFrame();
+            _frameScheduler.EndFrame();
             return;
         }
 
         // ── Pass 1: Render viewport content into FBOs ──
         Silk.NET.Vulkan.Semaphore pass1Semaphore;
         {
-            var (cmdBuffer, sem) = _renderGraph.BeginPass();
+            var (cmdBuffer, sem) = _frameScheduler.BeginPass();
             pass1Semaphore = sem;
 
             RecordFboPass(cmdBuffer);
 
-            _renderGraph.EndPass(cmdBuffer);
-            _renderGraph.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem, default);
+            _frameScheduler.EndPass(cmdBuffer);
+            _frameScheduler.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem, default);
         }
 
         // ── Pass 2: Render editor UI + viewport quads to swapchain ──
         Silk.NET.Vulkan.Semaphore pass2Semaphore;
         {
-            var (cmdBuffer, sem) = _renderGraph.BeginPass();
+            var (cmdBuffer, sem) = _frameScheduler.BeginPass();
             pass2Semaphore = sem;
 
             RecordSwapchainPass(cmdBuffer, imageIndex);
 
-            _renderGraph.EndPass(cmdBuffer);
-            _renderGraph.SubmitPass(cmdBuffer, pass1Semaphore, sem, _renderGraph.GetCurrentFence());
+            _frameScheduler.EndPass(cmdBuffer);
+            _frameScheduler.PrepareCurrentFenceForSubmission();
+            _frameScheduler.SubmitPass(cmdBuffer, pass1Semaphore, sem, _frameScheduler.GetCurrentFence());
         }
 
         // ── Present ──
-        var swapchain = _swapchain;
+        var swapchain = _swapchainManager.Handle;
         var presentInfo = new PresentInfoKHR
         {
             SType = StructureType.PresentInfoKhr,
@@ -1905,7 +1847,7 @@ public unsafe class SilkWindow : IWindow
             PImageIndices = &imageIndex
         };
 
-        result = _khrSwapchain.QueuePresent(_presentQueue, &presentInfo);
+        result = _swapchainManager.Extension.QueuePresent(_presentQueue, &presentInfo);
 
         if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr || _framebufferResized)
         {
@@ -1913,7 +1855,7 @@ public unsafe class SilkWindow : IWindow
             RecreateSwapchain();
         }
 
-        _renderGraph.EndFrame();
+        _frameScheduler.EndFrame();
     }
 
     private void RecordFboPass(CommandBuffer commandBuffer)
@@ -1937,16 +1879,16 @@ public unsafe class SilkWindow : IWindow
         }
 
         if (totalVertices > 0)
-            EnsureViewportDrawBuffer(totalVertices);
+            _viewportDrawBuffers!.Ensure(_activeFrameIndex, totalVertices, Vertex.Stride);
 
         // Second pass: record draw commands into the shared buffer
         uint vertexOffset = 0;
+        var clearValues = stackalloc ClearValue[2];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty)
                 continue;
 
-            var clearValues = stackalloc ClearValue[2];
             clearValues[0] = new ClearValue
             {
                 Color = new ClearColorValue
@@ -1976,7 +1918,7 @@ public unsafe class SilkWindow : IWindow
                 PClearValues = clearValues
             };
 
-            _vk.CmdBeginRenderPass(commandBuffer, &fboRenderPassInfo, SubpassContents.Inline);
+            _vk!.CmdBeginRenderPass(commandBuffer, &fboRenderPassInfo, SubpassContents.Inline);
 
             var vp = new Viewport
             {
@@ -1993,26 +1935,38 @@ public unsafe class SilkWindow : IWindow
             };
             _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+            // Draw the infinite ground grid before opaque scene geometry so
+            // subsequent meshes naturally occlude it through the depth buffer.
+            if (_pendingGridDraws.Remove(viewportId, out var gridPushConstants))
+            {
+                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.GridPipeline);
+                _vk.CmdPushConstants(commandBuffer, _pipelines.GridLayout,
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0, (uint)sizeof(GridPushConstants), &gridPushConstants);
+                _vk.CmdDraw(commandBuffer, 3, 1, 0, 0);
+            }
+
             // Replay pending draws
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
-                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _fboGraphicsPipeline);
+                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.ViewportPipeline);
 
                 foreach (var (verts, push) in draws)
                 {
                     var vertsSize = (nuint)(verts.Length * Vertex.Stride);
                     fixed (Vertex* pVerts = verts)
                     {
-                        var dst = (byte*)_viewportDrawBufferMapped + (vertexOffset * Vertex.Stride);
+                        var dst = (byte*)_viewportDrawBuffers!.GetMappedPointer(_activeFrameIndex)
+                            + (vertexOffset * Vertex.Stride);
                         System.Buffer.MemoryCopy(pVerts, dst, vertsSize, vertsSize);
                     }
 
-                    var vb = _viewportDrawBuffer;
+                    var vb = _viewportDrawBuffers!.GetBuffer(_activeFrameIndex);
                     ulong bufOffset = vertexOffset * Vertex.Stride;
                     _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
 
                     var pc = push;
-                    _vk.CmdPushConstants(commandBuffer, _fboPipelineLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
+                    _vk.CmdPushConstants(commandBuffer, _pipelines.ViewportLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
 
                     _vk.CmdDraw(commandBuffer, (uint)verts.Length, 1, 0, 0);
 
@@ -2040,22 +1994,22 @@ public unsafe class SilkWindow : IWindow
         {
             SType = StructureType.RenderPassBeginInfo,
             RenderPass = _renderPass,
-            Framebuffer = _framebuffers![imageIndex],
+            Framebuffer = _swapchainManager!.Framebuffers[(int)imageIndex],
             RenderArea = new Rect2D
             {
                 Offset = new Offset2D { X = 0, Y = 0 },
-                Extent = _swapchainExtent
+                Extent = _swapchainManager.Extent
             },
             ClearValueCount = 1,
             PClearValues = &clearColor
         };
 
-        _vk.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
+        _vk!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
 
         var windowViewport = new Viewport
         {
             X = 0, Y = 0,
-            Width = _swapchainExtent.Width, Height = _swapchainExtent.Height,
+            Width = _swapchainManager.Extent.Width, Height = _swapchainManager.Extent.Height,
             MinDepth = 0.0f, MaxDepth = 1.0f
         };
         _vk.CmdSetViewport(commandBuffer, 0, 1, &windowViewport);
@@ -2063,25 +2017,26 @@ public unsafe class SilkWindow : IWindow
         var windowScissor = new Rect2D
         {
             Offset = new Offset2D { X = 0, Y = 0 },
-            Extent = _swapchainExtent
+            Extent = _swapchainManager.Extent
         };
         _vk.CmdSetScissor(commandBuffer, 0, 1, &windowScissor);
 
         // Draw editor UI
-        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
-
-        var vertexBuffer = _vertexBuffer;
-        ulong offset = 0;
-        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
-
         var pushConstants = _pushConstants;
-        _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit,
-            0, (uint)sizeof(PushConstants), &pushConstants);
+        if (_vertexCount > 0)
+        {
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
-        _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
+            var vertexBuffer = _vertexBuffer;
+            ulong offset = 0;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+            _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
+                0, (uint)sizeof(PushConstants), &pushConstants);
+            _vk.CmdDraw(commandBuffer, _vertexCount, 1, 0, 0);
+        }
 
         // Draw FBO textures for each viewport
-        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _texturePipeline);
+        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.TexturePipeline);
 
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
@@ -2093,14 +2048,14 @@ public unsafe class SilkWindow : IWindow
                 fixed (DescriptorSet* pDescSet = &fbo.DescriptorSet)
                 {
                     _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                        _texturePipelineLayout, 0, 1, pDescSet, 0, null);
+                        _pipelines.TextureLayout, 0, 1, pDescSet, 0, null);
                 }
 
                 var texVb = quadBuf.buffer;
                 ulong texOffset = 0;
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &texVb, &texOffset);
 
-                _vk.CmdPushConstants(commandBuffer, _texturePipelineLayout,
+                _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout,
                     ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
 
                 _vk.CmdDraw(commandBuffer, quadBuf.vertexCount, 1, 0, 0);
@@ -2110,84 +2065,27 @@ public unsafe class SilkWindow : IWindow
         // Draw 2D overlay (gizmo lines, etc.)
         if (_overlayVertices.Length > 0)
         {
-            EnsureOverlayBuffer((uint)_overlayVertices.Length);
+            _overlayBuffers!.Ensure(_activeFrameIndex, (uint)_overlayVertices.Length, Vertex.Stride);
 
-            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
             var ovSize = (nuint)(_overlayVertices.Length * Vertex.Stride);
             fixed (Vertex* pVerts = _overlayVertices)
             {
-                System.Buffer.MemoryCopy(pVerts, _overlayBufferMapped, ovSize, ovSize);
+                System.Buffer.MemoryCopy(pVerts, _overlayBuffers.GetMappedPointer(_activeFrameIndex), ovSize, ovSize);
             }
 
-            var ovB = _overlayBuffer;
+            var ovB = _overlayBuffers.GetBuffer(_activeFrameIndex);
             ulong ovOffset = 0;
             _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &ovB, &ovOffset);
 
-            _vk.CmdPushConstants(commandBuffer, _pipelineLayout, ShaderStageFlags.VertexBit,
+            _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
                 0, (uint)sizeof(PushConstants), &pushConstants);
 
             _vk.CmdDraw(commandBuffer, (uint)_overlayVertices.Length, 1, 0, 0);
         }
 
         _vk.CmdEndRenderPass(commandBuffer);
-    }
-
-    private Format GetSwapchainImageFormat()
-    {
-        var support = QuerySwapchainSupport(_physicalDevice);
-        var surfaceFormat = ChooseSwapSurfaceFormat(support.Formats);
-        return surfaceFormat.Format;
-    }
-
-    private SurfaceFormatKHR ChooseSwapSurfaceFormat(SurfaceFormatKHR[] available)
-    {
-        foreach (var format in available)
-            if (format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr)
-                return format;
-        return available[0];
-    }
-
-    private PresentModeKHR ChooseSwapPresentMode(PresentModeKHR[] available)
-    {
-        foreach (var mode in available)
-            if (mode == PresentModeKHR.MailboxKhr)
-                return mode;
-        return PresentModeKHR.FifoKhr;
-    }
-
-    private Extent2D ChooseSwapExtent(SurfaceCapabilitiesKHR capabilities)
-    {
-        if (capabilities.CurrentExtent.Width != uint.MaxValue)
-            return capabilities.CurrentExtent;
-
-        var size = _window!.Size;
-        var extent = new Extent2D
-        {
-            Width = (uint)Math.Clamp(size.X, (int)capabilities.MinImageExtent.Width, (int)capabilities.MaxImageExtent.Width),
-            Height = (uint)Math.Clamp(size.Y, (int)capabilities.MinImageExtent.Height, (int)capabilities.MaxImageExtent.Height)
-        };
-        return extent;
-    }
-
-    private SwapchainSupportDetails QuerySwapchainSupport(PhysicalDevice device)
-    {
-        var details = new SwapchainSupportDetails();
-        _khrSurface!.GetPhysicalDeviceSurfaceCapabilities(device, _surface, out details.Capabilities);
-
-        uint formatCount = 0;
-        _khrSurface.GetPhysicalDeviceSurfaceFormats(device, _surface, &formatCount, null);
-        details.Formats = new SurfaceFormatKHR[formatCount];
-        fixed (SurfaceFormatKHR* pFormats = details.Formats)
-            _khrSurface.GetPhysicalDeviceSurfaceFormats(device, _surface, &formatCount, pFormats);
-
-        uint presentModeCount = 0;
-        _khrSurface.GetPhysicalDeviceSurfacePresentModes(device, _surface, &presentModeCount, null);
-        details.PresentModes = new PresentModeKHR[presentModeCount];
-        fixed (PresentModeKHR* pModes = details.PresentModes)
-            _khrSurface.GetPhysicalDeviceSurfacePresentModes(device, _surface, &presentModeCount, pModes);
-
-        return details;
     }
 
     public void Run()
@@ -2198,14 +2096,24 @@ public unsafe class SilkWindow : IWindow
 
     public void Shutdown()
     {
+        if (_shutdown)
+            return;
+
+        _shutdown = true;
         _logger.LogInformation("Shutting down...");
+
+        if (_vk is null)
+        {
+            _input?.Dispose();
+            return;
+        }
 
         _vk?.DeviceWaitIdle(_device);
 
         CleanupSwapchain();
 
-        // Destroy RenderGraph
-        _renderGraph?.Destroy();
+        // Destroy frame scheduler
+        _frameScheduler?.Destroy();
 
         // Cleanup viewport FBOs and their vertex buffers
         foreach (var (id, fbo) in _viewportFbos)
@@ -2220,38 +2128,16 @@ public unsafe class SilkWindow : IWindow
         _viewportQuadBuffers.Clear();
 
         // Cleanup persistent viewport draw buffer
-        if (_viewportDrawBuffer.Handle != 0)
-        {
-            _vk?.DestroyBuffer(_device, _viewportDrawBuffer, null);
-            _vk?.FreeMemory(_device, _viewportDrawBufferMemory, null);
-        }
+        _viewportDrawBuffers?.Destroy();
+        _overlayBuffers?.Destroy();
 
         // Cleanup shared resources
         _vk?.DestroyBuffer(_device, _vertexBuffer, null);
         _vk?.FreeMemory(_device, _vertexBufferMemory, null);
-        _vk?.DestroyBuffer(_device, _uniformBuffer, null);
-        _vk?.FreeMemory(_device, _uniformBufferMemory, null);
-        _vk?.DestroyDescriptorPool(_device, _descriptorPool, null);
-        _vk?.DestroyDescriptorSetLayout(_device, _descriptorSetLayout, null);
-        _vk?.DestroyPipeline(_device, _graphicsPipeline, null);
-        _vk?.DestroyPipeline(_device, _fboGraphicsPipeline, null);
-        _vk?.DestroyPipelineLayout(_device, _fboPipelineLayout, null);
-        _vk?.DestroyPipelineLayout(_device, _pipelineLayout, null);
-        _vk?.DestroyShaderModule(_device, _vertShaderModule, null);
-        _vk?.DestroyShaderModule(_device, _fragShaderModule, null);
-
-        // Cleanup texture pipeline
-        _vk?.DestroyDescriptorPool(_device, _textureDescriptorPool, null);
-        _vk?.DestroyDescriptorSetLayout(_device, _textureDescriptorSetLayout, null);
-        _vk?.DestroyPipeline(_device, _texturePipeline, null);
-        _vk?.DestroyPipelineLayout(_device, _texturePipelineLayout, null);
-        _vk?.DestroyShaderModule(_device, _textureVertShaderModule, null);
-        _vk?.DestroyShaderModule(_device, _textureFragShaderModule, null);
+        _pipelines?.Dispose();
         _vk?.DestroyRenderPass(_device, _fboRenderPass, null);
 
-        _vk?.DestroyCommandPool(_device, _commandPool, null);
         _vk?.DestroyRenderPass(_device, _renderPass, null);
-        _khrSwapchain?.DestroySwapchain(_device, _swapchain, null);
         _khrSurface?.DestroySurface(_instance, _surface, null);
         _vk?.DestroyDevice(_device, null);
         _vk?.DestroyInstance(_instance, null);
@@ -2270,6 +2156,8 @@ public unsafe class SilkWindow : IWindow
     {
         Shutdown();
         _window?.Dispose();
+        _window = null;
+        GC.SuppressFinalize(this);
     }
 
     private struct QueueFamilyIndices
@@ -2278,10 +2166,4 @@ public unsafe class SilkWindow : IWindow
         public uint? PresentFamily;
     }
 
-    private struct SwapchainSupportDetails
-    {
-        public SurfaceCapabilitiesKHR Capabilities;
-        public SurfaceFormatKHR[] Formats;
-        public PresentModeKHR[] PresentModes;
-    }
 }

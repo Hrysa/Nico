@@ -1,0 +1,82 @@
+using Editor;
+using Engine.Core;
+using Engine.Graphics;
+using Engine.UI;
+using Xunit;
+
+namespace Editor.Tests;
+
+public class TreeViewTests
+{
+    /// <summary>Verifies that nested UI bounds are absolute for drawing and hit testing.</summary>
+    [Fact]
+    public void NestedElement_UsesAbsoluteBounds()
+    {
+        var root = new Panel(100f, 200f, 300f, 300f, Color.Black);
+        var child = new Panel(10f, 20f, 30f, 40f, Color.Red);
+        root.AddChild(child);
+
+        Assert.Equal(110f, child.Left);
+        Assert.Equal(140f, child.Right);
+        Assert.Equal(220f, child.Top);
+        Assert.Equal(260f, child.Bottom);
+        Assert.True(child.ContainsPoint(new(120f, 230f)));
+    }
+
+    /// <summary>Verifies that labels emit pixel-font paint commands.</summary>
+    [Fact]
+    public void Label_WithText_EmitsGlyphRectangles()
+    {
+        var label = new Label(0f, 0f, 100f, 20f, "Scene");
+
+        var drawList = label.BuildDrawList();
+
+        Assert.NotEmpty(drawList.Commands);
+    }
+
+    /// <summary>Verifies expanded roots expose children and can be collapsed.</summary>
+    [Fact]
+    public void Toggle_ExpandedRoot_CollapsesChildren()
+    {
+        var root = new Node { Name = "Scene" };
+        root.AddChild(new Node { Name = "Cube" });
+        var tree = new TreeView(0f, 0f, 200f, 200f);
+        tree.SetRoots([root]);
+        Assert.Equal(2, tree.Children.Count);
+
+        tree.Toggle(root);
+
+        Assert.Single(tree.Children);
+    }
+
+    /// <summary>Verifies clicking a row updates tree selection.</summary>
+    [Fact]
+    public void Click_Row_SelectsRepresentedNode()
+    {
+        var root = new Node { Name = "Scene" };
+        var tree = new TreeView(0f, 0f, 200f, 200f);
+        tree.SetRoots([root]);
+        var router = new UIEventRouter(tree, () => { });
+        router.MovePointer(new(10f, 10f));
+        router.Press();
+
+        router.Release(invokeClick: true);
+
+        Assert.Same(root, tree.SelectedItem);
+    }
+
+    /// <summary>Verifies wheel scrolling replaces the first visible row.</summary>
+    [Fact]
+    public void Scroll_LongTree_AdvancesVisibleRows()
+    {
+        var roots = Enumerable.Range(0, 10).Select(index => new Node { Name = $"Node {index}" }).ToArray();
+        var tree = new TreeView(0f, 0f, 200f, 48f);
+        tree.SetRoots(roots);
+        var firstBefore = Assert.IsType<TreeViewItem>(tree.Children[0]).Item;
+
+        tree.InvokeScroll(-1f);
+
+        var firstAfter = Assert.IsType<TreeViewItem>(tree.Children[0]).Item;
+        Assert.NotSame(firstBefore, firstAfter);
+    }
+}

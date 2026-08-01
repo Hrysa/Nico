@@ -9,6 +9,7 @@
     <Project Path="src/Player/Player.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Editor.Tests/Editor.Tests.csproj" />
     <Project Path="tests/Engine.Graphics.Tests/Engine.Graphics.Tests.csproj" />
   </Folder>
 </Solution>

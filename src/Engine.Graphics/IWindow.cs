@@ -1,84 +1,29 @@
-using System.Numerics;
-
 namespace Engine.Graphics;
 
+/// <summary>
+/// Owns application-window lifecycle and frame timing.
+/// </summary>
 public interface IWindow : IDisposable
 {
+    /// <summary>Initializes the native window.</summary>
+    /// <param name="options">Window configuration.</param>
     void Initialize(WindowOptions options);
+
+    /// <summary>Runs the window event loop.</summary>
     void Run();
+
+    /// <summary>Releases native window resources.</summary>
     void Shutdown();
+
+    /// <summary>Gets whether the window is running.</summary>
     bool IsRunning { get; }
+
+    /// <summary>Processes pending native events.</summary>
     void ProcessEvents();
 
-    /// <summary>Fired each frame with delta time in seconds, before rendering.</summary>
+    /// <summary>Occurs before rendering each frame.</summary>
     event Action<double>? Update;
 
-    /// <summary>Updates the GPU vertex buffer with new vertex data.</summary>
-    /// <param name="vertices">The new vertices to upload.</param>
-    void UpdateVertexBuffer(Vertex[] vertices);
-
-    // ── Viewport FBO Management ────────────────────────────────
-
-    /// <summary>
-    /// Registers a viewport and creates its FBO resources.
-    /// </summary>
-    /// <param name="width">Initial viewport width in pixels.</param>
-    /// <param name="height">Initial viewport height in pixels.</param>
-    /// <returns>A unique viewport ID.</returns>
-    uint RegisterViewport(float width, float height);
-
-    /// <summary>
-    /// Unregisters a viewport and destroys its FBO resources.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID to unregister.</param>
-    void UnregisterViewport(uint viewportId);
-
-    /// <summary>
-    /// Resizes a viewport's FBO. Actual GPU recreation is deferred to the next frame.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <param name="width">New width in pixels.</param>
-    /// <param name="height">New height in pixels.</param>
-    void ResizeViewport(uint viewportId, float width, float height);
-
-    /// <summary>
-    /// Sets the textured-quad vertices for a viewport's display quad.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <param name="vertices">The textured quad vertices.</param>
-    void SetViewportQuadVertices(uint viewportId, VertexT[] vertices);
-
-    /// <summary>
-    /// Creates a render context for the specified viewport.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <returns>A new ViewportRenderContext.</returns>
-    ViewportRenderContext CreateRenderContext(uint viewportId);
-
-    /// <summary>
-    /// Queues vertices to be drawn during the current viewport's FBO pass.
-    /// Call this from the Update event handler.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <param name="vertices">The vertices to draw.</param>
-    /// <param name="pushConstants">Push constants (MVP matrices).</param>
-    void DrawInViewport(uint viewportId, Vertex[] vertices, PushConstants pushConstants);
-
-    /// <summary>
-    /// Sets the clear color for a viewport's FBO.
-    /// </summary>
-    /// <param name="viewportId">The viewport ID.</param>
-    /// <param name="r">Red component (0-1).</param>
-    /// <param name="g">Green component (0-1).</param>
-    /// <param name="b">Blue component (0-1).</param>
-    /// <param name="a">Alpha component (0-1).</param>
-    void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f);
-
-    /// <summary>
-    /// Queues vertices to be drawn as a 2D overlay in the swapchain pass.
-    /// Vertices are in screen pixel coordinates (0,0 = top-left).
-    /// Drawn on top of all viewport FBO quads.
-    /// </summary>
-    /// <param name="vertices">The screen-space vertices to draw.</param>
-    void DrawOverlay(Vertex[] vertices);
+    /// <summary>Occurs after the native client area changes size.</summary>
+    event Action<int, int>? Resized;
 }

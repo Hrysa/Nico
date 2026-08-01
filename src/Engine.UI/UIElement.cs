@@ -66,17 +66,17 @@ public class UIElement : Node
     /// <summary>Occurs when a key is released while this element is focused. Provides key code.</summary>
     public event Action<int>? KeyUp;
 
-    /// <summary>Gets the left edge position (Position.X).</summary>
-    public float Left => Position.X;
+    /// <summary>Gets the absolute left edge after applying parent layout positions.</summary>
+    public float Left => GetParentLeft() + Position.X;
 
-    /// <summary>Gets the top edge position (Position.Y).</summary>
-    public float Top => Position.Y;
+    /// <summary>Gets the absolute top edge after applying parent layout positions.</summary>
+    public float Top => GetParentTop() + Position.Y;
 
-    /// <summary>Gets the right edge position (Position.X + Width).</summary>
-    public float Right => Position.X + Width;
+    /// <summary>Gets the absolute right edge position.</summary>
+    public float Right => Left + Width;
 
-    /// <summary>Gets the bottom edge position (Position.Y + Height).</summary>
-    public float Bottom => Position.Y + Height;
+    /// <summary>Gets the absolute bottom edge position.</summary>
+    public float Bottom => Top + Height;
 
     /// <summary>
     /// Creates a new UIElement with the specified position and size.
@@ -101,6 +101,20 @@ public class UIElement : Node
     {
         return point.X >= Left && point.X <= Right
             && point.Y >= Top && point.Y <= Bottom;
+    }
+
+    /// <summary>Gets the absolute left edge contributed by the UI parent.</summary>
+    /// <returns>The parent left edge, or zero for a root element.</returns>
+    private float GetParentLeft()
+    {
+        return Parent is UIElement parent ? parent.Left : 0f;
+    }
+
+    /// <summary>Gets the absolute top edge contributed by the UI parent.</summary>
+    /// <returns>The parent top edge, or zero for a root element.</returns>
+    private float GetParentTop()
+    {
+        return Parent is UIElement parent ? parent.Top : 0f;
     }
 
     /// <summary>
@@ -267,46 +281,38 @@ public class UIElement : Node
     }
 
     /// <summary>
-    /// Generates vertex data for this element as a colored quad.
+    /// Appends paint commands for this element.
     /// </summary>
-    /// <returns>An array of 6 vertices forming two triangles.</returns>
-    public virtual Vertex[] GetVertices()
+    /// <param name="drawList">Draw list receiving paint commands.</param>
+    protected virtual void Paint(UIDrawList drawList)
     {
-        var color = BackgroundColor;
-        return new Vertex[]
-        {
-            new(new Vector3(Left, Top, 0), color),
-            new(new Vector3(Left, Bottom, 0), color),
-            new(new Vector3(Right, Bottom, 0), color),
-
-            new(new Vector3(Right, Bottom, 0), color),
-            new(new Vector3(Right, Top, 0), color),
-            new(new Vector3(Left, Top, 0), color),
-        };
+        drawList.AddRectangle(Left, Top, Right, Bottom, BackgroundColor);
     }
 
     /// <summary>
-    /// Collects vertices from this element and all visible children recursively.
+    /// Builds paint commands for this element and all visible descendants.
     /// </summary>
-    /// <returns>A list of all vertices for rendering.</returns>
-    public List<Vertex> CollectVertices()
+    /// <returns>The ordered UI draw list.</returns>
+    public UIDrawList BuildDrawList()
     {
-        var result = new List<Vertex>();
-        CollectVerticesRecursive(result);
-        return result;
+        var drawList = new UIDrawList();
+        PaintRecursive(drawList);
+        return drawList;
     }
 
-    private void CollectVerticesRecursive(List<Vertex> result)
+    /// <summary>Recursively appends visible paint commands.</summary>
+    /// <param name="drawList">Draw list receiving paint commands.</param>
+    private void PaintRecursive(UIDrawList drawList)
     {
         if (!IsVisible)
             return;
 
-        result.AddRange(GetVertices());
+        Paint(drawList);
 
         foreach (var child in Children)
         {
             if (child is UIElement ui)
-                ui.CollectVerticesRecursive(result);
+                ui.PaintRecursive(drawList);
         }
     }
 }

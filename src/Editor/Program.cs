@@ -16,7 +16,7 @@ Debug.SetLoggerFactory(loggerFactory);
 var logger = loggerFactory.CreateLogger<Program>();
 logger.LogInformation("Starting Editor...");
 
-var window = new SilkWindow(loggerFactory);
+using var window = new SilkWindow(loggerFactory);
 var width = 1280;
 var height = 720;
 var options = new WindowOptions
@@ -30,13 +30,14 @@ logger.LogInformation("Initializing window...");
 window.Initialize(options);
 
 logger.LogInformation("Setting up editor UI...");
-var uiRoot = EditorUI.BuildUI(width, height);
-window.SetVertices(uiRoot.CollectVertices().ToArray());
+var editorView = EditorUI.BuildView(width, height);
+var uiRoot = editorView.Root;
+window.SetUI(uiRoot.BuildDrawList());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
 
 // ── Scene viewport: PerspectiveCamera for 3D scene ────────────
-var sceneViewport = EditorUI.GetSceneViewport()!;
+var sceneViewport = editorView.SceneViewport;
 var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
 sceneViewport.ViewportId = sceneViewportId;
 window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
@@ -54,121 +55,95 @@ sceneViewport.Camera = sceneCamera;
 
 var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
 var sceneObjects = new List<MeshInstance3D> { cube };
-MeshInstance3D? selectedObject = null;
-var gizmo = new EditorGizmo();
+var sceneRoot = new Node { Name = "Scene" };
+sceneRoot.AddChild(sceneCamera);
+sceneRoot.AddChild(cube);
+var hierarchyTree = editorView.HierarchyTree;
+hierarchyTree.SetRoots([sceneRoot]);
 
 // ── Game viewport: OrthographicCamera (future) ────────────────
-var gameViewport = EditorUI.GetGameViewport()!;
+var gameViewport = editorView.GameViewport;
 var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
 gameViewport.ViewportId = gameViewportId;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
 window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
 
-UIElement? hoveredElement = null;
-UIElement? focusedElement = null;
 Vector2 lastMousePos = Vector2.Zero;
-bool gizmoConsumedPrimaryDown = false;
+var selection = new SceneSelectionController(sceneObjects, sceneCamera, GetSceneGizmoViewport);
+var synchronizingSelection = false;
+AttachHierarchy(hierarchyTree);
+selection.SelectionChanged += item =>
+{
+    if (synchronizingSelection)
+        return;
+    synchronizingSelection = true;
+    hierarchyTree.Select(item);
+    synchronizingSelection = false;
+};
+var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, selection.CancelInteraction);
+var viewportRenderer = new EditorViewportRenderer(
+    window, sceneViewportId, gameViewportId, sceneCamera, sceneObjects, selection);
+
+var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
+RefreshVertices();
+
+void AttachHierarchy(TreeView tree)
+{
+    tree.SelectionChanged += item =>
+    {
+        if (synchronizingSelection)
+            return;
+        synchronizingSelection = true;
+        selection.Select(item as MeshInstance3D);
+        synchronizingSelection = false;
+    };
+}
+
+void ResizeEditor(int newWidth, int newHeight)
+{
+    if (newWidth <= 0 || newHeight <= 0)
+        return;
+
+    width = newWidth;
+    height = newHeight;
+    editorView = EditorUI.BuildView(width, height);
+    uiRoot = editorView.Root;
+    uiEventRouter.SetRoot(uiRoot);
+    sceneViewport = editorView.SceneViewport;
+    gameViewport = editorView.GameViewport;
+    hierarchyTree = editorView.HierarchyTree;
+    hierarchyTree.SetRoots([sceneRoot]);
+    hierarchyTree.Select(selection.SelectedObject);
+    AttachHierarchy(hierarchyTree);
+    sceneViewport.ViewportId = sceneViewportId;
+    sceneViewport.Camera = sceneCamera;
+    gameViewport.ViewportId = gameViewportId;
+
+    window.ResizeViewport(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+    window.ResizeViewport(gameViewportId, gameViewport.Width, gameViewport.Height);
+    window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+    window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+    window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
+    window.UpdateUI(uiRoot.BuildDrawList());
+}
+
+window.Resized += ResizeEditor;
 
 void RefreshVertices()
 {
-    window.UpdateVertexBuffer(uiRoot.CollectVertices().ToArray());
+    window.UpdateUI(uiRoot.BuildDrawList());
 }
 
-void HitTest(Vector2 mousePos)
+GizmoViewport GetSceneGizmoViewport()
 {
-    var hit = HitTestElement(uiRoot, mousePos);
-
-    if (hit != hoveredElement)
-    {
-        hoveredElement?.SetHover(false);
-        hoveredElement = hit;
-        hoveredElement?.SetHover(true);
-        Debug.Input(LogLevel.Debug, "Hover: {Name}", hoveredElement?.Name ?? "(none)");
-        RefreshVertices();
-    }
-}
-
-UIElement? HitTestElement(UIElement element, Vector2 pos)
-{
-    if (!element.IsVisible || !element.ContainsPoint(pos))
-        return null;
-
-    for (int i = element.Children.Count - 1; i >= 0; i--)
-    {
-        if (element.Children[i] is UIElement child)
-        {
-            var childHit = HitTestElement(child, pos);
-            if (childHit != null)
-                return childHit;
-        }
-    }
-
-    return element;
-}
-
-void SetFocus(UIElement? element)
-{
-    if (element == focusedElement)
-        return;
-
-    focusedElement?.SetFocus(false);
-    focusedElement = element;
-    focusedElement?.SetFocus(true);
-    Debug.Input(LogLevel.Debug, "Focus: {Name}", focusedElement?.Name ?? "(none)");
-}
-
-MeshInstance3D? FindObjectAtScreen(Vector2 mousePos)
-{
-    var view = sceneCamera.GetViewMatrix();
-    var proj = sceneCamera.GetProjectionMatrix();
-    var vpX = sceneViewport.Position.X;
-    var vpY = sceneViewport.Position.Y;
-    var vpW = sceneViewport.Width;
-    var vpH = sceneViewport.Height;
-
-    MeshInstance3D? closest = null;
-    var closestDist = 50f; // pixel threshold
-
-    foreach (var obj in sceneObjects)
-    {
-        var screen = WorldToScreen(obj.Position, view, proj, vpX, vpY, vpW, vpH);
-        if (screen == null) continue;
-        var dist = Vector2.Distance(mousePos, screen.Value);
-        if (dist < closestDist)
-        {
-            closestDist = dist;
-            closest = obj;
-        }
-    }
-    return closest;
-}
-
-/// <summary>
-/// Projects a temporary object-selection point into Scene viewport pixels.
-/// </summary>
-/// <param name="worldPos">World position.</param>
-/// <param name="view">Scene view matrix.</param>
-/// <param name="projection">Scene projection matrix.</param>
-/// <param name="viewportX">Viewport left coordinate.</param>
-/// <param name="viewportY">Viewport top coordinate.</param>
-/// <param name="viewportWidth">Viewport width.</param>
-/// <param name="viewportHeight">Viewport height.</param>
-/// <returns>The projected point, or null when the point is behind the camera.</returns>
-Vector2? WorldToScreen(Vector3 worldPos, Matrix4x4 view, Matrix4x4 projection,
-    float viewportX, float viewportY, float viewportWidth, float viewportHeight)
-{
-    var clip = Vector4.Transform(new Vector4(worldPos, 1f), view * projection);
-    if (!float.IsFinite(clip.W) || clip.W <= 0.000001f)
-        return null;
-    return new Vector2(
-        viewportX + (clip.X / clip.W + 1f) * 0.5f * viewportWidth,
-        viewportY + (clip.Y / clip.W + 1f) * 0.5f * viewportHeight);
+    return new GizmoViewport(sceneViewport.Left, sceneViewport.Top,
+        sceneViewport.Width, sceneViewport.Height);
 }
 
 bool IsInSceneViewport(Vector2 screenPos)
 {
-    var vpX = sceneViewport.Position.X;
-    var vpY = sceneViewport.Position.Y;
+    var vpX = sceneViewport.Left;
+    var vpY = sceneViewport.Top;
     var vpW = sceneViewport.Width;
     var vpH = sceneViewport.Height;
     return screenPos.X >= vpX && screenPos.X <= vpX + vpW
@@ -179,163 +154,82 @@ window.MouseMove += pos =>
 {
     lastMousePos = pos;
     Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
-    HitTest(pos);
 
-    if (selectedObject != null)
-    {
-        if (gizmo.IsDragging && gizmo.TryUpdateDrag(pos, out var updated))
-        {
-            selectedObject.Position = updated.Position;
-            selectedObject.Rotation = updated.Rotation;
-        }
-        else if (!gizmo.IsDragging)
-        {
-            gizmo.UpdateHover(pos);
-        }
-    }
+    if (flyCamera.MovePointer(pos))
+        return;
+
+    uiEventRouter.MovePointer(pos);
+
+    selection.MovePointer(pos);
 };
 
 window.MouseDown += button =>
 {
+    if (flyCamera.IsActive)
+        return;
+
     Debug.Input(LogLevel.Debug, "MouseDown: button={Button}", button);
-    SetFocus(hoveredElement);
-    hoveredElement?.SetPressed(true);
-    RefreshVertices();
+    uiEventRouter.Press();
 
     if (button != 0) return;
 
     // Must be in scene viewport area
-    bool inSceneViewport = (hoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
-                        || (hoveredElement == null && IsInSceneViewport(lastMousePos));
+    bool inSceneViewport = (uiEventRouter.HoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+                        || (uiEventRouter.HoveredElement == null && IsInSceneViewport(lastMousePos));
     if (!inSceneViewport) return;
 
-    // Try gizmo interaction (gizmo is not a UI element, so hoveredElement may be null)
-    if (selectedObject != null)
-    {
-        var transform = new GizmoTransform(selectedObject.Position, selectedObject.Rotation);
-        if (gizmo.BeginDrag(lastMousePos, transform))
-        {
-            gizmoConsumedPrimaryDown = true;
-            Debug.Input(LogLevel.Information, "Gizmo drag start: handle={Handle}", gizmo.ActiveHandle);
-            return;
-        }
-    }
-
-    // Otherwise, try object selection
-    var hit = FindObjectAtScreen(lastMousePos);
-    if (hit != selectedObject)
-    {
-        gizmo.CancelDrag();
-        selectedObject = hit;
-        Debug.Input(LogLevel.Information, "Selected: {Name}", selectedObject?.Name ?? "(none)");
-    }
+    selection.PrimaryDown(lastMousePos, inSceneViewport);
 };
 
 window.MouseUp += button =>
 {
+    if (flyCamera.IsActive)
+        return;
+
     Debug.Input(LogLevel.Debug, "MouseUp: button={Button}", button);
 
-    var consumedByGizmo = button == 0 && gizmoConsumedPrimaryDown;
-    if (button == 0)
-        gizmoConsumedPrimaryDown = false;
+    var consumedByGizmo = button == 0 && selection.PrimaryUp();
 
-    if (button == 0 && gizmo.IsDragging)
-    {
-        gizmo.EndDrag();
-        Debug.Input(LogLevel.Information, "Drag/Rotate end");
-    }
-
-    if (hoveredElement != null)
-    {
-        hoveredElement.SetPressed(false);
-        if (!consumedByGizmo)
-            hoveredElement.InvokeClick();
-        RefreshVertices();
-    }
+    uiEventRouter.Release(!consumedByGizmo);
 };
 
 window.MouseDoubleClick += button =>
 {
+    if (flyCamera.IsActive)
+        return;
+
     Debug.Input(LogLevel.Debug, "DoubleClick: button={Button}", button);
-    hoveredElement?.InvokeDoubleClick();
-    RefreshVertices();
+    uiEventRouter.DoubleClick();
 };
 
 window.MouseScroll += offset =>
 {
+    if (flyCamera.IsActive)
+        return;
+
     Debug.Input(LogLevel.Debug, "Scroll: offset={Offset:F1}", offset);
-    hoveredElement?.InvokeScroll(offset);
-    RefreshVertices();
+    uiEventRouter.Scroll(offset);
 };
 
 window.KeyDown += keyCode =>
 {
     Debug.Input(LogLevel.Debug, "KeyDown: key={Key}", keyCode);
-    focusedElement?.InvokeKeyDown(keyCode);
-    RefreshVertices();
+    if (!flyCamera.KeyDown(keyCode))
+        uiEventRouter.KeyDown((int)keyCode);
 };
 
 window.KeyUp += keyCode =>
 {
     Debug.Input(LogLevel.Debug, "KeyUp: key={Key}", keyCode);
-    focusedElement?.InvokeKeyUp(keyCode);
-    RefreshVertices();
+    if (!flyCamera.KeyUp(keyCode))
+        uiEventRouter.KeyUp((int)keyCode);
 };
 
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
-    // LogicUpdate: Scene viewport
-    sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
-
-    if (selectedObject != null)
-    {
-        var view = sceneCamera.GetViewMatrix();
-        var proj = sceneCamera.GetProjectionMatrix();
-        var viewport = new GizmoViewport(sceneViewport.Position.X, sceneViewport.Position.Y,
-            sceneViewport.Width, sceneViewport.Height);
-        gizmo.UpdateLayout(new GizmoTransform(selectedObject.Position, selectedObject.Rotation),
-            view, proj, viewport);
-        if (!gizmo.IsDragging)
-            gizmo.UpdateHover(lastMousePos);
-    }
-
-    var scenePush = sceneCamera.GetPushConstants(cube.GetModelMatrix());
-    window.DrawInViewport(sceneViewportId, cube.Mesh!.Vertices, scenePush);
-
-    // Render selection gizmo as 2D overlay
-    if (selectedObject != null)
-    {
-        window.DrawOverlay(gizmo.BuildOverlay());
-    }
-    else
-    {
-        gizmo.CancelDrag();
-        window.DrawOverlay([]);
-    }
-
-    // LogicUpdate: Game viewport
-    var gw = gameViewport.Width;
-    var gh = gameViewport.Height;
-    var gs = MathF.Min(gw, gh) * 0.25f;
-    var gamePush = new PushConstants
-    {
-        Model = Matrix4x4.Identity,
-        View = Matrix4x4.Identity,
-        Projection = Matrix4x4.CreateOrthographicOffCenter(0, gw, 0, gh, -1, 1)
-    };
-    var gcx = gw / 2.0f;
-    var gcy = gh / 2.0f;
-    var gameVerts = new Vertex[]
-    {
-        new(new Vector3(gcx - gs, gcy - gs, 0), new Vector3(1, 0.5f, 0)),
-        new(new Vector3(gcx - gs, gcy + gs, 0), new Vector3(0, 1, 0.5f)),
-        new(new Vector3(gcx + gs, gcy + gs, 0), new Vector3(0, 0.5f, 1)),
-        new(new Vector3(gcx + gs, gcy + gs, 0), new Vector3(0, 0.5f, 1)),
-        new(new Vector3(gcx + gs, gcy - gs, 0), new Vector3(1, 0, 0.5f)),
-        new(new Vector3(gcx - gs, gcy - gs, 0), new Vector3(1, 0.5f, 0)),
-    };
-    window.DrawInViewport(gameViewportId, gameVerts, gamePush);
+    flyCamera.Update(delta);
+    viewportRenderer.Render(sceneViewport, gameViewport, lastMousePos);
 };
 
 logger.LogInformation("Running main loop...");

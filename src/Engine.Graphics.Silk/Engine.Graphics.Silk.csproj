@@ -28,6 +28,8 @@
     <EmbeddedResource Include="../Shaders/basic.frag.spv" LogicalName="basic.frag.spv" />
     <EmbeddedResource Include="../Shaders/texture.vert.spv" LogicalName="texture.vert.spv" />
     <EmbeddedResource Include="../Shaders/texture.frag.spv" LogicalName="texture.frag.spv" />
+    <EmbeddedResource Include="../Shaders/grid.vert.spv" LogicalName="grid.vert.spv" />
+    <EmbeddedResource Include="../Shaders/grid.frag.spv" LogicalName="grid.frag.spv" />
   </ItemGroup>
 
 </Project>

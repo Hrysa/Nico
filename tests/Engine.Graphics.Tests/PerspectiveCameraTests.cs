@@ -9,6 +9,18 @@ namespace Engine.Graphics.Tests;
 /// </summary>
 public class PerspectiveCameraTests
 {
+    /// <summary>Verifies that directly changing position invalidates the cached view matrix.</summary>
+    [Fact]
+    public void PositionChange_InvalidatesViewMatrix()
+    {
+        var camera = new PerspectiveCamera();
+        var before = camera.GetViewMatrix();
+
+        camera.Position += Vector3.UnitX;
+
+        Assert.NotEqual(before, camera.GetViewMatrix());
+    }
+
     /// <summary>
     /// Verifies that aiming at the origin aligns the forward vector from multiple positions.
     /// </summary>

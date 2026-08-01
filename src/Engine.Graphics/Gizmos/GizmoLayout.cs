@@ -66,8 +66,12 @@ internal static class GizmoLayout
     {
         var axis = Axes[axisIndex];
         var (basisA, basisB) = CreateCircleBasis(axis);
+        // Use the camera projection to determine the ring's screen-space shape,
+        // then normalize that shape to a fixed UI size. This keeps the ring
+        // oriented with the world while preventing object depth from changing
+        // the gizmo's visible size.
         var radius = RingPixels * worldUnitsPerPixel;
-        var segments = new List<GizmoSegment>(RingSegments);
+        var projectedSegments = new List<(Vector2 Start, Vector2 End)>(RingSegments);
         var extent = 0f;
 
         for (var segmentIndex = 0; segmentIndex < RingSegments; segmentIndex++)
@@ -80,7 +84,16 @@ internal static class GizmoLayout
                 || !GizmoProjection.TryWorldToScreen(endWorld, view, projection, viewport, out var end))
                 continue;
 
+            projectedSegments.Add((start, end));
             extent = MathF.Max(extent, MathF.Max(Vector2.Distance(center, start), Vector2.Distance(center, end)));
+        }
+
+        var scale = extent > 0.0001f ? RingPixels / extent : 0f;
+        var segments = new List<GizmoSegment>(projectedSegments.Count);
+        foreach (var (rawStart, rawEnd) in projectedSegments)
+        {
+            var start = center + (rawStart - center) * scale;
+            var end = center + (rawEnd - center) * scale;
             if (GizmoProjection.ClipSegment(viewport, ref start, ref end))
                 segments.Add(new GizmoSegment(start, end, VisibleLinePixels, HitLinePixels));
         }
@@ -92,7 +105,7 @@ internal static class GizmoLayout
             segments.Count > 0,
             segments,
             [],
-            extent);
+            scale > 0f ? RingPixels : 0f);
     }
 
     /// <summary>
@@ -112,7 +125,15 @@ internal static class GizmoLayout
         if (!GizmoProjection.TryWorldToScreen(endWorld, view, projection, viewport, out var projectedEnd))
             return EmptyAxis(axisIndex);
 
-        var extent = Vector2.Distance(center, projectedEnd);
+        var projectedDirection = projectedEnd - center;
+        var projectedLength = projectedDirection.Length();
+        if (!float.IsFinite(projectedLength) || projectedLength <= 0.0001f)
+            return EmptyAxis(axisIndex);
+
+        // Translation handles are UI geometry: preserve their projected world
+        // direction, but make their visible length constant in pixels.
+        projectedEnd = center + projectedDirection / projectedLength * AxisPixels;
+        var extent = AxisPixels;
         var interactive = extent >= MinimumInteractiveAxisPixels;
         var segments = new List<GizmoSegment>(1);
         var triangles = new List<GizmoTriangle>(2);

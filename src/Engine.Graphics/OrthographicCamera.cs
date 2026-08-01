@@ -5,7 +5,7 @@ namespace Engine.Graphics;
 
 /// <summary>
 /// A 2D orthographic camera for editor UI rendering and 2D game views.
-/// Currently a stub — all methods throw <see cref="NotImplementedException"/>.
+/// Supports position-based panning and size-based zooming.
 /// </summary>
 public class OrthographicCamera : Node, ICamera
 {
@@ -18,28 +18,28 @@ public class OrthographicCamera : Node, ICamera
     public float Size
     {
         get => _size;
-        set { _size = value; /* TODO: mark projection dirty */ }
+        set => _size = value;
     }
 
     /// <summary>Gets or sets the viewport aspect ratio (width / height).</summary>
     public float Aspect
     {
         get => _aspect;
-        set { _aspect = value; /* TODO: mark projection dirty */ }
+        set => _aspect = value;
     }
 
     /// <summary>Gets or sets the near clip plane. Default: -1.</summary>
     public float Near
     {
         get => _near;
-        set { _near = value; /* TODO: mark projection dirty */ }
+        set => _near = value;
     }
 
     /// <summary>Gets or sets the far clip plane. Default: 1.</summary>
     public float Far
     {
         get => _far;
-        set { _far = value; /* TODO: mark projection dirty */ }
+        set => _far = value;
     }
 
     /// <summary>
@@ -61,53 +61,52 @@ public class OrthographicCamera : Node, ICamera
     /// <inheritdoc/>
     public Matrix4x4 GetViewMatrix()
     {
-        // TODO: Implement orthographic view matrix
-        // Should transform world coordinates so that (0,0) maps to the camera center
-        // and Size controls the vertical extent
-        throw new NotImplementedException("OrthographicCamera.GetViewMatrix");
+        return Matrix4x4.CreateTranslation(-Position);
     }
 
     /// <inheritdoc/>
     public Matrix4x4 GetProjectionMatrix()
     {
-        // TODO: Implement orthographic projection matrix
-        // Use Matrix4x4.CreateOrthographic(width, height, near, far)
-        // where width = Size * Aspect, height = Size
-        throw new NotImplementedException("OrthographicCamera.GetProjectionMatrix");
+        var projection = Matrix4x4.CreateOrthographic(_size * _aspect, _size, _near, _far);
+        projection.M22 = -projection.M22;
+        return projection;
     }
 
     /// <inheritdoc/>
     public PushConstants GetPushConstants(Matrix4x4 model)
     {
-        // TODO: Implement by composing model * GetViewMatrix() * GetProjectionMatrix()
-        throw new NotImplementedException("OrthographicCamera.GetPushConstants");
+        return new PushConstants
+        {
+            Model = model,
+            View = GetViewMatrix(),
+            Projection = GetProjectionMatrix()
+        };
     }
 
     /// <inheritdoc/>
     public void UpdateViewport(float width, float height)
     {
-        // TODO: Update Aspect = width / height, mark projection dirty
-        throw new NotImplementedException("OrthographicCamera.UpdateViewport");
+        if (height > 0f)
+            Aspect = width / height;
     }
 
     /// <summary>
-    /// TODO: Pan the camera by moving the view center in world space.
+    /// Pans the camera by moving the view center in world space.
     /// </summary>
     /// <param name="deltaX">Horizontal pan amount.</param>
     /// <param name="deltaY">Vertical pan amount.</param>
     public void Pan(float deltaX, float deltaY)
     {
-        // TODO: Move Position by (deltaX, -deltaY, 0), mark view dirty
-        throw new NotImplementedException("OrthographicCamera.Pan");
+        Position += new Vector3(deltaX, -deltaY, 0f);
     }
 
     /// <summary>
-    /// TODO: Zoom the camera by scaling the view Size.
+    /// Zooms the camera by scaling the visible vertical size.
     /// </summary>
     /// <param name="delta">Zoom factor. Positive zooms in (smaller Size), negative zooms out.</param>
     public void Zoom(float delta)
     {
-        // TODO: Scale Size by (1 - delta * zoomSpeed), clamp to min/max
-        throw new NotImplementedException("OrthographicCamera.Zoom");
+        const float ZoomSpeed = 0.1f;
+        Size = Math.Clamp(Size * (1f - delta * ZoomSpeed), 0.01f, 100000f);
     }
 }

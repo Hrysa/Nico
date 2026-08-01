@@ -16,8 +16,10 @@ public class Node3D : Node
     /// <returns>The world-space model matrix.</returns>
     public Matrix4x4 GetModelMatrix()
     {
-        return Matrix4x4.CreateScale(Scale)
+        var local = Matrix4x4.CreateScale(Scale)
              * GizmoTransformMath.ToRotationMatrix(Rotation)
              * Matrix4x4.CreateTranslation(Position);
+
+        return Parent is Node3D parent ? local * parent.GetModelMatrix() : local;
     }
 }

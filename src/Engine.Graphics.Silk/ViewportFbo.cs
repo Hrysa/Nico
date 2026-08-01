@@ -20,6 +20,9 @@ internal unsafe class ViewportFbo
     public Image ColorImage;
     public DeviceMemory ColorMemory;
     public ImageView ColorView;
+    public Image MsaaColorImage;
+    public DeviceMemory MsaaColorMemory;
+    public ImageView MsaaColorView;
     public Image DepthImage;
     public DeviceMemory DepthMemory;
     public ImageView DepthView;
@@ -44,7 +47,7 @@ internal unsafe class ViewportFbo
 
     public void Create(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, Format depthFormat, uint deviceLocalMemoryType,
+        Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         // ── Color image ────────────────────────────────────────
@@ -63,13 +66,30 @@ internal unsafe class ViewportFbo
         };
         vk.CreateImage(device, &colorInfo, null, out ColorImage);
         vk.GetImageMemoryRequirements(device, ColorImage, out var colorMemReqs);
-        vk.AllocateMemory(device, new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = colorMemReqs.Size, MemoryTypeIndex = deviceLocalMemoryType }, null, out ColorMemory);
+        var colorAllocation = new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = colorMemReqs.Size, MemoryTypeIndex = deviceLocalMemoryType };
+        vk.AllocateMemory(device, in colorAllocation, null, out ColorMemory);
         vk.BindImageMemory(device, ColorImage, ColorMemory, 0);
-        vk.CreateImageView(device, new ImageViewCreateInfo
+        var colorViewInfo = new ImageViewCreateInfo
         {
             SType = StructureType.ImageViewCreateInfo, Image = ColorImage, ViewType = ImageViewType.Type2D, Format = colorFormat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.ColorBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
-        }, null, out ColorView);
+        };
+        vk.CreateImageView(device, in colorViewInfo, null, out ColorView);
+
+        // ── Multisampled color image ───────────────────────────
+        colorInfo.Samples = samples;
+        colorInfo.Usage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransientAttachmentBit;
+        vk.CreateImage(device, &colorInfo, null, out MsaaColorImage);
+        vk.GetImageMemoryRequirements(device, MsaaColorImage, out var msaaColorMemReqs);
+        var msaaAllocation = new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = msaaColorMemReqs.Size, MemoryTypeIndex = deviceLocalMemoryType };
+        vk.AllocateMemory(device, in msaaAllocation, null, out MsaaColorMemory);
+        vk.BindImageMemory(device, MsaaColorImage, MsaaColorMemory, 0);
+        var msaaViewInfo = new ImageViewCreateInfo
+        {
+            SType = StructureType.ImageViewCreateInfo, Image = MsaaColorImage, ViewType = ImageViewType.Type2D, Format = colorFormat,
+            SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.ColorBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
+        };
+        vk.CreateImageView(device, in msaaViewInfo, null, out MsaaColorView);
 
         // ── Depth image ────────────────────────────────────────
         var depthInfo = new ImageCreateInfo
@@ -79,7 +99,7 @@ internal unsafe class ViewportFbo
             Format = depthFormat,
             Extent = new Extent3D { Width = Width, Height = Height, Depth = 1 },
             MipLevels = 1, ArrayLayers = 1,
-            Samples = SampleCountFlags.Count1Bit,
+            Samples = samples,
             Tiling = ImageTiling.Optimal,
             Usage = ImageUsageFlags.DepthStencilAttachmentBit,
             SharingMode = SharingMode.Exclusive,
@@ -87,28 +107,30 @@ internal unsafe class ViewportFbo
         };
         vk.CreateImage(device, &depthInfo, null, out DepthImage);
         vk.GetImageMemoryRequirements(device, DepthImage, out var depthMemReqs);
-        vk.AllocateMemory(device, new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = depthMemReqs.Size, MemoryTypeIndex = deviceLocalMemoryType }, null, out DepthMemory);
+        var depthAllocation = new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = depthMemReqs.Size, MemoryTypeIndex = deviceLocalMemoryType };
+        vk.AllocateMemory(device, in depthAllocation, null, out DepthMemory);
         vk.BindImageMemory(device, DepthImage, DepthMemory, 0);
-        vk.CreateImageView(device, new ImageViewCreateInfo
+        var depthViewInfo = new ImageViewCreateInfo
         {
             SType = StructureType.ImageViewCreateInfo, Image = DepthImage, ViewType = ImageViewType.Type2D, Format = depthFormat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.DepthBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
-        }, null, out DepthView);
+        };
+        vk.CreateImageView(device, in depthViewInfo, null, out DepthView);
 
-        // ── Framebuffer (color + depth) ────────────────────────
-        var fbAttachments = stackalloc[] { ColorView, DepthView };
+        // ── Framebuffer (MSAA color + depth + resolved color) ──
+        var fbAttachments = stackalloc[] { MsaaColorView, DepthView, ColorView };
         var fbInfo = new FramebufferCreateInfo
         {
             SType = StructureType.FramebufferCreateInfo,
             RenderPass = fboRenderPass,
-            AttachmentCount = 2,
+            AttachmentCount = 3,
             PAttachments = fbAttachments,
             Width = Width, Height = Height, Layers = 1
         };
         vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
 
         // ── Sampler ─────────────────────────────────────────────
-        vk.CreateSampler(device, new SamplerCreateInfo
+        var samplerInfo = new SamplerCreateInfo
         {
             SType = StructureType.SamplerCreateInfo,
             MagFilter = Filter.Nearest, MinFilter = Filter.Nearest,
@@ -116,14 +138,16 @@ internal unsafe class ViewportFbo
             AnisotropyEnable = new Bool32(false), MaxAnisotropy = 1,
             BorderColor = BorderColor.IntOpaqueBlack, UnnormalizedCoordinates = new Bool32(false),
             CompareEnable = new Bool32(false), CompareOp = CompareOp.Always, MipmapMode = SamplerMipmapMode.Nearest
-        }, null, out Sampler);
+        };
+        vk.CreateSampler(device, in samplerInfo, null, out Sampler);
 
         // ── Descriptor set ──────────────────────────────────────
         var setLayout = descriptorSetLayout;
-        vk.AllocateDescriptorSets(device, new DescriptorSetAllocateInfo
+        var descriptorSetInfo = new DescriptorSetAllocateInfo
         {
             SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = descriptorPool, DescriptorSetCount = 1, PSetLayouts = &setLayout
-        }, out DescriptorSet);
+        };
+        vk.AllocateDescriptorSets(device, in descriptorSetInfo, out DescriptorSet);
         var imageInfoDesc = new DescriptorImageInfo { Sampler = Sampler, ImageView = ColorView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
         var writeDescriptor = new WriteDescriptorSet
         {
@@ -135,23 +159,26 @@ internal unsafe class ViewportFbo
 
     public void Destroy(Vk vk, Device device)
     {
+        vk.DestroyFramebuffer(device, Framebuffer, null);
         vk.DestroySampler(device, Sampler, null);
+        vk.DestroyImageView(device, MsaaColorView, null);
+        vk.DestroyImage(device, MsaaColorImage, null);
+        vk.FreeMemory(device, MsaaColorMemory, null);
         vk.DestroyImageView(device, DepthView, null);
         vk.DestroyImage(device, DepthImage, null);
         vk.FreeMemory(device, DepthMemory, null);
         vk.DestroyImageView(device, ColorView, null);
         vk.DestroyImage(device, ColorImage, null);
         vk.FreeMemory(device, ColorMemory, null);
-        vk.DestroyFramebuffer(device, Framebuffer, null);
     }
 
     public void Recreate(
         Vk vk, Device device, RenderPass fboRenderPass,
-        Format colorFormat, Format depthFormat, uint deviceLocalMemoryType,
+        Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
         Destroy(vk, device);
-        Create(vk, device, fboRenderPass, colorFormat, depthFormat, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
+        Create(vk, device, fboRenderPass, colorFormat, depthFormat, samples, deviceLocalMemoryType, descriptorSetLayout, descriptorPool);
         IsDirty = false;
     }
 }

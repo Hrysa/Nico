@@ -10,21 +10,13 @@ namespace Editor;
 /// </summary>
 public static class EditorUI
 {
-    private static Panel _background = null!;
-    private static Panel _menuBar = null!;
-    private static Panel _statusBar = null!;
-    private static Panel _hierarchyPanel = null!;
-    private static Panel _inspectorPanel = null!;
-    private static ViewportPanel _sceneViewport = null!;
-    private static ViewportPanel _gameViewport = null!;
-
     /// <summary>
     /// Builds the editor UI tree from the given window dimensions.
     /// </summary>
     /// <param name="width">The window width in pixels.</param>
     /// <param name="height">The window height in pixels.</param>
     /// <returns>The root <see cref="Panel"/> containing all editor UI elements.</returns>
-    public static Panel BuildUI(float width, float height)
+    public static EditorView BuildView(float width, float height)
     {
         const float menuBarHeight = 30;
         const float statusBarHeight = 24;
@@ -37,24 +29,38 @@ public static class EditorUI
         var viewportHeight = viewportBottom - viewportTop;
         var halfViewportHeight = viewportHeight / 2;
 
-        _background = new Panel(0, 0, width, height, Color.EditorBackground) { Name = "Background" };
+        var background = new Panel(0, 0, width, height, Color.EditorBackground) { Name = "Background" };
 
-        _menuBar = new Panel(0, 0, width, menuBarHeight, Color.EditorMenuBar) { Name = "MenuBar" };
+        var menuBar = new Panel(0, 0, width, menuBarHeight, Color.EditorMenuBar) { Name = "MenuBar" };
 
         var fileButton = new Button(4, 3, 60, 24, "File", Color.EditorPanelHeader) { Name = "FileMenu" };
         var editButton = new Button(68, 3, 60, 24, "Edit", Color.EditorPanelHeader) { Name = "EditMenu" };
         var viewButton = new Button(132, 3, 60, 24, "View", Color.EditorPanelHeader) { Name = "ViewMenu" };
 
-        _menuBar.AddChild(fileButton);
-        _menuBar.AddChild(editButton);
-        _menuBar.AddChild(viewButton);
+        menuBar.AddChild(fileButton);
+        menuBar.AddChild(editButton);
+        menuBar.AddChild(viewButton);
 
         fileButton.Click += () => { Console.WriteLine("File menu clicked"); };
 
-        _statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.EditorStatusBar) { Name = "StatusBar" };
+        var statusBar = new Panel(0, height - statusBarHeight, width, statusBarHeight, Color.EditorStatusBar) { Name = "StatusBar" };
 
-        _hierarchyPanel = new Panel(0, viewportTop, hierarchyWidth, viewportHeight, Color.EditorPanel) { Name = "Hierarchy" };
-        _inspectorPanel = new Panel(width - inspectorWidth, viewportTop, inspectorWidth, viewportHeight, Color.EditorPanel) { Name = "Inspector" };
+        var hierarchyPanel = new Panel(0, viewportTop, hierarchyWidth, viewportHeight, Color.EditorPanel) { Name = "Hierarchy" };
+        var hierarchyHeader = new Label(0, 0, hierarchyWidth, 30, "Hierarchy")
+        {
+            Name = "HierarchyHeader",
+            BackgroundColor = Color.EditorPanelHeader,
+            PaintBackground = true,
+            PixelSize = 2f,
+            PaddingLeft = 8f
+        };
+        var hierarchyTree = new TreeView(0, 30, hierarchyWidth, viewportHeight - 30)
+        {
+            Name = "HierarchyTree"
+        };
+        hierarchyPanel.AddChild(hierarchyHeader);
+        hierarchyPanel.AddChild(hierarchyTree);
+        var inspectorPanel = new Panel(width - inspectorWidth, viewportTop, inspectorWidth, viewportHeight, Color.EditorPanel) { Name = "Inspector" };
 
         var separatorLeft = new Panel(hierarchyWidth, viewportTop, separatorWidth, viewportHeight, Color.EditorSeparator) { Name = "SeparatorLeft" };
         var separatorRight = new Panel(width - inspectorWidth - separatorWidth, viewportTop, separatorWidth, viewportHeight, Color.EditorSeparator) { Name = "SeparatorRight" };
@@ -62,33 +68,29 @@ public static class EditorUI
         var viewportWidth = width - hierarchyWidth - inspectorWidth - (separatorWidth * 2);
         var viewportX = hierarchyWidth + separatorWidth;
 
-        _sceneViewport = new ViewportPanel(viewportX, viewportTop, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "SceneViewport" };
-        _gameViewport = new ViewportPanel(viewportX, viewportTop + halfViewportHeight, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "GameViewport" };
+        var sceneViewport = new ViewportPanel(viewportX, viewportTop, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "SceneViewport" };
+        var gameViewport = new ViewportPanel(viewportX, viewportTop + halfViewportHeight, viewportWidth, halfViewportHeight, Color.EditorViewport) { Name = "GameViewport" };
 
         // Assemble tree
-        _background.AddChild(_menuBar);
-        _background.AddChild(_statusBar);
-        _background.AddChild(_hierarchyPanel);
-        _background.AddChild(_inspectorPanel);
-        _background.AddChild(separatorLeft);
-        _background.AddChild(separatorRight);
-        _background.AddChild(_sceneViewport);
-        _background.AddChild(_gameViewport);
+        background.AddChild(menuBar);
+        background.AddChild(statusBar);
+        background.AddChild(hierarchyPanel);
+        background.AddChild(inspectorPanel);
+        background.AddChild(separatorLeft);
+        background.AddChild(separatorRight);
+        background.AddChild(sceneViewport);
+        background.AddChild(gameViewport);
 
-        return _background;
+        return new EditorView(background, sceneViewport, gameViewport, hierarchyTree);
     }
 
     /// <summary>
-    /// Gets the Scene viewport panel for FBO registration.
+    /// Builds only the root UI panel for callers that do not need named editor elements.
     /// </summary>
-    /// <returns>The Scene ViewportPanel, or null if BuildUI has not been called.</returns>
-    public static ViewportPanel? GetSceneViewport() => _sceneViewport;
-
-    /// <summary>
-    /// Gets the Game viewport panel for FBO registration.
-    /// </summary>
-    /// <returns>The Game ViewportPanel, or null if BuildUI has not been called.</returns>
-    public static ViewportPanel? GetGameViewport() => _gameViewport;
+    /// <param name="width">Window width.</param>
+    /// <param name="height">Window height.</param>
+    /// <returns>The root UI panel.</returns>
+    public static Panel BuildUI(float width, float height) => BuildView(width, height).Root;
 
     /// <summary>
     /// Creates textured quad vertices for a specific viewport panel.
@@ -115,18 +117,6 @@ public static class EditorUI
     }
 
     /// <summary>
-    /// Collects all vertices from the UI tree for rendering.
-    /// </summary>
-    /// <param name="width">The window width in pixels.</param>
-    /// <param name="height">The window height in pixels.</param>
-    /// <returns>An array of <see cref="Vertex"/> for the entire editor UI.</returns>
-    public static Vertex[] CreateVertices(float width, float height)
-    {
-        var root = BuildUI(width, height);
-        return root.CollectVertices().ToArray();
-    }
-
-    /// <summary>
     /// Creates the MVP push constants with an orthographic projection for 2D editor rendering.
     /// </summary>
     /// <param name="width">The window width in pixels.</param>
@@ -150,3 +140,16 @@ public static class EditorUI
         };
     }
 }
+
+/// <summary>
+/// Contains one editor UI tree and its named viewport elements.
+/// </summary>
+/// <param name="Root">Root editor panel.</param>
+/// <param name="SceneViewport">Scene viewport panel.</param>
+/// <param name="GameViewport">Game viewport panel.</param>
+/// <param name="HierarchyTree">Scene hierarchy tree.</param>
+public sealed record EditorView(
+    Panel Root,
+    ViewportPanel SceneViewport,
+    ViewportPanel GameViewport,
+    TreeView HierarchyTree);

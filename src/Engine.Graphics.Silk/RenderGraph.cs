@@ -8,7 +8,7 @@ namespace Engine.Graphics;
 /// Each pass records into its own CommandBuffer; passes are submitted in order with semaphores
 /// ensuring GPU-side dependencies without DeviceWaitIdle.
 /// </summary>
-public unsafe class RenderGraph
+internal unsafe class FrameScheduler
 {
     private readonly Vk _vk;
     private readonly Device _device;
@@ -22,13 +22,13 @@ public unsafe class RenderGraph
 
     // Per-pass resources (allocated from the per-frame command pool)
     private const int MaxPasses = 4;
-    private readonly CommandBuffer[] _passCommandBuffers = new CommandBuffer[MaxPasses];
-    internal readonly Silk.NET.Vulkan.Semaphore[] _passSemaphores = new Silk.NET.Vulkan.Semaphore[MaxPasses];
+    private readonly Silk.NET.Vulkan.Semaphore[,] _passSemaphores =
+        new Silk.NET.Vulkan.Semaphore[MaxFramesInFlight, MaxPasses];
 
     private uint _currentFrame;
     private uint _passCount;
 
-    public RenderGraph(Vk vk, Device device, Queue graphicsQueue, uint queueFamilyIndex)
+    public FrameScheduler(Vk vk, Device device, Queue graphicsQueue, uint queueFamilyIndex)
     {
         _vk = vk;
         _device = device;
@@ -54,10 +54,13 @@ public unsafe class RenderGraph
         }
 
         // Create semaphores for inter-pass sync
-        for (int i = 0; i < MaxPasses; i++)
+        for (var frame = 0; frame < MaxFramesInFlight; frame++)
         {
-            var semInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
-            _vk.CreateSemaphore(_device, &semInfo, null, out _passSemaphores[i]);
+            for (var pass = 0; pass < MaxPasses; pass++)
+            {
+                var semInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
+                _vk.CreateSemaphore(_device, &semInfo, null, out _passSemaphores[frame, pass]);
+            }
         }
     }
 
@@ -68,9 +71,18 @@ public unsafe class RenderGraph
     {
         var fence = _inFlightFences[_currentFrame];
         _vk.WaitForFences(_device, 1, &fence, new Bool32(true), ulong.MaxValue);
-        _vk.ResetFences(_device, 1, &fence);
+        _vk.ResetCommandPool(_device, _commandPools[_currentFrame], 0);
         _passCount = 0;
         return _currentFrame;
+    }
+
+    /// <summary>
+    /// Resets the current frame fence immediately before the submission that will signal it.
+    /// </summary>
+    public void PrepareCurrentFenceForSubmission()
+    {
+        var fence = _inFlightFences[_currentFrame];
+        _vk.ResetFences(_device, 1, &fence);
     }
 
     /// <summary>
@@ -96,7 +108,7 @@ public unsafe class RenderGraph
             throw new InvalidOperationException($"Maximum {MaxPasses} passes per frame exceeded");
 
         var pool = _commandPools[_currentFrame];
-        var sem = _passSemaphores[_passCount];
+        var sem = _passSemaphores[_currentFrame, _passCount];
 
         // Allocate command buffer
         var allocInfo = new CommandBufferAllocateInfo
@@ -157,7 +169,7 @@ public unsafe class RenderGraph
     }
 
     /// <summary>
-    /// Destroys all RenderGraph resources.
+    /// Destroys all frame-scheduler resources.
     /// </summary>
     public void Destroy()
     {
@@ -169,9 +181,10 @@ public unsafe class RenderGraph
             _vk.DestroyFence(_device, _inFlightFences[i], null);
         }
 
-        for (int i = 0; i < MaxPasses; i++)
+        for (var frame = 0; frame < MaxFramesInFlight; frame++)
         {
-            _vk.DestroySemaphore(_device, _passSemaphores[i], null);
+            for (var pass = 0; pass < MaxPasses; pass++)
+                _vk.DestroySemaphore(_device, _passSemaphores[frame, pass], null);
         }
     }
 }
