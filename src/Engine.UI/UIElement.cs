@@ -9,6 +9,24 @@ namespace Engine.UI;
 /// </summary>
 public class UIElement : Node
 {
+    /// <summary>Gets or sets spacing outside the element's border box.</summary>
+    public Thickness Margin { get; set; } = Thickness.Zero;
+
+    /// <summary>Gets or sets spacing between the element border and its content.</summary>
+    public Thickness Padding { get; set; } = Thickness.Zero;
+
+    /// <summary>Gets or sets the minimum permitted width.</summary>
+    public float MinWidth { get; set; }
+
+    /// <summary>Gets or sets the minimum permitted height.</summary>
+    public float MinHeight { get; set; }
+
+    /// <summary>Gets or sets the maximum permitted width.</summary>
+    public float MaxWidth { get; set; } = float.PositiveInfinity;
+
+    /// <summary>Gets or sets the maximum permitted height.</summary>
+    public float MaxHeight { get; set; } = float.PositiveInfinity;
+
     /// <summary>Gets or sets the element width in pixels.</summary>
     public float Width { get; set; }
 
@@ -86,6 +104,18 @@ public class UIElement : Node
 
     /// <summary>Gets the absolute bottom edge position.</summary>
     public float Bottom => Top + Height;
+
+    /// <summary>Gets the width available to content after padding is removed.</summary>
+    public float ContentWidth => MathF.Max(0f, Width - Padding.Horizontal);
+
+    /// <summary>Gets the height available to content after padding is removed.</summary>
+    public float ContentHeight => MathF.Max(0f, Height - Padding.Vertical);
+
+    /// <summary>Gets the absolute left edge of the content box.</summary>
+    public float ContentLeft => Left + Padding.Left;
+
+    /// <summary>Gets the absolute top edge of the content box.</summary>
+    public float ContentTop => Top + Padding.Top;
 
     /// <summary>
     /// Creates a new UIElement with the specified position and size.

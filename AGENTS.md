@@ -126,9 +126,9 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 
 ### Matrix4x4 Push Constants (Row-Major vs Column-Major)
 
-`System.Numerics.Matrix4x4` is **row-major**. GLSL `mat4` is **column-major**. When a C# `Matrix4x4` is pushed as raw bytes via `vkCmdPushConstants`, GLSL reads the memory as columns — effectively getting the **transpose** of the intended matrix.
+`System.Numerics.Matrix4x4` is **row-major**. The Slang shaders declare `row_major` matrices and compile with `-matrix-layout-row-major`, which intentionally produces the existing SPIR-V `ColMajor` storage decorations. When a C# `Matrix4x4` is pushed as raw bytes via `vkCmdPushConstants`, the shader reads the memory as columns — effectively getting the **transpose** of the intended matrix.
 
-**Why it matters:** This automatic transpose is actually **correct** for the MVP transform. The C# row-vector convention is `v' = v * M`. The column-vector equivalent is `v' = M^T * v`. Since GLSL naturally reads the transpose, no explicit `Transpose()` call is needed — just push the raw `Matrix4x4` bytes directly.
+**Why it matters:** This automatic transpose is actually **correct** for the MVP transform. The C# row-vector convention is `v' = v * M`. The column-vector equivalent is `v' = M^T * v`. Since the SPIR-V storage contract supplies the transpose, no explicit `Transpose()` call is needed — just push the raw `Matrix4x4` bytes directly.
 
 **Rule:** Push `Matrix4x4` values directly to `PushConstants` without calling `Transpose()`. The game viewport's orthographic projection already does this correctly. The `PerspectiveCamera.GetPushConstants` must follow the same pattern.
 
@@ -163,8 +163,8 @@ dotnet run --project src/Player        # run game directly
 - `AllowUnsafeBlocks` only in `Engine.Graphics.Silk` (Vulkan interop)
 - Silk.NET.Windowing/Input/Vulkan/Maths 2.23.0
 - Microsoft.Extensions.Logging + Console (verbose dev logging)
-- Vortice.Dxc 3.8.3 (HLSL → SPIR-V shader compilation)
-- Shaders: `src/Shaders/` (basic.vert/frag, texture.vert/frag) → compile SPI-RV to same directory
+- Slang 2026.5.2 (`slangc`, native x64/ARM64 Slang → SPIR-V shader compilation)
+- Shaders: `src/Shaders/*.slang` → run `./compile_shaders.sh` to regenerate embedded `.spv` files
 
 ## Logging
 

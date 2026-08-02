@@ -106,15 +106,25 @@ public sealed class ListView : Panel
 /// <summary>
 /// Displays one selectable row inside a <see cref="ListView"/>.
 /// </summary>
-public sealed class ListViewItem : UIElement
+public sealed class ListViewItem : Button
 {
     private readonly UITheme _theme;
+    private bool _isSelected;
 
     /// <summary>Gets the displayed item text.</summary>
-    public string Text { get; }
+    public string Text => Label;
 
     /// <summary>Gets or sets whether this row is selected.</summary>
-    public bool IsSelected { get; set; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            _isSelected = value;
+            NormalColor = value ? _theme.SurfacePressed : _theme.Surface;
+            PaintNormalBackground = value;
+        }
+    }
 
     /// <summary>
     /// Creates a list row.
@@ -124,21 +134,15 @@ public sealed class ListViewItem : UIElement
     /// <param name="text">Displayed item text.</param>
     /// <param name="theme">Theme supplying row colors.</param>
     public ListViewItem(float width, float height, string text, UITheme? theme = null)
-        : base(0f, 0f, width, height)
+        : base(0f, 0f, width, height, text, theme ?? UITheme.Dark)
     {
-        Text = text;
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;
-    }
-
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-        var background = IsSelected ? _theme.SurfacePressed
-            : IsHovered ? _theme.SurfaceHover : _theme.Surface;
-        if (IsSelected || IsHovered)
-            drawList.AddRectangle(Left, Top, Right, Bottom, background);
-        drawList.AddText(Text, Left + 10f, Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f),
-            _theme.FontSize, ForegroundColor, background);
+        PaddingLeft = 10f;
+        NormalColor = _theme.Surface;
+        HoverColor = _theme.SurfaceHover;
+        PressedColor = _theme.SurfacePressed;
+        PaintNormalBackground = false;
+        CornerRadius = 0f;
     }
 }

@@ -52,10 +52,14 @@ public sealed class ScenePickerDialog : Modal
         };
         _sceneList = new ListView(16f, 124f, Dialog.Width - 32f,
             MathF.Max(80f, Dialog.Height - 190f), resolvedTheme) { Name = "SceneList" };
-        var cancelButton = new Button(Dialog.Width - 190f, Dialog.Height - 50f,
-            78f, 34f, "Cancel", resolvedTheme) { Name = "Cancel" };
-        _openButton = new Button(Dialog.Width - 104f, Dialog.Height - 50f,
-            88f, 34f, "Open", resolvedTheme, ButtonStyle.Primary) { Name = "Open" };
+        _openButton = new Button(0f, Dialog.Height - 50f,
+            34f, "Open", resolvedTheme, ButtonStyle.Primary) { Name = "Open" };
+        _openButton.Position = new System.Numerics.Vector3(
+            Dialog.Width - _openButton.Width - 16f, Dialog.Height - 50f, 0f);
+        var cancelButton = new Button(0f, Dialog.Height - 50f,
+            34f, "Cancel", resolvedTheme) { Name = "Cancel" };
+        cancelButton.Position = new System.Numerics.Vector3(
+            _openButton.Position.X - cancelButton.Width - 8f, Dialog.Height - 50f, 0f);
 
         _searchField.TextChanged += ApplyFilter;
         _sceneList.SelectionChanged += SelectVisiblePath;

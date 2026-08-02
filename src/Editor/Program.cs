@@ -141,8 +141,13 @@ var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
 ContextMenu? hierarchyContextMenu = null;
 ContextMenu? fileContextMenu = null;
 ScenePickerDialog? scenePickerDialog = null;
+FileSystemCreateDialog? fileSystemCreateDialog = null;
+var fileSystemList = editorView.FileSystemList;
+var fileSystemDirectory = project.RootPath;
+var fileSystemEntries = new Dictionary<string, string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
-AttachFileMenu(editorView.FileButton);
+AttachFileSystem(fileSystemList);
+RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 RefreshVertices();
 
@@ -156,15 +161,18 @@ void CloseHierarchyContextMenu()
     RefreshVertices();
 }
 
-/// <summary>Closes the File menu.</summary>
+/// <summary>Closes the filesystem context menu or scene picker.</summary>
 void CloseFileContextMenu()
 {
     if (fileContextMenu is not null)
         uiRoot.RemoveChild(fileContextMenu);
     if (scenePickerDialog is not null)
         uiRoot.RemoveChild(scenePickerDialog);
+    if (fileSystemCreateDialog is not null)
+        uiRoot.RemoveChild(fileSystemCreateDialog);
     fileContextMenu = null;
     scenePickerDialog = null;
+    fileSystemCreateDialog = null;
     RefreshVertices();
 }
 
@@ -175,6 +183,7 @@ void SaveScene()
     {
         SceneFileStore.Save(activeScenePath, sceneRoot, gameCamera);
         logger.LogInformation("Saved scene {ScenePath}", activeScenePath);
+        RefreshFileSystem();
     }
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
         or InvalidOperationException or NotSupportedException)
@@ -249,26 +258,170 @@ void ShowOpenSceneDialog()
     RefreshVertices();
 }
 
-/// <summary>Opens the File menu containing scene persistence actions.</summary>
-void ShowFileContextMenu()
+/// <summary>Returns whether a project file is a scene that this editor can load.</summary>
+/// <param name="path">Absolute project file path.</param>
+/// <returns>True for the primary scene or a named scene file.</returns>
+bool IsSceneFile(string path)
+{
+    return string.Equals(Path.GetFullPath(path), project.ScenePath, StringComparison.Ordinal)
+        || path.EndsWith(".scene.json", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Rebuilds the filesystem browser from the current project directory.</summary>
+void RefreshFileSystem()
+{
+    try
+    {
+        fileSystemEntries.Clear();
+        if (!string.Equals(fileSystemDirectory, project.RootPath, StringComparison.Ordinal))
+            fileSystemEntries.Add("← ..", Directory.GetParent(fileSystemDirectory)?.FullName
+                ?? project.RootPath);
+
+        foreach (var directory in Directory.EnumerateDirectories(fileSystemDirectory)
+                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+            fileSystemEntries.Add($"▸ {Path.GetFileName(directory)}", directory);
+        foreach (var file in Directory.EnumerateFiles(fileSystemDirectory)
+                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+            fileSystemEntries.Add(Path.GetFileName(file), file);
+
+        fileSystemList.SetItems(fileSystemEntries.Keys);
+        RefreshVertices();
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    {
+        logger.LogError(exception, "Could not enumerate project directory {Directory}",
+            fileSystemDirectory);
+    }
+}
+
+/// <summary>Opens a filesystem row as a directory or scene.</summary>
+/// <param name="label">Displayed filesystem row label.</param>
+void OpenFileSystemEntry(string label)
+{
+    if (!fileSystemEntries.TryGetValue(label, out var path))
+        return;
+    if (Directory.Exists(path))
+    {
+        fileSystemDirectory = path;
+        RefreshFileSystem();
+        return;
+    }
+    if (IsSceneFile(path))
+        LoadScene(path, makeActive: true);
+}
+
+/// <summary>Connects navigation and scene opening to a rebuilt filesystem list.</summary>
+/// <param name="list">Filesystem list to attach.</param>
+void AttachFileSystem(ListView list)
+{
+    list.ItemActivated += (_, label) => OpenFileSystemEntry(label);
+}
+
+/// <summary>Shows a naming dialog and creates a folder or empty file.</summary>
+/// <param name="parentDirectory">Directory that will contain the new item.</param>
+/// <param name="createFolder">True to create a folder; false to create an empty file.</param>
+void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
 {
     CloseFileContextMenu();
-    CloseHierarchyContextMenu();
-    var menu = new ContextMenu(8f, 78f, 170f) { Name = "FileContextMenu" };
-    menu.AddItem("Open Scene", ShowOpenSceneDialog);
-    menu.AddItem("Save Scene", SaveScene);
-    menu.AddItem("Reload Scene", ReloadScene);
-    fileContextMenu = menu;
-    uiRoot.AddChild(menu);
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height,
+        createFolder ? "Folder" : "File", relativeParent)
+        { Name = "CreateFileSystemItemDialog" };
+    dialog.CreateRequested += name =>
+    {
+        var itemPath = Path.Combine(parentDirectory, name);
+        try
+        {
+            if (Directory.Exists(itemPath) || File.Exists(itemPath))
+            {
+                dialog.ShowError("An item with that name already exists.");
+                RefreshVertices();
+                return;
+            }
+            if (createFolder)
+                Directory.CreateDirectory(itemPath);
+            else
+                using (File.Create(itemPath)) { }
+            logger.LogInformation("Created project item {ItemPath}", itemPath);
+            CloseFileContextMenu();
+            fileSystemDirectory = parentDirectory;
+            RefreshFileSystem();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not create project item {ItemPath}", itemPath);
+            dialog.ShowError("Could not create this item.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    uiRoot.AddChild(dialog);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
 
-/// <summary>Connects a rebuilt File button to its menu action.</summary>
-/// <param name="button">File button to attach.</param>
-void AttachFileMenu(Button button)
+/// <summary>Shows actions appropriate for filesystem blank space, a folder, or a file.</summary>
+/// <returns>True when the pointer was inside the filesystem list.</returns>
+bool ShowFileSystemContextMenu()
 {
-    button.Click += ShowFileContextMenu;
+    if (lastMousePos.X < fileSystemList.Left || lastMousePos.X > fileSystemList.Right
+        || lastMousePos.Y < fileSystemList.Top || lastMousePos.Y > fileSystemList.Bottom)
+        return false;
+
+    CloseFileContextMenu();
+    CloseHierarchyContextMenu();
+    string? targetPath = null;
+    if (uiEventRouter.HoveredElement is ListViewItem row)
+    {
+        fileSystemEntries.TryGetValue(row.Text, out targetPath);
+        fileSystemList.Select(fileSystemEntries.Keys.ToList().IndexOf(row.Text));
+    }
+    else
+    {
+        fileSystemList.Select(-1);
+    }
+
+    const float menuWidth = 170f;
+    var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
+    var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - 220f));
+    var menu = new ContextMenu(menuX, menuY, menuWidth) { Name = "FileSystemContextMenu" };
+    var creationDirectory = targetPath is not null && Directory.Exists(targetPath)
+        ? targetPath : fileSystemDirectory;
+    menu.AddItem("Add Folder", () => ShowCreateFileSystemDialog(creationDirectory,
+        createFolder: true));
+    menu.AddItem("Add File", () => ShowCreateFileSystemDialog(creationDirectory,
+        createFolder: false));
+    if (targetPath is not null && Directory.Exists(targetPath))
+    {
+        var folderPath = targetPath;
+        menu.AddItem("Open Folder", () =>
+        {
+            fileSystemDirectory = folderPath;
+            CloseFileContextMenu();
+            RefreshFileSystem();
+        });
+    }
+    else if (targetPath is not null && IsSceneFile(targetPath))
+    {
+        var scenePath = targetPath;
+        menu.AddItem("Open Scene", () => LoadScene(scenePath, makeActive: true));
+    }
+
+    menu.AddItem("Open Scene...", ShowOpenSceneDialog);
+    menu.AddItem("Save Scene", SaveScene);
+    if (targetPath is not null
+        && string.Equals(Path.GetFullPath(targetPath), activeScenePath, StringComparison.Ordinal))
+        menu.AddItem("Reload Scene", ReloadScene);
+    menu.AddItem("Refresh", RefreshFileSystem);
+    fileContextMenu = menu;
+    uiRoot.AddChild(menu);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+    return true;
 }
 
 /// <summary>Connects custom title-bar actions to native window commands.</summary>
@@ -354,16 +507,19 @@ void ResizeEditor(int newWidth, int newHeight)
     hierarchyContextMenu = null;
     fileContextMenu = null;
     scenePickerDialog = null;
+    fileSystemCreateDialog = null;
     editorView = EditorUI.BuildView(width, height);
     uiRoot = editorView.Root;
     uiEventRouter.SetRoot(uiRoot);
     sceneViewport = editorView.SceneViewport;
     gameViewport = editorView.GameViewport;
     hierarchyTree = editorView.HierarchyTree;
+    fileSystemList = editorView.FileSystemList;
     hierarchyTree.SetRoots(sceneRoot.Children);
     hierarchyTree.Select(selection.SelectedNode);
     AttachHierarchy(hierarchyTree);
-    AttachFileMenu(editorView.FileButton);
+    AttachFileSystem(fileSystemList);
+    RefreshFileSystem();
     AttachTitleBar(editorView.TitleBar);
     sceneViewport.ViewportId = sceneViewportId;
     sceneViewport.Camera = sceneCamera;
@@ -436,7 +592,8 @@ window.MouseDown += button =>
     Debug.Input(LogLevel.Debug, "MouseDown: button={Button}", button);
     if (button == 1)
     {
-        ShowHierarchyContextMenu();
+        if (!ShowFileSystemContextMenu())
+            ShowHierarchyContextMenu();
         return;
     }
 

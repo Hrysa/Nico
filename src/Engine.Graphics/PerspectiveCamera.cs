@@ -80,9 +80,9 @@ public class PerspectiveCamera : Node3D, ICamera
         if (_projectionDirty)
         {
             // System.Numerics CreatePerspectiveFieldOfView produces a row-major
-            // matrix. When pushed as raw bytes (no transpose), GLSL reads it
-            // as column-major, effectively getting the correct column-vector
-            // equivalent. Only Vulkan Y-flip needed.
+            // matrix. The Slang shaders preserve the existing column-major
+            // SPIR-V storage contract, which reads the raw bytes as the correct
+            // column-vector equivalent. Only the Vulkan Y-flip is needed.
             var proj = Matrix4x4.CreatePerspectiveFieldOfView(_fov, _aspect, _near, _far);
             proj.M22 = -proj.M22;  // Y-flip for Vulkan
 
@@ -96,8 +96,8 @@ public class PerspectiveCamera : Node3D, ICamera
     public PushConstants GetPushConstants(Matrix4x4 model)
     {
         // System.Numerics Matrix4x4 is row-major. When pushed as raw bytes
-        // via vkCmdPushConstants, GLSL reads them as column-major — effectively
-        // getting the transpose, which is the correct column-vector equivalent.
+        // via vkCmdPushConstants, the shader's column-major SPIR-V storage reads
+        // the transpose, which is the correct column-vector equivalent.
         // No explicit transpose needed (consistent with game viewport usage).
         return new PushConstants
         {

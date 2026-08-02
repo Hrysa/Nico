@@ -40,27 +40,17 @@ public sealed class TitleBar : Surface
     /// </summary>
     /// <param name="width">Title-bar width.</param>
     /// <param name="height">Title-bar height.</param>
-    /// <param name="title">Displayed project/window title.</param>
     /// <param name="theme">Theme supplying title-bar visuals.</param>
     /// <param name="style">Platform-specific control style.</param>
     public TitleBar(
         float width,
         float height,
-        string title,
         UITheme? theme = null,
         TitleBarStyle style = TitleBarStyle.Auto)
         : base(0f, 0f, width, height, (theme ?? UITheme.Dark).Canvas, (theme ?? UITheme.Dark).Border)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         Name = "TitleBar";
-        var titleLabel = new Label(width / 2f - 90f, 0f, 180f, height, title)
-        {
-            Name = "WindowTitle",
-            FontSize = resolvedTheme.FontSize,
-            ForegroundColor = resolvedTheme.TextPrimary,
-            PaddingLeft = 0f,
-            IsHitTestVisible = false
-        };
         var resolvedStyle = style == TitleBarStyle.Auto
             ? OperatingSystem.IsMacOS() ? TitleBarStyle.MacOS : TitleBarStyle.Windows
             : style;
@@ -94,7 +84,6 @@ public sealed class TitleBar : Surface
                 MaximizeRequested?.Invoke();
         };
         close.Click += () => CloseRequested?.Invoke();
-        AddChild(titleLabel);
         AddChild(minimize);
         AddChild(maximize);
         AddChild(close);

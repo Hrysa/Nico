@@ -42,12 +42,8 @@ public sealed class ContextMenu : Surface
 /// <summary>
 /// One clickable text row in a <see cref="ContextMenu"/>.
 /// </summary>
-public sealed class ContextMenuItem : UIElement
+public sealed class ContextMenuItem : Button
 {
-    private readonly UITheme _theme;
-    /// <summary>Gets the action label.</summary>
-    public string Label { get; }
-
     /// <summary>
     /// Creates a context-menu item.
     /// </summary>
@@ -58,19 +54,14 @@ public sealed class ContextMenuItem : UIElement
     /// <param name="label">Displayed label.</param>
     /// <param name="theme">Theme supplying row colors and typography.</param>
     public ContextMenuItem(float x, float y, float width, float height, string label, UITheme? theme = null)
-        : base(x, y, width, height)
+        : base(x, y, width, height, label, theme ?? UITheme.Dark)
     {
-        Label = label;
-        _theme = theme ?? UITheme.Dark;
-        ForegroundColor = _theme.TextPrimary;
-    }
-
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-        var color = IsPressed ? _theme.SurfacePressed
-            : IsHovered ? _theme.SurfaceHover : _theme.SurfaceRaised;
-        drawList.AddRectangle(Left, Top, Right, Bottom, color);
-        drawList.AddText(Label, Left + 10f, Top + 6f, _theme.FontSize, ForegroundColor, color);
+        var resolvedTheme = theme ?? UITheme.Dark;
+        PaddingLeft = 10f;
+        NormalColor = resolvedTheme.SurfaceRaised;
+        HoverColor = resolvedTheme.SurfaceHover;
+        PressedColor = resolvedTheme.SurfacePressed;
+        PaintNormalBackground = true;
+        CornerRadius = 0f;
     }
 }

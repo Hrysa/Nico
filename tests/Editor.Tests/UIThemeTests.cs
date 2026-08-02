@@ -39,6 +39,38 @@ public class UIThemeTests
         Assert.Contains(commands, command => command.Type == UIDrawCommandType.Text && command.Text == "Open");
     }
 
+    /// <summary>Verifies buttons compose and arrange a label instead of painting text themselves.</summary>
+    [Fact]
+    public void Button_TextConstructor_ComposesLabelInsidePaddingBox()
+    {
+        var button = new Button(10f, 20f, 100f, 30f, "Open", UITheme.Dark)
+        {
+            Padding = new Thickness(8f, 2f, 6f, 3f)
+        };
+
+        button.BuildDrawList();
+
+        var label = Assert.IsType<Label>(button.Content);
+        Assert.Same(label, Assert.Single(button.Children));
+        Assert.False(label.IsHitTestVisible);
+        Assert.Equal(8f, label.Position.X);
+        Assert.Equal(2f, label.Position.Y);
+        Assert.Equal(86f, label.Width);
+        Assert.Equal(25f, label.Height);
+    }
+
+    /// <summary>Verifies a scalar thickness expands to all four box-model sides.</summary>
+    [Fact]
+    public void Thickness_UniformValue_ProvidesCombinedInsets()
+    {
+        Thickness thickness = 4f;
+
+        Assert.Equal(4f, thickness.Left);
+        Assert.Equal(4f, thickness.Top);
+        Assert.Equal(8f, thickness.Horizontal);
+        Assert.Equal(8f, thickness.Vertical);
+    }
+
     /// <summary>Verifies subtle buttons paint a surface while hovered.</summary>
     [Fact]
     public void Button_ThemedSubtle_EmitsBackgroundWhenHovered()
@@ -49,6 +81,25 @@ public class UIThemeTests
 
         Assert.Contains(button.BuildDrawList().Commands,
             command => command.Type == UIDrawCommandType.Rectangle);
+    }
+
+    /// <summary>Verifies content-sized buttons grow with their label unless width is explicit.</summary>
+    [Fact]
+    public void Button_AutoWidth_FollowsContentWhileExplicitWidthIsPreserved()
+    {
+        var shortButton = new Button(0f, 0f, 28f, "Go", UITheme.Dark);
+        var longButton = new Button(0f, 0f, 28f, "Open Project", UITheme.Dark);
+        var explicitButton = new Button(0f, 0f, 123f, 28f, "Go", UITheme.Dark);
+
+        Assert.True(longButton.Width > shortButton.Width);
+        Assert.Equal(123f, explicitButton.Width);
+
+        var originalWidth = shortButton.Width;
+        shortButton.Label = "A much longer action";
+        Assert.True(shortButton.Width > originalWidth);
+
+        explicitButton.Label = "A much longer action";
+        Assert.Equal(123f, explicitButton.Width);
     }
 
     /// <summary>Verifies a surface paints one fill and four inset border edges.</summary>
@@ -159,7 +210,7 @@ public class UIThemeTests
     [Fact]
     public void TitleBar_DragRegionAndMinimizeButton_DispatchExpectedActions()
     {
-        var titleBar = new TitleBar(800f, 30f, "Project", style: TitleBarStyle.Windows);
+        var titleBar = new TitleBar(800f, 30f, style: TitleBarStyle.Windows);
         var dragged = false;
         var minimized = false;
         titleBar.DragStarted += () => dragged = true;
@@ -184,7 +235,7 @@ public class UIThemeTests
     [Fact]
     public void TitleBar_MacOS_UsesLeftTrafficLightControls()
     {
-        var titleBar = new TitleBar(800f, 30f, "Project", style: TitleBarStyle.MacOS);
+        var titleBar = new TitleBar(800f, 30f, style: TitleBarStyle.MacOS);
         var closed = false;
         titleBar.CloseRequested += () => closed = true;
         var router = new UIEventRouter(titleBar, () => { });

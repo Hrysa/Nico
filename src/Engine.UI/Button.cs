@@ -12,50 +12,91 @@ public enum ButtonStyle
     Primary
 }
 
-/// <summary>
-/// A clickable button element with hover and press visual states.
-/// </summary>
-public class Button : UIElement
+/// <summary>A clickable content box with hover and press visual states.</summary>
+public class Button : ContentControl
 {
+    private const float DefaultHorizontalPadding = 7f;
+    private const float AutoWidthOpticalCorrection = 1f;
     private Color _normalColor;
     private Color _hoverColor;
     private Color _pressedColor;
+    private bool _autoWidth;
     private bool _paintNormalBackground = true;
 
-    /// <summary>Gets or sets the button text inset.</summary>
-    public float PaddingLeft { get; set; } = 7f;
-
-    /// <summary>Gets or sets the button's right content inset.</summary>
-    public float PaddingRight { get; set; } = 7f;
-
-    /// <summary>Gets or sets the button's top content inset.</summary>
-    public float PaddingTop { get; set; } = 4f;
-
-    /// <summary>Gets or sets the button's bottom content inset.</summary>
-    public float PaddingBottom { get; set; } = 4f;
-
-    /// <summary>Sets the same content inset on every side of the button.</summary>
-    public float Padding
+    /// <summary>Gets or sets whether the idle state paints the button box.</summary>
+    protected bool PaintNormalBackground
     {
+        get => _paintNormalBackground;
+        set => _paintNormalBackground = value;
+    }
+
+    /// <summary>Gets the label child created by the text convenience constructors.</summary>
+    public Label? LabelContent => Content as Label;
+
+    /// <summary>Gets or sets the button label text.</summary>
+    public string Label
+    {
+        get => LabelContent?.Text ?? string.Empty;
         set
         {
-            PaddingLeft = value;
-            PaddingTop = value;
-            PaddingRight = value;
-            PaddingBottom = value;
+            ArgumentNullException.ThrowIfNull(value);
+            if (LabelContent is { } label)
+                label.Text = value;
+            else
+                Content = CreateLabel(value, UITheme.Dark.FontSize);
+            UpdateAutoWidth();
         }
     }
 
-    /// <summary>Gets or sets the button font size.</summary>
-    public float FontSize { get; set; } = UITheme.Dark.FontSize;
+    /// <summary>Gets or sets the button font size when its content is a label.</summary>
+    public float FontSize
+    {
+        get => LabelContent?.FontSize ?? UITheme.Dark.FontSize;
+        set
+        {
+            if (LabelContent is { } label)
+                label.FontSize = value;
+            UpdateAutoWidth();
+        }
+    }
 
-    /// <summary>Gets or sets the radius of the button's rounded corners.</summary>
-    public float CornerRadius { get; set; } = 5f;
+    /// <summary>Gets or sets the left content inset.</summary>
+    public float PaddingLeft
+    {
+        get => Padding.Left;
+        set
+        {
+            Padding = Padding with { Left = value };
+            UpdateAutoWidth();
+        }
+    }
 
-    /// <summary>Gets or sets the button label text.</summary>
-    public string Label { get; set; } = string.Empty;
+    /// <summary>Gets or sets the top content inset.</summary>
+    public float PaddingTop
+    {
+        get => Padding.Top;
+        set => Padding = Padding with { Top = value };
+    }
 
-    /// <summary>Gets or sets the normal (idle) background color.</summary>
+    /// <summary>Gets or sets the right content inset.</summary>
+    public float PaddingRight
+    {
+        get => Padding.Right;
+        set
+        {
+            Padding = Padding with { Right = value };
+            UpdateAutoWidth();
+        }
+    }
+
+    /// <summary>Gets or sets the bottom content inset.</summary>
+    public float PaddingBottom
+    {
+        get => Padding.Bottom;
+        set => Padding = Padding with { Bottom = value };
+    }
+
+    /// <summary>Gets or sets the normal background color.</summary>
     public Color NormalColor
     {
         get => _normalColor;
@@ -81,84 +122,100 @@ public class Button : UIElement
         set => _pressedColor = value;
     }
 
-    /// <summary>
-    /// Creates a new Button at the specified position and size.
-    /// </summary>
-    /// <param name="x">The X position (left edge).</param>
-    /// <param name="y">The Y position (top edge).</param>
-    /// <param name="width">The button width.</param>
-    /// <param name="height">The button height.</param>
-    /// <param name="label">The button label text.</param>
-    /// <param name="normalColor">The normal background color.</param>
+    /// <summary>Creates a fixed-size button with a custom color scheme.</summary>
+    /// <param name="x">Local X position.</param>
+    /// <param name="y">Local Y position.</param>
+    /// <param name="width">Button width.</param>
+    /// <param name="height">Button height.</param>
+    /// <param name="label">Button label.</param>
+    /// <param name="normalColor">Normal background color.</param>
     public Button(float x, float y, float width, float height, string label, Color normalColor)
         : base(x, y, width, height)
     {
-        Label = label;
+        Padding = new Thickness(DefaultHorizontalPadding, 0f);
+        CornerRadius = 5f;
+        Content = CreateLabel(label, UITheme.Dark.FontSize);
         _normalColor = normalColor;
         _hoverColor = Color.Lerp(normalColor, Color.White, 0.15f);
         _pressedColor = Color.Lerp(normalColor, Color.Black, 0.2f);
         BackgroundColor = normalColor;
     }
 
-    /// <summary>
-    /// Creates a new Button with default gray color scheme.
-    /// </summary>
-    /// <param name="x">The X position (left edge).</param>
-    /// <param name="y">The Y position (top edge).</param>
-    /// <param name="width">The button width.</param>
-    /// <param name="height">The button height.</param>
-    /// <param name="label">The button label text.</param>
+    /// <summary>Creates a fixed-size button with the default theme.</summary>
+    /// <param name="x">Local X position.</param>
+    /// <param name="y">Local Y position.</param>
+    /// <param name="width">Button width.</param>
+    /// <param name="height">Button height.</param>
+    /// <param name="label">Button label.</param>
     public Button(float x, float y, float width, float height, string label)
         : this(x, y, width, height, label, UITheme.Dark, ButtonStyle.Subtle)
     {
     }
 
-    /// <summary>
-    /// Creates a button from shared theme tokens.
-    /// </summary>
-    /// <param name="x">The X position.</param>
-    /// <param name="y">The Y position.</param>
-    /// <param name="width">The button width.</param>
-    /// <param name="height">The button height.</param>
-    /// <param name="label">The button label.</param>
+    /// <summary>Creates a themed button whose width follows its label content.</summary>
+    /// <param name="x">Local X position.</param>
+    /// <param name="y">Local Y position.</param>
+    /// <param name="height">Button height.</param>
+    /// <param name="label">Button label.</param>
     /// <param name="theme">Theme supplying colors and typography.</param>
     /// <param name="style">Button emphasis.</param>
-    public Button(
-        float x,
-        float y,
-        float width,
-        float height,
-        string label,
-        UITheme theme,
+    public Button(float x, float y, float height, string label, UITheme theme,
+        ButtonStyle style = ButtonStyle.Subtle)
+        : this(x, y, 0f, height, label, theme, style)
+    {
+        _autoWidth = true;
+        UpdateAutoWidth();
+    }
+
+    /// <summary>Creates a fixed-size themed button.</summary>
+    /// <param name="x">Local X position.</param>
+    /// <param name="y">Local Y position.</param>
+    /// <param name="width">Button width.</param>
+    /// <param name="height">Button height.</param>
+    /// <param name="label">Button label.</param>
+    /// <param name="theme">Theme supplying colors and typography.</param>
+    /// <param name="style">Button emphasis.</param>
+    public Button(float x, float y, float width, float height, string label, UITheme theme,
         ButtonStyle style = ButtonStyle.Subtle)
         : base(x, y, width, height)
     {
         ArgumentNullException.ThrowIfNull(theme);
-        Label = label;
+        Padding = new Thickness(DefaultHorizontalPadding, 0f);
+        CornerRadius = 5f;
+        Content = CreateLabel(label, theme.FontSize);
         _normalColor = style == ButtonStyle.Primary ? theme.SurfacePressed : theme.SurfaceRaised;
         _hoverColor = theme.SurfaceHover;
         _pressedColor = style == ButtonStyle.Primary ? theme.BorderStrong : theme.SurfacePressed;
         _paintNormalBackground = style == ButtonStyle.Primary;
         BackgroundColor = _normalColor;
         ForegroundColor = style == ButtonStyle.Primary ? theme.Accent : theme.TextPrimary;
-        FontSize = theme.FontSize;
     }
 
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
+    /// <summary>Creates a non-interactive label child for text convenience constructors.</summary>
+    /// <param name="text">Label text.</param>
+    /// <param name="fontSize">Label font size.</param>
+    /// <returns>The configured label child.</returns>
+    private static Label CreateLabel(string text, float fontSize)
     {
-        var paintBackground = _paintNormalBackground || IsHovered || IsPressed;
-        if (paintBackground)
-            drawList.AddRoundedRectangle(Left, Top, Right, Bottom, CornerRadius, BackgroundColor);
-        var textBackground = paintBackground ? BackgroundColor : GetParentBackgroundColor();
-        var contentHeight = MathF.Max(0f, Height - PaddingTop - PaddingBottom);
-        var textTop = Top + PaddingTop + MathF.Max(0f, (contentHeight - FontSize) / 2f);
-        drawList.AddText(Label, Left + PaddingLeft, textTop,
-            FontSize, ForegroundColor, textBackground);
+        return new Label(0f, 0f, 0f, 0f, text)
+        {
+            FontSize = fontSize,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        };
     }
 
-    /// <summary>Finds the nearest parent surface color behind this button.</summary>
-    /// <returns>The parent background color, or the theme canvas when no UI parent exists.</returns>
+    /// <summary>Refreshes content-driven width after content or padding changes.</summary>
+    private void UpdateAutoWidth()
+    {
+        if (!_autoWidth || LabelContent is not { } label)
+            return;
+        Width = MathF.Ceiling(MathF.Max(Padding.Horizontal,
+            label.MeasureTextWidth() + Padding.Horizontal - AutoWidthOpticalCorrection));
+    }
+
+    /// <summary>Finds the nearest ancestor background behind a transparent button.</summary>
+    /// <returns>The ancestor background, or the theme canvas when no ancestor exists.</returns>
     private Color GetParentBackgroundColor()
     {
         for (var ancestor = Parent; ancestor is not null; ancestor = ancestor.Parent)
@@ -167,6 +224,19 @@ public class Button : UIElement
                 return element.BackgroundColor;
         }
         return UITheme.Dark.Canvas;
+    }
+
+    /// <inheritdoc/>
+    protected override void Paint(UIDrawList drawList)
+    {
+        var paintBackground = _paintNormalBackground || IsHovered || IsPressed;
+        base.PaintBackground = paintBackground;
+        if (LabelContent is { } label)
+        {
+            label.ForegroundColor = ForegroundColor;
+            label.BackgroundColor = paintBackground ? BackgroundColor : GetParentBackgroundColor();
+        }
+        base.Paint(drawList);
     }
 
     /// <inheritdoc/>
