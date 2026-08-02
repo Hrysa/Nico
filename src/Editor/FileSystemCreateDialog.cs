@@ -19,18 +19,20 @@ public sealed class FileSystemCreateDialog : Modal
     /// <param name="height">Editor window height.</param>
     /// <param name="itemKind">Human-readable item kind, such as Folder or File.</param>
     /// <param name="parentPath">Project-relative destination directory.</param>
+    /// <param name="actionVerb">Dialog action verb, such as Add or Save.</param>
     /// <param name="theme">Theme supplying dialog visuals.</param>
     public FileSystemCreateDialog(
         float width,
         float height,
         string itemKind,
         string parentPath,
+        string actionVerb = "Add",
         UITheme? theme = null)
         : base(width, height, MathF.Min(480f, width - 48f), 238f, theme)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemKind);
         var resolvedTheme = theme ?? UITheme.Dark;
-        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width, $"Add {itemKind}",
+        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width, $"{actionVerb} {itemKind}",
             $"Create inside {parentPath}", resolvedTheme));
 
         _nameField = new TextField(16f, 82f, Dialog.Width - 32f, 34f, resolvedTheme)
@@ -45,8 +47,9 @@ public sealed class FileSystemCreateDialog : Modal
             FontSize = resolvedTheme.CaptionFontSize,
             PaddingLeft = 0f
         };
-        var createButton = new Button(0f, Dialog.Height - 50f, 34f, "Create",
-            resolvedTheme, ButtonStyle.Primary) { Name = "Create" };
+        var createButton = new Button(0f, Dialog.Height - 50f, 34f,
+            actionVerb == "Save" ? "Save" : "Create", resolvedTheme, ButtonStyle.Primary)
+            { Name = "Create" };
         createButton.Position = new System.Numerics.Vector3(
             Dialog.Width - createButton.Width - 16f, Dialog.Height - 50f, 0f);
         var cancelButton = new Button(0f, Dialog.Height - 50f, 34f, "Cancel", resolvedTheme)

@@ -74,8 +74,12 @@ sceneViewport.Camera = sceneCamera;
 Node3D sceneRoot;
 List<MeshInstance3D> sceneObjects;
 PerspectiveCamera gameCamera;
-var activeScenePath = project.ScenePath;
-if (File.Exists(activeScenePath))
+var discoveredScenes = project.FindSceneFiles();
+string? activeScenePath = File.Exists(project.ScenePath)
+    ? project.ScenePath : discoveredScenes.FirstOrDefault();
+editorView.ProjectLabel.Text = activeScenePath is null
+    ? "Untitled.node" : Path.GetFileName(activeScenePath);
+if (activeScenePath is not null)
 {
     try
     {
@@ -140,13 +144,14 @@ var viewportRenderer = new EditorViewportRenderer(
 var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
 ContextMenu? hierarchyContextMenu = null;
 ContextMenu? fileContextMenu = null;
+ContextMenu? fileSubmenu = null;
 ScenePickerDialog? scenePickerDialog = null;
 FileSystemCreateDialog? fileSystemCreateDialog = null;
-var fileSystemList = editorView.FileSystemList;
-var fileSystemDirectory = project.RootPath;
-var fileSystemEntries = new Dictionary<string, string>(StringComparer.Ordinal);
+ConfirmationDialog? confirmationDialog = null;
+DragPreview? dragPreview = null;
+var fileSystemTree = editorView.FileSystemTree;
 var createdObjectIndex = 1;
-AttachFileSystem(fileSystemList);
+AttachFileSystem(fileSystemTree);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 RefreshVertices();
@@ -166,19 +171,33 @@ void CloseFileContextMenu()
 {
     if (fileContextMenu is not null)
         uiRoot.RemoveChild(fileContextMenu);
+    if (fileSubmenu is not null)
+        uiRoot.RemoveChild(fileSubmenu);
     if (scenePickerDialog is not null)
         uiRoot.RemoveChild(scenePickerDialog);
     if (fileSystemCreateDialog is not null)
         uiRoot.RemoveChild(fileSystemCreateDialog);
+    if (confirmationDialog is not null)
+        uiRoot.RemoveChild(confirmationDialog);
+    if (dragPreview is not null)
+        uiRoot.RemoveChild(dragPreview);
     fileContextMenu = null;
+    fileSubmenu = null;
     scenePickerDialog = null;
     fileSystemCreateDialog = null;
+    confirmationDialog = null;
+    dragPreview = null;
     RefreshVertices();
 }
 
 /// <summary>Saves the current scene to its active scene file.</summary>
 void SaveScene()
 {
+    if (activeScenePath is null)
+    {
+        ShowScenePathDialog(project.RootPath, createDefaultScene: false, saveAction: true);
+        return;
+    }
     try
     {
         SceneFileStore.Save(activeScenePath, sceneRoot, gameCamera);
@@ -213,7 +232,10 @@ bool LoadScene(string scenePath, bool makeActive)
         viewportRenderer.SetGameCamera(gameCamera);
         hierarchyTree.SetRoots(sceneRoot.Children);
         if (makeActive)
+        {
             activeScenePath = Path.GetFullPath(scenePath);
+            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+        }
         logger.LogInformation("Loaded scene {ScenePath}", scenePath);
         CloseFileContextMenu();
         return true;
@@ -230,7 +252,8 @@ bool LoadScene(string scenePath, bool makeActive)
 /// <summary>Reloads the active scene file.</summary>
 void ReloadScene()
 {
-    LoadScene(activeScenePath, makeActive: false);
+    if (activeScenePath is not null)
+        LoadScene(activeScenePath, makeActive: false);
 }
 
 /// <summary>Displays a searchable project scene picker.</summary>
@@ -260,61 +283,83 @@ void ShowOpenSceneDialog()
 
 /// <summary>Returns whether a project file is a scene that this editor can load.</summary>
 /// <param name="path">Absolute project file path.</param>
-/// <returns>True for the primary scene or a named scene file.</returns>
+/// <returns>True for a node scene asset.</returns>
 bool IsSceneFile(string path)
 {
-    return string.Equals(Path.GetFullPath(path), project.ScenePath, StringComparison.Ordinal)
-        || path.EndsWith(".scene.json", StringComparison.OrdinalIgnoreCase);
+    return path.EndsWith(".node", StringComparison.OrdinalIgnoreCase);
 }
 
-/// <summary>Rebuilds the filesystem browser from the current project directory.</summary>
+/// <summary>Builds one recursive project filesystem subtree.</summary>
+/// <param name="path">Absolute file or directory path.</param>
+/// <returns>The populated filesystem node.</returns>
+FileSystemNode BuildFileSystemNode(string path)
+{
+    var isDirectory = Directory.Exists(path);
+    var node = new FileSystemNode(path, isDirectory);
+    if (!isDirectory || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+        return node;
+
+    foreach (var directory in Directory.EnumerateDirectories(path)
+                 .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        node.AddChild(BuildFileSystemNode(directory));
+    foreach (var file in Directory.EnumerateFiles(path)
+                 .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        node.AddChild(new FileSystemNode(file, isDirectory: false));
+    return node;
+}
+
+/// <summary>Enumerates one filesystem-node subtree.</summary>
+/// <param name="root">Subtree root.</param>
+/// <returns>Root and all descendants.</returns>
+IEnumerable<FileSystemNode> EnumerateFileSystemNodes(FileSystemNode root)
+{
+    yield return root;
+    foreach (var child in root.Children.OfType<FileSystemNode>())
+    foreach (var descendant in EnumerateFileSystemNodes(child))
+        yield return descendant;
+}
+
+/// <summary>Rebuilds the filesystem tree from the opened project root.</summary>
 void RefreshFileSystem()
 {
     try
     {
-        fileSystemEntries.Clear();
-        if (!string.Equals(fileSystemDirectory, project.RootPath, StringComparison.Ordinal))
-            fileSystemEntries.Add("← ..", Directory.GetParent(fileSystemDirectory)?.FullName
-                ?? project.RootPath);
-
-        foreach (var directory in Directory.EnumerateDirectories(fileSystemDirectory)
-                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
-            fileSystemEntries.Add($"▸ {Path.GetFileName(directory)}", directory);
-        foreach (var file in Directory.EnumerateFiles(fileSystemDirectory)
-                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
-            fileSystemEntries.Add(Path.GetFileName(file), file);
-
-        fileSystemList.SetItems(fileSystemEntries.Keys);
+        var expandedPaths = fileSystemTree.ExpandedItems.OfType<FileSystemNode>()
+            .Select(node => node.FullPath).ToHashSet(StringComparer.Ordinal);
+        var root = BuildFileSystemNode(project.RootPath);
+        var expandedNodes = EnumerateFileSystemNodes(root)
+            .Where(node => !ReferenceEquals(node, root) && node.IsDirectory
+                && expandedPaths.Contains(node.FullPath)).ToArray();
+        fileSystemTree.SetRoots(root.Children);
+        fileSystemTree.SetExpanded(expandedNodes);
         RefreshVertices();
     }
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
     {
         logger.LogError(exception, "Could not enumerate project directory {Directory}",
-            fileSystemDirectory);
+            project.RootPath);
     }
 }
 
-/// <summary>Opens a filesystem row as a directory or scene.</summary>
-/// <param name="label">Displayed filesystem row label.</param>
-void OpenFileSystemEntry(string label)
+/// <summary>Dispatches an activated project file to its registered editor operation.</summary>
+/// <param name="item">Activated filesystem node.</param>
+void OpenFileSystemEntry(Node item)
 {
-    if (!fileSystemEntries.TryGetValue(label, out var path))
+    if (item is not FileSystemNode node || node.IsDirectory)
         return;
-    if (Directory.Exists(path))
+    if (IsSceneFile(node.FullPath))
     {
-        fileSystemDirectory = path;
-        RefreshFileSystem();
+        LoadScene(node.FullPath, makeActive: true);
         return;
     }
-    if (IsSceneFile(path))
-        LoadScene(path, makeActive: true);
+    logger.LogInformation("No editor is registered for project file {FilePath}", node.FullPath);
 }
 
-/// <summary>Connects navigation and scene opening to a rebuilt filesystem list.</summary>
-/// <param name="list">Filesystem list to attach.</param>
-void AttachFileSystem(ListView list)
+/// <summary>Connects scene opening to the project filesystem tree.</summary>
+/// <param name="tree">Filesystem tree to attach.</param>
+void AttachFileSystem(TreeView tree)
 {
-    list.ItemActivated += (_, label) => OpenFileSystemEntry(label);
+    tree.ItemActivated += OpenFileSystemEntry;
 }
 
 /// <summary>Shows a naming dialog and creates a folder or empty file.</summary>
@@ -346,7 +391,6 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
                 using (File.Create(itemPath)) { }
             logger.LogInformation("Created project item {ItemPath}", itemPath);
             CloseFileContextMenu();
-            fileSystemDirectory = parentDirectory;
             RefreshFileSystem();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
@@ -364,48 +408,199 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
     RefreshVertices();
 }
 
+/// <summary>Replaces the current editor scene with a new in-memory default node scene.</summary>
+void ResetToDefaultScene()
+{
+    selection.Select(null);
+    sceneRoot.ClearChildren();
+    sceneObjects.Clear();
+    var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
+    gameCamera = new PerspectiveCamera(
+        fov: MathF.PI / 4f,
+        aspect: gameViewport.Width / MathF.Max(1f, gameViewport.Height),
+        near: 0.1f,
+        far: 1000f)
+    {
+        Name = "GameCamera",
+        Position = new Vector3(4f, 3f, 6f)
+    };
+    gameCamera.LookAt(Vector3.Zero);
+    sceneObjects.Add(cube);
+    sceneRoot.AddChild(cube);
+    sceneRoot.AddChild(gameCamera);
+    gameViewport.Camera = gameCamera;
+    viewportRenderer.SetGameCamera(gameCamera);
+    hierarchyTree.SetRoots(sceneRoot.Children);
+}
+
+/// <summary>Shows a project-scoped path dialog for adding or saving a node scene.</summary>
+/// <param name="parentDirectory">Directory that will contain the node asset.</param>
+/// <param name="createDefaultScene">Whether to replace the viewport with a fresh default scene.</param>
+/// <param name="saveAction">Whether the dialog represents Save rather than Add.</param>
+void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool saveAction)
+{
+    CloseFileContextMenu();
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height, "Scene", relativeParent,
+        actionVerb: saveAction ? "Save" : "Add") { Name = "SaveNodeDialog" };
+    dialog.CreateRequested += requestedName =>
+    {
+        var fileName = requestedName.EndsWith(".node", StringComparison.OrdinalIgnoreCase)
+            ? requestedName : requestedName + ".node";
+        var scenePath = Path.Combine(parentDirectory, fileName);
+        if (File.Exists(scenePath) || Directory.Exists(scenePath))
+        {
+            dialog.ShowError("An item with that name already exists.");
+            RefreshVertices();
+            return;
+        }
+        try
+        {
+            if (createDefaultScene)
+                ResetToDefaultScene();
+            SceneFileStore.Save(scenePath, sceneRoot, gameCamera);
+            activeScenePath = Path.GetFullPath(scenePath);
+            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+            logger.LogInformation("Saved scene {ScenePath}", activeScenePath);
+            CloseFileContextMenu();
+            RefreshFileSystem();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or InvalidOperationException or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not save scene {ScenePath}", scenePath);
+            dialog.ShowError("Could not save this scene.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    uiRoot.AddChild(dialog);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
+/// <summary>Shows file types that can be created in the selected project directory.</summary>
+/// <param name="parentDirectory">Directory receiving the new file.</param>
+/// <param name="x">Submenu screen X position.</param>
+/// <param name="y">Submenu screen Y position.</param>
+void ShowAddFileSubmenu(string parentDirectory, float x, float y)
+{
+    if (fileSubmenu is not null)
+        uiRoot.RemoveChild(fileSubmenu);
+    var submenu = new ContextMenu(
+        Math.Clamp(x, 0f, MathF.Max(0f, width - 170f)),
+        Math.Clamp(y, 0f, MathF.Max(0f, height - 60f)),
+        170f) { Name = "AddFileSubmenu" };
+    submenu.AddItem("Add Scene", () => ShowScenePathDialog(parentDirectory,
+        createDefaultScene: true, saveAction: false));
+    submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
+        createFolder: false));
+    fileSubmenu = submenu;
+    uiRoot.AddChild(submenu);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
+/// <summary>Returns whether a path is the active scene or contains it.</summary>
+/// <param name="targetPath">File or directory considered for deletion.</param>
+/// <returns>True when deleting the target would remove the active scene.</returns>
+bool ContainsActiveScene(string targetPath)
+{
+    if (activeScenePath is null)
+        return false;
+    var target = Path.GetFullPath(targetPath);
+    var active = Path.GetFullPath(activeScenePath);
+    if (string.Equals(target, active, StringComparison.Ordinal))
+        return true;
+    if (!Directory.Exists(target))
+        return false;
+    return active.StartsWith(target.TrimEnd(Path.DirectorySeparatorChar)
+        + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+}
+
+/// <summary>Shows confirmation and deletes one project file or folder.</summary>
+/// <param name="targetPath">Absolute project entry path to delete.</param>
+void ShowDeleteConfirmation(string targetPath)
+{
+    CloseFileContextMenu();
+    var displayName = Path.GetFileName(targetPath.TrimEnd(Path.DirectorySeparatorChar));
+    var dialog = new ConfirmationDialog(width, height, "Delete Project Item",
+        $"Delete {displayName}? This cannot be undone.", "Delete")
+        { Name = "DeleteProjectItemDialog" };
+    dialog.Confirmed += () =>
+    {
+        try
+        {
+            var removesActiveScene = ContainsActiveScene(targetPath);
+            if (Directory.Exists(targetPath))
+            {
+                var isLink = File.GetAttributes(targetPath).HasFlag(FileAttributes.ReparsePoint);
+                Directory.Delete(targetPath, recursive: !isLink);
+            }
+            else if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+            if (removesActiveScene)
+            {
+                activeScenePath = null;
+                editorView.ProjectLabel.Text = "Untitled.node";
+                ResetToDefaultScene();
+            }
+            logger.LogInformation("Deleted project item {ItemPath}", targetPath);
+            CloseFileContextMenu();
+            RefreshFileSystem();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not delete project item {ItemPath}", targetPath);
+            CloseFileContextMenu();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    confirmationDialog = dialog;
+    uiRoot.AddChild(dialog);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
 /// <summary>Shows actions appropriate for filesystem blank space, a folder, or a file.</summary>
-/// <returns>True when the pointer was inside the filesystem list.</returns>
+/// <returns>True when the pointer was inside the filesystem tree.</returns>
 bool ShowFileSystemContextMenu()
 {
-    if (lastMousePos.X < fileSystemList.Left || lastMousePos.X > fileSystemList.Right
-        || lastMousePos.Y < fileSystemList.Top || lastMousePos.Y > fileSystemList.Bottom)
+    if (lastMousePos.X < fileSystemTree.Left || lastMousePos.X > fileSystemTree.Right
+        || lastMousePos.Y < fileSystemTree.Top || lastMousePos.Y > fileSystemTree.Bottom)
         return false;
 
     CloseFileContextMenu();
     CloseHierarchyContextMenu();
     string? targetPath = null;
-    if (uiEventRouter.HoveredElement is ListViewItem row)
+    if (uiEventRouter.HoveredElement is TreeViewItem row && row.Item is FileSystemNode node)
     {
-        fileSystemEntries.TryGetValue(row.Text, out targetPath);
-        fileSystemList.Select(fileSystemEntries.Keys.ToList().IndexOf(row.Text));
+        targetPath = node.FullPath;
+        fileSystemTree.Select(node);
     }
     else
     {
-        fileSystemList.Select(-1);
+        fileSystemTree.Select(null);
     }
 
     const float menuWidth = 170f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
-    var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - 220f));
+    var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - 270f));
     var menu = new ContextMenu(menuX, menuY, menuWidth) { Name = "FileSystemContextMenu" };
     var creationDirectory = targetPath is not null && Directory.Exists(targetPath)
-        ? targetPath : fileSystemDirectory;
+        ? targetPath : targetPath is not null ? Path.GetDirectoryName(targetPath) ?? project.RootPath
+        : project.RootPath;
     menu.AddItem("Add Folder", () => ShowCreateFileSystemDialog(creationDirectory,
         createFolder: true));
-    menu.AddItem("Add File", () => ShowCreateFileSystemDialog(creationDirectory,
-        createFolder: false));
-    if (targetPath is not null && Directory.Exists(targetPath))
-    {
-        var folderPath = targetPath;
-        menu.AddItem("Open Folder", () =>
-        {
-            fileSystemDirectory = folderPath;
-            CloseFileContextMenu();
-            RefreshFileSystem();
-        });
-    }
-    else if (targetPath is not null && IsSceneFile(targetPath))
+    menu.AddItem("Add File", () => ShowAddFileSubmenu(creationDirectory,
+        menu.Right - 2f, menu.Top + 28f));
+    if (targetPath is not null && !Directory.Exists(targetPath) && IsSceneFile(targetPath))
     {
         var scenePath = targetPath;
         menu.AddItem("Open Scene", () => LoadScene(scenePath, makeActive: true));
@@ -416,6 +611,11 @@ bool ShowFileSystemContextMenu()
     if (targetPath is not null
         && string.Equals(Path.GetFullPath(targetPath), activeScenePath, StringComparison.Ordinal))
         menu.AddItem("Reload Scene", ReloadScene);
+    if (targetPath is not null)
+    {
+        var deletePath = targetPath;
+        menu.AddItem("Delete", () => ShowDeleteConfirmation(deletePath));
+    }
     menu.AddItem("Refresh", RefreshFileSystem);
     fileContextMenu = menu;
     uiRoot.AddChild(menu);
@@ -506,19 +706,24 @@ void ResizeEditor(int newWidth, int newHeight)
     height = newHeight;
     hierarchyContextMenu = null;
     fileContextMenu = null;
+    fileSubmenu = null;
     scenePickerDialog = null;
     fileSystemCreateDialog = null;
+    confirmationDialog = null;
+    dragPreview = null;
     editorView = EditorUI.BuildView(width, height);
     uiRoot = editorView.Root;
     uiEventRouter.SetRoot(uiRoot);
     sceneViewport = editorView.SceneViewport;
     gameViewport = editorView.GameViewport;
     hierarchyTree = editorView.HierarchyTree;
-    fileSystemList = editorView.FileSystemList;
+    fileSystemTree = editorView.FileSystemTree;
+    editorView.ProjectLabel.Text = activeScenePath is null
+        ? "Untitled.node" : Path.GetFileName(activeScenePath);
     hierarchyTree.SetRoots(sceneRoot.Children);
     hierarchyTree.Select(selection.SelectedNode);
     AttachHierarchy(hierarchyTree);
-    AttachFileSystem(fileSystemList);
+    AttachFileSystem(fileSystemTree);
     RefreshFileSystem();
     AttachTitleBar(editorView.TitleBar);
     sceneViewport.ViewportId = sceneViewportId;
@@ -570,6 +775,101 @@ bool IsInSceneViewport(Vector2 screenPos)
         && screenPos.Y >= vpY && screenPos.Y <= vpY + vpH;
 }
 
+/// <summary>Returns whether a screen position is inside a UI element.</summary>
+/// <param name="element">Element whose bounds are tested.</param>
+/// <param name="position">Screen-space pointer position.</param>
+/// <returns>True when the position lies within the element.</returns>
+bool IsInside(UIElement element, Vector2 position)
+{
+    return position.X >= element.Left && position.X <= element.Right
+        && position.Y >= element.Top && position.Y <= element.Bottom;
+}
+
+/// <summary>Reparents one hierarchy node to a row target or the scene root.</summary>
+/// <param name="source">Scene node being moved.</param>
+/// <param name="target">Drop target, or null for the hierarchy root.</param>
+void MoveHierarchyNode(Node source, Node? target)
+{
+    var destination = target ?? sceneRoot;
+    if (ReferenceEquals(source, destination) || ReferenceEquals(source.Parent, destination))
+        return;
+    try
+    {
+        destination.AddChild(source);
+        hierarchyTree.SetRoots(sceneRoot.Children);
+        if (!ReferenceEquals(destination, sceneRoot))
+            hierarchyTree.Expand(destination);
+        hierarchyTree.Select(source);
+        logger.LogInformation("Moved scene node {NodeName} under {ParentName}", source.Name,
+            ReferenceEquals(destination, sceneRoot) ? "Scene" : destination.Name);
+        RefreshVertices();
+    }
+    catch (InvalidOperationException exception)
+    {
+        logger.LogWarning(exception, "Rejected hierarchy move for {NodeName}", source.Name);
+    }
+}
+
+/// <summary>Moves one project file or folder into a destination folder.</summary>
+/// <param name="source">Filesystem entry being moved.</param>
+/// <param name="target">Drop target, or null for the project root.</param>
+void MoveFileSystemEntry(FileSystemNode source, FileSystemNode? target)
+{
+    var destinationDirectory = target is { IsDirectory: true }
+        ? target.FullPath
+        : target is not null ? Path.GetDirectoryName(target.FullPath) ?? project.RootPath
+        : project.RootPath;
+    var sourcePath = source.FullPath;
+    var destinationPath = Path.Combine(destinationDirectory,
+        Path.GetFileName(sourcePath.TrimEnd(Path.DirectorySeparatorChar)));
+    if (string.Equals(sourcePath, destinationPath, StringComparison.Ordinal))
+        return;
+    if (source.IsDirectory && destinationDirectory.StartsWith(
+            sourcePath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+            StringComparison.Ordinal))
+    {
+        logger.LogWarning("Cannot move folder {SourcePath} inside itself", sourcePath);
+        return;
+    }
+    if (File.Exists(destinationPath) || Directory.Exists(destinationPath))
+    {
+        logger.LogWarning("Cannot move {SourcePath}; destination exists: {DestinationPath}",
+            sourcePath, destinationPath);
+        return;
+    }
+
+    try
+    {
+        string? activeRelativePath = null;
+        if (ContainsActiveScene(sourcePath) && activeScenePath is not null)
+            activeRelativePath = source.IsDirectory
+                ? Path.GetRelativePath(sourcePath, activeScenePath) : string.Empty;
+        if (source.IsDirectory)
+            Directory.Move(sourcePath, destinationPath);
+        else
+            File.Move(sourcePath, destinationPath);
+        if (activeRelativePath is not null)
+        {
+            activeScenePath = activeRelativePath.Length == 0
+                ? destinationPath : Path.Combine(destinationPath, activeRelativePath);
+            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+        }
+        logger.LogInformation("Moved project item {SourcePath} to {DestinationPath}",
+            sourcePath, destinationPath);
+        RefreshFileSystem();
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+        or NotSupportedException)
+    {
+        logger.LogError(exception, "Could not move project item {SourcePath}", sourcePath);
+    }
+}
+
+Node? pendingDragItem = null;
+var pendingDragStart = Vector2.Zero;
+var primaryPointerDown = false;
+var dragActive = false;
+
 window.MouseMove += pos =>
 {
     lastMousePos = pos;
@@ -580,6 +880,29 @@ window.MouseMove += pos =>
         return;
 
     uiEventRouter.MovePointer(pos);
+
+    if (primaryPointerDown && pendingDragItem is not null
+        && Vector2.DistanceSquared(pos, pendingDragStart) >= 25f)
+    {
+        if (!dragActive)
+        {
+            dragActive = true;
+            if (pendingDragItem is FileSystemNode fileNode)
+                fileSystemTree.Select(fileNode);
+            else
+                hierarchyTree.Select(pendingDragItem);
+            dragPreview = new DragPreview(pos + new Vector2(12f, 12f),
+                string.IsNullOrWhiteSpace(pendingDragItem.Name)
+                    ? pendingDragItem.GetType().Name : pendingDragItem.Name)
+                { Name = "DragPreview" };
+            uiRoot.AddChild(dragPreview);
+        }
+        else if (dragPreview is not null)
+        {
+            dragPreview.Position = new Vector3(pos.X + 12f, pos.Y + 12f, 0f);
+        }
+        RefreshVertices();
+    }
 
     selection.MovePointer(pos);
 };
@@ -599,6 +922,13 @@ window.MouseDown += button =>
 
     if (button != 0)
         return;
+
+    primaryPointerDown = true;
+    pendingDragStart = lastMousePos;
+    dragActive = false;
+    pendingDragItem = uiEventRouter.HoveredElement is TreeViewItem dragRow
+        && (IsInside(hierarchyTree, lastMousePos) || IsInside(fileSystemTree, lastMousePos))
+        ? dragRow.Item : null;
 
     if (hierarchyContextMenu is not null
         && uiEventRouter.HoveredElement is not ContextMenuItem)
@@ -628,9 +958,28 @@ window.MouseUp += button =>
     if (button != 0)
         return;
 
+    primaryPointerDown = false;
+
+    if (dragActive && pendingDragItem is { } draggedItem)
+    {
+        var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
+        if (draggedItem is FileSystemNode fileSource && IsInside(fileSystemTree, lastMousePos))
+            MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
+        else if (draggedItem is not FileSystemNode && IsInside(hierarchyTree, lastMousePos))
+            MoveHierarchyNode(draggedItem, targetRow?.Item);
+    }
+
+    if (dragPreview is not null)
+    {
+        uiRoot.RemoveChild(dragPreview);
+        dragPreview = null;
+    }
+
     var consumedByGizmo = selection.PrimaryUp();
 
-    uiEventRouter.Release(!consumedByGizmo);
+    uiEventRouter.Release(!consumedByGizmo && !dragActive);
+    pendingDragItem = null;
+    dragActive = false;
 };
 
 window.MouseDoubleClick += button =>
@@ -652,9 +1001,20 @@ window.MouseScroll += offset =>
     uiEventRouter.Scroll(offset);
 };
 
+var controlDown = false;
+var commandDown = false;
 window.KeyDown += keyCode =>
 {
     Debug.Input(LogLevel.Debug, "KeyDown: key={Key}", keyCode);
+    if (keyCode is InputKey.LeftControl or InputKey.RightControl)
+        controlDown = true;
+    if (keyCode is InputKey.LeftSuper or InputKey.RightSuper)
+        commandDown = true;
+    if (keyCode == InputKey.S && (controlDown || commandDown))
+    {
+        SaveScene();
+        return;
+    }
     if (!flyCamera.KeyDown(keyCode))
         uiEventRouter.KeyDown((int)keyCode);
 };
@@ -662,6 +1022,10 @@ window.KeyDown += keyCode =>
 window.KeyUp += keyCode =>
 {
     Debug.Input(LogLevel.Debug, "KeyUp: key={Key}", keyCode);
+    if (keyCode is InputKey.LeftControl or InputKey.RightControl)
+        controlDown = false;
+    if (keyCode is InputKey.LeftSuper or InputKey.RightSuper)
+        commandDown = false;
     if (!flyCamera.KeyUp(keyCode))
         uiEventRouter.KeyUp((int)keyCode);
 };

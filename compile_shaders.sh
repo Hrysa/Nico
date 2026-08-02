@@ -24,12 +24,13 @@ fi
 
 compile_shader() {
     local source_file="$1"
-    local stage="$2"
-    local output_file="$3"
+    local entry_point="$2"
+    local stage="$3"
+    local output_file="$4"
 
     "$SLANG_COMPILER" \
         "$SHADER_DIRECTORY/$source_file" \
-        -entry main \
+        -entry "$entry_point" \
         -stage "$stage" \
         -target spirv \
         -profile glsl_450 \
@@ -38,11 +39,11 @@ compile_shader() {
         -o "$SHADER_DIRECTORY/$output_file"
 }
 
-compile_shader basic.vert.slang vertex basic.vert.spv
-compile_shader basic.frag.slang fragment basic.frag.spv
-compile_shader grid.vert.slang vertex grid.vert.spv
-compile_shader grid.frag.slang fragment grid.frag.spv
-compile_shader texture.vert.slang vertex texture.vert.spv
-compile_shader texture.frag.slang fragment texture.frag.spv
+compile_shader basic.slang vertexMain vertex basic.vert.spv
+compile_shader basic.slang fragmentMain fragment basic.frag.spv
+compile_shader grid.slang vertexMain vertex grid.vert.spv
+compile_shader grid.slang fragmentMain fragment grid.frag.spv
+compile_shader texture.slang vertexMain vertex texture.vert.spv
+compile_shader texture.slang fragmentMain fragment texture.frag.spv
 
 echo "Compiled shaders with $SLANG_COMPILER"

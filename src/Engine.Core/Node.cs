@@ -64,6 +64,9 @@ public class Node
     /// <summary>Gets whether this node has any children.</summary>
     public bool HasChildren => _children.Count > 0;
 
+    /// <summary>Gets whether this node should expose expandable container behavior.</summary>
+    public virtual bool CanHaveChildren => HasChildren;
+
     /// <summary>
     /// Adds a child node to this node.
     /// </summary>

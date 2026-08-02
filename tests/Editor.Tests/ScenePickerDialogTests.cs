@@ -11,8 +11,8 @@ public class ScenePickerDialogTests
     public void SearchAndOpen_SelectedScene_RaisesOpenRequested()
     {
         var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "picker-project"));
-        var first = Path.Combine(root, "first.scene.json");
-        var second = Path.Combine(root, "levels", "second.scene.json");
+        var first = Path.Combine(root, "first.node");
+        var second = Path.Combine(root, "levels", "second.node");
         var picker = new ScenePickerDialog(800f, 600f, root, [first, second]);
         var search = Assert.Single(picker.Dialog.Children.OfType<TextField>());
         var list = Assert.Single(picker.Dialog.Children.OfType<ListView>());

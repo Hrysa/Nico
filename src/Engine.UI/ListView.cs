@@ -13,7 +13,7 @@ public sealed class ListView : Panel
     private int _scrollIndex;
 
     /// <summary>Gets or sets the height of one item row.</summary>
-    public float RowHeight { get; set; } = 30f;
+    public float RowHeight { get; set; }
 
     /// <summary>Gets the selected item index, or -1 when selection is empty.</summary>
     public int SelectedIndex { get; private set; } = -1;
@@ -39,6 +39,7 @@ public sealed class ListView : Panel
         : base(x, y, width, height, (theme ?? UITheme.Dark).Surface)
     {
         _theme = theme ?? UITheme.Dark;
+        RowHeight = _theme.ItemRowHeight;
         PaintBackground = false;
         Scroll += ScrollRows;
     }
@@ -138,7 +139,7 @@ public sealed class ListViewItem : Button
     {
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;
-        PaddingLeft = 10f;
+        PaddingLeft = _theme.ItemRowPadding;
         NormalColor = _theme.Surface;
         HoverColor = _theme.SurfaceHover;
         PressedColor = _theme.SurfacePressed;

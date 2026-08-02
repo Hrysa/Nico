@@ -64,6 +64,21 @@ public sealed record UITheme
     /// <summary>Gets the font size used by panel titles.</summary>
     public float PanelTitleFontSize { get; init; } = 18f;
 
+    /// <summary>Gets the standard height of every docked panel header.</summary>
+    public float PanelHeaderHeight { get; init; } = 36f;
+
+    /// <summary>Gets the horizontal inset used by every docked panel title.</summary>
+    public float PanelHeaderPadding { get; init; } = 10f;
+
+    /// <summary>Gets the standard height of hierarchy and filesystem rows.</summary>
+    public float ItemRowHeight { get; init; } = 30f;
+
+    /// <summary>Gets the standard horizontal inset of hierarchy and filesystem rows.</summary>
+    public float ItemRowPadding { get; init; } = 10f;
+
+    /// <summary>Gets the additional horizontal inset for each hierarchy depth.</summary>
+    public float TreeIndent { get; init; } = 14f;
+
     /// <summary>Gets the normal control height.</summary>
     public float ControlHeight { get; init; } = 30f;
 

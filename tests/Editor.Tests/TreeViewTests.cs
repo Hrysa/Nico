@@ -49,6 +49,22 @@ public class TreeViewTests
         Assert.Single(tree.Children);
     }
 
+    /// <summary>Verifies an empty container still exposes and toggles its disclosure state.</summary>
+    [Fact]
+    public void Toggle_EmptyContainer_ChangesExpandedState()
+    {
+        var directory = new FileSystemNode(Path.GetTempPath(), isDirectory: true);
+        var tree = new TreeView(0f, 0f, 200f, 200f);
+        tree.SetRoots([directory]);
+        Assert.Contains(directory, tree.ExpandedItems);
+
+        tree.Toggle(directory);
+
+        Assert.DoesNotContain(directory, tree.ExpandedItems);
+        var row = Assert.IsType<TreeViewItem>(Assert.Single(tree.Children));
+        Assert.StartsWith("+", row.Label);
+    }
+
     /// <summary>Verifies clicking a row updates tree selection.</summary>
     [Fact]
     public void Click_Row_SelectsRepresentedNode()

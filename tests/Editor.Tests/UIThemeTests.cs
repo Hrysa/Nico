@@ -25,6 +25,10 @@ public class UIThemeTests
         Assert.Equal(17.5f, UITheme.Dark.FontSize);
         Assert.Equal(15f, UITheme.Dark.CaptionFontSize);
         Assert.Equal(18f, UITheme.Dark.PanelTitleFontSize);
+        Assert.Equal(36f, UITheme.Dark.PanelHeaderHeight);
+        Assert.Equal(10f, UITheme.Dark.PanelHeaderPadding);
+        Assert.Equal(30f, UITheme.Dark.ItemRowHeight);
+        Assert.Equal(10f, UITheme.Dark.ItemRowPadding);
     }
 
     /// <summary>Verifies idle subtle buttons emit readable text without a background rectangle.</summary>
@@ -131,11 +135,32 @@ public class UIThemeTests
     [Fact]
     public void SectionHeader_UsesPanelSurfaceColor()
     {
-        var header = new SectionHeader(0f, 0f, 200f, 36f, "Inspector", UITheme.Dark);
+        var header = new SectionHeader(0f, 0f, 200f, "Inspector", UITheme.Dark);
 
         Assert.Equal(UITheme.Dark.Surface.R, header.BackgroundColor.R, 4);
         Assert.Equal(UITheme.Dark.Surface.G, header.BackgroundColor.G, 4);
         Assert.Equal(UITheme.Dark.Surface.B, header.BackgroundColor.B, 4);
+        Assert.Equal(UITheme.Dark.PanelHeaderHeight, header.Height);
+        Assert.Equal(UITheme.Dark.PanelTitleFontSize, header.TitleLabel.FontSize);
+    }
+
+    /// <summary>Verifies every persistent editor dock uses the shared panel composition and tokens.</summary>
+    [Fact]
+    public void EditorView_ToolPanels_UseOneHeaderStandard()
+    {
+        var view = EditorUI.BuildView(1280f, 720f);
+        var panels = view.Root.Children.OfType<ToolPanel>().ToArray();
+
+        Assert.Equal(3, panels.Length);
+        Assert.All(panels, panel =>
+        {
+            Assert.Equal(UITheme.Dark.PanelHeaderHeight, panel.Header.Height);
+            Assert.Equal(UITheme.Dark.PanelTitleFontSize, panel.Header.TitleLabel.FontSize);
+            Assert.Equal(UITheme.Dark.PanelHeaderPadding, panel.Header.Padding.Left);
+            Assert.Equal(UITheme.Dark.PanelHeaderPadding, panel.Header.Padding.Right);
+            Assert.Equal(panel.Header.Height, panel.Content.Position.Y);
+            Assert.Equal(panel.Width, panel.Content.Width);
+        });
     }
 
     /// <summary>Verifies floating component subtrees are assigned to the overlay composition layer.</summary>
@@ -171,6 +196,38 @@ public class UIThemeTests
 
         Assert.Equal(1, list.SelectedIndex);
         Assert.Equal("Second", selected);
+    }
+
+    /// <summary>Verifies hierarchy and filesystem rows share size and typography tokens.</summary>
+    [Fact]
+    public void TreeAndListRows_UseSameVisualMetrics()
+    {
+        var node = new Engine.Core.Node { Name = "Object" };
+        var tree = new TreeView(0f, 0f, 200f, 100f, UITheme.Dark);
+        tree.SetRoots([node]);
+        var list = new ListView(0f, 0f, 200f, 100f, UITheme.Dark);
+        list.SetItems(["Object"]);
+
+        var treeRow = Assert.IsType<TreeViewItem>(Assert.Single(tree.Children));
+        var listRow = Assert.IsType<ListViewItem>(Assert.Single(list.Children));
+        Assert.Equal(list.RowHeight, tree.RowHeight);
+        Assert.Equal(listRow.Height, treeRow.Height);
+        Assert.Equal(listRow.FontSize, treeRow.FontSize);
+        Assert.Equal(listRow.PaddingLeft, treeRow.PaddingLeft);
+    }
+
+    /// <summary>Verifies drag previews paint above content without intercepting drop hit tests.</summary>
+    [Fact]
+    public void DragPreview_IsNonInteractiveOverlayWithItemLabel()
+    {
+        var preview = new DragPreview(new(20f, 30f), "scene.node");
+
+        var commands = preview.BuildDrawList().Commands;
+
+        Assert.True(preview.IsOverlay);
+        Assert.False(preview.IsHitTestVisible);
+        Assert.Equal("scene.node", preview.ItemLabel.Text);
+        Assert.All(commands, command => Assert.Equal(UIDrawLayer.Overlay, command.Layer));
     }
 
     /// <summary>Verifies focused text fields receive characters and editing keys through the UI router.</summary>

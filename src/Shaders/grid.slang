@@ -7,8 +7,9 @@ struct GridPushConstants
 [[vk::push_constant]]
 ConstantBuffer<GridPushConstants> pc;
 
-struct FragmentInput
+struct VertexOutput
 {
+    float4 position : SV_Position;
     [[vk::location(0)]] float3 nearWorld : TEXCOORD0;
     [[vk::location(1)]] float3 farWorld : TEXCOORD1;
 };
@@ -19,6 +20,12 @@ struct FragmentOutput
     float depth : SV_Depth;
 };
 
+float3 unproject(float2 position, float depth)
+{
+    float4 world = mul(float4(position, depth, 1.0), pc.inverseViewProjection);
+    return world.xyz / world.w;
+}
+
 float gridMask(float2 worldPosition, float spacing)
 {
     float2 coordinate = worldPosition / spacing;
@@ -27,8 +34,26 @@ float gridMask(float2 worldPosition, float spacing)
     return 1.0 - min(min(distanceToLine.x, distanceToLine.y), 1.0);
 }
 
+[shader("vertex")]
+VertexOutput vertexMain(uint vertexIndex : SV_VertexID)
+{
+    static const float2 positions[3] =
+    {
+        float2(-1.0, -1.0),
+        float2(3.0, -1.0),
+        float2(-1.0, 3.0)
+    };
+
+    VertexOutput output;
+    float2 position = positions[vertexIndex];
+    output.nearWorld = unproject(position, 0.0);
+    output.farWorld = unproject(position, 1.0);
+    output.position = float4(position, 0.0, 1.0);
+    return output;
+}
+
 [shader("fragment")]
-FragmentOutput main(FragmentInput input)
+FragmentOutput fragmentMain(VertexOutput input)
 {
     float3 ray = input.farWorld - input.nearWorld;
     if (abs(ray.y) < 0.000001)

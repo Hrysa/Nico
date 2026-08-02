@@ -16,13 +16,19 @@ public sealed class TreeView : Panel
     private readonly UITheme _theme;
 
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
-    public float RowHeight { get; set; } = 24f;
+    public float RowHeight { get; set; }
 
     /// <summary>Gets the selected node.</summary>
     public Node? SelectedItem => _selectedItem;
 
+    /// <summary>Gets the nodes whose children are currently visible.</summary>
+    public IReadOnlyCollection<Node> ExpandedItems => _expanded;
+
     /// <summary>Occurs when selection changes.</summary>
     public event Action<Node?>? SelectionChanged;
+
+    /// <summary>Occurs when a row is double-clicked.</summary>
+    public event Action<Node>? ItemActivated;
 
     /// <summary>
     /// Creates a node tree view.
@@ -36,6 +42,7 @@ public sealed class TreeView : Panel
         : base(x, y, width, height, (theme ?? UITheme.Dark).Surface)
     {
         _theme = theme ?? UITheme.Dark;
+        RowHeight = _theme.ItemRowHeight;
         ForegroundColor = _theme.TextPrimary;
         PaintBackground = false;
         Scroll += ScrollRows;
@@ -48,6 +55,7 @@ public sealed class TreeView : Panel
         ArgumentNullException.ThrowIfNull(roots);
         _roots.Clear();
         _roots.AddRange(roots);
+        _expanded.Clear();
         foreach (var root in _roots)
             _expanded.Add(root);
         _scrollRow = 0;
@@ -69,7 +77,7 @@ public sealed class TreeView : Panel
     /// <param name="item">Node to toggle.</param>
     public void Toggle(Node item)
     {
-        if (!item.HasChildren)
+        if (!item.CanHaveChildren)
             return;
         if (!_expanded.Remove(item))
             _expanded.Add(item);
@@ -81,6 +89,16 @@ public sealed class TreeView : Panel
     public void Expand(Node item)
     {
         _expanded.Add(item);
+        RebuildRows();
+    }
+
+    /// <summary>Replaces the complete expanded-node set.</summary>
+    /// <param name="items">Nodes whose children should be visible.</param>
+    public void SetExpanded(IEnumerable<Node> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        _expanded.Clear();
+        _expanded.UnionWith(items);
         RebuildRows();
     }
 
@@ -115,7 +133,11 @@ public sealed class TreeView : Panel
                 IsSelected = ReferenceEquals(item, _selectedItem)
             };
             row.Click += () => Select(item);
-            row.DoubleClick += () => Toggle(item);
+            row.DoubleClick += () =>
+            {
+                Toggle(item);
+                ItemActivated?.Invoke(item);
+            };
             row.Scroll += ScrollRows;
             AddChild(row);
         }

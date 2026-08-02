@@ -9,7 +9,7 @@ public sealed class EditorProjectContext
     public string RootPath { get; }
 
     /// <summary>Gets the path of the project's primary scene file.</summary>
-    public string ScenePath => Path.Combine(RootPath, "scene.json");
+    public string ScenePath => Path.Combine(RootPath, "scene.node");
 
     /// <summary>
     /// Finds scene files that can be opened from this game project.
@@ -17,7 +17,7 @@ public sealed class EditorProjectContext
     /// <returns>Absolute scene paths ordered by project-relative path.</returns>
     public IReadOnlyList<string> FindSceneFiles()
     {
-        var paths = Directory.EnumerateFiles(RootPath, "*.scene.json", SearchOption.AllDirectories)
+        var paths = Directory.EnumerateFiles(RootPath, "*.node", SearchOption.AllDirectories)
             .Select(Path.GetFullPath)
             .ToList();
         if (File.Exists(ScenePath) && !paths.Contains(ScenePath, StringComparer.Ordinal))

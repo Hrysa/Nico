@@ -21,7 +21,7 @@ struct VertexOutput
 };
 
 [shader("vertex")]
-VertexOutput main(VertexInput input)
+VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     float4 worldPosition = mul(float4(input.position, 1.0), pc.model);
@@ -29,4 +29,10 @@ VertexOutput main(VertexInput input)
     output.position = mul(viewPosition, pc.projection);
     output.color = input.color;
     return output;
+}
+
+[shader("fragment")]
+float4 fragmentMain(VertexOutput input) : SV_Target0
+{
+    return float4(input.color, 1.0);
 }

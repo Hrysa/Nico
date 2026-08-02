@@ -15,7 +15,7 @@ public class SceneFileStoreTests
         Directory.CreateDirectory(directory);
         try
         {
-            var path = Path.Combine(directory, "scene.json");
+            var path = Path.Combine(directory, "scene.node");
             var root = new Node3D { Name = "Scene" };
             var group = new Node3D
             {

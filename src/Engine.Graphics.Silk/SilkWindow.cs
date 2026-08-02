@@ -446,6 +446,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Key.Space => InputKey.Space,
             Key.ControlLeft => InputKey.LeftControl,
             Key.ControlRight => InputKey.RightControl,
+            Key.SuperLeft => InputKey.LeftSuper,
+            Key.SuperRight => InputKey.RightSuper,
             Key.ShiftLeft => InputKey.LeftShift,
             Key.ShiftRight => InputKey.RightShift,
             Key.Backspace => InputKey.Backspace,

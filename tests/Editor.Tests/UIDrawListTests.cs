@@ -64,4 +64,5 @@ public class UIDrawListTests
         Assert.Equal(14f, command.FontPixelHeight);
         Assert.Equal(Color.Black, command.BackgroundColor);
     }
+
 }

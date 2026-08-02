@@ -14,6 +14,8 @@ public enum InputKey
     Space,
     LeftControl,
     RightControl,
+    LeftSuper,
+    RightSuper,
     LeftShift,
     RightShift,
     Backspace,

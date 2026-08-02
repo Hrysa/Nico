@@ -32,16 +32,16 @@ public class EditorProjectContextTests
         Directory.CreateDirectory(levelsDirectory);
         try
         {
-            File.WriteAllText(Path.Combine(directory, "scene.json"), "{}");
-            File.WriteAllText(Path.Combine(levelsDirectory, "second.scene.json"), "{}");
+            File.WriteAllText(Path.Combine(directory, "scene.node"), "{}");
+            File.WriteAllText(Path.Combine(levelsDirectory, "second.node"), "{}");
             File.WriteAllText(Path.Combine(directory, "settings.json"), "{}");
             var context = EditorProjectContext.Open(directory);
 
             var scenes = context.FindSceneFiles();
 
             Assert.Equal(2, scenes.Count);
-            Assert.Equal(Path.Combine(levelsDirectory, "second.scene.json"), scenes[0]);
-            Assert.Equal(Path.Combine(directory, "scene.json"), scenes[1]);
+            Assert.Equal(Path.Combine(levelsDirectory, "second.node"), scenes[0]);
+            Assert.Equal(Path.Combine(directory, "scene.node"), scenes[1]);
         }
         finally
         {

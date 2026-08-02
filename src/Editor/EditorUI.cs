@@ -24,9 +24,8 @@ public static class EditorUI
         const float separatorWidth = 1f;
         const float hierarchyWidth = 252f;
         const float inspectorWidth = 300f;
-        const float panelHeaderHeight = 36f;
         const float viewportToolbarHeight = 36f;
-        const float gameHeaderHeight = 30f;
+        var panelHeaderHeight = theme.PanelHeaderHeight;
 
         var workspaceTop = titleBarHeight;
         var workspaceHeight = MathF.Max(0f, height - workspaceTop - bottomDockHeight);
@@ -42,7 +41,7 @@ public static class EditorUI
         var titleBar = new TitleBar(width, titleBarHeight, theme);
         var titleContentX = OperatingSystem.IsMacOS() ? 88f : 8f;
         var rightWindowControlsWidth = OperatingSystem.IsMacOS() ? 0f : 108f;
-        var projectLabel = new Label(titleContentX, 0f, 180f, titleBarHeight, "scene.json")
+        var projectLabel = new Label(titleContentX, 0f, 180f, titleBarHeight, "scene.node")
         {
             Name = "ProjectLabel",
             FontSize = theme.FontSize,
@@ -69,37 +68,33 @@ public static class EditorUI
             PaddingLeft = 0f
         });
 
-        var hierarchyPanel = new Surface(0, workspaceTop, hierarchyWidth, hierarchyHeight,
-            theme.Surface, theme.Border) { Name = "Hierarchy", PaintBackground = false };
-        var hierarchyHeader = new SectionHeader(0, 0, hierarchyWidth, panelHeaderHeight, "Scene", theme)
-            { Name = "HierarchyHeader" };
-        var hierarchyTree = new TreeView(0, panelHeaderHeight, hierarchyWidth,
+        var hierarchyPanel = new ToolPanel(0, workspaceTop, hierarchyWidth, hierarchyHeight,
+            "Hierarchy", theme) { Name = "Hierarchy" };
+        hierarchyPanel.Header.Name = "HierarchyHeader";
+        var hierarchyTree = new TreeView(0, 0, hierarchyWidth,
             MathF.Max(0f, hierarchyHeight - panelHeaderHeight), theme)
         {
             Name = "HierarchyTree"
         };
-        hierarchyPanel.AddChild(hierarchyHeader);
-        hierarchyPanel.AddChild(hierarchyTree);
+        hierarchyPanel.Content.AddChild(hierarchyTree);
 
         var filesystemY = workspaceTop + hierarchyHeight + separatorWidth;
-        var filesystemPanel = new Surface(0, filesystemY, hierarchyWidth, filesystemHeight,
-            theme.Surface, theme.Border) { Name = "FileSystem", PaintBackground = false };
-        filesystemPanel.AddChild(new SectionHeader(0f, 0f, hierarchyWidth, panelHeaderHeight,
-            "FileSystem", theme) { Name = "FileSystemHeader" });
-        var fileList = new ListView(0f, panelHeaderHeight, hierarchyWidth,
+        var filesystemPanel = new ToolPanel(0, filesystemY, hierarchyWidth, filesystemHeight,
+            "File System", theme) { Name = "FileSystem" };
+        filesystemPanel.Header.Name = "FileSystemHeader";
+        var fileTree = new TreeView(0f, 0f, hierarchyWidth,
             MathF.Max(0f, filesystemHeight - panelHeaderHeight), theme) { Name = "ProjectFiles" };
-        filesystemPanel.AddChild(fileList);
+        filesystemPanel.Content.AddChild(fileTree);
 
-        var inspectorPanel = new Surface(width - inspectorWidth, workspaceTop, inspectorWidth, workspaceHeight,
-            theme.Surface, theme.Border) { Name = "Inspector", PaintBackground = false };
-        inspectorPanel.AddChild(new SectionHeader(0, 0, inspectorWidth, panelHeaderHeight, "Inspector", theme)
-            { Name = "InspectorHeader" });
-        inspectorPanel.AddChild(new TextField(10f, panelHeaderHeight + 8f, inspectorWidth - 20f, 32f, theme)
+        var inspectorPanel = new ToolPanel(width - inspectorWidth, workspaceTop, inspectorWidth,
+            workspaceHeight, "Inspector", theme) { Name = "Inspector" };
+        inspectorPanel.Header.Name = "InspectorHeader";
+        inspectorPanel.Content.AddChild(new TextField(10f, 8f, inspectorWidth - 20f, 32f, theme)
         {
             Name = "PropertyFilter",
             Placeholder = "Filter Properties"
         });
-        inspectorPanel.AddChild(new Label(12f, panelHeaderHeight + 52f, inspectorWidth - 24f, 28f,
+        inspectorPanel.Content.AddChild(new Label(12f, 52f, inspectorWidth - 24f, 28f,
             "Select an object to inspect")
         {
             Name = "InspectorEmptyState",
@@ -139,9 +134,9 @@ public static class EditorUI
             { Name = "SceneViewport" };
         var gameHeaderY = workspaceTop + sceneSlotHeight + separatorWidth;
         var gameHeader = new SectionHeader(viewportX, gameHeaderY, viewportWidth,
-            gameHeaderHeight, "Game", theme) { Name = "GameHeader" };
-        var gameViewport = new ViewportPanel(viewportX, gameHeaderY + gameHeaderHeight,
-            viewportWidth, MathF.Max(0f, gameSlotHeight - gameHeaderHeight), theme.Viewport)
+            "Game", theme) { Name = "GameHeader" };
+        var gameViewport = new ViewportPanel(viewportX, gameHeaderY + panelHeaderHeight,
+            viewportWidth, MathF.Max(0f, gameSlotHeight - panelHeaderHeight), theme.Viewport)
             { Name = "GameViewport" };
 
         // Assemble tree
@@ -157,7 +152,8 @@ public static class EditorUI
         background.AddChild(gameHeader);
         background.AddChild(gameViewport);
 
-        return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileList, titleBar);
+        return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
+            projectLabel, titleBar);
     }
 
     /// <summary>
@@ -224,12 +220,14 @@ public static class EditorUI
 /// <param name="SceneViewport">Scene viewport panel.</param>
 /// <param name="GameViewport">Game viewport panel.</param>
 /// <param name="HierarchyTree">Scene hierarchy tree.</param>
-/// <param name="FileSystemList">Project filesystem browser.</param>
+/// <param name="FileSystemTree">Project-root filesystem tree.</param>
+/// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
     ViewportPanel GameViewport,
     TreeView HierarchyTree,
-    ListView FileSystemList,
+    TreeView FileSystemTree,
+    Label ProjectLabel,
     TitleBar TitleBar);

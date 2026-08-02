@@ -8,6 +8,9 @@ struct PushConstants
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> pc;
 
+[[vk::binding(0, 0)]]
+Sampler2D textureSampler;
+
 struct VertexInput
 {
     [[vk::location(0)]] float3 position : POSITION;
@@ -21,7 +24,7 @@ struct VertexOutput
 };
 
 [shader("vertex")]
-VertexOutput main(VertexInput input)
+VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     float4 worldPosition = mul(float4(input.position, 1.0), pc.model);
@@ -29,4 +32,10 @@ VertexOutput main(VertexInput input)
     output.position = mul(viewPosition, pc.projection);
     output.textureCoordinate = input.textureCoordinate;
     return output;
+}
+
+[shader("fragment")]
+float4 fragmentMain(VertexOutput input) : SV_Target0
+{
+    return textureSampler.Sample(input.textureCoordinate);
 }
