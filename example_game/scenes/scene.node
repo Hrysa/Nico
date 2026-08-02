@@ -1,9 +1,9 @@
 {
   "formatVersion": 1,
-  "gameCameraId": "67a3003c700d4532bf673879f3bff2b3",
+  "gameCameraId": "dcc2efcd02ce42308e1c36d6a154bc9d",
   "nodes": [
     {
-      "id": "857a705faf3747af8bb74fe31058a630",
+      "id": "d6971bc5df44454e9cf726271ce996f7",
       "type": "cube",
       "name": "SceneCube",
       "position": {
@@ -26,7 +26,7 @@
       "children": []
     },
     {
-      "id": "67a3003c700d4532bf673879f3bff2b3",
+      "id": "dcc2efcd02ce42308e1c36d6a154bc9d",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -44,6 +44,7 @@
         "y": 1,
         "z": 1
       },
+      "scriptType": null,
       "camera": {
         "fov": 0.7853982,
         "near": 0.1,
