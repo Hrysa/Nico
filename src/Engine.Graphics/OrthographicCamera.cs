@@ -59,7 +59,12 @@ public class OrthographicCamera : Node3D, ICamera
     /// <inheritdoc/>
     public Matrix4x4 GetViewMatrix()
     {
-        return Matrix4x4.CreateTranslation(-Position);
+        var worldTransform = GetModelMatrix();
+        if (!Matrix4x4.Decompose(worldTransform, out _, out var rotation, out var position))
+            return Matrix4x4.Identity;
+        var cameraWorld = Matrix4x4.CreateFromQuaternion(rotation)
+            * Matrix4x4.CreateTranslation(position);
+        return Matrix4x4.Invert(cameraWorld, out var view) ? view : Matrix4x4.Identity;
     }
 
     /// <inheritdoc/>

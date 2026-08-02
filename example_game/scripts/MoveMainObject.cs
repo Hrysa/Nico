@@ -8,13 +8,13 @@ namespace ExampleGame;
 /// </summary>
 public sealed class MoveMainObject : SceneScript
 {
-    private Vector3 _origin;
     private double _elapsedTime;
+    private float _previousOffset;
 
     /// <inheritdoc />
     public override void OnReady()
     {
-        _origin = Owner.Position;
+        _previousOffset = 0f;
     }
 
     /// <inheritdoc />
@@ -22,6 +22,7 @@ public sealed class MoveMainObject : SceneScript
     {
         _elapsedTime += deltaTime;
         var offset = MathF.Sin((float)_elapsedTime) * 2f;
-        Owner.Position = _origin + Vector3.UnitX * offset;
+        Owner.Position += Vector3.UnitX * (offset - _previousOffset);
+        _previousOffset = offset;
     }
 }

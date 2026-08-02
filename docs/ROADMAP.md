@@ -20,3 +20,20 @@
 - Prioritize detachable Scene and Game viewports, followed by Inspector, Hierarchy, FileSystem, profiler, debugger, and settings.
 - Keep temporary workflows such as Open Scene as in-window modal overlays.
 - Avoid creating a separate engine or Vulkan device for each tool window; share queues, pipelines, fonts, and immutable GPU assets where valid.
+
+## Following Version
+
+### AI and automation interface
+
+- Assign persistent IDs to scene nodes so automation clients can retain stable references across saves and reloads.
+- Extract project, scene, selection, scripting, and play-mode operations from `Program.cs` into a typed `EditorSession` command service shared by the UI and automation clients.
+- Define versioned command, result, snapshot, validation-error, and event contracts; generate JSON schemas from the C# contract types.
+- Cover project and asset queries, scene open/save, node inspection and mutation, hierarchy operations, script creation and attachment, builds, and play-mode control.
+- Require an expected scene revision for mutations so stale clients cannot silently overwrite newer user changes.
+- Add transactions that group related commands into one undo/redo operation.
+- Implement a CLI first for testing, CI, headless workflows, and one-shot human operations.
+- Add local JSON-RPC over Unix sockets on macOS/Linux and named pipes on Windows for controlling the currently running Editor without exposing a network port.
+- Make the CLI forward commands to a running Editor when available and use the same command service in headless mode when no Editor is running.
+- Add an MCP adapter as a thin schema-driven layer over the local command API for AI clients.
+- Publish scene, selection, build, and play-state events for interactive clients and progress reporting.
+- Restrict all asset and filesystem operations to the opened project root; do not expose unrestricted filesystem access or arbitrary command execution.

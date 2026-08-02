@@ -23,6 +23,26 @@ public class FlyCameraControllerTests
         Assert.NotEqual(original, camera.Position);
     }
 
+    /// <summary>Verifies D and A move right and left respectively.</summary>
+    [Fact]
+    public void Update_StrafeKeys_MoveInExpectedDirections()
+    {
+        var rightCamera = new PerspectiveCamera { Position = default, Rotation = default };
+        var rightController = new FlyCameraController(rightCamera, _ => { }, () => { });
+        rightController.KeyDown(InputKey.F);
+        rightController.KeyDown(InputKey.D);
+        rightController.Update(1d);
+
+        var leftCamera = new PerspectiveCamera { Position = default, Rotation = default };
+        var leftController = new FlyCameraController(leftCamera, _ => { }, () => { });
+        leftController.KeyDown(InputKey.F);
+        leftController.KeyDown(InputKey.A);
+        leftController.Update(1d);
+
+        Assert.True(rightCamera.Position.X > 0f);
+        Assert.True(leftCamera.Position.X < 0f);
+    }
+
     /// <summary>Verifies Escape exits fly mode and releases capture.</summary>
     [Fact]
     public void Escape_WhileActive_ReleasesCapture()

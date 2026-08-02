@@ -89,19 +89,12 @@ public static class EditorUI
         var inspectorPanel = new ToolPanel(width - inspectorWidth, workspaceTop, inspectorWidth,
             workspaceHeight, "Inspector", theme) { Name = "Inspector" };
         inspectorPanel.Header.Name = "InspectorHeader";
-        inspectorPanel.Content.AddChild(new TextField(10f, 8f, inspectorWidth - 20f, 32f, theme)
+        var inspector = new SceneInspector(inspectorWidth,
+            MathF.Max(0f, workspaceHeight - panelHeaderHeight), theme)
         {
-            Name = "PropertyFilter",
-            Placeholder = "Filter Properties"
-        });
-        inspectorPanel.Content.AddChild(new Label(12f, 52f, inspectorWidth - 24f, 28f,
-            "Select an object to inspect")
-        {
-            Name = "InspectorEmptyState",
-            ForegroundColor = theme.TextMuted,
-            FontSize = theme.FontSize,
-            PaddingLeft = 0f
-        });
+            Name = "SceneInspector"
+        };
+        inspectorPanel.Content.AddChild(inspector);
 
         var separatorLeft = new Separator(hierarchyWidth, workspaceTop, separatorWidth, workspaceHeight, theme)
             { Name = "SeparatorLeft" };
@@ -153,7 +146,7 @@ public static class EditorUI
         background.AddChild(gameViewport);
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
-            projectLabel, playButton, titleBar);
+            projectLabel, playButton, inspector, titleBar);
     }
 
     /// <summary>
@@ -223,6 +216,7 @@ public static class EditorUI
 /// <param name="FileSystemTree">Project-root filesystem tree.</param>
 /// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
 /// <param name="PlayButton">Title-bar control that starts and stops play mode.</param>
+/// <param name="Inspector">Selection-bound scene property Inspector.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 public sealed record EditorView(
     Panel Root,
@@ -232,4 +226,5 @@ public sealed record EditorView(
     TreeView FileSystemTree,
     Label ProjectLabel,
     Button PlayButton,
+    SceneInspector Inspector,
     TitleBar TitleBar);

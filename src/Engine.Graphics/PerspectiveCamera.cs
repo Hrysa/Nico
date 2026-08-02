@@ -13,6 +13,7 @@ public class PerspectiveCamera : Node3D, ICamera
     private float _near;
     private float _far;
     private Matrix4x4 _viewMatrix;
+    private Matrix4x4 _cachedWorldTransform;
     private Matrix4x4 _projectionMatrix;
     private bool _viewDirty = true;
     private bool _projectionDirty = true;
@@ -66,9 +67,11 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <inheritdoc/>
     public Matrix4x4 GetViewMatrix()
     {
-        if (_viewDirty)
+        var worldTransform = GetModelMatrix();
+        if (_viewDirty || worldTransform != _cachedWorldTransform)
         {
-            _viewMatrix = ComputeViewMatrix();
+            _viewMatrix = ComputeViewMatrix(worldTransform);
+            _cachedWorldTransform = worldTransform;
             _viewDirty = false;
         }
         return _viewMatrix;
@@ -118,7 +121,7 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <param name="distance">Distance to move in world units.</param>
     public void MoveForward(float distance)
     {
-        Position += GetForwardVector() * distance;
+        MoveInWorldDirection(GetForwardVector(), distance);
         _viewDirty = true;
     }
 
@@ -126,7 +129,7 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <param name="distance">Distance to move in world units.</param>
     public void MoveRight(float distance)
     {
-        Position += GetRightVector() * distance;
+        MoveInWorldDirection(GetRightVector(), distance);
         _viewDirty = true;
     }
 
@@ -134,7 +137,7 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <param name="distance">Distance to move in world units.</param>
     public void MoveUp(float distance)
     {
-        Position += GetUpVector() * distance;
+        MoveInWorldDirection(GetUpVector(), distance);
         _viewDirty = true;
     }
 
@@ -176,6 +179,13 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <returns>The normalized forward vector.</returns>
     public Vector3 GetForwardVector()
     {
+        return TransformDirectionByParent(GetLocalForwardVector());
+    }
+
+    /// <summary>Gets the camera's local forward direction before parent transforms.</summary>
+    /// <returns>The normalized local forward vector.</returns>
+    private Vector3 GetLocalForwardVector()
+    {
         var yaw = Rotation.Y;
         var pitch = Rotation.X;
         return new Vector3(
@@ -188,23 +198,62 @@ public class PerspectiveCamera : Node3D, ICamera
     /// <returns>The normalized right vector.</returns>
     public Vector3 GetRightVector()
     {
-        return Vector3.Normalize(Vector3.Cross(GetForwardVector(), Vector3.UnitY));
+        return TransformDirectionByParent(GetLocalRightVector());
     }
 
     /// <summary>Gets the camera's up direction vector (local +Y in world space).</summary>
     /// <returns>The normalized up vector.</returns>
     public Vector3 GetUpVector()
     {
-        return Vector3.Normalize(Vector3.Cross(GetRightVector(), GetForwardVector()));
+        return TransformDirectionByParent(GetLocalUpVector());
     }
 
-    private Matrix4x4 ComputeViewMatrix()
+    /// <summary>Gets the camera's local right direction before parent transforms.</summary>
+    /// <returns>The normalized local right vector.</returns>
+    private Vector3 GetLocalRightVector()
     {
-        var eye = Position;
-        var target = eye + GetForwardVector();
-        var up = GetUpVector();
+        return Vector3.Normalize(Vector3.Cross(GetLocalForwardVector(), Vector3.UnitY));
+    }
 
-        return Matrix4x4.CreateLookAt(eye, target, up);
+    /// <summary>Gets the camera's local up direction before parent transforms.</summary>
+    /// <returns>The normalized local up vector.</returns>
+    private Vector3 GetLocalUpVector()
+    {
+        return Vector3.Normalize(Vector3.Cross(GetLocalRightVector(), GetLocalForwardVector()));
+    }
+
+    /// <summary>Computes a view matrix using the camera's established forward/up convention.</summary>
+    /// <param name="worldTransform">Camera transform including its scene parents.</param>
+    /// <returns>The inverse world camera transform.</returns>
+    private Matrix4x4 ComputeViewMatrix(Matrix4x4 worldTransform)
+    {
+        var eye = Vector3.Transform(Vector3.Zero, worldTransform);
+        var forward = GetForwardVector();
+        var up = GetUpVector();
+        return Matrix4x4.CreateLookAt(eye, eye + forward, up);
+    }
+
+    /// <summary>Applies ancestor rotation to one local camera direction.</summary>
+    /// <param name="direction">Direction expressed relative to this camera's parent.</param>
+    /// <returns>The normalized world-space direction.</returns>
+    private Vector3 TransformDirectionByParent(Vector3 direction)
+    {
+        if (Parent is not Node3D parent
+            || !Matrix4x4.Decompose(parent.GetModelMatrix(), out _, out var rotation, out _))
+            return Vector3.Normalize(direction);
+        return Vector3.Normalize(Vector3.Transform(direction, rotation));
+    }
+
+    /// <summary>Moves in world space while storing a parent-relative position.</summary>
+    /// <param name="worldDirection">Normalized world-space movement direction.</param>
+    /// <param name="distance">Signed movement distance.</param>
+    private void MoveInWorldDirection(Vector3 worldDirection, float distance)
+    {
+        var localDirection = worldDirection;
+        if (Parent is Node3D parent
+            && Matrix4x4.Decompose(parent.GetModelMatrix(), out _, out var rotation, out _))
+            localDirection = Vector3.Transform(worldDirection, Quaternion.Inverse(rotation));
+        Position += Vector3.Normalize(localDirection) * distance;
     }
 
     /// <inheritdoc/>

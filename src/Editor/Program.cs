@@ -129,10 +129,15 @@ else
     sceneRoot.AddChild(gameCamera);
 }
 var hierarchyTree = editorView.HierarchyTree;
+var inspector = editorView.Inspector;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
 LoadedScene? playScene = null;
+LoadedScene? pendingPlayScene = null;
+Task<GameScriptHost>? playBuildTask = null;
+CompilationProgressDialog? compilationProgressDialog = null;
+Node3D? editSelectionBeforePlay = null;
 var isPlaying = false;
 
 // ── Game viewport: scene rendered through its GameCamera ─────
@@ -170,6 +175,7 @@ DragPreview? dragPreview = null;
 var fileSystemTree = editorView.FileSystemTree;
 var createdObjectIndex = 1;
 AttachFileSystem(fileSystemTree);
+AttachInspector(inspector);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
@@ -178,29 +184,94 @@ RefreshVertices();
 /// <summary>Starts an isolated runtime copy of the authored scene.</summary>
 void StartPlayMode()
 {
-    if (isPlaying)
+    if (isPlaying || playBuildTask is not null)
         return;
+    try
+    {
+        pendingPlayScene = ScenePlayClone.Create(sceneRoot, gameCamera);
+        ShowCompilationProgress();
+        playBuildTask = Task.Run(() => GameScriptHost.BuildAndLoad(scriptingWorkspace));
+    }
+    catch (Exception exception)
+    {
+        pendingPlayScene = null;
+        CloseCompilationProgress();
+        logger.LogError(exception, "Could not enter play mode");
+    }
+}
+
+/// <summary>Completes a background script build and enters play mode on the main thread.</summary>
+/// <param name="deltaTime">Elapsed time used to animate compilation progress.</param>
+void UpdatePlayModeStart(double deltaTime)
+{
+    if (playBuildTask is not { } build)
+        return;
+    if (!build.IsCompleted)
+    {
+        compilationProgressDialog?.Update(deltaTime);
+        RefreshVertices();
+        return;
+    }
+
+    var candidateScene = pendingPlayScene;
+    playBuildTask = null;
+    pendingPlayScene = null;
+    CloseCompilationProgress();
     GameScriptHost? candidateHost = null;
     try
     {
-        var candidateScene = ScenePlayClone.Create(sceneRoot, gameCamera);
-        candidateHost = GameScriptHost.BuildAndLoad(scriptingWorkspace);
+        candidateHost = build.GetAwaiter().GetResult();
+        if (candidateScene is null)
+            throw new InvalidOperationException("The pending play scene is unavailable.");
         candidateHost.LoadScene(candidateScene.Root);
+        editSelectionBeforePlay = selection.SelectedNode;
+        selection.SetObjects(candidateScene.MeshInstances);
         playScene = candidateScene;
         scriptHost = candidateHost;
         isPlaying = true;
+        viewportRenderer.SetSceneObjects(candidateScene.MeshInstances);
+        hierarchyTree.SetRoots(candidateScene.Root.Children);
         gameViewport.Camera = candidateScene.GameCamera;
         viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
         editorView.PlayButton.Label = "Stop";
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
-        RefreshVertices();
     }
     catch (Exception exception)
     {
-        candidateHost?.Dispose();
+        try
+        {
+            candidateHost?.Dispose();
+        }
+        catch (Exception disposalException)
+        {
+            logger.LogError(disposalException, "Could not unload a failed game script build");
+        }
         logger.LogError(exception, "Could not enter play mode");
     }
+    RefreshVertices();
+}
+
+/// <summary>Shows modal compilation progress above the editor.</summary>
+void ShowCompilationProgress()
+{
+    CloseCompilationProgress();
+    compilationProgressDialog = new CompilationProgressDialog(width, height)
+        { Name = "CompilationProgressDialog" };
+    uiRoot.AddChild(compilationProgressDialog);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
+/// <summary>Removes modal compilation progress from the editor.</summary>
+void CloseCompilationProgress()
+{
+    if (compilationProgressDialog is null)
+        return;
+    if (ReferenceEquals(compilationProgressDialog.Parent, uiRoot))
+        uiRoot.RemoveChild(compilationProgressDialog);
+    compilationProgressDialog = null;
+    RefreshVertices();
 }
 
 /// <summary>Stops scripts and discards the isolated runtime scene.</summary>
@@ -219,6 +290,11 @@ void StopPlayMode()
     scriptHost = null;
     playScene = null;
     isPlaying = false;
+    selection.SetObjects(sceneObjects);
+    viewportRenderer.SetSceneObjects(sceneObjects);
+    hierarchyTree.SetRoots(sceneRoot.Children);
+    selection.Select(editSelectionBeforePlay);
+    editSelectionBeforePlay = null;
     gameViewport.Camera = gameCamera;
     viewportRenderer.SetGameScene(gameCamera, sceneObjects);
     editorView.PlayButton.Label = "Play";
@@ -723,11 +799,13 @@ void AttachTitleBar(TitleBar titleBar)
 
 void AddSceneNode(Node parent, bool withCubeMesh)
 {
+    var activeRoot = GetActiveSceneRoot();
+    var activeObjects = GetActiveSceneObjects();
     Node child;
     if (withCubeMesh)
     {
         var meshInstance = new MeshInstance3D(new CubeMesh()) { Name = $"Cube {createdObjectIndex++}" };
-        sceneObjects.Add(meshInstance);
+        activeObjects.Add(meshInstance);
         child = meshInstance;
     }
     else
@@ -736,8 +814,8 @@ void AddSceneNode(Node parent, bool withCubeMesh)
     }
 
     parent.AddChild(child);
-    if (ReferenceEquals(parent, sceneRoot))
-        hierarchyTree.SetRoots(sceneRoot.Children);
+    if (ReferenceEquals(parent, activeRoot))
+        hierarchyTree.SetRoots(activeRoot.Children);
     else
         hierarchyTree.Expand(parent);
     hierarchyTree.Select(child);
@@ -752,8 +830,9 @@ void ShowHierarchyContextMenu()
         return;
 
     CloseHierarchyContextMenu();
-    var target = uiEventRouter.HoveredElement is TreeViewItem row ? row.Item : sceneRoot;
-    hierarchyTree.Select(ReferenceEquals(target, sceneRoot) ? null : target);
+    var activeRoot = GetActiveSceneRoot();
+    var target = uiEventRouter.HoveredElement is TreeViewItem row ? row.Item : activeRoot;
+    hierarchyTree.Select(ReferenceEquals(target, activeRoot) ? null : target);
 
     const float menuWidth = 160f;
     const float menuHeight = 56f;
@@ -772,12 +851,38 @@ void AttachHierarchy(TreeView tree)
 {
     tree.SelectionChanged += item =>
     {
+        inspector.Bind(item);
         if (synchronizingSelection)
             return;
         synchronizingSelection = true;
         selection.Select(item as Node3D);
         synchronizingSelection = false;
     };
+}
+
+/// <summary>Connects Inspector edits to hierarchy and renderer refreshes.</summary>
+/// <param name="sceneInspector">Inspector to attach.</param>
+void AttachInspector(SceneInspector sceneInspector)
+{
+    sceneInspector.NodeChanged += _ =>
+    {
+        hierarchyTree.Refresh();
+        RefreshVertices();
+    };
+}
+
+/// <summary>Gets the scene graph currently exposed to editing tools.</summary>
+/// <returns>The runtime root during Play; otherwise, the authored root.</returns>
+Node3D GetActiveSceneRoot()
+{
+    return playScene?.Root ?? sceneRoot;
+}
+
+/// <summary>Gets the renderable objects currently exposed to editing tools.</summary>
+/// <returns>The runtime objects during Play; otherwise, the authored objects.</returns>
+List<MeshInstance3D> GetActiveSceneObjects()
+{
+    return playScene?.MeshInstances ?? sceneObjects;
 }
 
 /// <summary>Rebuilds the logical editor layout without reallocating viewport render targets.</summary>
@@ -803,12 +908,15 @@ void ResizeEditor(int newWidth, int newHeight)
     sceneViewport = editorView.SceneViewport;
     gameViewport = editorView.GameViewport;
     hierarchyTree = editorView.HierarchyTree;
+    inspector = editorView.Inspector;
     fileSystemTree = editorView.FileSystemTree;
     editorView.ProjectLabel.Text = activeScenePath is null
         ? "Untitled.node" : Path.GetFileName(activeScenePath);
-    hierarchyTree.SetRoots(sceneRoot.Children);
+    hierarchyTree.SetRoots(GetActiveSceneRoot().Children);
     hierarchyTree.Select(selection.SelectedNode);
     AttachHierarchy(hierarchyTree);
+    inspector.Bind(selection.SelectedNode);
+    AttachInspector(inspector);
     AttachFileSystem(fileSystemTree);
     RefreshFileSystem();
     AttachTitleBar(editorView.TitleBar);
@@ -817,6 +925,8 @@ void ResizeEditor(int newWidth, int newHeight)
     sceneViewport.Camera = sceneCamera;
     gameViewport.ViewportId = gameViewportId;
     gameViewport.Camera = playScene?.GameCamera ?? gameCamera;
+    if (playBuildTask is not null)
+        ShowCompilationProgress();
 
     window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
     window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
@@ -877,18 +987,19 @@ bool IsInside(UIElement element, Vector2 position)
 /// <param name="target">Drop target, or null for the hierarchy root.</param>
 void MoveHierarchyNode(Node source, Node? target)
 {
-    var destination = target ?? sceneRoot;
+    var activeRoot = GetActiveSceneRoot();
+    var destination = target ?? activeRoot;
     if (ReferenceEquals(source, destination) || ReferenceEquals(source.Parent, destination))
         return;
     try
     {
         destination.AddChild(source);
-        hierarchyTree.SetRoots(sceneRoot.Children);
-        if (!ReferenceEquals(destination, sceneRoot))
+        hierarchyTree.SetRoots(activeRoot.Children);
+        if (!ReferenceEquals(destination, activeRoot))
             hierarchyTree.Expand(destination);
         hierarchyTree.Select(source);
         logger.LogInformation("Moved scene node {NodeName} under {ParentName}", source.Name,
-            ReferenceEquals(destination, sceneRoot) ? "Scene" : destination.Name);
+            ReferenceEquals(destination, activeRoot) ? "Scene" : destination.Name);
         RefreshVertices();
     }
     catch (InvalidOperationException exception)
@@ -1126,6 +1237,7 @@ window.TextInput += character =>
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
+    UpdatePlayModeStart(delta);
     if (pendingResizeTimestamp != 0)
     {
         var resizeSettled = System.Diagnostics.Stopwatch.GetElapsedTime(pendingResizeTimestamp)
@@ -1150,11 +1262,24 @@ window.Update += delta =>
             StopPlayMode();
         }
     }
+    if (inspector.RefreshValues())
+        RefreshVertices();
     viewportRenderer.Render(sceneViewport, gameViewport, lastMousePos);
 };
 
 logger.LogInformation("Running main loop...");
 window.Run();
 StopPlayMode();
+if (playBuildTask is not null)
+{
+    try
+    {
+        playBuildTask.GetAwaiter().GetResult().Dispose();
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Could not finish the pending game script build");
+    }
+}
 logger.LogInformation("Done.");
 return 0;

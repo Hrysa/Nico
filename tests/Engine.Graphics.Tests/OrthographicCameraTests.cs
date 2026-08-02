@@ -29,6 +29,20 @@ public class OrthographicCameraTests
         Assert.Equal(new Vector3(2f, -3f, 0f), camera.Position);
     }
 
+    /// <summary>Verifies an orthographic camera inherits parent movement.</summary>
+    [Fact]
+    public void ParentPositionChange_ChangesViewMatrix()
+    {
+        var parent = new Node3D();
+        var camera = new OrthographicCamera();
+        parent.AddChild(camera);
+        var before = camera.GetViewMatrix();
+
+        parent.Position = new Vector3(2f, 0f, 0f);
+
+        Assert.NotEqual(before, camera.GetViewMatrix());
+    }
+
     /// <summary>Verifies that positive zoom reduces the visible size.</summary>
     [Fact]
     public void Zoom_PositiveDelta_ReducesSize()

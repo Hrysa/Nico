@@ -14,7 +14,7 @@ public sealed class EditorViewportRenderer
     private readonly uint _gameViewportId;
     private readonly PerspectiveCamera _sceneCamera;
     private ICamera _gameCamera;
-    private readonly IReadOnlyList<MeshInstance3D> _sceneObjects;
+    private IReadOnlyList<MeshInstance3D> _sceneObjects;
     private IReadOnlyList<MeshInstance3D> _gameObjects;
     private readonly SceneSelectionController _selection;
     private readonly OriginAxesMesh _originAxes = new();
@@ -61,6 +61,14 @@ public sealed class EditorViewportRenderer
         ArgumentNullException.ThrowIfNull(gameObjects);
         _gameCamera = gameCamera;
         _gameObjects = gameObjects;
+    }
+
+    /// <summary>Changes the objects rendered and edited in the Scene viewport.</summary>
+    /// <param name="sceneObjects">Objects belonging to the active editing scene.</param>
+    public void SetSceneObjects(IReadOnlyList<MeshInstance3D> sceneObjects)
+    {
+        ArgumentNullException.ThrowIfNull(sceneObjects);
+        _sceneObjects = sceneObjects;
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>

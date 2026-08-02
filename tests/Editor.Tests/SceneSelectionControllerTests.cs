@@ -30,4 +30,21 @@ public class SceneSelectionControllerTests
         Assert.Same(gameCamera, controller.SelectedNode);
         Assert.NotEmpty(controller.BuildOverlay());
     }
+
+    /// <summary>Verifies switching editing scenes clears selection from the previous graph.</summary>
+    [Fact]
+    public void SetObjects_RuntimeScene_ClearsAuthoredSelection()
+    {
+        var authoredObject = new MeshInstance3D(new CubeMesh());
+        var runtimeObject = new MeshInstance3D(new CubeMesh());
+        var controller = new SceneSelectionController(
+            new[] { authoredObject }, new PerspectiveCamera(),
+            () => new GizmoViewport(0f, 0f, 200f, 200f));
+        controller.Select(authoredObject);
+
+        controller.SetObjects(new[] { runtimeObject });
+
+        Assert.Null(controller.SelectedNode);
+        Assert.Empty(controller.BuildOverlay());
+    }
 }

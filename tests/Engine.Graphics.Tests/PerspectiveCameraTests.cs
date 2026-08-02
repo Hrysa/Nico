@@ -9,6 +9,31 @@ namespace Engine.Graphics.Tests;
 /// </summary>
 public class PerspectiveCameraTests
 {
+    /// <summary>Verifies the default camera uses forward -Z and right +X.</summary>
+    [Fact]
+    public void DefaultOrientation_HasExpectedWorldDirections()
+    {
+        var camera = new PerspectiveCamera { Rotation = Vector3.Zero };
+
+        AssertVectorClose(-Vector3.UnitZ, camera.GetForwardVector());
+        AssertVectorClose(Vector3.UnitX, camera.GetRightVector());
+    }
+
+    /// <summary>Verifies the view matrix preserves the established look-at convention.</summary>
+    [Fact]
+    public void GetViewMatrix_DefaultRotation_LooksTowardNegativeZ()
+    {
+        var camera = new PerspectiveCamera
+        {
+            Position = new Vector3(0f, 0f, 5f),
+            Rotation = Vector3.Zero
+        };
+
+        var viewOrigin = Vector3.Transform(Vector3.Zero, camera.GetViewMatrix());
+
+        AssertVectorClose(new Vector3(0f, 0f, -5f), viewOrigin);
+    }
+
     /// <summary>Verifies that directly changing position invalidates the cached view matrix.</summary>
     [Fact]
     public void PositionChange_InvalidatesViewMatrix()
@@ -19,6 +44,21 @@ public class PerspectiveCameraTests
         camera.Position += Vector3.UnitX;
 
         Assert.NotEqual(before, camera.GetViewMatrix());
+    }
+
+    /// <summary>Verifies a parent transform changes an already-cached camera view.</summary>
+    [Fact]
+    public void ParentPositionChange_UpdatesViewMatrix()
+    {
+        var parent = new Node3D();
+        var camera = new PerspectiveCamera { Position = new Vector3(0f, 0f, 5f) };
+        parent.AddChild(camera);
+        var before = camera.GetViewMatrix();
+
+        parent.Position = new Vector3(3f, 0f, 0f);
+
+        Assert.NotEqual(before, camera.GetViewMatrix());
+        Assert.Equal(new Vector3(3f, 0f, 5f), camera.GetWorldPosition());
     }
 
     /// <summary>

@@ -33,7 +33,7 @@ The assembly suffix is optional because the Editor currently resolves scripts on
 
 ## Play mode
 
-Scripts never execute while the Editor is in normal edit mode. Press **Play** in the title bar to compile the game project and create an isolated in-memory clone of the authored scene. The Game viewport switches to that runtime clone while the hierarchy, Scene viewport, and save operation continue to use the authored scene.
+Scripts never execute while the Editor is in normal edit mode. Press **Play** in the title bar to create an isolated in-memory clone of the authored scene and compile the game project in the background. A modal progress dialog blocks editing while the window continues repainting. When compilation finishes, the Game viewport, Scene viewport, hierarchy, selection, gizmo, and Inspector switch to the runtime clone. Play-time Inspector and gizmo edits affect only that clone; saving continues to use the authored scene.
 
 Press **Stop** to invoke script destruction, unload the game assembly, and discard all runtime changes. The Game viewport then returns to the authored scene.
 

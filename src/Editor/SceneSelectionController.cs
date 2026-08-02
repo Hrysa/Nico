@@ -8,7 +8,7 @@ namespace Editor;
 /// </summary>
 public sealed class SceneSelectionController
 {
-    private readonly IReadOnlyList<MeshInstance3D> _objects;
+    private IReadOnlyList<MeshInstance3D> _objects;
     private readonly PerspectiveCamera _camera;
     private readonly Func<GizmoViewport> _getViewport;
     private readonly EditorGizmo _gizmo = new();
@@ -45,8 +45,7 @@ public sealed class SceneSelectionController
 
         if (_gizmo.IsDragging && _gizmo.TryUpdateDrag(position, out var updated))
         {
-            SelectedNode.Position = updated.Position;
-            SelectedNode.Rotation = updated.Rotation;
+            SelectedNode.SetWorldTransform(updated.Position, updated.Rotation);
         }
         else if (!_gizmo.IsDragging)
         {
@@ -65,7 +64,8 @@ public sealed class SceneSelectionController
 
         if (SelectedNode is not null)
         {
-            var transform = new GizmoTransform(SelectedNode.Position, SelectedNode.Rotation);
+            var transform = new GizmoTransform(
+                SelectedNode.GetWorldPosition(), SelectedNode.GetWorldRotation());
             if (_gizmo.BeginDrag(position, transform))
             {
                 _consumedPrimaryDown = true;
@@ -105,7 +105,7 @@ public sealed class SceneSelectionController
 
         var viewport = _getViewport();
         _gizmo.UpdateLayout(
-            new GizmoTransform(SelectedNode.Position, SelectedNode.Rotation),
+            new GizmoTransform(SelectedNode.GetWorldPosition(), SelectedNode.GetWorldRotation()),
             _camera.GetViewMatrix(), _camera.GetProjectionMatrix(), viewport);
         if (!_gizmo.IsDragging)
             _gizmo.UpdateHover(pointerPosition);
@@ -123,6 +123,15 @@ public sealed class SceneSelectionController
     {
         _consumedPrimaryDown = false;
         _gizmo.CancelDrag();
+    }
+
+    /// <summary>Changes the objects eligible for Scene viewport picking.</summary>
+    /// <param name="objects">Objects belonging to the active editing scene.</param>
+    public void SetObjects(IReadOnlyList<MeshInstance3D> objects)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        _objects = objects;
+        Select(null);
     }
 
     /// <summary>Selects a scene object from an external editor surface.</summary>
