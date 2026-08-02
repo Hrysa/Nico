@@ -21,6 +21,7 @@
         "y": 1,
         "z": 1
       },
+      "scriptType": "ExampleGame.MoveMainObject, example_game.Scripts",
       "camera": null,
       "children": []
     },

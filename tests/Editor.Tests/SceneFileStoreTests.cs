@@ -24,7 +24,11 @@ public class SceneFileStoreTests
                 Rotation = new Vector3(0.1f, 0.2f, 0.3f),
                 Scale = new Vector3(2f, 3f, 4f)
             };
-            var cube = new MeshInstance3D(new CubeMesh()) { Name = "Cube" };
+            var cube = new MeshInstance3D(new CubeMesh())
+            {
+                Name = "Cube",
+                ScriptType = "Example.RotateCube, Example.Scripts"
+            };
             var camera = new PerspectiveCamera(0.9f, near: 0.25f, far: 500f)
             {
                 Name = "GameCamera",
@@ -42,7 +46,9 @@ public class SceneFileStoreTests
             Assert.Equal(group.Position, loadedGroup.Position);
             Assert.Equal(group.Rotation, loadedGroup.Rotation);
             Assert.Equal(group.Scale, loadedGroup.Scale);
-            Assert.IsType<CubeMesh>(Assert.IsType<MeshInstance3D>(loadedGroup.Children[0]).Mesh);
+            var loadedCube = Assert.IsType<MeshInstance3D>(loadedGroup.Children[0]);
+            Assert.IsType<CubeMesh>(loadedCube.Mesh);
+            Assert.Equal(cube.ScriptType, loadedCube.ScriptType);
             Assert.Single(loaded.MeshInstances);
             Assert.Equal("GameCamera", loaded.GameCamera.Name);
             Assert.Equal(camera.Position, loaded.GameCamera.Position);

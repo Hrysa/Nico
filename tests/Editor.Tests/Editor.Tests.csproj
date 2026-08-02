@@ -15,6 +15,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <ProjectReference Include="../../src/Editor/Editor.csproj" />
+    <ProjectReference Include="../../src/Engine.Scripting/Engine.Scripting.csproj" />
   </ItemGroup>
 
 </Project>

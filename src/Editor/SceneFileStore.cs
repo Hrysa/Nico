@@ -115,6 +115,7 @@ public static class SceneFileStore
             SceneVector3.From(node.Position),
             SceneVector3.From(node.Rotation),
             SceneVector3.From(node.Scale),
+            node.ScriptType,
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
             children);
     }
@@ -145,6 +146,7 @@ public static class SceneFileStore
         node.Position = data.Position.ToVector3();
         node.Rotation = data.Rotation.ToVector3();
         node.Scale = data.Scale.ToVector3();
+        node.ScriptType = data.ScriptType;
         nodesById.Add(data.Id, node);
         if (node is MeshInstance3D meshInstance)
             meshInstances.Add(meshInstance);
@@ -176,6 +178,7 @@ public static class SceneFileStore
         SceneVector3 Position,
         SceneVector3 Rotation,
         SceneVector3 Scale,
+        string? ScriptType,
         CameraData? Camera,
         List<SceneNodeData> Children);
 

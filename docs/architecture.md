@@ -7,13 +7,14 @@ The engine uses a layered, in-place architecture. Rebuilding as a separate proje
 ```text
 Player ──> Engine ──> Engine.Core
                   ├─> Engine.Graphics ──> Engine.Core
+                  ├─> Engine.Scripting ──> Engine.Core, Engine.Graphics
                   ├─> Engine.UI ────────> Engine.Core, Engine.Graphics
                   └─> Engine.Graphics.Silk ──> Engine.Graphics, Silk.NET
 
-Editor ──> Engine.Graphics, Engine.UI, Engine.Graphics.Silk
+Editor ──> Engine.Graphics, Engine.Scripting, Engine.UI, Engine.Graphics.Silk
 ```
 
-Only `Engine.Graphics.Silk` may reference Silk.NET. `Engine.Core`, `Engine.Graphics`, and `Engine.UI` remain renderer-independent.
+Only `Engine.Graphics.Silk` may reference Silk.NET. `Engine.Core`, `Engine.Graphics`, `Engine.Scripting`, and `Engine.UI` remain renderer-independent.
 
 ## Runtime contracts
 
@@ -21,6 +22,7 @@ Only `Engine.Graphics.Silk` may reference Silk.NET. `Engine.Core`, `Engine.Graph
 - `IInputSource` exposes renderer-independent keyboard and pointer events.
 - `IRenderer` accepts viewport, grid, UI, and overlay render data.
 - `EngineHost` is the runtime composition facade used by Player.
+- `SceneScript`, `SceneContext`, and `SceneScriptRuntime` form the renderer-independent game scripting API.
 
 The current Silk implementation implements all three contracts on `SilkWindow`; consumers depend on the narrow contract they need.
 
@@ -33,12 +35,15 @@ The current Silk implementation implements all three contracts on `SilkWindow`; 
 - `FlyCameraController` owns scene-camera input.
 - `SceneSelectionController` owns viewport picking and selection.
 - `EditorViewportRenderer` builds per-frame render submissions.
+- `GameScriptHost` builds the generated game project and owns its collectible assembly context.
 
 UI produces semantic `UIDrawCommand` values. Only the Silk backend translates those commands into GPU vertices.
 
 ## Scene and rendering
 
 `Node` owns hierarchy invariants and local transforms. `Node3D` composes parent transforms. Cameras implement `ICamera`; selection uses `MeshPicker`; `RenderQueue` separates scene submission from backend execution.
+
+A node may persist one assembly-qualified `ScriptType`. Entering play mode clones the authored graph, builds the game-owned script project, resolves those types from its output assembly, binds one `SceneScript` instance per runtime node, and invokes its lifecycle before rendering. Stopping play discards the clone, leaving authored state unchanged. Script assemblies are loaded into a collectible context; engine contract assemblies remain shared with the default context so node and script type identity is stable.
 
 The Vulkan backend separates resource lifetimes even though `SilkWindow` remains its facade:
 

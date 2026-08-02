@@ -15,6 +15,7 @@ public sealed class EditorViewportRenderer
     private readonly PerspectiveCamera _sceneCamera;
     private ICamera _gameCamera;
     private readonly IReadOnlyList<MeshInstance3D> _sceneObjects;
+    private IReadOnlyList<MeshInstance3D> _gameObjects;
     private readonly SceneSelectionController _selection;
     private readonly OriginAxesMesh _originAxes = new();
     private readonly RenderQueue _sceneQueue = new();
@@ -45,15 +46,21 @@ public sealed class EditorViewportRenderer
         _sceneCamera = sceneCamera;
         _gameCamera = gameCamera;
         _sceneObjects = sceneObjects;
+        _gameObjects = sceneObjects;
         _selection = selection;
     }
 
-    /// <summary>Changes the scene-owned camera used by the Game viewport.</summary>
-    /// <param name="gameCamera">New active game camera.</param>
-    public void SetGameCamera(ICamera gameCamera)
+    /// <summary>Changes the camera and objects rendered in the Game viewport.</summary>
+    /// <param name="gameCamera">Active game camera.</param>
+    /// <param name="gameObjects">Objects belonging to the active game scene.</param>
+    public void SetGameScene(
+        ICamera gameCamera,
+        IReadOnlyList<MeshInstance3D> gameObjects)
     {
         ArgumentNullException.ThrowIfNull(gameCamera);
+        ArgumentNullException.ThrowIfNull(gameObjects);
         _gameCamera = gameCamera;
+        _gameObjects = gameObjects;
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>
@@ -102,7 +109,7 @@ public sealed class EditorViewportRenderer
     private void RenderGameViewport(float width, float height)
     {
         _gameCamera.UpdateViewport(width, height);
-        foreach (var instance in _sceneObjects)
+        foreach (var instance in _gameObjects)
         {
             if (instance.Mesh is { } mesh)
                 _gameQueue.Add(mesh.Vertices, _gameCamera.GetPushConstants(instance.GetModelMatrix()));

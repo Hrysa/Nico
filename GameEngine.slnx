@@ -3,6 +3,7 @@
     <Project Path="src/Engine.Core/Engine.Core.csproj" />
     <Project Path="src/Engine.Graphics/Engine.Graphics.csproj" />
     <Project Path="src/Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
+    <Project Path="src/Engine.Scripting/Engine.Scripting.csproj" />
     <Project Path="src/Engine.UI/Engine.UI.csproj" />
     <Project Path="src/Engine/Engine.csproj" />
     <Project Path="src/Editor/Editor.csproj" />

@@ -55,6 +55,9 @@ public class Node
     /// <summary>Gets or sets the node name for debugging.</summary>
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>Gets or sets the assembly-qualified game script type attached to this node.</summary>
+    public string? ScriptType { get; set; }
+
     /// <summary>Gets the parent node, or null if this is a root node.</summary>
     public Node? Parent => _parent;
 

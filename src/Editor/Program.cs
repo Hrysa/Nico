@@ -33,6 +33,20 @@ Debug.SetLoggerFactory(loggerFactory);
 var logger = loggerFactory.CreateLogger<Program>();
 logger.LogInformation("Starting Editor for game project {ProjectRoot}...", project.RootPath);
 
+ScriptingWorkspace scriptingWorkspace;
+try
+{
+    scriptingWorkspace = ProjectSolutionScaffolder.Ensure(
+        project.RootPath,
+        typeof(Node).Assembly.Location);
+    logger.LogInformation("Scripting solution ready at {SolutionPath}", scriptingWorkspace.SolutionPath);
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+{
+    logger.LogError(exception, "Could not create the scripting solution in {ProjectRoot}", project.RootPath);
+    return 2;
+}
+
 using var window = new SilkWindow(loggerFactory);
 var width = 1280;
 var height = 720;
@@ -90,7 +104,7 @@ if (activeScenePath is not null)
         logger.LogInformation("Loaded scene {ScenePath}", activeScenePath);
     }
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-        or System.Text.Json.JsonException or NotSupportedException)
+        or System.Text.Json.JsonException or NotSupportedException or InvalidOperationException)
     {
         logger.LogCritical(exception, "Could not load scene {ScenePath}", activeScenePath);
         return 3;
@@ -116,6 +130,10 @@ else
 }
 var hierarchyTree = editorView.HierarchyTree;
 hierarchyTree.SetRoots(sceneRoot.Children);
+
+GameScriptHost? scriptHost = null;
+LoadedScene? playScene = null;
+var isPlaying = false;
 
 // ── Game viewport: scene rendered through its GameCamera ─────
 var gameViewport = editorView.GameViewport;
@@ -154,7 +172,73 @@ var createdObjectIndex = 1;
 AttachFileSystem(fileSystemTree);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
+AttachPlayButton(editorView.PlayButton);
 RefreshVertices();
+
+/// <summary>Starts an isolated runtime copy of the authored scene.</summary>
+void StartPlayMode()
+{
+    if (isPlaying)
+        return;
+    GameScriptHost? candidateHost = null;
+    try
+    {
+        var candidateScene = ScenePlayClone.Create(sceneRoot, gameCamera);
+        candidateHost = GameScriptHost.BuildAndLoad(scriptingWorkspace);
+        candidateHost.LoadScene(candidateScene.Root);
+        playScene = candidateScene;
+        scriptHost = candidateHost;
+        isPlaying = true;
+        gameViewport.Camera = candidateScene.GameCamera;
+        viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
+        editorView.PlayButton.Label = "Stop";
+        logger.LogInformation("Entered play mode with {ScriptCount} scripts",
+            candidateHost.ScriptCount);
+        RefreshVertices();
+    }
+    catch (Exception exception)
+    {
+        candidateHost?.Dispose();
+        logger.LogError(exception, "Could not enter play mode");
+    }
+}
+
+/// <summary>Stops scripts and discards the isolated runtime scene.</summary>
+void StopPlayMode()
+{
+    if (!isPlaying && scriptHost is null && playScene is null)
+        return;
+    try
+    {
+        scriptHost?.Dispose();
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "A script failed while leaving play mode");
+    }
+    scriptHost = null;
+    playScene = null;
+    isPlaying = false;
+    gameViewport.Camera = gameCamera;
+    viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+    editorView.PlayButton.Label = "Play";
+    logger.LogInformation("Exited play mode");
+    RefreshVertices();
+}
+
+/// <summary>Connects the title-bar play control to the current play state.</summary>
+/// <param name="playButton">Play/Stop button to attach.</param>
+void AttachPlayButton(Button playButton)
+{
+    playButton.Label = isPlaying ? "Stop" : "Play";
+    playButton.Click += () =>
+    {
+        if (isPlaying)
+            StopPlayMode();
+        else
+            StartPlayMode();
+    };
+}
 
 /// <summary>Closes the hierarchy's object-creation menu.</summary>
 void CloseHierarchyContextMenu()
@@ -220,6 +304,7 @@ bool LoadScene(string scenePath, bool makeActive)
 {
     try
     {
+        StopPlayMode();
         var loadedScene = SceneFileStore.Load(scenePath);
         selection.Select(null);
         sceneRoot.ClearChildren();
@@ -229,7 +314,7 @@ bool LoadScene(string scenePath, bool makeActive)
         sceneObjects.AddRange(loadedScene.MeshInstances);
         gameCamera = loadedScene.GameCamera;
         gameViewport.Camera = gameCamera;
-        viewportRenderer.SetGameCamera(gameCamera);
+        viewportRenderer.SetGameScene(gameCamera, sceneObjects);
         hierarchyTree.SetRoots(sceneRoot.Children);
         if (makeActive)
         {
@@ -241,7 +326,7 @@ bool LoadScene(string scenePath, bool makeActive)
         return true;
     }
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-        or System.Text.Json.JsonException or NotSupportedException)
+        or System.Text.Json.JsonException or NotSupportedException or InvalidOperationException)
     {
         logger.LogError(exception, "Could not load scene {ScenePath}", scenePath);
         CloseFileContextMenu();
@@ -411,6 +496,7 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
 /// <summary>Replaces the current editor scene with a new in-memory default node scene.</summary>
 void ResetToDefaultScene()
 {
+    StopPlayMode();
     selection.Select(null);
     sceneRoot.ClearChildren();
     sceneObjects.Clear();
@@ -429,7 +515,7 @@ void ResetToDefaultScene()
     sceneRoot.AddChild(cube);
     sceneRoot.AddChild(gameCamera);
     gameViewport.Camera = gameCamera;
-    viewportRenderer.SetGameCamera(gameCamera);
+    viewportRenderer.SetGameScene(gameCamera, sceneObjects);
     hierarchyTree.SetRoots(sceneRoot.Children);
 }
 
@@ -726,10 +812,11 @@ void ResizeEditor(int newWidth, int newHeight)
     AttachFileSystem(fileSystemTree);
     RefreshFileSystem();
     AttachTitleBar(editorView.TitleBar);
+    AttachPlayButton(editorView.PlayButton);
     sceneViewport.ViewportId = sceneViewportId;
     sceneViewport.Camera = sceneCamera;
     gameViewport.ViewportId = gameViewportId;
-    gameViewport.Camera = gameCamera;
+    gameViewport.Camera = playScene?.GameCamera ?? gameCamera;
 
     window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
     window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
@@ -1051,10 +1138,23 @@ window.Update += delta =>
         }
     }
     flyCamera.Update(delta);
+    if (scriptHost is not null)
+    {
+        try
+        {
+            scriptHost.Update(delta);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "A game script failed; play mode has been stopped");
+            StopPlayMode();
+        }
+    }
     viewportRenderer.Render(sceneViewport, gameViewport, lastMousePos);
 };
 
 logger.LogInformation("Running main loop...");
 window.Run();
+StopPlayMode();
 logger.LogInformation("Done.");
 return 0;

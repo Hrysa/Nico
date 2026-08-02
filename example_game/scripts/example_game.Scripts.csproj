@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Engine.Core">
+      <HintPath>/Users/valhsu/Projects/ai/game-engine/src/Editor/bin/Debug/net11.0/Engine.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  <Reference Include="Engine.Graphics"><HintPath>/Users/valhsu/Projects/ai/game-engine/src/Editor/bin/Debug/net11.0/Engine.Graphics.dll</HintPath><Private>false</Private></Reference><Reference Include="Engine.Scripting"><HintPath>/Users/valhsu/Projects/ai/game-engine/src/Editor/bin/Debug/net11.0/Engine.Scripting.dll</HintPath><Private>false</Private></Reference></ItemGroup>
+</Project>

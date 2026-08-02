@@ -153,7 +153,7 @@ public static class EditorUI
         background.AddChild(gameViewport);
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
-            projectLabel, titleBar);
+            projectLabel, playButton, titleBar);
     }
 
     /// <summary>
@@ -222,6 +222,7 @@ public static class EditorUI
 /// <param name="HierarchyTree">Scene hierarchy tree.</param>
 /// <param name="FileSystemTree">Project-root filesystem tree.</param>
 /// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
+/// <param name="PlayButton">Title-bar control that starts and stops play mode.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 public sealed record EditorView(
     Panel Root,
@@ -230,4 +231,5 @@ public sealed record EditorView(
     TreeView HierarchyTree,
     TreeView FileSystemTree,
     Label ProjectLabel,
+    Button PlayButton,
     TitleBar TitleBar);

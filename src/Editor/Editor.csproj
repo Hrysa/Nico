@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="../Engine.Graphics/Engine.Graphics.csproj" />
     <ProjectReference Include="../Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
+    <ProjectReference Include="../Engine.Scripting/Engine.Scripting.csproj" />
     <ProjectReference Include="../Engine.UI/Engine.UI.csproj" />
   </ItemGroup>
 
