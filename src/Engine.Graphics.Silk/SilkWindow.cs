@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.Core;
@@ -39,6 +40,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private Vector2 _windowDragOffset;
     private bool _macFullScreen;
     private float _uiFramebufferScale = 1f;
+    private float _uiInputScale = 1f;
+    private WindowsWindowChrome? _windowsWindowChrome;
+    private bool _customTitleBar;
+    private int _requestedWidth;
+    private int _requestedHeight;
     private long _lastLiveResizeFrameTimestamp;
     private bool _renderingFrame;
 
@@ -131,6 +137,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             throw new InvalidOperationException("The window has already been initialized.");
 
         _shutdown = false;
+        _customTitleBar = options.CustomTitleBar;
+        _requestedWidth = options.Width;
+        _requestedHeight = options.Height;
         _logger.LogInformation("Creating window '{Title}' ({Width}x{Height}) [Vulkan]", options.Title, options.Width, options.Height);
 
         var settings = new Silk.NET.Windowing.WindowOptions
@@ -140,9 +149,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             API = new GraphicsAPI(ContextAPI.Vulkan, new APIVersion(1, 1)),
             ShouldSwapAutomatically = false,
             IsVisible = true,
-            WindowBorder = options.CustomTitleBar && !OperatingSystem.IsMacOS()
-                ? WindowBorder.Hidden
-                : WindowBorder.Resizable,
+            WindowBorder = WindowBorder.Resizable,
             TransparentFramebuffer = options.CustomTitleBar && OperatingSystem.IsMacOS()
         };
 
@@ -155,9 +162,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _window.FramebufferResize += OnFramebufferResize;
 
         _window.Initialize();
-        _uiFramebufferScale = CalculateFramebufferScale();
-        if (options.CustomTitleBar)
+        if (options.CustomTitleBar && OperatingSystem.IsMacOS())
             MacOSWindowChrome.Apply(_window);
+        if (!OperatingSystem.IsWindows())
+        {
+            _uiFramebufferScale = CalculateFramebufferScale();
+            _uiInputScale = 1f;
+        }
         _logger.LogInformation("Window initialized");
     }
 
@@ -176,6 +187,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private void OnLoad()
     {
         _logger.LogInformation("Window.Load fired — initializing Vulkan");
+
+        InitializeWindowsClientGeometry();
 
         _input = _window!.CreateInput();
         _mouse = _input.Mice.Count > 0 ? _input.Mice[0] : null;
@@ -223,6 +236,23 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _logger.LogInformation("Vulkan initialization complete");
     }
 
+    /// <summary>Finalizes Windows chrome, DPI, size, and placement before Vulkan reads the surface extent.</summary>
+    private void InitializeWindowsClientGeometry()
+    {
+        if (!OperatingSystem.IsWindows() || _window is null)
+            return;
+
+        if (_customTitleBar)
+            _windowsWindowChrome = WindowsWindowChrome.Apply(_window);
+
+        _uiFramebufferScale = CalculateFramebufferScale();
+        _uiInputScale = _uiFramebufferScale;
+        _window.Size = new Vector2D<int>(
+            Math.Max(1, (int)MathF.Round(_requestedWidth * _uiFramebufferScale)),
+            Math.Max(1, (int)MathF.Round(_requestedHeight * _uiFramebufferScale)));
+        _windowsWindowChrome?.EnsureVisible();
+    }
+
     private void OnUpdate(double delta)
     {
         Update?.Invoke(delta);
@@ -262,9 +292,14 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         if (size.X <= 0 || size.Y <= 0)
             return;
 
+        _uiFramebufferScale = CalculateFramebufferScale();
+        _uiInputScale = OperatingSystem.IsWindows() ? _uiFramebufferScale : 1f;
         var logicalWidth = Math.Max(1, (int)MathF.Round(size.X / _uiFramebufferScale));
         var logicalHeight = Math.Max(1, (int)MathF.Round(size.Y / _uiFramebufferScale));
         Resized?.Invoke(logicalWidth, logicalHeight);
+        if (_vk is null)
+            return;
+
         _framebufferResized = true;
         var liveFrameDue = _lastLiveResizeFrameTimestamp == 0
             || System.Diagnostics.Stopwatch.GetElapsedTime(_lastLiveResizeFrameTimestamp)
@@ -279,7 +314,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnMouseMove(IMouse mouse, Vector2 pos)
     {
-        MouseMove?.Invoke(new Vector2(pos.X, pos.Y));
+        MouseMove?.Invoke(new Vector2(pos.X / _uiInputScale, pos.Y / _uiInputScale));
     }
 
     private void OnMouseDown(IMouse mouse, MouseButton button)
@@ -344,6 +379,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         if (_window is null || _window.WindowState != WindowState.Normal)
             return;
         if (MacOSWindowChrome.TryBeginWindowDrag(_window))
+        {
+            _windowDragging = false;
+            return;
+        }
+        if (_windowsWindowChrome?.TryBeginWindowDrag() == true)
         {
             _windowDragging = false;
             return;
@@ -576,8 +616,38 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         if (!indices.GraphicsFamily.HasValue || !indices.PresentFamily.HasValue)
             return false;
 
+        if (!SupportsDeviceExtension(device, KhrSwapchain.ExtensionName))
+            return false;
+
         var support = SwapchainManager.QuerySupport(_khrSurface!, device, _surface);
         return support.Formats.Length > 0 && support.PresentModes.Length > 0;
+    }
+
+    /// <summary>
+    /// Determines whether a physical device advertises an extension.
+    /// </summary>
+    /// <param name="device">Physical device to inspect.</param>
+    /// <param name="extensionName">Extension name to locate.</param>
+    /// <returns><see langword="true"/> when the extension is supported.</returns>
+    private bool SupportsDeviceExtension(PhysicalDevice device, string extensionName)
+    {
+        uint extensionCount = 0;
+        _vk!.EnumerateDeviceExtensionProperties(device, (byte*)null, &extensionCount, null);
+
+        var properties = new ExtensionProperties[extensionCount];
+        fixed (ExtensionProperties* pProperties = properties)
+            _vk.EnumerateDeviceExtensionProperties(device, (byte*)null, &extensionCount, pProperties);
+
+        foreach (var property in properties)
+        {
+            var name = SilkMarshal.PtrToString(
+                (nint)property.ExtensionName,
+                NativeStringEncoding.UTF8);
+            if (string.Equals(name, extensionName, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private QueueFamilyIndices FindQueueFamilies(PhysicalDevice device)
@@ -625,15 +695,19 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 PQueuePriorities = pQueuePriority
             };
 
-            var extensions = new[] { "VK_KHR_swapchain", "VK_KHR_portability_subset" };
-            var extensionNamesMem = SilkMarshal.StringArrayToPtr(extensions, NativeStringEncoding.UTF8);
+            var extensions = new List<string> { KhrSwapchain.ExtensionName };
+            if (SupportsDeviceExtension(_physicalDevice, "VK_KHR_portability_subset"))
+                extensions.Add("VK_KHR_portability_subset");
+
+            _logger.LogDebug("Enabling device extensions: {Extensions}", string.Join(", ", extensions));
+            var extensionNamesMem = SilkMarshal.StringArrayToPtr(extensions.ToArray(), NativeStringEncoding.UTF8);
 
             var createInfo = new DeviceCreateInfo
             {
                 SType = StructureType.DeviceCreateInfo,
                 QueueCreateInfoCount = 1,
                 PQueueCreateInfos = &queueCreateInfo,
-                EnabledExtensionCount = (uint)extensions.Length,
+                EnabledExtensionCount = (uint)extensions.Count,
                 PpEnabledExtensionNames = (byte**)extensionNamesMem
             };
 
@@ -653,19 +727,21 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void CreateSwapchain()
     {
-        var windowSize = _window!.Size;
+        var framebufferSize = _window!.FramebufferSize;
         var indices = FindQueueFamilies(_physicalDevice);
         _swapchainManager = new SwapchainManager(_vk!, _device, _physicalDevice, _surface,
             _khrSurface!, indices.GraphicsFamily!.Value, indices.PresentFamily!.Value, _logger);
-        _swapchainManager.Create((uint)Math.Max(windowSize.X, 0), (uint)Math.Max(windowSize.Y, 0));
+        _swapchainManager.Create(
+            (uint)Math.Max(framebufferSize.X, 0),
+            (uint)Math.Max(framebufferSize.Y, 0));
     }
 
     private void RecreateSwapchain()
     {
-        var size = _window!.Size;
+        var size = _window!.FramebufferSize;
         while (size.X == 0 || size.Y == 0)
         {
-            size = _window.Size;
+            size = _window.FramebufferSize;
             _window.DoEvents();
         }
 
@@ -1881,8 +1957,23 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         var framebufferSize = _window.FramebufferSize;
         var scaleX = framebufferSize.X / (float)_window.Size.X;
         var scaleY = framebufferSize.Y / (float)_window.Size.Y;
-        return MathF.Max(1f, MathF.Max(scaleX, scaleY));
+        var scale = MathF.Max(1f, MathF.Max(scaleX, scaleY));
+        if (!OperatingSystem.IsWindows())
+            return scale;
+
+        var win32 = _window.Native?.Win32;
+        if (win32 is null || win32.Value.Item1 == IntPtr.Zero)
+            return scale;
+
+        var dpi = GetDpiForWindow(win32.Value.Item1);
+        return MathF.Max(scale, dpi / 96f);
     }
+
+    /// <summary>Gets the effective DPI for a native Windows window.</summary>
+    /// <param name="windowHandle">Native Win32 window handle.</param>
+    /// <returns>The DPI value for the window.</returns>
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr windowHandle);
 
     private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties)
     {
@@ -2288,6 +2379,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         _shutdown = true;
         _logger.LogInformation("Shutting down...");
+        _windowsWindowChrome?.Dispose();
+        _windowsWindowChrome = null;
 
         if (_vk is null)
         {
@@ -2295,7 +2388,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             return;
         }
 
-        _vk?.DeviceWaitIdle(_device);
+        if (_device.Handle != 0)
+            _vk.DeviceWaitIdle(_device);
 
         CleanupSwapchain();
 
@@ -2319,12 +2413,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         // Cleanup shared resources
         _uiBuffers?.Destroy();
         _pipelines?.Dispose();
-        _vk?.DestroyRenderPass(_device, _fboRenderPass, null);
+        if (_device.Handle != 0 && _fboRenderPass.Handle != 0)
+            _vk.DestroyRenderPass(_device, _fboRenderPass, null);
 
-        _vk?.DestroyRenderPass(_device, _renderPass, null);
-        _khrSurface?.DestroySurface(_instance, _surface, null);
-        _vk?.DestroyDevice(_device, null);
-        _vk?.DestroyInstance(_instance, null);
+        if (_device.Handle != 0 && _renderPass.Handle != 0)
+            _vk.DestroyRenderPass(_device, _renderPass, null);
+        if (_instance.Handle != 0 && _surface.Handle != 0)
+            _khrSurface?.DestroySurface(_instance, _surface, null);
+        if (_device.Handle != 0)
+            _vk.DestroyDevice(_device, null);
+        if (_instance.Handle != 0)
+            _vk.DestroyInstance(_instance, null);
 
         _input?.Dispose();
         _fontRasterizer.Dispose();

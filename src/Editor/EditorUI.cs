@@ -19,7 +19,7 @@ public static class EditorUI
     public static EditorView BuildView(float width, float height)
     {
         var theme = UITheme.Dark;
-        const float titleBarHeight = 48f;
+        var titleBarHeight = OperatingSystem.IsWindows() ? 36f : 48f;
         const float bottomDockHeight = 30f;
         const float separatorWidth = 1f;
         const float hierarchyWidth = 252f;
@@ -48,10 +48,11 @@ public static class EditorUI
             ForegroundColor = theme.TextSecondary,
             PaddingLeft = 0f
         };
-        var playButton = new Button(0f, 10f, 28f, "Play", theme, ButtonStyle.Primary)
+        var playButtonTop = (titleBarHeight - 28f) / 2f;
+        var playButton = new Button(0f, playButtonTop, 28f, "Play", theme, ButtonStyle.Primary)
             { Name = "Play" };
         playButton.Position = new Vector3(
-            width - rightWindowControlsWidth - playButton.Width - 10f, 10f, 0f);
+            width - rightWindowControlsWidth - playButton.Width - 10f, playButtonTop, 0f);
 
         titleBar.AddChild(projectLabel);
         titleBar.AddChild(playButton);
