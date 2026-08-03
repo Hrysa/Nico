@@ -23,6 +23,9 @@ public interface IWindow : IDisposable
     /// <summary>Processes pending native events.</summary>
     void ProcessEvents();
 
+    /// <summary>Processes events, updates, and renders one frame without entering a blocking loop.</summary>
+    void PumpFrame();
+
     /// <summary>Begins moving a borderless window from a client-area pointer position.</summary>
     /// <param name="pointerPosition">Pointer position inside the client area.</param>
     void BeginWindowDrag(Vector2 pointerPosition);

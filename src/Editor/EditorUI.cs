@@ -234,7 +234,9 @@ public static class EditorUI
         background.Arrange(Vector2.Zero, new Vector2(width, height));
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
-            projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay);
+            projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay,
+            viewportDock, sceneSlot, gameSlot, sceneTools, gameHeader,
+            workspace, leftDock, hierarchyPanel, filesystemPanel, inspectorPanel);
     }
 
     /// <summary>
@@ -308,6 +310,16 @@ public static class EditorUI
 /// <param name="Inspector">Selection-bound scene property Inspector.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 /// <param name="Overlay">Canvas hosting floating editor UI.</param>
+/// <param name="ViewportDock">Main viewport docking grid.</param>
+/// <param name="SceneSlot">Detachable Scene tool content.</param>
+/// <param name="GameSlot">Detachable Game tool content.</param>
+/// <param name="SceneToolbar">Scene tool header used to detach its window.</param>
+/// <param name="GameHeader">Game tool header used to detach its window.</param>
+/// <param name="Workspace">Main editor workspace grid.</param>
+/// <param name="LeftDock">Hierarchy and File System docking grid.</param>
+/// <param name="HierarchyPanel">Detachable Hierarchy tool.</param>
+/// <param name="FileSystemPanel">Detachable File System tool.</param>
+/// <param name="InspectorPanel">Detachable Inspector tool.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
@@ -319,4 +331,14 @@ public sealed record EditorView(
     Label PlayButtonLabel,
     SceneInspector Inspector,
     TitleBar TitleBar,
-    Canvas Overlay);
+    Canvas Overlay,
+    Grid ViewportDock,
+    Grid SceneSlot,
+    Grid GameSlot,
+    Surface SceneToolbar,
+    SectionHeader GameHeader,
+    Grid Workspace,
+    Grid LeftDock,
+    ToolPanel HierarchyPanel,
+    ToolPanel FileSystemPanel,
+    ToolPanel InspectorPanel);

@@ -10,8 +10,8 @@ namespace Editor;
 public sealed class EditorViewportRenderer : IDisposable
 {
     private readonly IRenderer _renderer;
-    private readonly RenderViewHandle _sceneViewport;
-    private readonly RenderViewHandle _gameViewport;
+    private RenderViewHandle _sceneViewport;
+    private RenderViewHandle _gameViewport;
     private readonly PerspectiveCamera _sceneCamera;
     private ICamera _gameCamera;
     private IReadOnlyList<MeshInstance3D> _sceneObjects;
@@ -75,6 +75,24 @@ public sealed class EditorViewportRenderer : IDisposable
         ReleaseUnusedMeshes();
     }
 
+    /// <summary>Changes the renderer-local target used by the Scene viewport.</summary>
+    /// <param name="view">New Scene render view.</param>
+    public void SetSceneRenderView(RenderViewHandle view)
+    {
+        if (!view.IsValid)
+            throw new ArgumentException("A valid Scene render view is required.", nameof(view));
+        _sceneViewport = view;
+    }
+
+    /// <summary>Changes the renderer-local target used by the Game viewport.</summary>
+    /// <param name="view">New Game render view.</param>
+    public void SetGameRenderView(RenderViewHandle view)
+    {
+        if (!view.IsValid)
+            throw new ArgumentException("A valid Game render view is required.", nameof(view));
+        _gameViewport = view;
+    }
+
     /// <summary>Releases retained renderer resources created by this viewport renderer.</summary>
     public void Dispose()
     {
@@ -95,12 +113,27 @@ public sealed class EditorViewportRenderer : IDisposable
         ViewportPanel gameViewport,
         Vector2 pointerPosition)
     {
+        RenderScene(sceneViewport, pointerPosition);
+        RenderGame(gameViewport);
+    }
+
+    /// <summary>Builds and submits only the Scene viewport for its owning native window.</summary>
+    /// <param name="sceneViewport">Current Scene viewport layout.</param>
+    /// <param name="pointerPosition">Pointer position in the same window.</param>
+    public void RenderScene(ViewportPanel sceneViewport, Vector2 pointerPosition)
+    {
         _sceneQueue.Clear();
-        _gameQueue.Clear();
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
         RenderSceneViewport();
         _renderer.SubmitTransient(new TransientGeometry(_selection.BuildOverlay()));
+    }
+
+    /// <summary>Builds and submits only the Game viewport for its owning native window.</summary>
+    /// <param name="gameViewport">Current Game viewport layout.</param>
+    public void RenderGame(ViewportPanel gameViewport)
+    {
+        _gameQueue.Clear();
         RenderGameViewport(gameViewport.Width, gameViewport.Height);
     }
 

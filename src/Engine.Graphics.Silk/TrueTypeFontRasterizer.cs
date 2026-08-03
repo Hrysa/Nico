@@ -11,6 +11,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     internal const uint AtlasHeight = 2048;
     private const int AtlasPadding = 2;
     private const int GlyphOversampling = 2;
+    private static readonly object SharedGlyphLock = new();
+    private static readonly Dictionary<GlyphShapeKey, RasterizedGlyph> SharedGlyphs = [];
     private readonly stbtt_fontinfo _font;
     private readonly Dictionary<GlyphKey, AtlasGlyph> _glyphs = [];
     private int _nextX = AtlasPadding;
@@ -130,62 +132,90 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         if (_glyphs.TryGetValue(key, out var cached))
             return cached;
 
-        int width;
-        int height;
-        int xOffset;
-        int yOffset;
-        var bitmap = stbtt_GetCodepointBitmap(
-            _font, rasterScale, rasterScale, codepoint, &width, &height, &xOffset, &yOffset);
-        int advance;
-        stbtt_GetCodepointHMetrics(_font, codepoint, &advance, null);
-        if (width == 0 || height == 0)
+        var rasterized = GetRasterizedGlyph(codepoint, pixelHeight, layoutScale, rasterScale);
+        if (rasterized.Width == 0 || rasterized.Height == 0)
         {
-            var empty = new AtlasGlyph(0, 0, xOffset, yOffset, advance * layoutScale, 0, 0);
+            var empty = new AtlasGlyph(
+                0, 0, rasterized.XOffset, rasterized.YOffset, rasterized.Advance, 0, 0);
             _glyphs.Add(key, empty);
-            if (bitmap != null)
-                stbtt_FreeBitmap(bitmap, null);
             return empty;
         }
 
-        if (_nextX + width + AtlasPadding > AtlasWidth)
+        if (_nextX + rasterized.Width + AtlasPadding > AtlasWidth)
         {
             _nextX = AtlasPadding;
             _nextY += _rowHeight + AtlasPadding;
             _rowHeight = 0;
         }
-        if (_nextY + height + AtlasPadding > AtlasHeight)
-        {
-            if (bitmap != null)
-                stbtt_FreeBitmap(bitmap, null);
+        if (_nextY + rasterized.Height + AtlasPadding > AtlasHeight)
             throw new InvalidOperationException("Inter glyph atlas is full.");
-        }
 
         var red = ToByte(color.R);
         var green = ToByte(color.G);
         var blue = ToByte(color.B);
-        for (var row = 0; row < height; row++)
+        for (var row = 0; row < rasterized.Height; row++)
         {
-            for (var column = 0; column < width; column++)
+            for (var column = 0; column < rasterized.Width; column++)
             {
                 var destination = ((_nextY + row) * (int)AtlasWidth + _nextX + column) * 4;
                 AtlasPixels[destination] = red;
                 AtlasPixels[destination + 1] = green;
                 AtlasPixels[destination + 2] = blue;
-                AtlasPixels[destination + 3] = bitmap[row * width + column];
+                AtlasPixels[destination + 3] =
+                    rasterized.Coverage[row * rasterized.Width + column];
             }
         }
-        stbtt_FreeBitmap(bitmap, null);
         var glyph = new AtlasGlyph(
-            width, height, xOffset, yOffset, advance * layoutScale, _nextX, _nextY);
+            rasterized.Width, rasterized.Height, rasterized.XOffset, rasterized.YOffset,
+            rasterized.Advance, _nextX, _nextY);
         _glyphs.Add(key, glyph);
-        _nextX += width + AtlasPadding;
-        _rowHeight = Math.Max(_rowHeight, height);
+        _nextX += rasterized.Width + AtlasPadding;
+        _rowHeight = Math.Max(_rowHeight, rasterized.Height);
         _dirtyLeft = Math.Min(_dirtyLeft, glyph.AtlasX);
         _dirtyTop = Math.Min(_dirtyTop, glyph.AtlasY);
         _dirtyRight = Math.Max(_dirtyRight, glyph.AtlasX + glyph.Width);
         _dirtyBottom = Math.Max(_dirtyBottom, glyph.AtlasY + glyph.Height);
         AtlasGeneration++;
         return glyph;
+    }
+
+    /// <summary>Gets an immutable oversampled glyph shared by every native window.</summary>
+    /// <param name="codepoint">Unicode codepoint.</param>
+    /// <param name="pixelHeight">Requested physical glyph height.</param>
+    /// <param name="layoutScale">Scale used for layout metrics.</param>
+    /// <param name="rasterScale">Scale used for oversampled coverage.</param>
+    /// <returns>Shared glyph bitmap and metrics.</returns>
+    private RasterizedGlyph GetRasterizedGlyph(
+        int codepoint,
+        int pixelHeight,
+        float layoutScale,
+        float rasterScale)
+    {
+        var key = new GlyphShapeKey(codepoint, pixelHeight);
+        lock (SharedGlyphLock)
+        {
+            if (SharedGlyphs.TryGetValue(key, out var cached))
+                return cached;
+            int width;
+            int height;
+            int xOffset;
+            int yOffset;
+            var bitmap = stbtt_GetCodepointBitmap(
+                _font, rasterScale, rasterScale, codepoint,
+                &width, &height, &xOffset, &yOffset);
+            int advance;
+            stbtt_GetCodepointHMetrics(_font, codepoint, &advance, null);
+            var coverage = new byte[Math.Max(0, width * height)];
+            if (bitmap != null)
+            {
+                new ReadOnlySpan<byte>(bitmap, coverage.Length).CopyTo(coverage);
+                stbtt_FreeBitmap(bitmap, null);
+            }
+            var glyph = new RasterizedGlyph(
+                width, height, xOffset, yOffset, advance * layoutScale, coverage);
+            SharedGlyphs.Add(key, glyph);
+            return glyph;
+        }
     }
 
     /// <summary>Converts a normalized linear component to an atlas byte.</summary>
@@ -225,6 +255,26 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="PixelHeight">Physical pixel height.</param>
     /// <param name="Color">Baked foreground color.</param>
     private readonly record struct GlyphKey(int Codepoint, int PixelHeight, Color Color);
+
+    /// <summary>Keys immutable glyph shapes shared across renderer windows.</summary>
+    /// <param name="Codepoint">Unicode codepoint.</param>
+    /// <param name="PixelHeight">Physical pixel height.</param>
+    private readonly record struct GlyphShapeKey(int Codepoint, int PixelHeight);
+
+    /// <summary>Stores immutable oversampled glyph coverage and layout metrics.</summary>
+    /// <param name="Width">Bitmap width.</param>
+    /// <param name="Height">Bitmap height.</param>
+    /// <param name="XOffset">Horizontal bearing.</param>
+    /// <param name="YOffset">Vertical bearing.</param>
+    /// <param name="Advance">Scaled horizontal advance.</param>
+    /// <param name="Coverage">Oversampled alpha coverage.</param>
+    private sealed record RasterizedGlyph(
+        int Width,
+        int Height,
+        int XOffset,
+        int YOffset,
+        float Advance,
+        byte[] Coverage);
 
     /// <summary>Stores glyph metrics and atlas placement.</summary>
     /// <param name="Width">Bitmap width.</param>

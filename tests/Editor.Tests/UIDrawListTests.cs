@@ -102,6 +102,21 @@ public class UIDrawListTests
         Assert.Equal(Color.Black, command.BackgroundColor);
     }
 
+    /// <summary>Verifies retained snapshots carry monotonic identities and cached trees reuse them.</summary>
+    [Fact]
+    public void BuildDrawList_Snapshots_HaveMonotonicGenerations()
+    {
+        var root = new Panel(Color.Black, 100f, 100f);
+        var first = root.BuildDrawList();
+        var unchanged = root.BuildDrawList();
+        root.BackgroundColor = Color.White;
+        var changed = root.BuildDrawList();
+
+        Assert.Same(first, unchanged);
+        Assert.Equal(first.Generation, unchanged.Generation);
+        Assert.True(changed.Generation > first.Generation);
+    }
+
     /// <summary>Counts local paint executions for snapshot tests.</summary>
     private sealed class CountingElement : UIElement
     {

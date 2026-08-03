@@ -125,6 +125,28 @@ public sealed class UILayoutTests
         Assert.Equal(1, element.MeasureCount);
     }
 
+    /// <summary>Verifies dock content can leave and return to the same grid instance.</summary>
+    [Fact]
+    public void Grid_RemoveAndAdd_ReparentsDockContentCleanly()
+    {
+        var grid = new Grid(Color.Black);
+        grid.Rows.Add(GridLength.Star());
+        grid.Columns.Add(GridLength.Star());
+        var content = new Panel(Color.Red);
+        grid.Add(content, 0, 0);
+
+        Assert.True(grid.Remove(content));
+        Assert.Null(content.Parent);
+        Assert.Empty(grid.Children);
+
+        grid.Add(content, 0, 0);
+        grid.Measure(new Vector2(320f, 200f));
+        grid.Arrange(Vector2.Zero, new Vector2(320f, 200f));
+        Assert.Same(grid, content.Parent);
+        Assert.Equal(320f, content.Width);
+        Assert.Equal(200f, content.Height);
+    }
+
     /// <summary>Enumerates all UI descendants beneath one root.</summary>
     /// <param name="root">Subtree root.</param>
     /// <returns>Descendants in depth-first order.</returns>

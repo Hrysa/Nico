@@ -1,6 +1,8 @@
 # Roadmap
 
-## Next Version
+## Version 0.2.0
+
+**Status: Implemented.** Persistent tool headers detach on double-click and dock again when their native window closes. The same `UIHost`/`DetachedToolWindow` boundary applies to future profiler, debugger, and settings tools when those components are introduced.
 
 ### Generation-based UI geometry caching
 
@@ -29,7 +31,7 @@
 - Keep glyph generation independent of layout and window ownership so multiple windows can share immutable font data safely.
 - Preserve antialiasing quality with oversampled rasterization and filtered atlas sampling.
 
-## Following Version
+## Version 0.3.0
 
 ### AI and automation interface
 

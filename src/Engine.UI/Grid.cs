@@ -35,6 +35,16 @@ public sealed class Grid : Panel
         AddChild(child);
     }
 
+    /// <summary>Removes a child and its grid placement.</summary>
+    /// <param name="child">Element to remove.</param>
+    /// <returns>True when the child was present.</returns>
+    public bool Remove(UIElement child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+        _cells.Remove(child);
+        return RemoveChild(child);
+    }
+
     /// <inheritdoc/>
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {

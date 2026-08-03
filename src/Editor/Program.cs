@@ -61,6 +61,7 @@ var options = new WindowOptions
 
 logger.LogInformation("Initializing window...");
 window.Initialize(options);
+using var secondaryWindows = new SilkWindowGroup(window, loggerFactory);
 
 logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
@@ -165,6 +166,13 @@ selection.SelectionChanged += item =>
 var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, selection.CancelInteraction);
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
+DetachedToolWindow? detachedSceneWindow = null;
+DetachedToolWindow? detachedGameWindow = null;
+EditorViewportRenderer? detachedSceneRenderer = null;
+EditorViewportRenderer? detachedGameRenderer = null;
+DetachedToolWindow? detachedHierarchyWindow = null;
+DetachedToolWindow? detachedFileSystemWindow = null;
+DetachedToolWindow? detachedInspectorWindow = null;
 
 var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
 ContextMenu? hierarchyContextMenu = null;
@@ -181,7 +189,231 @@ AttachInspector(inspector);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
+editorView.SceneToolbar.DoubleClick += DetachSceneViewport;
+editorView.GameHeader.DoubleClick += DetachGameViewport;
+editorView.HierarchyPanel.Header.DoubleClick += DetachHierarchy;
+editorView.FileSystemPanel.Header.DoubleClick += DetachFileSystem;
+editorView.InspectorPanel.Header.DoubleClick += DetachInspector;
 RefreshVertices();
+
+/// <summary>Moves the Scene tool into an independent shared-device window.</summary>
+void DetachSceneViewport()
+{
+    if (detachedSceneWindow is not null)
+        return;
+    editorView.ViewportDock.Remove(editorView.SceneSlot);
+    editorView.ViewportDock.Rows[0] = GridLength.Pixels(0f);
+    editorView.ViewportDock.Rows[1] = GridLength.Pixels(0f);
+    uiRoot.InvalidateMeasure();
+    window.DestroyRenderView(sceneViewportId);
+    detachedSceneWindow = new DetachedToolWindow(
+        secondaryWindows, "Scene", 900, 600, editorView.SceneSlot);
+    var detachedWindow = detachedSceneWindow.Window;
+    sceneViewportId = detachedWindow.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
+    sceneViewport.RenderView = sceneViewportId;
+    detachedWindow.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
+    detachedWindow.SetViewportQuadVertices(
+        sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+    detachedSceneRenderer = new EditorViewportRenderer(
+        detachedWindow, sceneViewportId, sceneViewportId,
+        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+    detachedWindow.Resized += (_, _) =>
+    {
+        detachedWindow.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+        detachedWindow.SetViewportQuadVertices(
+            sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+    };
+    detachedWindow.Update += _ =>
+    {
+        detachedSceneRenderer?.SetSceneObjects(GetActiveSceneObjects());
+        detachedSceneRenderer?.RenderScene(
+            sceneViewport, detachedSceneWindow?.UIHost.PointerPosition ?? Vector2.Zero);
+    };
+    ResizeEditor(width, height);
+}
+
+/// <summary>Moves the detached Scene tool back into the main dock.</summary>
+void DockSceneViewport()
+{
+    if (detachedSceneWindow is null)
+        return;
+    detachedSceneRenderer?.Dispose();
+    detachedSceneRenderer = null;
+    detachedSceneWindow.Window.DestroyRenderView(sceneViewportId);
+    detachedSceneWindow.ReleaseContent();
+    detachedSceneWindow.Dispose();
+    detachedSceneWindow = null;
+    editorView.ViewportDock.Rows[0] = GridLength.Star(0.73f);
+    editorView.ViewportDock.Rows[1] = GridLength.Pixels(1f);
+    editorView.ViewportDock.Add(editorView.SceneSlot, 0, 0);
+    sceneViewportId = window.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
+    sceneViewport.RenderView = sceneViewportId;
+    viewportRenderer.SetSceneRenderView(sceneViewportId);
+    window.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+    window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+}
+
+/// <summary>Moves the Game tool into an independent shared-device window.</summary>
+void DetachGameViewport()
+{
+    if (detachedGameWindow is not null)
+        return;
+    editorView.ViewportDock.Remove(editorView.GameSlot);
+    editorView.ViewportDock.Rows[2] = GridLength.Pixels(0f);
+    editorView.ViewportDock.Rows[1] = GridLength.Pixels(0f);
+    uiRoot.InvalidateMeasure();
+    window.DestroyRenderView(gameViewportId);
+    detachedGameWindow = new DetachedToolWindow(
+        secondaryWindows, "Game", 900, 600, editorView.GameSlot);
+    var detachedWindow = detachedGameWindow.Window;
+    gameViewportId = detachedWindow.CreateRenderView(gameViewport.Width, gameViewport.Height);
+    gameViewport.RenderView = gameViewportId;
+    detachedWindow.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
+    detachedWindow.SetViewportQuadVertices(
+        gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+    detachedGameRenderer = new EditorViewportRenderer(
+        detachedWindow, gameViewportId, gameViewportId,
+        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+    detachedWindow.Resized += (_, _) =>
+    {
+        detachedWindow.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
+        detachedWindow.SetViewportQuadVertices(
+            gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+    };
+    detachedWindow.Update += _ =>
+    {
+        detachedGameRenderer?.SetGameScene(
+            gameViewport.Camera ?? gameCamera, GetActiveSceneObjects());
+        detachedGameRenderer?.RenderGame(gameViewport);
+    };
+    ResizeEditor(width, height);
+}
+
+/// <summary>Moves the detached Game tool back into the main dock.</summary>
+void DockGameViewport()
+{
+    if (detachedGameWindow is null)
+        return;
+    detachedGameRenderer?.Dispose();
+    detachedGameRenderer = null;
+    detachedGameWindow.Window.DestroyRenderView(gameViewportId);
+    detachedGameWindow.ReleaseContent();
+    detachedGameWindow.Dispose();
+    detachedGameWindow = null;
+    editorView.ViewportDock.Rows[2] = GridLength.Star(0.27f);
+    editorView.ViewportDock.Rows[1] = GridLength.Pixels(1f);
+    editorView.ViewportDock.Add(editorView.GameSlot, 2, 0);
+    gameViewportId = window.CreateRenderView(gameViewport.Width, gameViewport.Height);
+    gameViewport.RenderView = gameViewportId;
+    viewportRenderer.SetGameRenderView(gameViewportId);
+    window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+    window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+}
+
+/// <summary>Moves the Hierarchy tool into an independent native window.</summary>
+void DetachHierarchy()
+{
+    if (detachedHierarchyWindow is not null)
+        return;
+    editorView.LeftDock.Remove(editorView.HierarchyPanel);
+    editorView.LeftDock.Rows[0] = GridLength.Pixels(0f);
+    editorView.LeftDock.Rows[1] = GridLength.Pixels(0f);
+    detachedHierarchyWindow = new DetachedToolWindow(
+        secondaryWindows, "Hierarchy", 360, 620, editorView.HierarchyPanel);
+    UpdateLeftDockWorkspaceTracks();
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
+
+/// <summary>Returns the Hierarchy tool to the main left dock.</summary>
+void DockHierarchy()
+{
+    if (detachedHierarchyWindow is null)
+        return;
+    detachedHierarchyWindow.ReleaseContent();
+    detachedHierarchyWindow.Dispose();
+    detachedHierarchyWindow = null;
+    editorView.LeftDock.Rows[0] = GridLength.Star(0.58f);
+    editorView.LeftDock.Rows[1] = detachedFileSystemWindow is null
+        ? GridLength.Pixels(1f) : GridLength.Pixels(0f);
+    editorView.LeftDock.Add(editorView.HierarchyPanel, 0, 0);
+    UpdateLeftDockWorkspaceTracks();
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
+
+/// <summary>Moves the File System tool into an independent native window.</summary>
+void DetachFileSystem()
+{
+    if (detachedFileSystemWindow is not null)
+        return;
+    editorView.LeftDock.Remove(editorView.FileSystemPanel);
+    editorView.LeftDock.Rows[2] = GridLength.Pixels(0f);
+    editorView.LeftDock.Rows[1] = GridLength.Pixels(0f);
+    detachedFileSystemWindow = new DetachedToolWindow(
+        secondaryWindows, "File System", 440, 520, editorView.FileSystemPanel);
+    UpdateLeftDockWorkspaceTracks();
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
+
+/// <summary>Returns the File System tool to the main left dock.</summary>
+void DockFileSystem()
+{
+    if (detachedFileSystemWindow is null)
+        return;
+    detachedFileSystemWindow.ReleaseContent();
+    detachedFileSystemWindow.Dispose();
+    detachedFileSystemWindow = null;
+    editorView.LeftDock.Rows[2] = GridLength.Star(0.42f);
+    editorView.LeftDock.Rows[1] = detachedHierarchyWindow is null
+        ? GridLength.Pixels(1f) : GridLength.Pixels(0f);
+    editorView.LeftDock.Add(editorView.FileSystemPanel, 2, 0);
+    UpdateLeftDockWorkspaceTracks();
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
+
+/// <summary>Reclaims the main left-dock width only while both of its tools are detached.</summary>
+void UpdateLeftDockWorkspaceTracks()
+{
+    var hasDockedTool = detachedHierarchyWindow is null || detachedFileSystemWindow is null;
+    editorView.Workspace.Columns[0] = GridLength.Pixels(hasDockedTool ? 252f : 0f);
+    editorView.Workspace.Columns[1] = GridLength.Pixels(hasDockedTool ? 1f : 0f);
+}
+
+/// <summary>Moves the Inspector tool into an independent native window.</summary>
+void DetachInspector()
+{
+    if (detachedInspectorWindow is not null)
+        return;
+    editorView.Workspace.Remove(editorView.InspectorPanel);
+    editorView.Workspace.Columns[3] = GridLength.Pixels(0f);
+    editorView.Workspace.Columns[4] = GridLength.Pixels(0f);
+    detachedInspectorWindow = new DetachedToolWindow(
+        secondaryWindows, "Inspector", 420, 680, editorView.InspectorPanel);
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
+
+/// <summary>Returns the Inspector tool to the main workspace.</summary>
+void DockInspector()
+{
+    if (detachedInspectorWindow is null)
+        return;
+    detachedInspectorWindow.ReleaseContent();
+    detachedInspectorWindow.Dispose();
+    detachedInspectorWindow = null;
+    editorView.Workspace.Columns[3] = GridLength.Pixels(1f);
+    editorView.Workspace.Columns[4] = GridLength.Pixels(300f);
+    editorView.Workspace.Add(editorView.InspectorPanel, 0, 4);
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+}
 
 /// <summary>Starts an isolated runtime copy of the authored scene.</summary>
 void StartPlayMode()
@@ -914,8 +1146,12 @@ void ResizeEditor(int newWidth, int newHeight)
     uiRoot.Measure(new Vector2(width, height));
     uiRoot.Arrange(Vector2.Zero, new Vector2(width, height));
 
-    window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
-    window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+    if (detachedSceneWindow is null)
+        window.SetViewportQuadVertices(
+            sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+    if (detachedGameWindow is null)
+        window.SetViewportQuadVertices(
+            gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
     window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
     window.SubmitUI(uiRoot.BuildDrawList());
 }
@@ -923,8 +1159,10 @@ void ResizeEditor(int newWidth, int newHeight)
 /// <summary>Reallocates viewport FBOs once a live native resize has settled.</summary>
 void ResizeViewportTargets()
 {
-    window.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
-    window.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
+    if (detachedSceneWindow is null)
+        window.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+    if (detachedGameWindow is null)
+        window.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
 }
 
 var pendingResizeWidth = 0;
@@ -940,6 +1178,11 @@ window.Resized += (newWidth, newHeight) =>
 void RefreshVertices()
 {
     window.SubmitUI(uiRoot.BuildDrawList());
+    detachedSceneWindow?.UIHost.Refresh();
+    detachedGameWindow?.UIHost.Refresh();
+    detachedHierarchyWindow?.UIHost.Refresh();
+    detachedFileSystemWindow?.UIHost.Refresh();
+    detachedInspectorWindow?.UIHost.Refresh();
 }
 
 GizmoViewport GetSceneGizmoViewport()
@@ -1249,11 +1492,30 @@ window.Update += delta =>
     }
     if (inspector.RefreshValues())
         RefreshVertices();
-    viewportRenderer.Render(sceneViewport, gameViewport, lastMousePos);
+    if (detachedSceneWindow is null)
+        viewportRenderer.RenderScene(sceneViewport, lastMousePos);
+    if (detachedGameWindow is null)
+        viewportRenderer.RenderGame(gameViewport);
+    secondaryWindows.PumpFrames();
+    if (detachedSceneWindow is { IsOpen: false })
+        DockSceneViewport();
+    if (detachedGameWindow is { IsOpen: false })
+        DockGameViewport();
+    if (detachedHierarchyWindow is { IsOpen: false })
+        DockHierarchy();
+    if (detachedFileSystemWindow is { IsOpen: false })
+        DockFileSystem();
+    if (detachedInspectorWindow is { IsOpen: false })
+        DockInspector();
 };
 
 logger.LogInformation("Running main loop...");
 window.Run();
+DockSceneViewport();
+DockGameViewport();
+DockHierarchy();
+DockFileSystem();
+DockInspector();
 StopPlayMode();
 if (playBuildTask is not null)
 {

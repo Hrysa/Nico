@@ -20,6 +20,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private readonly ILogger _logger;
     private readonly uint _rendererId;
+    private readonly SilkWindow? _sharedDeviceOwner;
     private bool _shutdown;
     private Silk.NET.Windowing.IWindow? _window;
     private IInputContext? _input;
@@ -33,6 +34,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private Device _device;
     private Queue _graphicsQueue;
     private Queue _presentQueue;
+    private uint _graphicsQueueFamily;
+    private uint _presentQueueFamily;
     private KhrSurface? _khrSurface;
     private SwapchainManager? _swapchainManager;
     private RenderPass _renderPass;
@@ -44,6 +47,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private float _uiFramebufferScale = 1f;
     private float _uiInputScale = 1f;
     private WindowsWindowChrome? _windowsWindowChrome;
+    private WindowsWindowCloak? _windowsWindowCloak;
     private bool _customTitleBar;
     private int _requestedWidth;
     private int _requestedHeight;
@@ -51,6 +55,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private int _pendingInitialLogicalHeight;
     private long _lastLiveResizeFrameTimestamp;
     private bool _renderingFrame;
+    private bool _firstFramePresented;
 
     private Vk? _vk;
 
@@ -66,6 +71,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private readonly List<UiBatch> _uiBatches = [];
     private uint _vertexCount;
     private ulong _uiGeneration = 1;
+    private ulong _submittedUiGeneration;
     private readonly ulong[] _uploadedUiGenerations = new ulong[MaxFramesInFlight];
     private PushConstants _pushConstants;
     private FrameVertexBuffers? _uiBuffers;
@@ -145,6 +151,16 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _rendererId = checked((uint)Interlocked.Increment(ref _nextRendererId));
     }
 
+    /// <summary>Creates a window that shares the initialized Vulkan device of another window.</summary>
+    /// <param name="sharedDeviceOwner">Primary window that owns the Vulkan instance and device.</param>
+    /// <param name="loggerFactory">Factory used to create backend loggers.</param>
+    public SilkWindow(SilkWindow sharedDeviceOwner, ILoggerFactory loggerFactory)
+        : this(loggerFactory)
+    {
+        ArgumentNullException.ThrowIfNull(sharedDeviceOwner);
+        _sharedDeviceOwner = sharedDeviceOwner;
+    }
+
     public void Initialize(WindowOptions options)
     {
         if (_window is not null)
@@ -162,7 +178,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Title = options.Title,
             API = new GraphicsAPI(ContextAPI.Vulkan, new APIVersion(1, 1)),
             ShouldSwapAutomatically = false,
-            IsVisible = true,
+            IsVisible = !OperatingSystem.IsWindows(),
             WindowBorder = WindowBorder.Resizable,
             TransparentFramebuffer = options.CustomTitleBar && OperatingSystem.IsMacOS()
         };
@@ -182,6 +198,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         {
             _uiFramebufferScale = CalculateFramebufferScale();
             _uiInputScale = 1f;
+            _window.Center(null);
         }
         _logger.LogInformation("Window initialized");
     }
@@ -189,9 +206,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <inheritdoc/>
     public void SubmitUI(UIDrawList drawList)
     {
+        ArgumentNullException.ThrowIfNull(drawList);
+        if (_submittedUiGeneration == drawList.Generation)
+            return;
         _vertices = BuildUIVertices(drawList);
         _vertexCount = (uint)_vertices.Length;
-        _uiGeneration++;
+        _uiGeneration = drawList.Generation;
+        _submittedUiGeneration = drawList.Generation;
         _uiBuffers ??= new FrameVertexBuffers(
             _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Length),
             "UI", FindMemoryType, _logger);
@@ -233,16 +254,26 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _logger.LogInformation("Keyboard input attached");
         }
 
-        _vk = Vk.GetApi();
-        CreateInstance();
-        CreateSurface();
-        PickPhysicalDevice();
-        CreateLogicalDevice();
+        if (_sharedDeviceOwner is null)
+        {
+            _vk = Vk.GetApi();
+            CreateInstance();
+            CreateSurface();
+            PickPhysicalDevice();
+            CreateLogicalDevice();
+        }
+        else
+        {
+            AdoptSharedDevice(_sharedDeviceOwner);
+            CreateSurface();
+            EnsureSharedDeviceCanPresent();
+        }
         _pipelines = new PipelineResources(_vk!, _device);
-        _frameScheduler = new FrameScheduler(_vk!, _device, _graphicsQueue, FindQueueFamilies(_physicalDevice).GraphicsFamily!.Value);
-        _persistentVertices = new PersistentVertexArena(_vk, _device, FindMemoryType, _logger);
+        _frameScheduler = new FrameScheduler(
+            _vk!, _device, _graphicsQueue, _graphicsQueueFamily);
+        _persistentVertices = new PersistentVertexArena(_vk!, _device, FindMemoryType, _logger);
         _transientArena = new FrameTransientArena(
-            _vk, _device, MaxFramesInFlight, FindMemoryType, _logger);
+            _vk!, _device, MaxFramesInFlight, FindMemoryType, _logger);
         CreateSwapchain();
         CreateFboRenderPass();
         CreateRenderPass();
@@ -252,10 +283,38 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         CreateFramebuffers();
         CreateSyncObjects();
         CreateTexturePipeline();
-        _fontAtlas = new FontAtlasTexture(_vk, _device, _fontRasterizer, FindMemoryType,
+        _fontAtlas = new FontAtlasTexture(_vk!, _device, _fontRasterizer, FindMemoryType,
             _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
 
         _logger.LogInformation("Vulkan initialization complete");
+    }
+
+    /// <summary>Copies immutable device handles from the primary window.</summary>
+    /// <param name="owner">Initialized primary window.</param>
+    private void AdoptSharedDevice(SilkWindow owner)
+    {
+        if (owner._vk is null || owner._device.Handle == 0 || owner._instance.Handle == 0)
+            throw new InvalidOperationException(
+                "The shared-device owner must be initialized before secondary windows.");
+        _vk = owner._vk;
+        _instance = owner._instance;
+        _physicalDevice = owner._physicalDevice;
+        _device = owner._device;
+        _graphicsQueue = owner._graphicsQueue;
+        _presentQueue = owner._presentQueue;
+        _graphicsQueueFamily = owner._graphicsQueueFamily;
+        _presentQueueFamily = owner._presentQueueFamily;
+        _msaaSamples = owner._msaaSamples;
+    }
+
+    /// <summary>Verifies the shared physical device supports presenting to this window surface.</summary>
+    private void EnsureSharedDeviceCanPresent()
+    {
+        _khrSurface!.GetPhysicalDeviceSurfaceSupport(
+            _physicalDevice, _presentQueueFamily, _surface, out var supported);
+        if (supported != new Bool32(true))
+            throw new InvalidOperationException(
+                "The shared Vulkan present queue cannot present to the secondary window surface.");
     }
 
     /// <summary>Finalizes Windows chrome, DPI, size, and placement before Vulkan reads the surface extent.</summary>
@@ -266,13 +325,14 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         if (_customTitleBar)
             _windowsWindowChrome = WindowsWindowChrome.Apply(_window);
+        _windowsWindowCloak = WindowsWindowCloak.Apply(_window);
 
         _uiFramebufferScale = CalculateFramebufferScale();
         _uiInputScale = _uiFramebufferScale;
         _window.Size = new Vector2D<int>(
             Math.Max(1, (int)MathF.Round(_requestedWidth * _uiFramebufferScale)),
             Math.Max(1, (int)MathF.Round(_requestedHeight * _uiFramebufferScale)));
-        _windowsWindowChrome?.EnsureVisible();
+        _window.Center(null);
         var framebufferSize = _window.FramebufferSize;
         _pendingInitialLogicalWidth = Math.Max(1,
             (int)MathF.Round(framebufferSize.X / _uiFramebufferScale));
@@ -716,18 +776,27 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _logger.LogDebug("Creating logical device");
 
         var indices = FindQueueFamilies(_physicalDevice);
+        _graphicsQueueFamily = indices.GraphicsFamily!.Value;
+        _presentQueueFamily = indices.PresentFamily!.Value;
         _logger.LogDebug("Graphics queue family: {Family}, Present queue family: {Family}", indices.GraphicsFamily, indices.PresentFamily);
 
         var queuePriorityArr = new[] { 1.0f };
         fixed (float* pQueuePriority = queuePriorityArr)
         {
-            var queueCreateInfo = new DeviceQueueCreateInfo
+            var queueFamilies = _graphicsQueueFamily == _presentQueueFamily
+                ? new[] { _graphicsQueueFamily }
+                : new[] { _graphicsQueueFamily, _presentQueueFamily };
+            var queueCreateInfos = stackalloc DeviceQueueCreateInfo[queueFamilies.Length];
+            for (var index = 0; index < queueFamilies.Length; index++)
             {
-                SType = StructureType.DeviceQueueCreateInfo,
-                QueueFamilyIndex = indices.GraphicsFamily!.Value,
-                QueueCount = 1,
-                PQueuePriorities = pQueuePriority
-            };
+                queueCreateInfos[index] = new DeviceQueueCreateInfo
+                {
+                    SType = StructureType.DeviceQueueCreateInfo,
+                    QueueFamilyIndex = queueFamilies[index],
+                    QueueCount = 1,
+                    PQueuePriorities = pQueuePriority
+                };
+            }
 
             var extensions = new List<string> { KhrSwapchain.ExtensionName };
             if (SupportsDeviceExtension(_physicalDevice, "VK_KHR_portability_subset"))
@@ -739,8 +808,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             var createInfo = new DeviceCreateInfo
             {
                 SType = StructureType.DeviceCreateInfo,
-                QueueCreateInfoCount = 1,
-                PQueueCreateInfos = &queueCreateInfo,
+                QueueCreateInfoCount = (uint)queueFamilies.Length,
+                PQueueCreateInfos = queueCreateInfos,
                 EnabledExtensionCount = (uint)extensions.Count,
                 PpEnabledExtensionNames = (byte**)extensionNamesMem
             };
@@ -753,8 +822,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 throw new Exception($"Failed to create logical device: {result}");
         }
 
-        _vk.GetDeviceQueue(_device, indices.GraphicsFamily!.Value, 0, out _graphicsQueue);
-        _vk.GetDeviceQueue(_device, indices.PresentFamily!.Value, 0, out _presentQueue);
+        _vk.GetDeviceQueue(_device, _graphicsQueueFamily, 0, out _graphicsQueue);
+        _vk.GetDeviceQueue(_device, _presentQueueFamily, 0, out _presentQueue);
 
         _logger.LogInformation("Logical device created");
     }
@@ -762,9 +831,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private void CreateSwapchain()
     {
         var framebufferSize = _window!.FramebufferSize;
-        var indices = FindQueueFamilies(_physicalDevice);
         _swapchainManager = new SwapchainManager(_vk!, _device, _physicalDevice, _surface,
-            _khrSurface!, indices.GraphicsFamily!.Value, indices.PresentFamily!.Value, _logger);
+            _khrSurface!, _graphicsQueueFamily, _presentQueueFamily, _logger);
         _swapchainManager.Create(
             (uint)Math.Max(framebufferSize.X, 0),
             (uint)Math.Max(framebufferSize.Y, 0));
@@ -2571,7 +2639,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public void Run()
     {
         _logger.LogInformation("Entering main loop...");
-        _window?.Run();
+        if (_window is null)
+            return;
+        if (_window.IsVisible)
+            _firstFramePresented = true;
+        else
+            PresentFirstFrameAndReveal();
+        _window.Run();
     }
 
     public void Shutdown()
@@ -2624,9 +2698,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _vk.DestroyRenderPass(_device, _renderPass, null);
         if (_instance.Handle != 0 && _surface.Handle != 0)
             _khrSurface?.DestroySurface(_instance, _surface, null);
-        if (_device.Handle != 0)
+        if (_sharedDeviceOwner is null && _device.Handle != 0)
             _vk.DestroyDevice(_device, null);
-        if (_instance.Handle != 0)
+        if (_sharedDeviceOwner is null && _instance.Handle != 0)
             _vk.DestroyInstance(_instance, null);
 
         _input?.Dispose();
@@ -2638,6 +2712,44 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public void ProcessEvents()
     {
         _window?.DoEvents();
+    }
+
+    /// <inheritdoc/>
+    public void PumpFrame()
+    {
+        if (_window is null || _window.IsClosing)
+            return;
+        if (!_firstFramePresented)
+        {
+            if (!_window.IsVisible)
+            {
+                PresentFirstFrameAndReveal();
+                return;
+            }
+            _firstFramePresented = true;
+        }
+        _window.DoEvents();
+        _window.DoUpdate();
+        _window.DoRender();
+    }
+
+    /// <summary>Renders complete initialized content before revealing a deferred Windows window.</summary>
+    private void PresentFirstFrameAndReveal()
+    {
+        if (_window is null || _firstFramePresented)
+            return;
+        if (_windowsWindowCloak is not null && !_window.IsVisible)
+            _window.IsVisible = true;
+        _window.DoEvents();
+        _window.DoUpdate();
+        _window.DoRender();
+        if (OperatingSystem.IsWindows() && _vk is not null && _device.Handle != 0)
+            _vk.DeviceWaitIdle(_device);
+        _firstFramePresented = true;
+        if (_windowsWindowCloak is not null)
+            _windowsWindowCloak.Reveal();
+        else if (!_window.IsVisible)
+            _window.IsVisible = true;
     }
 
     public void Dispose()

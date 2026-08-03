@@ -53,7 +53,11 @@ public readonly record struct UIDrawCommand(
 /// </summary>
 public sealed class UIDrawList
 {
+    private static long _nextGeneration;
     private readonly List<UIDrawCommand> _commands = [];
+
+    /// <summary>Gets the globally monotonic identity of this immutable paint snapshot.</summary>
+    public ulong Generation { get; } = checked((ulong)Interlocked.Increment(ref _nextGeneration));
 
     /// <summary>Gets the ordered paint commands.</summary>
     public IReadOnlyList<UIDrawCommand> Commands => _commands;
