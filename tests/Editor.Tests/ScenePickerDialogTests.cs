@@ -14,9 +14,10 @@ public class ScenePickerDialogTests
         var first = Path.Combine(root, "first.node");
         var second = Path.Combine(root, "levels", "second.node");
         var picker = new ScenePickerDialog(800f, 600f, root, [first, second]);
-        var search = Assert.Single(picker.Dialog.Children.OfType<TextField>());
-        var list = Assert.Single(picker.Dialog.Children.OfType<ListView>());
-        var open = picker.Dialog.Children.OfType<Button>().Single(button => button.Name == "Open");
+        picker.BuildDrawList();
+        var search = Assert.Single(picker.Dialog.Descendants().OfType<TextField>());
+        var list = Assert.Single(picker.Dialog.Descendants().OfType<ListView>());
+        var open = picker.Dialog.Descendants().OfType<Button>().Single(button => button.Name == "Open");
         var router = new UIEventRouter(picker, () => { });
 
         Click(router, search.Left + 10f, search.Top + 10f);

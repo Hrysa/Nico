@@ -1,4 +1,5 @@
 using Engine.Graphics;
+using System.Numerics;
 
 namespace Engine.UI;
 
@@ -12,27 +13,43 @@ public sealed class ToolPanel : Surface
     public Panel Content { get; }
 
     /// <summary>Creates a standard docked tool panel.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Panel width.</param>
     /// <param name="height">Panel height.</param>
     /// <param name="title">Panel title.</param>
     /// <param name="theme">Theme supplying standardized panel tokens.</param>
-    public ToolPanel(float x, float y, float width, float height, string title, UITheme? theme = null)
-        : base(x, y, width, height, (theme ?? UITheme.Dark).Surface,
-            (theme ?? UITheme.Dark).Border)
+    public ToolPanel(float width, float height, string title, UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).Surface, (theme ?? UITheme.Dark).Border, width, height)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         PaintBackground = false;
-        Header = new SectionHeader(0f, 0f, width, title, resolvedTheme)
+        Header = new SectionHeader(width, title, resolvedTheme)
             { Name = "Header" };
-        Content = new Panel(0f, Header.Height, width,
-            MathF.Max(0f, height - Header.Height), resolvedTheme.Surface)
+        Header.Width = 0f;
+        Content = new Panel(resolvedTheme.Surface, width,
+            MathF.Max(0f, height - Header.Height))
         {
             Name = "Content",
             PaintBackground = false
         };
+        Content.Width = 0f;
+        Content.Height = 0f;
         AddChild(Header);
         AddChild(Content);
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(Vector2 contentSize)
+    {
+        Header.Measure(new Vector2(contentSize.X, Header.Height));
+        Header.Arrange(Vector2.Zero, new Vector2(contentSize.X, Header.Height));
+        Content.Measure(new Vector2(contentSize.X, MathF.Max(0f, contentSize.Y - Header.Height)));
+        Content.Arrange(new Vector2(0f, Header.Height),
+            new Vector2(contentSize.X, MathF.Max(0f, contentSize.Y - Header.Height)));
+        var childSize = new Vector2(Content.ContentWidth, Content.ContentHeight);
+        foreach (var child in Content.Children.OfType<UIElement>())
+        {
+            child.Measure(childSize);
+            child.Arrange(Vector2.Zero, childSize);
+        }
     }
 }

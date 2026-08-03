@@ -9,6 +9,7 @@ namespace Editor;
 public sealed class CompilationProgressDialog : Modal
 {
     private readonly Surface _indicator;
+    private readonly Canvas _trackCanvas;
     private readonly float _trackLeft;
     private readonly float _travelWidth;
     private double _elapsedTime;
@@ -23,25 +24,29 @@ public sealed class CompilationProgressDialog : Modal
         : base(width, height, MathF.Min(420f, width - 48f), 156f, theme)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
-        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width,
-            "Preparing Play Mode", "Compiling C# scripts...", resolvedTheme));
+        var content = new Canvas();
+        Dialog.AddChild(content);
+        content.Add(new DialogHeader("Preparing Play Mode", "Compiling C# scripts...", resolvedTheme),
+            Vector2.Zero);
 
         _trackLeft = 20f;
         const float trackHeight = 6f;
         const float indicatorWidth = 84f;
         var trackWidth = MathF.Max(indicatorWidth, Dialog.Width - _trackLeft * 2f);
-        var track = new Surface(_trackLeft, 112f, trackWidth, trackHeight,
-            resolvedTheme.SurfacePressed, resolvedTheme.SurfacePressed)
+        var track = new Surface(resolvedTheme.SurfacePressed, resolvedTheme.SurfacePressed,
+            trackWidth, trackHeight)
         {
             Name = "CompilationProgressTrack"
         };
-        _indicator = new Surface(0f, 0f, indicatorWidth, trackHeight,
-            resolvedTheme.Accent, resolvedTheme.Accent)
+        _indicator = new Surface(resolvedTheme.Accent, resolvedTheme.Accent,
+            indicatorWidth, trackHeight)
         {
             Name = "CompilationProgressIndicator"
         };
-        track.AddChild(_indicator);
-        Dialog.AddChild(track);
+        _trackCanvas = new Canvas();
+        track.AddChild(_trackCanvas);
+        _trackCanvas.Add(_indicator, Vector2.Zero);
+        content.Add(track, new Vector2(_trackLeft, 112f));
         _travelWidth = MathF.Max(0f, trackWidth - indicatorWidth);
     }
 
@@ -52,6 +57,7 @@ public sealed class CompilationProgressDialog : Modal
         _elapsedTime += Math.Max(0d, deltaTime);
         var phase = (float)(_elapsedTime % 1.4d / 1.4d);
         var pingPong = phase <= 0.5f ? phase * 2f : (1f - phase) * 2f;
-        _indicator.Position = new Vector3(MathF.Round(pingPong * _travelWidth), 0f, 0f);
+        _trackCanvas.SetPosition(_indicator,
+            new Vector2(MathF.Round(pingPong * _travelWidth), 0f));
     }
 }

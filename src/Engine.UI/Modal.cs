@@ -24,21 +24,34 @@ public class Modal : UIElement
     /// <param name="dialogHeight">Dialog height.</param>
     /// <param name="theme">Theme supplying modal colors.</param>
     public Modal(float width, float height, float dialogWidth, float dialogHeight, UITheme? theme = null)
-        : base(0f, 0f, width, height)
+        : base(width, height)
     {
         _theme = theme ?? UITheme.Dark;
         IsOverlay = true;
-        Dialog = new Surface(
-            MathF.Max(0f, (width - dialogWidth) / 2f),
-            MathF.Max(0f, (height - dialogHeight) / 2f),
-            MathF.Min(width, dialogWidth),
-            MathF.Min(height, dialogHeight),
-            _theme.SurfaceRaised,
-            _theme.BorderStrong)
+        Dialog = new Surface(_theme.SurfaceRaised, _theme.BorderStrong,
+            MathF.Min(width, dialogWidth), MathF.Min(height, dialogHeight))
         {
             Name = "Dialog"
         };
         AddChild(Dialog);
+    }
+
+    /// <inheritdoc/>
+    protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
+    {
+        Dialog.Measure(availableSize);
+        return availableSize;
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
+    {
+        var dialogSize = new System.Numerics.Vector2(
+            MathF.Min(contentSize.X, Dialog.DesiredSize.X),
+            MathF.Min(contentSize.Y, Dialog.DesiredSize.Y));
+        Dialog.Arrange(new System.Numerics.Vector2(
+            MathF.Max(0f, (contentSize.X - dialogSize.X) / 2f),
+            MathF.Max(0f, (contentSize.Y - dialogSize.Y) / 2f)), dialogSize);
     }
 
     /// <inheritdoc/>

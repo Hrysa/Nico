@@ -17,13 +17,11 @@ public class StackPanel : Panel
     /// <summary>
     /// Creates a vertical stack panel.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Panel width.</param>
     /// <param name="height">Panel height.</param>
     /// <param name="backgroundColor">Panel background color.</param>
-    public StackPanel(float x, float y, float width, float height, Color backgroundColor)
-        : base(x, y, width, height, backgroundColor)
+    public StackPanel(float width, float height, Color backgroundColor)
+        : base(backgroundColor, width, height)
     {
     }
 
@@ -32,18 +30,35 @@ public class StackPanel : Panel
     public void AddItem(UIElement child)
     {
         AddChild(child);
-        Relayout();
+        Measure(new Vector2(Width, Height));
+        Arrange(new Vector2(Position.X, Position.Y), new Vector2(Width, Height));
     }
 
     /// <summary>Recomputes the vertical position and width of every UI child.</summary>
-    public void Relayout()
+    protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        var y = PaddingTop;
+        var desiredWidth = 0f;
+        var desiredHeight = PaddingTop;
         foreach (var child in Children.OfType<UIElement>())
         {
-            child.Position = new Vector3(child.Position.X, y, child.Position.Z);
-            child.Width = MathF.Max(0f, Width - child.Position.X);
-            y += child.Height + Spacing;
+            child.Measure(new Vector2(availableSize.X, float.PositiveInfinity));
+            desiredWidth = MathF.Max(desiredWidth, child.DesiredSize.X);
+            desiredHeight += child.DesiredSize.Y + Spacing;
+        }
+        if (Children.Count > 0)
+            desiredHeight -= Spacing;
+        return new Vector2(desiredWidth + Padding.Horizontal, desiredHeight + Padding.Vertical);
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(Vector2 contentSize)
+    {
+        var y = Padding.Top + PaddingTop;
+        foreach (var child in Children.OfType<UIElement>())
+        {
+            child.Arrange(new Vector2(Padding.Left, y),
+                new Vector2(contentSize.X, child.DesiredSize.Y));
+            y += child.Height + child.Margin.Vertical + Spacing;
         }
     }
 }

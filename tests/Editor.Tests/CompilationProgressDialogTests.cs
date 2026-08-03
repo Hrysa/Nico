@@ -12,12 +12,15 @@ public class CompilationProgressDialogTests
     public void Update_ProgressDialog_MovesOverlayIndicator()
     {
         var dialog = new CompilationProgressDialog(1280f, 720f);
-        var track = Assert.Single(dialog.Dialog.Children.OfType<Surface>(),
+        dialog.BuildDrawList();
+        var track = Assert.Single(dialog.Dialog.Descendants().OfType<Surface>(),
             child => child.Name == "CompilationProgressTrack");
-        var indicator = Assert.Single(track.Children.OfType<Surface>());
+        var indicator = Assert.Single(track.Descendants().OfType<Surface>(),
+            child => child.Name == "CompilationProgressIndicator");
         var initialPosition = indicator.Position;
 
         dialog.Update(0.35);
+        dialog.BuildDrawList();
 
         Assert.True(dialog.IsOverlay);
         Assert.NotEqual(initialPosition, indicator.Position);

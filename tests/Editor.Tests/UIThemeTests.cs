@@ -1,5 +1,6 @@
 using Engine.Graphics;
 using Engine.UI;
+using System.Numerics;
 using Xunit;
 
 namespace Editor.Tests;
@@ -35,7 +36,7 @@ public class UIThemeTests
     [Fact]
     public void Button_ThemedSubtle_EmitsOnlyTextWhenIdle()
     {
-        var button = new Button(0f, 0f, 100f, 30f, "Open", UITheme.Dark);
+        var button = new Button(100f, 30f, "Open", UITheme.Dark);
 
         var commands = button.BuildDrawList().Commands;
 
@@ -47,12 +48,13 @@ public class UIThemeTests
     [Fact]
     public void Button_TextConstructor_ComposesLabelInsidePaddingBox()
     {
-        var button = new Button(10f, 20f, 100f, 30f, "Open", UITheme.Dark)
+        var button = new Button(100f, 30f, "Open", UITheme.Dark)
         {
             Padding = new Thickness(8f, 2f, 6f, 3f)
         };
 
-        button.BuildDrawList();
+        button.Measure(new Vector2(100f, 30f));
+        button.Arrange(new Vector2(10f, 20f), new Vector2(100f, 30f));
 
         var label = Assert.IsType<Label>(button.Content);
         Assert.Same(label, Assert.Single(button.Children));
@@ -79,7 +81,7 @@ public class UIThemeTests
     [Fact]
     public void Button_ThemedSubtle_EmitsBackgroundWhenHovered()
     {
-        var button = new Button(0f, 0f, 100f, 30f, "Open", UITheme.Dark);
+        var button = new Button(100f, 30f, "Open", UITheme.Dark);
 
         button.SetHover(true);
 
@@ -91,9 +93,9 @@ public class UIThemeTests
     [Fact]
     public void Button_AutoWidth_FollowsContentWhileExplicitWidthIsPreserved()
     {
-        var shortButton = new Button(0f, 0f, 28f, "Go", UITheme.Dark);
-        var longButton = new Button(0f, 0f, 28f, "Open Project", UITheme.Dark);
-        var explicitButton = new Button(0f, 0f, 123f, 28f, "Go", UITheme.Dark);
+        var shortButton = new Button(28f, "Go", UITheme.Dark);
+        var longButton = new Button(28f, "Open Project", UITheme.Dark);
+        var explicitButton = new Button(123f, 28f, "Go", UITheme.Dark);
 
         Assert.True(longButton.Width > shortButton.Width);
         Assert.Equal(123f, explicitButton.Width);
@@ -110,7 +112,7 @@ public class UIThemeTests
     [Fact]
     public void Surface_WithBorder_EmitsFiveRectangles()
     {
-        var surface = new Surface(0f, 0f, 100f, 50f, UITheme.Dark.Surface, UITheme.Dark.Border);
+        var surface = new Surface(UITheme.Dark.Surface, UITheme.Dark.Border, 100f, 50f);
 
         var commands = surface.BuildDrawList().Commands;
 
@@ -121,7 +123,7 @@ public class UIThemeTests
     [Fact]
     public void Surface_WithoutBackground_EmitsOnlyBorderRectangles()
     {
-        var surface = new Surface(0f, 0f, 100f, 50f, UITheme.Dark.Surface, UITheme.Dark.Border)
+        var surface = new Surface(UITheme.Dark.Surface, UITheme.Dark.Border, 100f, 50f)
         {
             PaintBackground = false
         };
@@ -135,7 +137,7 @@ public class UIThemeTests
     [Fact]
     public void SectionHeader_UsesPanelSurfaceColor()
     {
-        var header = new SectionHeader(0f, 0f, 200f, "Inspector", UITheme.Dark);
+        var header = new SectionHeader(200f, "Inspector", UITheme.Dark);
 
         Assert.Equal(UITheme.Dark.Surface.R, header.BackgroundColor.R, 4);
         Assert.Equal(UITheme.Dark.Surface.G, header.BackgroundColor.G, 4);
@@ -149,7 +151,7 @@ public class UIThemeTests
     public void EditorView_ToolPanels_UseOneHeaderStandard()
     {
         var view = EditorUI.BuildView(1280f, 720f);
-        var panels = view.Root.Children.OfType<ToolPanel>().ToArray();
+        var panels = Descendants(view.Root).OfType<ToolPanel>().ToArray();
 
         Assert.Equal(3, panels.Length);
         Assert.All(panels, panel =>
@@ -167,8 +169,8 @@ public class UIThemeTests
     [Fact]
     public void ContextMenu_DrawList_UsesOverlayLayerForSurfaceAndText()
     {
-        var root = new Panel(0f, 0f, 300f, 300f, UITheme.Dark.Canvas);
-        var menu = new ContextMenu(20f, 20f, 160f);
+        var root = new Panel(UITheme.Dark.Canvas, 300f, 300f);
+        var menu = new ContextMenu(160f);
         menu.AddItem("Open", () => { });
         root.AddChild(menu);
 
@@ -184,7 +186,7 @@ public class UIThemeTests
     [Fact]
     public void ListView_ClickRow_UpdatesSelection()
     {
-        var list = new ListView(0f, 0f, 200f, 100f);
+        var list = new ListView(200f, 100f);
         list.SetItems(["First", "Second"]);
         var selected = string.Empty;
         list.SelectionChanged += (_, item) => selected = item;
@@ -203,9 +205,9 @@ public class UIThemeTests
     public void TreeAndListRows_UseSameVisualMetrics()
     {
         var node = new Engine.Core.Node { Name = "Object" };
-        var tree = new TreeView(0f, 0f, 200f, 100f, UITheme.Dark);
+        var tree = new TreeView(200f, 100f, UITheme.Dark);
         tree.SetRoots([node]);
-        var list = new ListView(0f, 0f, 200f, 100f, UITheme.Dark);
+        var list = new ListView(200f, 100f, UITheme.Dark);
         list.SetItems(["Object"]);
 
         var treeRow = Assert.IsType<TreeViewItem>(Assert.Single(tree.Children));
@@ -220,7 +222,7 @@ public class UIThemeTests
     [Fact]
     public void DragPreview_IsNonInteractiveOverlayWithItemLabel()
     {
-        var preview = new DragPreview(new(20f, 30f), "scene.node");
+        var preview = new DragPreview("scene.node");
 
         var commands = preview.BuildDrawList().Commands;
 
@@ -234,7 +236,7 @@ public class UIThemeTests
     [Fact]
     public void TextField_Focused_HandlesTextInputAndBackspace()
     {
-        var field = new TextField(0f, 0f, 200f, 30f) { Placeholder = "Filename" };
+        var field = new TextField(200f, 30f) { Placeholder = "Filename" };
         var router = new UIEventRouter(field, () => { });
         router.MovePointer(new(20f, 15f));
         router.Press();
@@ -257,10 +259,11 @@ public class UIThemeTests
         var view = EditorUI.BuildView(1280f, 720f);
 
         Assert.True(view.SceneViewport.Height > view.GameViewport.Height * 2f);
-        Assert.Contains(view.Root.Children, child => child.Name == "FileSystem");
-        Assert.Contains(view.Root.Children, child => child.Name == "Inspector");
-        Assert.Contains(view.Root.Children, child => child.Name == "BottomDock");
-        Assert.Contains(view.Root.Children, child => child.Name == "SceneToolbar");
+        var descendants = Descendants(view.Root).ToArray();
+        Assert.Contains(descendants, child => child.Name == "FileSystem");
+        Assert.Contains(descendants, child => child.Name == "Inspector");
+        Assert.Contains(descendants, child => child.Name == "BottomDock");
+        Assert.Contains(descendants, child => child.Name == "SceneToolbar");
     }
 
     /// <summary>Verifies title-bar drag regions and window buttons dispatch separate actions.</summary>
@@ -304,5 +307,18 @@ public class UIThemeTests
         router.Release(invokeClick: true);
 
         Assert.True(closed);
+    }
+
+    /// <summary>Enumerates all descendants beneath one UI element.</summary>
+    /// <param name="element">Subtree root.</param>
+    /// <returns>Descendants in depth-first order.</returns>
+    private static IEnumerable<UIElement> Descendants(UIElement element)
+    {
+        foreach (var child in element.Children.OfType<UIElement>())
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child))
+                yield return descendant;
+        }
     }
 }

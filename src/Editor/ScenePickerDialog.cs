@@ -43,23 +43,23 @@ public sealed class ScenePickerDialog : Modal
         _projectRoot = projectRoot;
         _scenePaths = scenePaths;
 
-        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width, "Open Scene",
-            "Choose a scene from this game project", resolvedTheme));
-        _searchField = new TextField(16f, 78f, Dialog.Width - 32f, 34f, resolvedTheme)
+        var content = new Canvas();
+        Dialog.AddChild(content);
+        content.Add(new DialogHeader("Open Scene",
+            "Choose a scene from this game project", resolvedTheme), System.Numerics.Vector2.Zero);
+        _searchField = new TextField(Dialog.Width - 32f, 34f, resolvedTheme)
         {
             Name = "SceneSearch",
             Placeholder = "Search scenes"
         };
-        _sceneList = new ListView(16f, 124f, Dialog.Width - 32f,
+        _sceneList = new ListView(Dialog.Width - 32f,
             MathF.Max(80f, Dialog.Height - 190f), resolvedTheme) { Name = "SceneList" };
-        _openButton = new Button(0f, Dialog.Height - 50f,
-            34f, "Open", resolvedTheme, ButtonStyle.Primary) { Name = "Open" };
-        _openButton.Position = new System.Numerics.Vector3(
-            Dialog.Width - _openButton.Width - 16f, Dialog.Height - 50f, 0f);
-        var cancelButton = new Button(0f, Dialog.Height - 50f,
-            34f, "Cancel", resolvedTheme) { Name = "Cancel" };
-        cancelButton.Position = new System.Numerics.Vector3(
-            _openButton.Position.X - cancelButton.Width - 8f, Dialog.Height - 50f, 0f);
+        _openButton = new Button(34f, "Open", resolvedTheme, ButtonStyle.Primary) { Name = "Open" };
+        var cancelButton = new Button(34f, "Cancel", resolvedTheme) { Name = "Cancel" };
+        var openPosition = new System.Numerics.Vector2(
+            Dialog.Width - _openButton.Width - 16f, Dialog.Height - 50f);
+        var cancelPosition = new System.Numerics.Vector2(
+            openPosition.X - cancelButton.Width - 8f, Dialog.Height - 50f);
 
         _searchField.TextChanged += ApplyFilter;
         _sceneList.SelectionChanged += SelectVisiblePath;
@@ -68,10 +68,10 @@ public sealed class ScenePickerDialog : Modal
         _openButton.Click += ConfirmSelection;
         DismissRequested += RequestCancel;
 
-        Dialog.AddChild(_searchField);
-        Dialog.AddChild(_sceneList);
-        Dialog.AddChild(cancelButton);
-        Dialog.AddChild(_openButton);
+        content.Add(_searchField, new System.Numerics.Vector2(16f, 78f));
+        content.Add(_sceneList, new System.Numerics.Vector2(16f, 124f));
+        content.Add(cancelButton, cancelPosition);
+        content.Add(_openButton, openPosition);
         ApplyFilter(string.Empty);
     }
 

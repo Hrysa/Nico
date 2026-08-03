@@ -12,12 +12,10 @@ public class Box : UIElement
     public float CornerRadius { get; set; }
 
     /// <summary>Creates a visual box.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Box width.</param>
     /// <param name="height">Box height.</param>
-    public Box(float x, float y, float width, float height)
-        : base(x, y, width, height)
+    public Box(float width = 0f, float height = 0f)
+        : base(width, height)
     {
     }
 

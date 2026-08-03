@@ -32,13 +32,11 @@ public class ViewportPanel : Panel
     /// <summary>
     /// Creates a new ViewportPanel at the specified position and size.
     /// </summary>
-    /// <param name="x">The X position (left edge).</param>
-    /// <param name="y">The Y position (top edge).</param>
     /// <param name="width">The panel width.</param>
     /// <param name="height">The panel height.</param>
     /// <param name="backgroundColor">The viewport background color.</param>
-    public ViewportPanel(float x, float y, float width, float height, Color backgroundColor)
-        : base(x, y, width, height, backgroundColor)
+    public ViewportPanel(float width, float height, Color backgroundColor)
+        : base(backgroundColor, width, height)
     {
         _previousWidth = width;
         _previousHeight = height;

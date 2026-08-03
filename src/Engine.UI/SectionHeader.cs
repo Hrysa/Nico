@@ -7,20 +7,18 @@ public sealed class SectionHeader : ContentControl
     public Label TitleLabel { get; }
 
     /// <summary>Creates a section header using only shared panel theme metrics.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Header width.</param>
     /// <param name="text">Header caption.</param>
     /// <param name="theme">Theme supplying standardized panel tokens.</param>
-    public SectionHeader(float x, float y, float width, string text, UITheme? theme = null)
-        : base(x, y, width, (theme ?? UITheme.Dark).PanelHeaderHeight)
+    public SectionHeader(float width, string text, UITheme? theme = null)
+        : base(width, (theme ?? UITheme.Dark).PanelHeaderHeight)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         BackgroundColor = resolvedTheme.Surface;
         ForegroundColor = resolvedTheme.TextSecondary;
         Padding = new Thickness(resolvedTheme.PanelHeaderPadding, 0f);
         CornerRadius = 0f;
-        TitleLabel = new Label(0f, 0f, 0f, 0f, text)
+        TitleLabel = new Label(text)
         {
             Name = "Title",
             FontSize = resolvedTheme.PanelTitleFontSize,

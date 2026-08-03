@@ -11,6 +11,7 @@ public sealed class ListView : Panel
     private readonly List<string> _items = [];
     private readonly UITheme _theme;
     private int _scrollIndex;
+    private Vector2 _arrangedSize;
 
     /// <summary>Gets or sets the height of one item row.</summary>
     public float RowHeight { get; set; }
@@ -30,13 +31,11 @@ public sealed class ListView : Panel
     /// <summary>
     /// Creates a selectable list.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">List width.</param>
     /// <param name="height">List height.</param>
     /// <param name="theme">Theme supplying list colors.</param>
-    public ListView(float x, float y, float width, float height, UITheme? theme = null)
-        : base(x, y, width, height, (theme ?? UITheme.Dark).Surface)
+    public ListView(float width, float height, UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).Surface, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         RowHeight = _theme.ItemRowHeight;
@@ -89,7 +88,6 @@ public sealed class ListView : Panel
         {
             var row = new ListViewItem(Width, RowHeight, item, _theme)
             {
-                Position = new Vector3(0f, Children.Count * RowHeight, 0f),
                 IsSelected = index == SelectedIndex
             };
             row.Click += () => Select(index);
@@ -100,6 +98,32 @@ public sealed class ListView : Panel
             };
             row.Scroll += ScrollRows;
             AddChild(row);
+        }
+        if (Width > 0f && Height > 0f)
+            ArrangeRows(new Vector2(ContentWidth, ContentHeight));
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(Vector2 contentSize)
+    {
+        if (_arrangedSize != contentSize)
+        {
+            _arrangedSize = contentSize;
+            RebuildRows();
+        }
+        ArrangeRows(contentSize);
+    }
+
+    /// <summary>Arranges current rows sequentially in the list viewport.</summary>
+    /// <param name="contentSize">Available list content size.</param>
+    private void ArrangeRows(Vector2 contentSize)
+    {
+        var y = 0f;
+        foreach (var child in Children.OfType<UIElement>())
+        {
+            child.Measure(new Vector2(contentSize.X, RowHeight));
+            child.Arrange(new Vector2(0f, y), new Vector2(contentSize.X, RowHeight));
+            y += RowHeight;
         }
     }
 }
@@ -135,7 +159,7 @@ public sealed class ListViewItem : Button
     /// <param name="text">Displayed item text.</param>
     /// <param name="theme">Theme supplying row colors.</param>
     public ListViewItem(float width, float height, string text, UITheme? theme = null)
-        : base(0f, 0f, width, height, text, theme ?? UITheme.Dark)
+        : base(width, height, text, theme ?? UITheme.Dark)
     {
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;

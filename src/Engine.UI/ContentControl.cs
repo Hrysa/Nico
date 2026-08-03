@@ -1,4 +1,3 @@
-using System.Numerics;
 using Engine.Graphics;
 
 namespace Engine.UI;
@@ -21,34 +20,29 @@ public class ContentControl : Box
             _content = value;
             if (_content is not null)
                 AddChild(_content);
-            ArrangeContent();
         }
     }
 
     /// <summary>Creates an empty single-content box.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Outer box width.</param>
     /// <param name="height">Outer box height.</param>
-    public ContentControl(float x, float y, float width, float height)
-        : base(x, y, width, height)
+    public ContentControl(float width = 0f, float height = 0f)
+        : base(width, height)
     {
     }
 
     /// <summary>Arranges the content child within the box's padding.</summary>
-    protected virtual void ArrangeContent()
+    protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
     {
         if (_content is null)
             return;
-        _content.Position = new Vector3(Padding.Left, Padding.Top, _content.Position.Z);
-        _content.Width = MathF.Max(0f, Width - Padding.Horizontal);
-        _content.Height = MathF.Max(0f, Height - Padding.Vertical);
+        _content.Measure(contentSize);
+        _content.Arrange(new System.Numerics.Vector2(Padding.Left, Padding.Top), contentSize);
     }
 
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        ArrangeContent();
         base.Paint(drawList);
     }
 }

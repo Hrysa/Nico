@@ -1,5 +1,3 @@
-using System.Numerics;
-
 namespace Engine.UI;
 
 /// <summary>Displays the item currently moving during a drag gesture.</summary>
@@ -9,11 +7,10 @@ public sealed class DragPreview : ContentControl
     public Label ItemLabel { get; }
 
     /// <summary>Creates a floating, non-interactive drag preview.</summary>
-    /// <param name="position">Initial screen position.</param>
     /// <param name="text">Dragged item name.</param>
     /// <param name="theme">Theme supplying preview visuals.</param>
-    public DragPreview(Vector2 position, string text, UITheme? theme = null)
-        : base(position.X, position.Y, 0f, 28f)
+    public DragPreview(string text, UITheme? theme = null)
+        : base(0f, 28f)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         IsOverlay = true;
@@ -22,7 +19,7 @@ public sealed class DragPreview : ContentControl
         CornerRadius = 4f;
         BackgroundColor = resolvedTheme.SurfaceRaised;
         ForegroundColor = resolvedTheme.TextPrimary;
-        ItemLabel = new Label(0f, 0f, 0f, 0f, text)
+        ItemLabel = new Label(text)
         {
             FontSize = resolvedTheme.FontSize,
             ForegroundColor = resolvedTheme.TextPrimary,

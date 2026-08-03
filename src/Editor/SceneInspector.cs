@@ -27,7 +27,7 @@ public sealed class SceneInspector : Panel
     /// <param name="height">Inspector content height.</param>
     /// <param name="theme">Theme supplying Inspector visuals.</param>
     public SceneInspector(float width, float height, UITheme? theme = null)
-        : base(0f, 0f, width, height, (theme ?? UITheme.Dark).Surface)
+        : base((theme ?? UITheme.Dark).Surface, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         PaintBackground = false;
@@ -53,10 +53,11 @@ public sealed class SceneInspector : Panel
         AddChild(CreateLabel(12f, 8f, Width - 24f, 24f,
             node.GetType().Name, _theme.TextSecondary));
         AddChild(CreateLabel(12f, 40f, 58f, 30f, "Name", _theme.TextSecondary));
-        var nameField = new TextField(72f, 40f, Width - 84f, 30f, _theme)
+        var nameField = new TextField(Width - 84f, 30f, _theme)
         {
             Name = "NameField",
-            Text = node.Name
+            Text = node.Name,
+            Margin = new Thickness(72f, 40f, 0f, 0f)
         };
         nameField.TextChanged += value =>
         {
@@ -77,11 +78,12 @@ public sealed class SceneInspector : Panel
 
         AddChild(CreateLabel(12f, 236f, Width - 24f, 26f,
             "Script", _theme.TextPrimary));
-        var scriptField = new TextField(12f, 266f, Width - 24f, 30f, _theme)
+        var scriptField = new TextField(Width - 24f, 30f, _theme)
         {
             Name = "ScriptTypeField",
             Text = node.ScriptType ?? string.Empty,
-            Placeholder = "No script attached"
+            Placeholder = "No script attached",
+            Margin = new Thickness(12f, 266f, 0f, 0f)
         };
         scriptField.TextChanged += value =>
         {
@@ -134,15 +136,12 @@ public sealed class SceneInspector : Panel
         for (var index = 0; index < fields.Length; index++)
         {
             var componentIndex = index;
-            var field = new TextField(
-                12f + labelWidth + index * (fieldWidth + spacing),
-                y,
-                fieldWidth,
-                30f,
-                _theme)
+            var field = new TextField(fieldWidth, 30f, _theme)
             {
                 Name = $"{namePrefix}{"XYZ"[index]}",
-                Text = Format(GetComponent(displayValue, index))
+                Text = Format(GetComponent(displayValue, index)),
+                Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing),
+                    y, 0f, 0f)
             };
             field.TextChanged += text =>
             {
@@ -241,11 +240,22 @@ public sealed class SceneInspector : Panel
         string text,
         Color color)
     {
-        return new Label(x, y, width, height, text)
+        return new Label(text, width, height)
         {
             FontSize = _theme.FontSize,
             ForegroundColor = color,
-            PaddingLeft = 0f
+            PaddingLeft = 0f,
+            Margin = new Thickness(x, y, 0f, 0f)
         };
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(Vector2 contentSize)
+    {
+        foreach (var child in Children.OfType<UIElement>())
+        {
+            child.Measure(contentSize);
+            child.Arrange(Vector2.Zero, child.DesiredSize);
+        }
     }
 }

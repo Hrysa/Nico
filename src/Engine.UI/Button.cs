@@ -123,14 +123,12 @@ public class Button : ContentControl
     }
 
     /// <summary>Creates a fixed-size button with a custom color scheme.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Button width.</param>
     /// <param name="height">Button height.</param>
     /// <param name="label">Button label.</param>
     /// <param name="normalColor">Normal background color.</param>
-    public Button(float x, float y, float width, float height, string label, Color normalColor)
-        : base(x, y, width, height)
+    public Button(float width, float height, string label, Color normalColor)
+        : base(width, height)
     {
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
@@ -142,42 +140,36 @@ public class Button : ContentControl
     }
 
     /// <summary>Creates a fixed-size button with the default theme.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Button width.</param>
     /// <param name="height">Button height.</param>
     /// <param name="label">Button label.</param>
-    public Button(float x, float y, float width, float height, string label)
-        : this(x, y, width, height, label, UITheme.Dark, ButtonStyle.Subtle)
+    public Button(float width, float height, string label)
+        : this(width, height, label, UITheme.Dark, ButtonStyle.Subtle)
     {
     }
 
     /// <summary>Creates a themed button whose width follows its label content.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="height">Button height.</param>
     /// <param name="label">Button label.</param>
     /// <param name="theme">Theme supplying colors and typography.</param>
     /// <param name="style">Button emphasis.</param>
-    public Button(float x, float y, float height, string label, UITheme theme,
+    public Button(float height, string label, UITheme theme,
         ButtonStyle style = ButtonStyle.Subtle)
-        : this(x, y, 0f, height, label, theme, style)
+        : this(0f, height, label, theme, style)
     {
         _autoWidth = true;
         UpdateAutoWidth();
     }
 
     /// <summary>Creates a fixed-size themed button.</summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Button width.</param>
     /// <param name="height">Button height.</param>
     /// <param name="label">Button label.</param>
     /// <param name="theme">Theme supplying colors and typography.</param>
     /// <param name="style">Button emphasis.</param>
-    public Button(float x, float y, float width, float height, string label, UITheme theme,
+    public Button(float width, float height, string label, UITheme theme,
         ButtonStyle style = ButtonStyle.Subtle)
-        : base(x, y, width, height)
+        : base(width, height)
     {
         ArgumentNullException.ThrowIfNull(theme);
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
@@ -197,7 +189,7 @@ public class Button : ContentControl
     /// <returns>The configured label child.</returns>
     private static Label CreateLabel(string text, float fontSize)
     {
-        return new Label(0f, 0f, 0f, 0f, text)
+        return new Label(text)
         {
             FontSize = fontSize,
             PaddingLeft = 0f,

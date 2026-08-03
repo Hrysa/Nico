@@ -14,6 +14,7 @@ public sealed class TreeView : Panel
     private Node? _selectedItem;
     private int _scrollRow;
     private readonly UITheme _theme;
+    private Vector2 _arrangedSize;
 
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
     public float RowHeight { get; set; }
@@ -33,13 +34,11 @@ public sealed class TreeView : Panel
     /// <summary>
     /// Creates a node tree view.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Tree width.</param>
     /// <param name="height">Tree height.</param>
     /// <param name="theme">Theme supplying tree colors and typography.</param>
-    public TreeView(float x, float y, float width, float height, UITheme? theme = null)
-        : base(x, y, width, height, (theme ?? UITheme.Dark).Surface)
+    public TreeView(float width, float height, UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).Surface, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         RowHeight = _theme.ItemRowHeight;
@@ -129,7 +128,6 @@ public sealed class TreeView : Panel
         {
             var row = new TreeViewItem(Width, RowHeight, item, depth, _expanded.Contains(item), _theme)
             {
-                Position = new Vector3(0f, Children.Count * RowHeight, 0f),
                 IsSelected = ReferenceEquals(item, _selectedItem)
             };
             row.Click += () => Select(item);
@@ -140,6 +138,32 @@ public sealed class TreeView : Panel
             };
             row.Scroll += ScrollRows;
             AddChild(row);
+        }
+        if (Width > 0f && Height > 0f)
+            ArrangeRows(new Vector2(ContentWidth, ContentHeight));
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(Vector2 contentSize)
+    {
+        if (_arrangedSize != contentSize)
+        {
+            _arrangedSize = contentSize;
+            RebuildRows();
+        }
+        ArrangeRows(contentSize);
+    }
+
+    /// <summary>Arranges current rows sequentially in the tree viewport.</summary>
+    /// <param name="contentSize">Available tree content size.</param>
+    private void ArrangeRows(Vector2 contentSize)
+    {
+        var y = 0f;
+        foreach (var child in Children.OfType<UIElement>())
+        {
+            child.Measure(new Vector2(contentSize.X, RowHeight));
+            child.Arrange(new Vector2(0f, y), new Vector2(contentSize.X, RowHeight));
+            y += RowHeight;
         }
     }
 

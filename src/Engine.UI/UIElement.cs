@@ -9,6 +9,25 @@ namespace Engine.UI;
 /// </summary>
 public class UIElement : Node
 {
+    private Vector2 _desiredSize;
+    private float _actualWidth;
+    private float _actualHeight;
+    private float? _requestedWidth;
+    private float? _requestedHeight;
+    private bool _measureValid;
+    private bool _arrangeValid;
+    private Vector2 _lastMeasureSize;
+    private Vector2 _lastArrangePosition;
+    private Vector2 _lastArrangeSize;
+
+    /// <summary>Gets or sets horizontal placement within the parent allocation.</summary>
+    public HorizontalAlignment HorizontalAlignment { get; set; } = HorizontalAlignment.Stretch;
+
+    /// <summary>Gets or sets vertical placement within the parent allocation.</summary>
+    public VerticalAlignment VerticalAlignment { get; set; } = VerticalAlignment.Stretch;
+
+    /// <summary>Gets the size requested by the most recent measure pass, including margin.</summary>
+    public Vector2 DesiredSize => _desiredSize;
     /// <summary>Gets or sets spacing outside the element's border box.</summary>
     public Thickness Margin { get; set; } = Thickness.Zero;
 
@@ -28,10 +47,28 @@ public class UIElement : Node
     public float MaxHeight { get; set; } = float.PositiveInfinity;
 
     /// <summary>Gets or sets the element width in pixels.</summary>
-    public float Width { get; set; }
+    public float Width
+    {
+        get => _actualWidth;
+        set
+        {
+            _requestedWidth = value > 0f ? value : null;
+            _actualWidth = MathF.Max(0f, value);
+            InvalidateMeasure();
+        }
+    }
 
     /// <summary>Gets or sets the element height in pixels.</summary>
-    public float Height { get; set; }
+    public float Height
+    {
+        get => _actualHeight;
+        set
+        {
+            _requestedHeight = value > 0f ? value : null;
+            _actualHeight = MathF.Max(0f, value);
+            InvalidateMeasure();
+        }
+    }
 
     /// <summary>Gets or sets the background color.</summary>
     public Color BackgroundColor { get; set; } = Color.Black;
@@ -118,15 +155,12 @@ public class UIElement : Node
     public float ContentTop => Top + Padding.Top;
 
     /// <summary>
-    /// Creates a new UIElement with the specified position and size.
+    /// Creates a new UI element with an optional explicit size.
     /// </summary>
-    /// <param name="x">The X position (left edge).</param>
-    /// <param name="y">The Y position (top edge).</param>
     /// <param name="width">The element width.</param>
     /// <param name="height">The element height.</param>
-    public UIElement(float x, float y, float width, float height)
+    public UIElement(float width = 0f, float height = 0f)
     {
-        Position = new Vector3(x, y, 0);
         Width = width;
         Height = height;
     }
@@ -140,6 +174,138 @@ public class UIElement : Node
     {
         return point.X >= Left && point.X <= Right
             && point.Y >= Top && point.Y <= Bottom;
+    }
+
+    /// <summary>Measures this element and its descendants against available parent space.</summary>
+    /// <param name="availableSize">Space offered by the parent.</param>
+    public void Measure(Vector2 availableSize)
+    {
+        if (_measureValid && _lastMeasureSize == availableSize)
+            return;
+        if (!IsVisible)
+        {
+            _desiredSize = Vector2.Zero;
+            _measureValid = true;
+            _lastMeasureSize = availableSize;
+            return;
+        }
+        var availableWithoutMargin = new Vector2(
+            MathF.Max(0f, availableSize.X - Margin.Horizontal),
+            MathF.Max(0f, availableSize.Y - Margin.Vertical));
+        var requested = MeasureOverride(availableWithoutMargin);
+        var width = _requestedWidth ?? requested.X;
+        var height = _requestedHeight ?? requested.Y;
+        width = Math.Clamp(width, MinWidth, MaxWidth);
+        height = Math.Clamp(height, MinHeight, MaxHeight);
+        _desiredSize = new Vector2(width + Margin.Horizontal, height + Margin.Vertical);
+        _lastMeasureSize = availableSize;
+        _measureValid = true;
+    }
+
+    /// <summary>Arranges this element in a parent-relative slot.</summary>
+    /// <param name="slotPosition">Top-left position of the allocated slot.</param>
+    /// <param name="slotSize">Size of the allocated slot.</param>
+    public void Arrange(Vector2 slotPosition, Vector2 slotSize)
+    {
+        if (_arrangeValid && _lastArrangePosition == slotPosition && _lastArrangeSize == slotSize)
+            return;
+        if (!IsVisible)
+            return;
+        var availableWidth = MathF.Max(0f, slotSize.X - Margin.Horizontal);
+        var availableHeight = MathF.Max(0f, slotSize.Y - Margin.Vertical);
+        var desiredWidth = MathF.Max(0f, _desiredSize.X - Margin.Horizontal);
+        var desiredHeight = MathF.Max(0f, _desiredSize.Y - Margin.Vertical);
+        var width = HorizontalAlignment == HorizontalAlignment.Stretch && _requestedWidth is null
+            ? availableWidth : MathF.Min(availableWidth, desiredWidth);
+        var height = VerticalAlignment == VerticalAlignment.Stretch && _requestedHeight is null
+            ? availableHeight : MathF.Min(availableHeight, desiredHeight);
+        width = Math.Clamp(width, MinWidth, MaxWidth);
+        height = Math.Clamp(height, MinHeight, MaxHeight);
+        var x = slotPosition.X + Margin.Left + AlignOffset(availableWidth, width, HorizontalAlignment);
+        var y = slotPosition.Y + Margin.Top + AlignOffset(availableHeight, height, VerticalAlignment);
+        Position = new Vector3(x, y, Position.Z);
+        _actualWidth = width;
+        _actualHeight = height;
+        ArrangeOverride(new Vector2(ContentWidth, ContentHeight));
+        _lastArrangePosition = slotPosition;
+        _lastArrangeSize = slotSize;
+        _arrangeValid = true;
+    }
+
+    /// <summary>Invalidates desired size and propagates the change toward the layout root.</summary>
+    public void InvalidateMeasure()
+    {
+        _measureValid = false;
+        _arrangeValid = false;
+        if (Parent is UIElement parent)
+            parent.InvalidateMeasure();
+    }
+
+    /// <summary>Invalidates final placement without discarding the desired size.</summary>
+    public void InvalidateArrange()
+    {
+        _arrangeValid = false;
+        if (Parent is UIElement parent)
+            parent.InvalidateArrange();
+    }
+
+    /// <summary>Adds a child and invalidates layout.</summary>
+    /// <param name="child">Node to add.</param>
+    public new void AddChild(Node child)
+    {
+        base.AddChild(child);
+        InvalidateMeasure();
+    }
+
+    /// <summary>Removes a child and invalidates layout.</summary>
+    /// <param name="child">Node to remove.</param>
+    /// <returns>True when the child was present.</returns>
+    public new bool RemoveChild(Node child)
+    {
+        var removed = base.RemoveChild(child);
+        if (removed)
+            InvalidateMeasure();
+        return removed;
+    }
+
+    /// <summary>Removes all children and invalidates layout.</summary>
+    public new void ClearChildren()
+    {
+        base.ClearChildren();
+        InvalidateMeasure();
+    }
+
+    /// <summary>Measures content for a derived element.</summary>
+    /// <param name="availableSize">Available size after margin removal.</param>
+    /// <returns>Desired border-box size.</returns>
+    protected virtual Vector2 MeasureOverride(Vector2 availableSize)
+    {
+        foreach (var child in Children.OfType<UIElement>())
+            child.Measure(availableSize);
+        return Vector2.Zero;
+    }
+
+    /// <summary>Arranges child content after this element receives its final size.</summary>
+    /// <param name="contentSize">Size inside this element's padding.</param>
+    protected virtual void ArrangeOverride(Vector2 contentSize)
+    {
+        foreach (var child in Children.OfType<UIElement>())
+            child.Arrange(Vector2.Zero, child.DesiredSize);
+    }
+
+    /// <summary>Calculates alignment offset on one axis.</summary>
+    /// <param name="available">Available axis size.</param>
+    /// <param name="actual">Actual element size.</param>
+    /// <param name="alignment">Axis alignment value.</param>
+    /// <returns>Offset within the available size.</returns>
+    private static float AlignOffset(float available, float actual, object alignment)
+    {
+        return alignment switch
+        {
+            HorizontalAlignment.Center or VerticalAlignment.Center => (available - actual) / 2f,
+            HorizontalAlignment.Right or VerticalAlignment.Bottom => available - actual,
+            _ => 0f
+        };
     }
 
     /// <summary>Gets the absolute left edge contributed by the UI parent.</summary>
@@ -348,6 +514,12 @@ public class UIElement : Node
     /// <returns>The ordered UI draw list.</returns>
     public UIDrawList BuildDrawList()
     {
+        if (Parent is null && Width > 0f && Height > 0f && (!_measureValid || !_arrangeValid))
+        {
+            var size = new Vector2(Width, Height);
+            Measure(size);
+            Arrange(new Vector2(Position.X, Position.Y), size);
+        }
         var drawList = new UIDrawList();
         PaintRecursive(drawList, inheritedOverlay: false);
         return drawList;

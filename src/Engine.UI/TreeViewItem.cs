@@ -38,7 +38,7 @@ public sealed class TreeViewItem : Button
     /// <param name="theme">Theme supplying row colors, spacing, and typography.</param>
     public TreeViewItem(float width, float height, Node item, int depth, bool isExpanded,
         UITheme? theme = null)
-        : base(0f, 0f, width, height, BuildLabel(item, isExpanded), theme ?? UITheme.Dark)
+        : base(width, height, BuildLabel(item, isExpanded), theme ?? UITheme.Dark)
     {
         Item = item;
         Depth = depth;

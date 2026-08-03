@@ -34,14 +34,11 @@ public sealed class TextField : Surface
     /// <summary>
     /// Creates a single-line text field.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Field width.</param>
     /// <param name="height">Field height.</param>
     /// <param name="theme">Theme supplying colors and typography.</param>
-    public TextField(float x, float y, float width, float height, UITheme? theme = null)
-        : base(x, y, width, height, (theme ?? UITheme.Dark).Field,
-            (theme ?? UITheme.Dark).BorderStrong)
+    public TextField(float width, float height, UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).Field, (theme ?? UITheme.Dark).BorderStrong, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;

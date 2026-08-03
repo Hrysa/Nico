@@ -20,6 +20,7 @@ public enum TitleBarStyle
 /// </summary>
 public sealed class TitleBar : Surface
 {
+    private readonly TitleBarStyle _resolvedStyle;
     /// <summary>Occurs when pointer dragging begins in an unoccupied title-bar region.</summary>
     public event Action? DragStarted;
 
@@ -47,38 +48,38 @@ public sealed class TitleBar : Surface
         float height,
         UITheme? theme = null,
         TitleBarStyle style = TitleBarStyle.Auto)
-        : base(0f, 0f, width, height, (theme ?? UITheme.Dark).Canvas, (theme ?? UITheme.Dark).Border)
+        : base((theme ?? UITheme.Dark).Canvas, (theme ?? UITheme.Dark).Border, width, height)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         Name = "TitleBar";
-        var resolvedStyle = style == TitleBarStyle.Auto
+        _resolvedStyle = style == TitleBarStyle.Auto
             ? OperatingSystem.IsMacOS() ? TitleBarStyle.MacOS : TitleBarStyle.Windows
             : style;
         UIElement minimize;
         UIElement maximize;
         UIElement close;
-        if (resolvedStyle == TitleBarStyle.MacOS)
+        if (_resolvedStyle == TitleBarStyle.MacOS)
         {
-            close = new MacWindowButton(8f, height, Color.FromSrgb(0xFF, 0x5F, 0x57), "×")
+            close = new MacWindowButton(height, Color.FromSrgb(0xFF, 0x5F, 0x57), "×")
                 { Name = "WindowClose" };
-            minimize = new MacWindowButton(32f, height, Color.FromSrgb(0xFE, 0xBC, 0x2E), "−")
+            minimize = new MacWindowButton(height, Color.FromSrgb(0xFE, 0xBC, 0x2E), "−")
                 { Name = "WindowMinimize" };
-            maximize = new MacWindowButton(56f, height, Color.FromSrgb(0x28, 0xC8, 0x40), "+")
+            maximize = new MacWindowButton(height, Color.FromSrgb(0x28, 0xC8, 0x40), "+")
                 { Name = "WindowMaximize" };
         }
         else
         {
-            minimize = new Button(width - 108f, 0f, 36f, height, "−", resolvedTheme)
+            minimize = new Button(36f, height, "−", resolvedTheme)
                 { Name = "WindowMinimize", PaddingLeft = 13f };
-            maximize = new Button(width - 72f, 0f, 36f, height, "□", resolvedTheme)
+            maximize = new Button(36f, height, "□", resolvedTheme)
                 { Name = "WindowMaximize", PaddingLeft = 12f };
-            close = new Button(width - 36f, 0f, 36f, height, "×", resolvedTheme)
+            close = new Button(36f, height, "×", resolvedTheme)
                 { Name = "WindowClose", PaddingLeft = 12f, ForegroundColor = Color.FromSrgb(0xEC, 0x62, 0x5C) };
         }
         minimize.Click += () => MinimizeRequested?.Invoke();
         maximize.Click += () =>
         {
-            if (resolvedStyle == TitleBarStyle.MacOS)
+            if (_resolvedStyle == TitleBarStyle.MacOS)
                 FullScreenRequested?.Invoke();
             else
                 MaximizeRequested?.Invoke();
@@ -87,6 +88,48 @@ public sealed class TitleBar : Surface
         AddChild(minimize);
         AddChild(maximize);
         AddChild(close);
+        Measure(new System.Numerics.Vector2(width, height));
+        Arrange(System.Numerics.Vector2.Zero, new System.Numerics.Vector2(width, height));
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
+    {
+        var controls = Children.OfType<UIElement>()
+            .Where(child => child.Name.StartsWith("Window", StringComparison.Ordinal)).ToArray();
+        if (_resolvedStyle == TitleBarStyle.MacOS)
+        {
+            var x = 8f;
+            foreach (var control in controls.Reverse())
+            {
+                control.Measure(new System.Numerics.Vector2(24f, contentSize.Y));
+                control.Arrange(new System.Numerics.Vector2(x, 0f),
+                    new System.Numerics.Vector2(24f, contentSize.Y));
+                x += 24f;
+            }
+        }
+        else
+        {
+            var x = contentSize.X;
+            foreach (var control in controls.Reverse())
+            {
+                control.Measure(new System.Numerics.Vector2(36f, contentSize.Y));
+                x -= 36f;
+                control.Arrange(new System.Numerics.Vector2(x, 0f),
+                    new System.Numerics.Vector2(36f, contentSize.Y));
+            }
+        }
+
+        foreach (var child in Children.OfType<UIElement>().Except(controls))
+        {
+            child.Measure(contentSize);
+            var x = child.Name == "Play"
+                ? contentSize.X - (_resolvedStyle == TitleBarStyle.Windows ? 108f : 0f)
+                    - child.DesiredSize.X - 10f
+                : _resolvedStyle == TitleBarStyle.MacOS ? 88f : 8f;
+            child.Arrange(new System.Numerics.Vector2(x, 0f),
+                new System.Numerics.Vector2(child.DesiredSize.X, contentSize.Y));
+        }
     }
 
     /// <inheritdoc/>
@@ -110,12 +153,11 @@ public sealed class TitleBar : Surface
         private readonly string _symbol;
 
         /// <summary>Creates a macOS traffic-light control.</summary>
-        /// <param name="x">Local X position.</param>
         /// <param name="titleBarHeight">Title-bar height.</param>
         /// <param name="color">Traffic-light color.</param>
         /// <param name="symbol">Symbol displayed on hover.</param>
-        public MacWindowButton(float x, float titleBarHeight, Color color, string symbol)
-            : base(x, 0f, 24f, titleBarHeight)
+        public MacWindowButton(float titleBarHeight, Color color, string symbol)
+            : base(24f, titleBarHeight)
         {
             _color = color;
             _symbol = symbol;

@@ -64,6 +64,7 @@ window.Initialize(options);
 logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
 var uiRoot = editorView.Root;
+var overlay = editorView.Overlay;
 window.SetUI(uiRoot.BuildDrawList());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
 window.CreateVertexBuffer();
@@ -258,7 +259,7 @@ void ShowCompilationProgress()
     CloseCompilationProgress();
     compilationProgressDialog = new CompilationProgressDialog(width, height)
         { Name = "CompilationProgressDialog" };
-    uiRoot.AddChild(compilationProgressDialog);
+    overlay.Add(compilationProgressDialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -268,8 +269,8 @@ void CloseCompilationProgress()
 {
     if (compilationProgressDialog is null)
         return;
-    if (ReferenceEquals(compilationProgressDialog.Parent, uiRoot))
-        uiRoot.RemoveChild(compilationProgressDialog);
+    if (ReferenceEquals(compilationProgressDialog.Parent, overlay))
+        overlay.Remove(compilationProgressDialog);
     compilationProgressDialog = null;
     RefreshVertices();
 }
@@ -321,7 +322,7 @@ void CloseHierarchyContextMenu()
 {
     if (hierarchyContextMenu is null)
         return;
-    uiRoot.RemoveChild(hierarchyContextMenu);
+    overlay.Remove(hierarchyContextMenu);
     hierarchyContextMenu = null;
     RefreshVertices();
 }
@@ -330,17 +331,17 @@ void CloseHierarchyContextMenu()
 void CloseFileContextMenu()
 {
     if (fileContextMenu is not null)
-        uiRoot.RemoveChild(fileContextMenu);
+        overlay.Remove(fileContextMenu);
     if (fileSubmenu is not null)
-        uiRoot.RemoveChild(fileSubmenu);
+        overlay.Remove(fileSubmenu);
     if (scenePickerDialog is not null)
-        uiRoot.RemoveChild(scenePickerDialog);
+        overlay.Remove(scenePickerDialog);
     if (fileSystemCreateDialog is not null)
-        uiRoot.RemoveChild(fileSystemCreateDialog);
+        overlay.Remove(fileSystemCreateDialog);
     if (confirmationDialog is not null)
-        uiRoot.RemoveChild(confirmationDialog);
+        overlay.Remove(confirmationDialog);
     if (dragPreview is not null)
-        uiRoot.RemoveChild(dragPreview);
+        overlay.Remove(dragPreview);
     fileContextMenu = null;
     fileSubmenu = null;
     scenePickerDialog = null;
@@ -437,7 +438,7 @@ void ShowOpenSceneDialog()
     picker.OpenRequested += scenePath => LoadScene(scenePath, makeActive: true);
     picker.CancelRequested += CloseFileContextMenu;
     scenePickerDialog = picker;
-    uiRoot.AddChild(picker);
+    overlay.Add(picker, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -564,7 +565,7 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
     };
     dialog.CancelRequested += CloseFileContextMenu;
     fileSystemCreateDialog = dialog;
-    uiRoot.AddChild(dialog);
+    overlay.Add(dialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -639,7 +640,7 @@ void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool s
     };
     dialog.CancelRequested += CloseFileContextMenu;
     fileSystemCreateDialog = dialog;
-    uiRoot.AddChild(dialog);
+    overlay.Add(dialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -651,17 +652,17 @@ void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool s
 void ShowAddFileSubmenu(string parentDirectory, float x, float y)
 {
     if (fileSubmenu is not null)
-        uiRoot.RemoveChild(fileSubmenu);
-    var submenu = new ContextMenu(
+        overlay.Remove(fileSubmenu);
+    var submenuPosition = new Vector2(
         Math.Clamp(x, 0f, MathF.Max(0f, width - 170f)),
-        Math.Clamp(y, 0f, MathF.Max(0f, height - 60f)),
-        170f) { Name = "AddFileSubmenu" };
+        Math.Clamp(y, 0f, MathF.Max(0f, height - 60f)));
+    var submenu = new ContextMenu(170f) { Name = "AddFileSubmenu" };
     submenu.AddItem("Add Scene", () => ShowScenePathDialog(parentDirectory,
         createDefaultScene: true, saveAction: false));
     submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
         createFolder: false));
     fileSubmenu = submenu;
-    uiRoot.AddChild(submenu);
+    overlay.Add(submenu, submenuPosition);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -725,7 +726,7 @@ void ShowDeleteConfirmation(string targetPath)
     };
     dialog.CancelRequested += CloseFileContextMenu;
     confirmationDialog = dialog;
-    uiRoot.AddChild(dialog);
+    overlay.Add(dialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -754,14 +755,14 @@ bool ShowFileSystemContextMenu()
     const float menuWidth = 170f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - 270f));
-    var menu = new ContextMenu(menuX, menuY, menuWidth) { Name = "FileSystemContextMenu" };
+    var menu = new ContextMenu(menuWidth) { Name = "FileSystemContextMenu" };
     var creationDirectory = targetPath is not null && Directory.Exists(targetPath)
         ? targetPath : targetPath is not null ? Path.GetDirectoryName(targetPath) ?? project.RootPath
         : project.RootPath;
     menu.AddItem("Add Folder", () => ShowCreateFileSystemDialog(creationDirectory,
         createFolder: true));
-    menu.AddItem("Add File", () => ShowAddFileSubmenu(creationDirectory,
-        menu.Right - 2f, menu.Top + 28f));
+    menu.AddSubmenu("Add File", item => ShowAddFileSubmenu(creationDirectory,
+        menu.Right - 2f, item.Top));
     if (targetPath is not null && !Directory.Exists(targetPath) && IsSceneFile(targetPath))
     {
         var scenePath = targetPath;
@@ -780,7 +781,7 @@ bool ShowFileSystemContextMenu()
     }
     menu.AddItem("Refresh", RefreshFileSystem);
     fileContextMenu = menu;
-    uiRoot.AddChild(menu);
+    overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
     return true;
@@ -838,11 +839,11 @@ void ShowHierarchyContextMenu()
     const float menuHeight = 56f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
-    var menu = new ContextMenu(menuX, menuY, menuWidth) { Name = "HierarchyContextMenu" };
+    var menu = new ContextMenu(menuWidth) { Name = "HierarchyContextMenu" };
     menu.AddItem("Add Empty Object", () => AddSceneNode(target, withCubeMesh: false));
     menu.AddItem("Add Cube", () => AddSceneNode(target, withCubeMesh: true));
     hierarchyContextMenu = menu;
-    uiRoot.AddChild(menu);
+    overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
@@ -885,7 +886,7 @@ List<MeshInstance3D> GetActiveSceneObjects()
     return playScene?.MeshInstances ?? sceneObjects;
 }
 
-/// <summary>Rebuilds the logical editor layout without reallocating viewport render targets.</summary>
+/// <summary>Rearranges the logical editor layout without rebuilding its UI tree.</summary>
 /// <param name="newWidth">New logical window width.</param>
 /// <param name="newHeight">New logical window height.</param>
 void ResizeEditor(int newWidth, int newHeight)
@@ -895,38 +896,8 @@ void ResizeEditor(int newWidth, int newHeight)
 
     width = newWidth;
     height = newHeight;
-    hierarchyContextMenu = null;
-    fileContextMenu = null;
-    fileSubmenu = null;
-    scenePickerDialog = null;
-    fileSystemCreateDialog = null;
-    confirmationDialog = null;
-    dragPreview = null;
-    editorView = EditorUI.BuildView(width, height);
-    uiRoot = editorView.Root;
-    uiEventRouter.SetRoot(uiRoot);
-    sceneViewport = editorView.SceneViewport;
-    gameViewport = editorView.GameViewport;
-    hierarchyTree = editorView.HierarchyTree;
-    inspector = editorView.Inspector;
-    fileSystemTree = editorView.FileSystemTree;
-    editorView.ProjectLabel.Text = activeScenePath is null
-        ? "Untitled.node" : Path.GetFileName(activeScenePath);
-    hierarchyTree.SetRoots(GetActiveSceneRoot().Children);
-    hierarchyTree.Select(selection.SelectedNode);
-    AttachHierarchy(hierarchyTree);
-    inspector.Bind(selection.SelectedNode);
-    AttachInspector(inspector);
-    AttachFileSystem(fileSystemTree);
-    RefreshFileSystem();
-    AttachTitleBar(editorView.TitleBar);
-    AttachPlayButton(editorView.PlayButton);
-    sceneViewport.ViewportId = sceneViewportId;
-    sceneViewport.Camera = sceneCamera;
-    gameViewport.ViewportId = gameViewportId;
-    gameViewport.Camera = playScene?.GameCamera ?? gameCamera;
-    if (playBuildTask is not null)
-        ShowCompilationProgress();
+    uiRoot.Measure(new Vector2(width, height));
+    uiRoot.Arrange(Vector2.Zero, new Vector2(width, height));
 
     window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
     window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
@@ -1089,15 +1060,14 @@ window.MouseMove += pos =>
                 fileSystemTree.Select(fileNode);
             else
                 hierarchyTree.Select(pendingDragItem);
-            dragPreview = new DragPreview(pos + new Vector2(12f, 12f),
-                string.IsNullOrWhiteSpace(pendingDragItem.Name)
+            dragPreview = new DragPreview(string.IsNullOrWhiteSpace(pendingDragItem.Name)
                     ? pendingDragItem.GetType().Name : pendingDragItem.Name)
                 { Name = "DragPreview" };
-            uiRoot.AddChild(dragPreview);
+            overlay.Add(dragPreview, pos + new Vector2(12f, 12f));
         }
         else if (dragPreview is not null)
         {
-            dragPreview.Position = new Vector3(pos.X + 12f, pos.Y + 12f, 0f);
+            overlay.SetPosition(dragPreview, pos + new Vector2(12f, 12f));
         }
         RefreshVertices();
     }
@@ -1169,7 +1139,7 @@ window.MouseUp += button =>
 
     if (dragPreview is not null)
     {
-        uiRoot.RemoveChild(dragPreview);
+        overlay.Remove(dragPreview);
         dragPreview = null;
     }
 

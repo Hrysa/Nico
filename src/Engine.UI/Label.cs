@@ -39,15 +39,22 @@ public class Label : UIElement
     /// <summary>
     /// Creates a text label.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Label width.</param>
     /// <param name="height">Label height.</param>
     /// <param name="text">Displayed text.</param>
-    public Label(float x, float y, float width, float height, string text)
-        : base(x, y, width, height)
+    private Label(float width, float height, string text)
+        : base(width, height)
     {
         Text = text;
+    }
+
+    /// <summary>Creates a label for container-owned layout.</summary>
+    /// <param name="text">Displayed text.</param>
+    /// <param name="width">Optional explicit width.</param>
+    /// <param name="height">Optional explicit height.</param>
+    public Label(string text, float width = 0f, float height = 0f)
+        : this(width, height, text)
+    {
     }
 
     /// <summary>Measures the label text using the bundled Inter font metrics.</summary>

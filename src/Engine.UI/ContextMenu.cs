@@ -1,4 +1,3 @@
-using System.Numerics;
 using Engine.Graphics;
 
 namespace Engine.UI;
@@ -14,12 +13,10 @@ public sealed class ContextMenu : Surface
     /// <summary>
     /// Creates an empty context menu.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Menu width.</param>
     /// <param name="theme">Theme supplying menu colors and typography.</param>
-    public ContextMenu(float x, float y, float width, UITheme? theme = null)
-        : base(x, y, width, 0f, (theme ?? UITheme.Dark).SurfaceRaised, (theme ?? UITheme.Dark).BorderStrong)
+    public ContextMenu(float width, UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).SurfaceRaised, (theme ?? UITheme.Dark).BorderStrong, width)
     {
         _theme = theme ?? UITheme.Dark;
         IsOverlay = true;
@@ -31,11 +28,53 @@ public sealed class ContextMenu : Surface
     public void AddItem(string label, Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        var item = new ContextMenuItem(2f, 2f + Children.Count * ItemHeight,
-            Width - 4f, ItemHeight, label, _theme);
+        var item = CreateItem(label);
         item.Click += action;
         AddChild(item);
         Height = 4f + Children.Count * ItemHeight;
+        RefreshLayout();
+    }
+
+    /// <summary>Adds an item that opens a child menu when hovered.</summary>
+    /// <param name="label">Item label.</param>
+    /// <param name="showSubmenu">Action that displays the child menu beside the hovered item.</param>
+    public void AddSubmenu(string label, Action<ContextMenuItem> showSubmenu)
+    {
+        ArgumentNullException.ThrowIfNull(showSubmenu);
+        var item = CreateItem($"{label}  ›");
+        item.SubmenuRequested += () => showSubmenu(item);
+        AddChild(item);
+        Height = 4f + Children.Count * ItemHeight;
+        RefreshLayout();
+    }
+
+    /// <summary>Creates a context-menu row at the next vertical position.</summary>
+    /// <param name="label">Displayed row label.</param>
+    /// <returns>The unparented context-menu item.</returns>
+    private ContextMenuItem CreateItem(string label)
+    {
+        return new ContextMenuItem(Width - 4f, ItemHeight, label, _theme);
+    }
+
+    /// <summary>Refreshes row bounds after menu contents change.</summary>
+    private void RefreshLayout()
+    {
+        var size = new System.Numerics.Vector2(Width, Height);
+        Measure(size);
+        Arrange(System.Numerics.Vector2.Zero, size);
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
+    {
+        var y = 2f;
+        foreach (var child in Children.OfType<UIElement>())
+        {
+            child.Measure(new System.Numerics.Vector2(MathF.Max(0f, contentSize.X - 4f), ItemHeight));
+            child.Arrange(new System.Numerics.Vector2(2f, y),
+                new System.Numerics.Vector2(MathF.Max(0f, contentSize.X - 4f), ItemHeight));
+            y += ItemHeight;
+        }
     }
 }
 
@@ -44,17 +83,18 @@ public sealed class ContextMenu : Surface
 /// </summary>
 public sealed class ContextMenuItem : Button
 {
+    /// <summary>Occurs when hovering this item should display its child menu.</summary>
+    public event Action? SubmenuRequested;
+
     /// <summary>
     /// Creates a context-menu item.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Item width.</param>
     /// <param name="height">Item height.</param>
     /// <param name="label">Displayed label.</param>
     /// <param name="theme">Theme supplying row colors and typography.</param>
-    public ContextMenuItem(float x, float y, float width, float height, string label, UITheme? theme = null)
-        : base(x, y, width, height, label, theme ?? UITheme.Dark)
+    public ContextMenuItem(float width, float height, string label, UITheme? theme = null)
+        : base(width, height, label, theme ?? UITheme.Dark)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         PaddingLeft = 10f;
@@ -63,5 +103,12 @@ public sealed class ContextMenuItem : Button
         PressedColor = resolvedTheme.SurfacePressed;
         PaintNormalBackground = true;
         CornerRadius = 0f;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnMouseEnter()
+    {
+        base.OnMouseEnter();
+        SubmenuRequested?.Invoke();
     }
 }

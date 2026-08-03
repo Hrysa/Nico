@@ -16,14 +16,12 @@ public class Surface : Panel
     /// <summary>
     /// Creates a themed surface.
     /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
     /// <param name="width">Surface width.</param>
     /// <param name="height">Surface height.</param>
     /// <param name="backgroundColor">Surface fill color.</param>
     /// <param name="borderColor">Surface border color.</param>
-    public Surface(float x, float y, float width, float height, Color backgroundColor, Color borderColor)
-        : base(x, y, width, height, backgroundColor)
+    public Surface(Color backgroundColor, Color borderColor, float width = 0f, float height = 0f)
+        : base(backgroundColor, width, height)
     {
         BorderColor = borderColor;
     }

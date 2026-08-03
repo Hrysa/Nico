@@ -11,8 +11,9 @@ public class FileSystemCreateDialogTests
     public void Create_ValidName_RaisesCreateRequested()
     {
         var dialog = new FileSystemCreateDialog(800f, 600f, "Folder", "project");
-        var field = Assert.Single(dialog.Dialog.Children.OfType<TextField>());
-        var create = dialog.Dialog.Children.OfType<Button>().Single(button => button.Name == "Create");
+        dialog.BuildDrawList();
+        var field = Assert.Single(dialog.Dialog.Descendants().OfType<TextField>());
+        var create = dialog.Dialog.Descendants().OfType<Button>().Single(button => button.Name == "Create");
         var router = new UIEventRouter(dialog, () => { });
         Click(router, field.Left + 10f, field.Top + 10f);
         foreach (var character in "  assets  ")
@@ -30,9 +31,10 @@ public class FileSystemCreateDialogTests
     public void Create_PathName_ShowsValidationError()
     {
         var dialog = new FileSystemCreateDialog(800f, 600f, "File", "project");
-        var field = Assert.Single(dialog.Dialog.Children.OfType<TextField>());
-        var create = dialog.Dialog.Children.OfType<Button>().Single(button => button.Name == "Create");
-        var error = dialog.Dialog.Children.OfType<Label>()
+        dialog.BuildDrawList();
+        var field = Assert.Single(dialog.Dialog.Descendants().OfType<TextField>());
+        var create = dialog.Dialog.Descendants().OfType<Button>().Single(button => button.Name == "Create");
+        var error = dialog.Dialog.Descendants().OfType<Label>()
             .Single(label => label.Name == "ValidationError");
         var router = new UIEventRouter(dialog, () => { });
         Click(router, field.Left + 10f, field.Top + 10f);

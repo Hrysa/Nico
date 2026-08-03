@@ -5,41 +5,54 @@ namespace Engine.UI;
 /// </summary>
 public sealed class DialogHeader : Panel
 {
-    /// <summary>
-    /// Creates a dialog header.
-    /// </summary>
-    /// <param name="x">Local X position.</param>
-    /// <param name="y">Local Y position.</param>
-    /// <param name="width">Header width.</param>
+    private readonly Label _title;
+    private readonly Label? _subtitle;
+    private readonly Separator _separator;
+
+    /// <summary>Creates a container-arranged dialog header.</summary>
     /// <param name="title">Primary title.</param>
     /// <param name="subtitle">Optional secondary description.</param>
     /// <param name="theme">Theme supplying colors and typography.</param>
-    public DialogHeader(
-        float x,
-        float y,
-        float width,
-        string title,
-        string subtitle = "",
-        UITheme? theme = null)
-        : base(x, y, width, string.IsNullOrWhiteSpace(subtitle) ? 48f : 66f,
-            (theme ?? UITheme.Dark).SurfaceRaised)
+    public DialogHeader(string title, string subtitle = "", UITheme? theme = null)
+        : base((theme ?? UITheme.Dark).SurfaceRaised, 0f,
+            string.IsNullOrWhiteSpace(subtitle) ? 48f : 66f)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
-        AddChild(new Label(16f, 8f, width - 32f, 28f, title)
+        _title = new Label(title)
         {
             FontSize = 25.5f,
             ForegroundColor = resolvedTheme.TextPrimary,
             PaddingLeft = 0f
-        });
+        };
         if (!string.IsNullOrWhiteSpace(subtitle))
         {
-            AddChild(new Label(16f, 34f, width - 32f, 22f, subtitle)
+            _subtitle = new Label(subtitle)
             {
                 FontSize = resolvedTheme.CaptionFontSize,
                 ForegroundColor = resolvedTheme.TextSecondary,
                 PaddingLeft = 0f
-            });
+            };
         }
-        AddChild(new Separator(0f, Height - 1f, width, 1f, resolvedTheme));
+        _separator = new Separator(0f, 1f, resolvedTheme);
+        AddChild(_title);
+        if (_subtitle is not null)
+            AddChild(_subtitle);
+        AddChild(_separator);
+    }
+
+    /// <inheritdoc/>
+    protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
+    {
+        var width = MathF.Max(0f, contentSize.X - 32f);
+        _title.Measure(new System.Numerics.Vector2(width, 28f));
+        _title.Arrange(new System.Numerics.Vector2(16f, 8f), new System.Numerics.Vector2(width, 28f));
+        if (_subtitle is not null)
+        {
+            _subtitle.Measure(new System.Numerics.Vector2(width, 22f));
+            _subtitle.Arrange(new System.Numerics.Vector2(16f, 34f), new System.Numerics.Vector2(width, 22f));
+        }
+        _separator.Measure(new System.Numerics.Vector2(contentSize.X, 1f));
+        _separator.Arrange(new System.Numerics.Vector2(0f, MathF.Max(0f, contentSize.Y - 1f)),
+            new System.Numerics.Vector2(contentSize.X, 1f));
     }
 }

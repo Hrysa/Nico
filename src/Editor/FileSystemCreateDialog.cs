@@ -32,38 +32,40 @@ public sealed class FileSystemCreateDialog : Modal
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemKind);
         var resolvedTheme = theme ?? UITheme.Dark;
-        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width, $"{actionVerb} {itemKind}",
-            $"Create inside {parentPath}", resolvedTheme));
+        var content = new Canvas();
+        Dialog.AddChild(content);
+        content.Add(new DialogHeader($"{actionVerb} {itemKind}",
+            $"Create inside {parentPath}", resolvedTheme), System.Numerics.Vector2.Zero);
 
-        _nameField = new TextField(16f, 82f, Dialog.Width - 32f, 34f, resolvedTheme)
+        _nameField = new TextField(Dialog.Width - 32f, 34f, resolvedTheme)
         {
             Name = "ItemName",
             Placeholder = $"{itemKind} name"
         };
-        _errorLabel = new Label(16f, 120f, Dialog.Width - 32f, 28f, string.Empty)
+        _errorLabel = new Label(string.Empty, Dialog.Width - 32f, 28f)
         {
             Name = "ValidationError",
             ForegroundColor = resolvedTheme.AccentHover,
             FontSize = resolvedTheme.CaptionFontSize,
             PaddingLeft = 0f
         };
-        var createButton = new Button(0f, Dialog.Height - 50f, 34f,
+        var createButton = new Button(34f,
             actionVerb == "Save" ? "Save" : "Create", resolvedTheme, ButtonStyle.Primary)
             { Name = "Create" };
-        createButton.Position = new System.Numerics.Vector3(
-            Dialog.Width - createButton.Width - 16f, Dialog.Height - 50f, 0f);
-        var cancelButton = new Button(0f, Dialog.Height - 50f, 34f, "Cancel", resolvedTheme)
+        var cancelButton = new Button(34f, "Cancel", resolvedTheme)
             { Name = "Cancel" };
-        cancelButton.Position = new System.Numerics.Vector3(
-            createButton.Position.X - cancelButton.Width - 8f, Dialog.Height - 50f, 0f);
+        var createPosition = new System.Numerics.Vector2(
+            Dialog.Width - createButton.Width - 16f, Dialog.Height - 50f);
+        var cancelPosition = new System.Numerics.Vector2(
+            createPosition.X - cancelButton.Width - 8f, Dialog.Height - 50f);
 
         createButton.Click += RequestCreate;
         cancelButton.Click += RequestCancel;
         DismissRequested += RequestCancel;
-        Dialog.AddChild(_nameField);
-        Dialog.AddChild(_errorLabel);
-        Dialog.AddChild(cancelButton);
-        Dialog.AddChild(createButton);
+        content.Add(_nameField, new System.Numerics.Vector2(16f, 82f));
+        content.Add(_errorLabel, new System.Numerics.Vector2(16f, 120f));
+        content.Add(cancelButton, cancelPosition);
+        content.Add(createButton, createPosition);
     }
 
     /// <summary>Displays a validation or filesystem error.</summary>

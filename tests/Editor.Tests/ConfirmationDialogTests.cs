@@ -11,7 +11,8 @@ public class ConfirmationDialogTests
     public void ConfirmButton_Click_RaisesConfirmed()
     {
         var dialog = new ConfirmationDialog(800f, 600f, "Delete", "Delete item?", "Delete");
-        var confirm = dialog.Dialog.Children.OfType<Button>()
+        dialog.BuildDrawList();
+        var confirm = dialog.Dialog.Descendants().OfType<Button>()
             .Single(button => button.Name == "Confirm");
         var router = new UIEventRouter(dialog, () => { });
         var confirmed = false;

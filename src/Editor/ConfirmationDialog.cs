@@ -23,19 +23,21 @@ public sealed class ConfirmationDialog : Modal
         : base(width, height, MathF.Min(480f, width - 48f), 210f, theme)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
-        Dialog.AddChild(new DialogHeader(0f, 0f, Dialog.Width, title, message, resolvedTheme));
-        var confirmButton = new Button(0f, Dialog.Height - 50f, 34f, confirmLabel,
+        var content = new Canvas();
+        Dialog.AddChild(content);
+        content.Add(new DialogHeader(title, message, resolvedTheme), System.Numerics.Vector2.Zero);
+        var confirmButton = new Button(34f, confirmLabel,
             resolvedTheme, ButtonStyle.Primary) { Name = "Confirm" };
-        confirmButton.Position = new System.Numerics.Vector3(
-            Dialog.Width - confirmButton.Width - 16f, Dialog.Height - 50f, 0f);
-        var cancelButton = new Button(0f, Dialog.Height - 50f, 34f, "Cancel", resolvedTheme)
+        var cancelButton = new Button(34f, "Cancel", resolvedTheme)
             { Name = "Cancel" };
-        cancelButton.Position = new System.Numerics.Vector3(
-            confirmButton.Position.X - cancelButton.Width - 8f, Dialog.Height - 50f, 0f);
+        var confirmPosition = new System.Numerics.Vector2(
+            Dialog.Width - confirmButton.Width - 16f, Dialog.Height - 50f);
+        var cancelPosition = new System.Numerics.Vector2(
+            confirmPosition.X - cancelButton.Width - 8f, Dialog.Height - 50f);
         confirmButton.Click += () => Confirmed?.Invoke();
         cancelButton.Click += () => CancelRequested?.Invoke();
         DismissRequested += () => CancelRequested?.Invoke();
-        Dialog.AddChild(cancelButton);
-        Dialog.AddChild(confirmButton);
+        content.Add(cancelButton, cancelPosition);
+        content.Add(confirmButton, confirmPosition);
     }
 }

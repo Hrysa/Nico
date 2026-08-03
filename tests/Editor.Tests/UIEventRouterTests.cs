@@ -11,9 +11,9 @@ public class UIEventRouterTests
     [Fact]
     public void MovePointer_OverlappingChildren_HoversTopmostChild()
     {
-        var root = new Panel(0f, 0f, 100f, 100f, Color.Black);
-        var first = new Panel(0f, 0f, 100f, 100f, Color.Black);
-        var second = new Panel(0f, 0f, 100f, 100f, Color.Black);
+        var root = new Panel(Color.Black, 100f, 100f);
+        var first = new Panel(Color.Black, 100f, 100f);
+        var second = new Panel(Color.Black, 100f, 100f);
         root.AddChild(first);
         root.AddChild(second);
         var router = new UIEventRouter(root, () => { });
@@ -29,7 +29,7 @@ public class UIEventRouterTests
     [Fact]
     public void Release_AfterPress_InvokesClick()
     {
-        var button = new Button(0f, 0f, 100f, 100f, "Test", Color.Black);
+        var button = new Button(100f, 100f, "Test", Color.Black);
         var clicks = 0;
         button.Click += () => clicks++;
         var router = new UIEventRouter(button, () => { });
@@ -46,8 +46,8 @@ public class UIEventRouterTests
     [Fact]
     public void Release_AfterPointerLeavesPressedElement_ClearsOriginalPressWithoutClick()
     {
-        var root = new Panel(0f, 0f, 200f, 100f, Color.Black);
-        var button = new Button(0f, 0f, 100f, 100f, "Test", Color.Black);
+        var root = new Panel(Color.Black, 200f, 100f);
+        var button = new Button(100f, 100f, "Test", Color.Black);
         var clicks = 0;
         button.Click += () => clicks++;
         root.AddChild(button);
