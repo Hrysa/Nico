@@ -278,6 +278,28 @@ public class UIThemeTests
             command => command.Type == UIDrawCommandType.Text && command.Text.Contains('|'));
     }
 
+    /// <summary>Verifies a focused long value keeps its editable tail and caret visible.</summary>
+    [Fact]
+    public void TextField_FocusedLongValue_ShowsEditableTail()
+    {
+        var field = new TextField(180f, 30f)
+        {
+            Text = "ExampleGame.MoveMainObject, example_game.Scripts"
+        };
+        var router = new UIEventRouter(field, () => { });
+        router.MovePointer(new(20f, 15f));
+        router.Press();
+        router.Release(invokeClick: true);
+
+        router.TextInput('X');
+
+        var textCommand = Assert.Single(field.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+        Assert.EndsWith("ScriptsX", textCommand.Text);
+        Assert.Equal(textCommand.Text.Length, textCommand.CaretIndex);
+        Assert.EndsWith("ScriptsX", field.Text);
+    }
+
     /// <summary>Verifies the editor shell prioritizes Scene while retaining hierarchy, files, Game, and Inspector docks.</summary>
     [Fact]
     public void EditorView_ReferenceLayout_HasExpectedDockHierarchy()

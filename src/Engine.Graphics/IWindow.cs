@@ -26,6 +26,13 @@ public interface IWindow : IDisposable
     /// <summary>Processes events, updates, and renders one frame without entering a blocking loop.</summary>
     void PumpFrame();
 
+    /// <summary>Wakes an event-driven window so pending state is updated and presented.</summary>
+    void RequestFrame();
+
+    /// <summary>Enables or disables capped continuous updates and rendering.</summary>
+    /// <param name="enabled">True while time-based work requires continuous frames.</param>
+    void SetContinuousRendering(bool enabled);
+
     /// <summary>Begins moving a borderless window from a client-area pointer position.</summary>
     /// <param name="pointerPosition">Pointer position inside the client area.</param>
     void BeginWindowDrag(Vector2 pointerPosition);

@@ -98,6 +98,12 @@ public class UIHostTests
         public void PumpFrame() => Update?.Invoke(0d);
 
         /// <inheritdoc/>
+        public void RequestFrame() { }
+
+        /// <inheritdoc/>
+        public void SetContinuousRendering(bool enabled) { }
+
+        /// <inheritdoc/>
         public void BeginWindowDrag(Vector2 pointerPosition) { }
 
         /// <inheritdoc/>

@@ -55,6 +55,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private int _pendingInitialLogicalHeight;
     private long _lastLiveResizeFrameTimestamp;
     private bool _renderingFrame;
+    private bool _continuousRendering;
+    private bool _eventDrivenIdle;
+    private double _targetFrameRate;
+    private Timer? _continuousWakeTimer;
     private bool _firstFramePresented;
 
     private Vk? _vk;
@@ -94,6 +98,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private readonly Dictionary<uint, VertexT[][]> _uploadedViewportQuadVertices = new();
     private readonly Dictionary<uint, List<RenderCommand>> _pendingViewportDraws = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
+    private readonly HashSet<uint> _pendingViewportRenders = [];
     private uint _nextViewportId = 1;
     private RenderPass _fboRenderPass;
 
@@ -168,6 +173,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         _shutdown = false;
         _customTitleBar = options.CustomTitleBar;
+        _eventDrivenIdle = options.IsEventDriven;
+        _targetFrameRate = options.TargetFrameRate;
         _requestedWidth = options.Width;
         _requestedHeight = options.Height;
         _logger.LogInformation("Creating window '{Title}' ({Width}x{Height}) [Vulkan]", options.Title, options.Width, options.Height);
@@ -178,6 +185,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Title = options.Title,
             API = new GraphicsAPI(ContextAPI.Vulkan, new APIVersion(1, 1)),
             ShouldSwapAutomatically = false,
+            IsEventDriven = options.IsEventDriven,
+            FramesPerSecond = options.TargetFrameRate,
+            UpdatesPerSecond = options.TargetFrameRate,
             IsVisible = !OperatingSystem.IsWindows(),
             WindowBorder = WindowBorder.Resizable,
             TransparentFramebuffer = options.CustomTitleBar && OperatingSystem.IsMacOS()
@@ -1860,7 +1870,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _uploadedViewportQuadGenerations.Remove(viewportId);
         _uploadedViewportQuadVertices.Remove(viewportId);
 
+        _pendingViewportDraws.Remove(viewportId);
         _pendingGridDraws.Remove(viewportId);
+        _pendingViewportRenders.Remove(viewportId);
 
         _logger.LogInformation("Viewport {Id} unregistered", viewportId);
     }
@@ -1920,6 +1932,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             ValidateOwner(command.Mesh);
             _pendingViewportDraws[viewportId].Add(command);
         }
+        _pendingViewportRenders.Add(viewportId);
     }
 
     /// <inheritdoc/>
@@ -1963,6 +1976,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             ViewProjection = viewProjection,
             InverseViewProjection = inverseViewProjection
         };
+        _pendingViewportRenders.Add(viewportId);
     }
 
     /// <inheritdoc/>
@@ -2260,29 +2274,21 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             return;
         }
 
-        // ── Pass 1: Render viewport content into FBOs ──
-        Silk.NET.Vulkan.Semaphore pass1Semaphore;
+        // Record viewport and swapchain passes in submission order on one graphics command buffer.
+        // A single queue submission avoids an unnecessary CPU/driver transition and the same-queue
+        // semaphore that previously connected these passes.
+        Silk.NET.Vulkan.Semaphore renderFinishedSemaphore;
         {
             var (cmdBuffer, sem) = _frameScheduler.BeginPass();
-            pass1Semaphore = sem;
+            renderFinishedSemaphore = sem;
 
             RecordFboPass(cmdBuffer);
-
-            _frameScheduler.EndPass(cmdBuffer);
-            _frameScheduler.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem, default);
-        }
-
-        // ── Pass 2: Render editor UI + viewport quads to swapchain ──
-        Silk.NET.Vulkan.Semaphore pass2Semaphore;
-        {
-            var (cmdBuffer, sem) = _frameScheduler.BeginPass();
-            pass2Semaphore = sem;
-
             RecordSwapchainPass(cmdBuffer, imageIndex);
 
             _frameScheduler.EndPass(cmdBuffer);
             _frameScheduler.PrepareCurrentFenceForSubmission();
-            _frameScheduler.SubmitPass(cmdBuffer, pass1Semaphore, sem, _frameScheduler.GetCurrentFence());
+            _frameScheduler.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem,
+                _frameScheduler.GetCurrentFence());
         }
 
         // ── Present ──
@@ -2291,7 +2297,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         {
             SType = StructureType.PresentInfoKhr,
             WaitSemaphoreCount = 1,
-            PWaitSemaphores = &pass2Semaphore,
+            PWaitSemaphores = &renderFinishedSemaphore,
             SwapchainCount = 1,
             PSwapchains = &swapchain,
             PImageIndices = &imageIndex
@@ -2317,7 +2323,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         var clearValues = stackalloc ClearValue[2];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
-            if (fbo.IsDirty)
+            if (fbo.IsDirty || !_pendingViewportRenders.Remove(viewportId))
                 continue;
 
             clearValues[0] = new ClearValue
@@ -2665,6 +2671,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             return;
 
         _shutdown = true;
+        _continuousWakeTimer?.Dispose();
+        _continuousWakeTimer = null;
         _logger.LogInformation("Shutting down...");
         _windowsWindowChrome?.Dispose();
         _windowsWindowChrome = null;
@@ -2742,6 +2750,31 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _window.DoEvents();
         _window.DoUpdate();
         _window.DoRender();
+    }
+
+    /// <inheritdoc/>
+    public void RequestFrame()
+    {
+        _window?.ContinueEvents();
+    }
+
+    /// <inheritdoc/>
+    public void SetContinuousRendering(bool enabled)
+    {
+        if (_continuousRendering == enabled)
+            return;
+        _continuousRendering = enabled;
+        if (_eventDrivenIdle)
+        {
+            var interval = TimeSpan.FromSeconds(1d /
+                (_targetFrameRate > 0d ? _targetFrameRate : 60d));
+            _continuousWakeTimer ??= new Timer(
+                static state => ((SilkWindow)state!).RequestFrame(), this,
+                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _continuousWakeTimer.Change(enabled ? TimeSpan.Zero : Timeout.InfiniteTimeSpan,
+                enabled ? interval : Timeout.InfiniteTimeSpan);
+        }
+        RequestFrame();
     }
 
     /// <summary>Renders complete initialized content before revealing a deferred Windows window.</summary>

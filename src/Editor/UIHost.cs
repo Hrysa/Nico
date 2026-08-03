@@ -62,6 +62,7 @@ public sealed class UIHost : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _renderer.SubmitUI(Root.BuildDrawList());
+        _window.RequestFrame();
     }
 
     /// <summary>Measures, arranges, and submits the root at a new logical size.</summary>

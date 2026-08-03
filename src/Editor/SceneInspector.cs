@@ -20,6 +20,9 @@ public sealed class SceneInspector : Panel
     /// <summary>Occurs after an Inspector field changes the selected node.</summary>
     public event Action<Node>? NodeChanged;
 
+    /// <summary>Occurs after the Inspector changes the selected node's displayed name.</summary>
+    public event Action<Node>? NodeNameChanged;
+
     /// <summary>
     /// Creates an empty scene Inspector.
     /// </summary>
@@ -63,6 +66,7 @@ public sealed class SceneInspector : Panel
         {
             node.Name = value;
             NodeChanged?.Invoke(node);
+            NodeNameChanged?.Invoke(node);
         };
         RegisterRefresh(nameField, () => node.Name);
         AddChild(nameField);

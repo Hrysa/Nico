@@ -56,7 +56,9 @@ var options = new WindowOptions
     Title = $"{Path.GetFileName(project.RootPath)} - Game Engine Editor",
     Width = width,
     Height = height,
-    CustomTitleBar = true
+    CustomTitleBar = true,
+    IsEventDriven = true,
+    TargetFrameRate = 120d
 };
 
 logger.LogInformation("Initializing window...");
@@ -166,6 +168,7 @@ selection.SelectionChanged += item =>
 var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, selection.CancelInteraction);
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
+var renderScheduler = new EditorRenderScheduler();
 DetachedToolWindow? detachedSceneWindow = null;
 DetachedToolWindow? detachedGameWindow = null;
 EditorViewportRenderer? detachedSceneRenderer = null;
@@ -174,7 +177,7 @@ DetachedToolWindow? detachedHierarchyWindow = null;
 DetachedToolWindow? detachedFileSystemWindow = null;
 DetachedToolWindow? detachedInspectorWindow = null;
 
-var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
+var uiEventRouter = new UIEventRouter(uiRoot, RefreshUI);
 ContextMenu? hierarchyContextMenu = null;
 ContextMenu? fileContextMenu = null;
 ContextMenu? fileSubmenu = null;
@@ -1108,11 +1111,12 @@ void AttachHierarchy(TreeView tree)
     };
 }
 
-/// <summary>Connects Inspector edits to hierarchy and renderer refreshes.</summary>
+/// <summary>Refreshes hierarchy rows only when an Inspector edit changes their labels.</summary>
 /// <param name="sceneInspector">Inspector to attach.</param>
 void AttachInspector(SceneInspector sceneInspector)
 {
-    sceneInspector.NodeChanged += _ =>
+    sceneInspector.NodeChanged += _ => InvalidateViewports();
+    sceneInspector.NodeNameChanged += _ =>
     {
         hierarchyTree.Refresh();
         RefreshVertices();
@@ -1177,12 +1181,30 @@ window.Resized += (newWidth, newHeight) =>
 
 void RefreshVertices()
 {
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport | RenderInvalidation.GameViewport);
+    RefreshUI();
+}
+
+/// <summary>Submits changed UI state without rebuilding retained viewport content.</summary>
+void RefreshUI()
+{
+    renderScheduler.Invalidate(RenderInvalidation.UI);
     window.SubmitUI(uiRoot.BuildDrawList());
+    renderScheduler.Consume(RenderInvalidation.UI);
+    window.RequestFrame();
     detachedSceneWindow?.UIHost.Refresh();
     detachedGameWindow?.UIHost.Refresh();
     detachedHierarchyWindow?.UIHost.Refresh();
     detachedFileSystemWindow?.UIHost.Refresh();
     detachedInspectorWindow?.UIHost.Refresh();
+}
+
+/// <summary>Marks both scene-derived viewport textures stale and wakes the event loop.</summary>
+void InvalidateViewports()
+{
+    renderScheduler.Invalidate(
+        RenderInvalidation.SceneViewport | RenderInvalidation.GameViewport);
+    window.RequestFrame();
 }
 
 GizmoViewport GetSceneGizmoViewport()
@@ -1331,6 +1353,8 @@ window.MouseMove += pos =>
     }
 
     selection.MovePointer(pos);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
 };
 
 window.MouseDown += button =>
@@ -1371,6 +1395,8 @@ window.MouseDown += button =>
     if (!inSceneViewport) return;
 
     selection.PrimaryDown(lastMousePos, inSceneViewport);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
 };
 
 window.MouseUp += button =>
@@ -1402,6 +1428,8 @@ window.MouseUp += button =>
     }
 
     var consumedByGizmo = selection.PrimaryUp();
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
 
     uiEventRouter.Release(!consumedByGizmo && !dragActive);
     pendingDragItem = null;
@@ -1492,9 +1520,15 @@ window.Update += delta =>
     }
     if (inspector.RefreshValues())
         RefreshVertices();
-    if (detachedSceneWindow is null)
+    var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
+    var gameContinuous = scriptHost is not null;
+    var sceneInvalid = renderScheduler.Consume(RenderInvalidation.SceneViewport);
+    var gameInvalid = renderScheduler.Consume(RenderInvalidation.GameViewport);
+    if (detachedSceneWindow is null
+        && (sceneContinuous || sceneInvalid))
         viewportRenderer.RenderScene(sceneViewport, lastMousePos);
-    if (detachedGameWindow is null)
+    if (detachedGameWindow is null
+        && (gameContinuous || gameInvalid))
         viewportRenderer.RenderGame(gameViewport);
     secondaryWindows.PumpFrames();
     if (detachedSceneWindow is { IsOpen: false })
@@ -1507,6 +1541,9 @@ window.Update += delta =>
         DockFileSystem();
     if (detachedInspectorWindow is { IsOpen: false })
         DockInspector();
+    window.SetContinuousRendering(
+        flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
+            || pendingResizeTimestamp != 0);
 };
 
 logger.LogInformation("Running main loop...");

@@ -11,6 +11,7 @@ public sealed class TextField : Surface
     private string _text = string.Empty;
     private string _placeholder = string.Empty;
     private int _caretIndex;
+    private int _textWindowStart;
 
     /// <summary>Gets or sets the editable text.</summary>
     public string Text
@@ -20,6 +21,7 @@ public sealed class TextField : Surface
         {
             _text = value ?? string.Empty;
             _caretIndex = Math.Clamp(_caretIndex, 0, _text.Length);
+            _textWindowStart = Math.Clamp(_textWindowStart, 0, _caretIndex);
             InvalidateVisual();
         }
     }
@@ -63,17 +65,33 @@ public sealed class TextField : Surface
         BorderColor = IsFocused ? _theme.Accent : _theme.BorderStrong;
         base.Paint(drawList);
         var displayText = _text;
+        var displayCaretIndex = _caretIndex;
         var color = ForegroundColor;
         if (displayText.Length == 0 && !IsFocused)
         {
             displayText = Placeholder;
             color = _theme.TextMuted;
         }
+        else if (IsFocused)
+        {
+            var visibleCharacterCount = Math.Max(1,
+                (int)MathF.Floor(MathF.Max(0f, Width - 20f) / _theme.FontSize));
+            if (_caretIndex < _textWindowStart)
+                _textWindowStart = _caretIndex;
+            else if (_caretIndex > _textWindowStart + visibleCharacterCount)
+                _textWindowStart = _caretIndex - visibleCharacterCount;
+            _textWindowStart = Math.Clamp(_textWindowStart, 0,
+                Math.Max(0, _text.Length - visibleCharacterCount));
+            var displayLength = Math.Min(visibleCharacterCount,
+                _text.Length - _textWindowStart);
+            displayText = _text.Substring(_textWindowStart, displayLength);
+            displayCaretIndex -= _textWindowStart;
+        }
         var textLeft = Left + 10f;
         var textTop = Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f);
         if (IsFocused)
             drawList.AddTextWithCaret(displayText, textLeft, textTop, _theme.FontSize,
-                color, BackgroundColor, _caretIndex);
+                color, BackgroundColor, displayCaretIndex);
         else
             drawList.AddText(displayText, textLeft, textTop,
                 _theme.FontSize, color, BackgroundColor);
@@ -83,6 +101,7 @@ public sealed class TextField : Surface
     protected override void OnFocus()
     {
         _caretIndex = _text.Length;
+        _textWindowStart = 0;
         base.OnFocus();
     }
 

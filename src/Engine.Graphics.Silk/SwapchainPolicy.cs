@@ -25,17 +25,12 @@ internal static class SwapchainPolicy
         return available[0];
     }
 
-    /// <summary>Selects mailbox presentation when available, otherwise guaranteed FIFO.</summary>
+    /// <summary>Selects guaranteed FIFO presentation to pace rendering to the display.</summary>
     /// <param name="available">Available presentation modes.</param>
     /// <returns>The selected presentation mode.</returns>
     internal static PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> available)
     {
-        foreach (var mode in available)
-        {
-            if (mode == PresentModeKHR.MailboxKhr)
-                return mode;
-        }
-
+        ArgumentNullException.ThrowIfNull(available);
         return PresentModeKHR.FifoKhr;
     }
 

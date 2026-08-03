@@ -29,10 +29,13 @@ public class SceneInspectorTests
         };
         var inspector = new SceneInspector(300f, 500f);
         var changeCount = 0;
+        var nameChangeCount = 0;
         inspector.NodeChanged += _ => changeCount++;
+        inspector.NodeNameChanged += _ => nameChangeCount++;
         inspector.Bind(node);
         var name = Assert.IsType<TextField>(FindByName<TextField>(inspector, "NameField"));
         var positionX = Assert.IsType<TextField>(FindByName<TextField>(inspector, "PositionX"));
+        var script = Assert.IsType<TextField>(FindByName<TextField>(inspector, "ScriptTypeField"));
 
         name.SetFocus(true);
         name.InvokeTextInput('2');
@@ -40,11 +43,15 @@ public class SceneInspectorTests
         positionX.SetFocus(true);
         positionX.InvokeKeyDown((int)InputKey.Backspace);
         positionX.InvokeTextInput('5');
+        script.SetFocus(true);
+        script.InvokeTextInput('S');
 
         Assert.Equal("Cube2", node.Name);
         Assert.Equal(5f, node.Position.X);
         Assert.Equal(8f, node.Position.Y);
+        Assert.Equal("S", node.ScriptType);
         Assert.True(changeCount >= 2);
+        Assert.Equal(1, nameChangeCount);
     }
 
     /// <summary>Verifies non-focused fields follow runtime transform changes.</summary>

@@ -1,8 +1,10 @@
 # Roadmap
 
-## Version 0.2.0
+## Version 0.3.0
 
-**Status: Implemented.** Persistent tool headers detach on double-click and dock again when their native window closes. The same `UIHost`/`DetachedToolWindow` boundary applies to future profiler, debugger, and settings tools when those components are introduced.
+### Implemented foundations
+
+Persistent tool headers detach on double-click and dock again when their native window closes. The same `UIHost`/`DetachedToolWindow` boundary applies to future profiler, debugger, and settings tools when those components are introduced.
 
 ### Generation-based UI geometry caching
 
@@ -11,7 +13,7 @@
 - Track the uploaded generation independently for each frame-in-flight UI buffer.
 - Upload a generation at most once to each frame buffer, then reuse its mapped GPU geometry while the UI remains unchanged.
 - Preserve full-frame UI drawing and the existing content/overlay ordering; the optimization targets CPU traversal, tessellation, font vertex generation, and redundant memory copies.
-- Keep component-level dirty rectangles and partial swapchain redraw outside this milestone unless profiling demonstrates a need.
+- Keep component-level dirty rectangles and partial swapchain redraw outside this work unless profiling demonstrates a need.
 
 ### Multi-window editor
 
@@ -30,8 +32,6 @@
 - Upload only newly generated or replaced atlas regions instead of rebuilding or transferring the complete atlas.
 - Keep glyph generation independent of layout and window ownership so multiple windows can share immutable font data safely.
 - Preserve antialiasing quality with oversampled rasterization and filtered atlas sampling.
-
-## Version 0.3.0
 
 ### AI and automation interface
 
