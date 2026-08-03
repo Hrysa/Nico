@@ -2041,9 +2041,20 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             if (command.Type == UIDrawCommandType.Text)
             {
                 var firstVertex = (uint)textVertices.Count;
-                _fontRasterizer.AppendVertices(textVertices, command, framebufferScale);
+                var caretLeft = _fontRasterizer.AppendVertices(
+                    textVertices, command, framebufferScale);
                 AddUiBatch(UiGeometryKind.Text, command.Layer, firstVertex,
                     (uint)textVertices.Count - firstVertex);
+                if (command.CaretIndex >= 0)
+                {
+                    firstVertex = (uint)contentVertices.Count;
+                    AppendUICommandVertices(contentVertices, new UIDrawCommand(
+                        caretLeft, command.Top, caretLeft + 1f,
+                        command.Top + command.FontPixelHeight, command.Color,
+                        Layer: command.Layer));
+                    AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
+                        (uint)contentVertices.Count - firstVertex);
+                }
             }
             else
             {

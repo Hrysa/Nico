@@ -69,13 +69,14 @@ public sealed class TextField : Surface
             displayText = Placeholder;
             color = _theme.TextMuted;
         }
-        else if (IsFocused)
-        {
-            displayText = displayText.Insert(_caretIndex, "|");
-        }
-        drawList.AddText(displayText, Left + 10f,
-            Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f),
-            _theme.FontSize, color, BackgroundColor);
+        var textLeft = Left + 10f;
+        var textTop = Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f);
+        if (IsFocused)
+            drawList.AddTextWithCaret(displayText, textLeft, textTop, _theme.FontSize,
+                color, BackgroundColor, _caretIndex);
+        else
+            drawList.AddText(displayText, textLeft, textTop,
+                _theme.FontSize, color, BackgroundColor);
     }
 
     /// <inheritdoc/>

@@ -72,7 +72,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="vertices">Destination textured vertices.</param>
     /// <param name="command">Text paint command.</param>
     /// <param name="framebufferScale">Physical pixels per logical UI pixel.</param>
-    internal void AppendVertices(List<VertexT> vertices, UIDrawCommand command, float framebufferScale)
+    /// <returns>The logical horizontal position of the requested caret.</returns>
+    internal float AppendVertices(List<VertexT> vertices, UIDrawCommand command, float framebufferScale)
     {
         framebufferScale = MathF.Max(1f, framebufferScale);
         var pixelHeight = Math.Max(1, (int)MathF.Round(command.FontPixelHeight * framebufferScale));
@@ -83,9 +84,13 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         var baseline = command.Top + ascent * layoutScale / framebufferScale;
         var cursor = command.Left;
         var previousCodepoint = -1;
+        var textIndex = 0;
+        var caretLeft = command.Left;
 
         foreach (var rune in command.Text.EnumerateRunes())
         {
+            if (textIndex == command.CaretIndex)
+                caretLeft = cursor;
             var codepoint = rune.Value;
             if (previousCodepoint >= 0)
                 cursor += stbtt_GetCodepointKernAdvance(_font, previousCodepoint, codepoint)
@@ -102,7 +107,11 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
             }
             cursor += glyph.Advance / framebufferScale;
             previousCodepoint = codepoint;
+            textIndex += rune.Utf16SequenceLength;
         }
+        if (textIndex == command.CaretIndex)
+            caretLeft = cursor;
+        return caretLeft;
     }
 
     /// <summary>Releases unmanaged font data.</summary>

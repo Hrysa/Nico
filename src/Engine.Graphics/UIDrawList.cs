@@ -36,6 +36,7 @@ public enum UIDrawCommandType
 /// <param name="FontPixelHeight">Requested font height in pixels.</param>
 /// <param name="BackgroundColor">Known color behind anti-aliased text.</param>
 /// <param name="Layer">Composition layer relative to viewport textures.</param>
+/// <param name="CaretIndex">UTF-16 text index at which to draw a caret, or -1 for none.</param>
 public readonly record struct UIDrawCommand(
     float Left,
     float Top,
@@ -46,7 +47,8 @@ public readonly record struct UIDrawCommand(
     string Text = "",
     float FontPixelHeight = 0f,
     Color BackgroundColor = default,
-    UIDrawLayer Layer = UIDrawLayer.Content);
+    UIDrawLayer Layer = UIDrawLayer.Content,
+    int CaretIndex = -1);
 
 /// <summary>
 /// Collects semantic UI paint commands without exposing GPU vertex formats.
@@ -169,5 +171,42 @@ public sealed class UIDrawList
             fontSize,
             backgroundColor,
             CurrentLayer));
+    }
+
+    /// <summary>Adds editable TrueType text with a separately rendered caret.</summary>
+    /// <param name="text">Text to draw.</param>
+    /// <param name="left">Left edge.</param>
+    /// <param name="top">Top edge.</param>
+    /// <param name="fontSize">Font height in logical pixels.</param>
+    /// <param name="color">Text and caret color.</param>
+    /// <param name="backgroundColor">Color beneath the text.</param>
+    /// <param name="caretIndex">UTF-16 text index at which to draw the caret.</param>
+    public void AddTextWithCaret(
+        string text,
+        float left,
+        float top,
+        float fontSize,
+        Color color,
+        Color backgroundColor,
+        int caretIndex)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (fontSize <= 0f)
+            throw new ArgumentOutOfRangeException(nameof(fontSize));
+        if (caretIndex < 0 || caretIndex > text.Length)
+            throw new ArgumentOutOfRangeException(nameof(caretIndex));
+
+        _commands.Add(new UIDrawCommand(
+            left,
+            top,
+            left,
+            top,
+            color,
+            UIDrawCommandType.Text,
+            text,
+            fontSize,
+            backgroundColor,
+            CurrentLayer,
+            caretIndex));
     }
 }

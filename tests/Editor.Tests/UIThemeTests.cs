@@ -270,8 +270,12 @@ public class UIThemeTests
 
         Assert.True(field.IsFocused);
         Assert.Equal("A", field.Text);
-        Assert.Contains(field.BuildDrawList().Commands,
-            command => command.Type == UIDrawCommandType.Text && command.Text == "A|");
+        var commands = field.BuildDrawList().Commands;
+        Assert.Contains(commands,
+            command => command.Type == UIDrawCommandType.Text
+                && command.Text == "A" && command.CaretIndex == 1);
+        Assert.DoesNotContain(commands,
+            command => command.Type == UIDrawCommandType.Text && command.Text.Contains('|'));
     }
 
     /// <summary>Verifies the editor shell prioritizes Scene while retaining hierarchy, files, Game, and Inspector docks.</summary>
