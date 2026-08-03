@@ -65,14 +65,13 @@ logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
 var uiRoot = editorView.Root;
 var overlay = editorView.Overlay;
-window.SetUI(uiRoot.BuildDrawList());
+window.SubmitUI(uiRoot.BuildDrawList());
 window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
-window.CreateVertexBuffer();
 
 // ── Scene viewport: PerspectiveCamera for 3D scene ────────────
 var sceneViewport = editorView.SceneViewport;
-var sceneViewportId = window.RegisterViewport(sceneViewport.Width, sceneViewport.Height);
-sceneViewport.ViewportId = sceneViewportId;
+var sceneViewportId = window.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
+sceneViewport.RenderView = sceneViewportId;
 window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
 window.SetViewportClearColor(sceneViewportId, 0.0f, 0.0f, 0.0f);
 
@@ -143,8 +142,8 @@ var isPlaying = false;
 
 // ── Game viewport: scene rendered through its GameCamera ─────
 var gameViewport = editorView.GameViewport;
-var gameViewportId = window.RegisterViewport(gameViewport.Width, gameViewport.Height);
-gameViewport.ViewportId = gameViewportId;
+var gameViewportId = window.CreateRenderView(gameViewport.Width, gameViewport.Height);
+gameViewport.RenderView = gameViewportId;
 gameViewport.Camera = gameCamera;
 window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
 window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
@@ -162,7 +161,7 @@ selection.SelectionChanged += item =>
     synchronizingSelection = false;
 };
 var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, selection.CancelInteraction);
-var viewportRenderer = new EditorViewportRenderer(
+using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
 
 var uiEventRouter = new UIEventRouter(uiRoot, RefreshVertices);
@@ -902,14 +901,14 @@ void ResizeEditor(int newWidth, int newHeight)
     window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
     window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
     window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
-    window.UpdateUI(uiRoot.BuildDrawList());
+    window.SubmitUI(uiRoot.BuildDrawList());
 }
 
 /// <summary>Reallocates viewport FBOs once a live native resize has settled.</summary>
 void ResizeViewportTargets()
 {
-    window.ResizeViewport(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
-    window.ResizeViewport(gameViewportId, gameViewport.Width, gameViewport.Height);
+    window.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+    window.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
 }
 
 var pendingResizeWidth = 0;
@@ -924,7 +923,7 @@ window.Resized += (newWidth, newHeight) =>
 
 void RefreshVertices()
 {
-    window.UpdateUI(uiRoot.BuildDrawList());
+    window.SubmitUI(uiRoot.BuildDrawList());
 }
 
 GizmoViewport GetSceneGizmoViewport()
@@ -1108,7 +1107,7 @@ window.MouseDown += button =>
     uiEventRouter.Press();
 
     // Must be in scene viewport area
-    bool inSceneViewport = (uiEventRouter.HoveredElement is ViewportPanel vp && vp.ViewportId == sceneViewportId)
+    bool inSceneViewport = (uiEventRouter.HoveredElement is ViewportPanel vp && vp.RenderView == sceneViewportId)
                         || (uiEventRouter.HoveredElement == null && IsInSceneViewport(lastMousePos));
     if (!inSceneViewport) return;
 

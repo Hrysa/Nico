@@ -21,6 +21,14 @@
 - Keep temporary workflows such as Open Scene as in-window modal overlays.
 - Avoid creating a separate engine or Vulkan device for each tool window; share queues, pipelines, fonts, and immutable GPU assets where valid.
 
+### Dynamic glyph generation and runtime cache
+
+- Generate glyphs on demand for the codepoints, font faces, sizes, weights, and DPI scales actually requested by visible UI.
+- Cache rasterized glyph metrics and atlas placements so unchanged text reuses existing CPU and GPU resources.
+- Upload only newly generated or replaced atlas regions instead of rebuilding or transferring the complete atlas.
+- Keep glyph generation independent of layout and window ownership so multiple windows can share immutable font data safely.
+- Preserve antialiasing quality with oversampled rasterization and filtered atlas sampling.
+
 ## Following Version
 
 ### AI and automation interface
@@ -37,3 +45,11 @@
 - Add an MCP adapter as a thin schema-driven layer over the local command API for AI clients.
 - Publish scene, selection, build, and play-state events for interactive clients and progress reporting.
 - Restrict all asset and filesystem operations to the opened project root; do not expose unrestricted filesystem access or arbitrary command execution.
+
+### Bounded glyph cache and font fallback
+
+- Add bounded atlas pages with usage tracking and fence-safe glyph eviction so long editor sessions cannot exhaust a fixed atlas.
+- Persist reusable glyph-cache pages and metadata between editor sessions when the font source and rasterization settings still match.
+- Support fallback font chains and dynamically generated Unicode glyphs without baking every supported codepoint at startup.
+- Share compatible glyph-cache pages across native windows while keeping per-window descriptors and synchronization explicit.
+- Add cache hit-rate, atlas occupancy, generation, upload, and eviction diagnostics for profiling.

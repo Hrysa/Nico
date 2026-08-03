@@ -15,9 +15,20 @@ public sealed class TreeView : Panel
     private int _scrollRow;
     private readonly UITheme _theme;
     private Vector2 _arrangedSize;
+    private float _rowHeight;
 
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
-    public float RowHeight { get; set; }
+    public float RowHeight
+    {
+        get => _rowHeight;
+        set
+        {
+            if (_rowHeight == value)
+                return;
+            _rowHeight = value;
+            RebuildRows();
+        }
+    }
 
     /// <summary>Gets the selected node.</summary>
     public Node? SelectedItem => _selectedItem;

@@ -16,8 +16,10 @@ namespace Engine.Graphics;
 public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 {
     private const uint MaxFramesInFlight = 2;
+    private static int _nextRendererId;
 
     private readonly ILogger _logger;
+    private readonly uint _rendererId;
     private bool _shutdown;
     private Silk.NET.Windowing.IWindow? _window;
     private IInputContext? _input;
@@ -45,6 +47,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private bool _customTitleBar;
     private int _requestedWidth;
     private int _requestedHeight;
+    private int _pendingInitialLogicalWidth;
+    private int _pendingInitialLogicalHeight;
     private long _lastLiveResizeFrameTimestamp;
     private bool _renderingFrame;
 
@@ -58,28 +62,37 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     // New: Vertex buffer
     private Vertex[] _vertices = [];
+    private VertexT[] _textVertices = [];
+    private readonly List<UiBatch> _uiBatches = [];
     private uint _vertexCount;
-    private uint _contentUiVertexCount;
-    private uint _overlayUiFirstVertex;
-    private uint _overlayUiVertexCount;
+    private ulong _uiGeneration = 1;
+    private readonly ulong[] _uploadedUiGenerations = new ulong[MaxFramesInFlight];
     private PushConstants _pushConstants;
     private FrameVertexBuffers? _uiBuffers;
+    private FrameVertexBuffers? _textBuffers;
+    private FontAtlasTexture? _fontAtlas;
+    private readonly ulong[] _uploadedTextGenerations = new ulong[MaxFramesInFlight];
+    private readonly Vertex[][] _uploadedUiVertices = [[], []];
+    private readonly VertexT[][] _uploadedTextVertices = [[], []];
 
     // Viewport FBO management
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
     private readonly Dictionary<uint, FrameVertexBuffers> _viewportQuadBuffers = new();
+    private PersistentVertexArena? _persistentVertices;
+    private FrameTransientArena? _transientArena;
+    private readonly List<PersistentVertexArena.Allocation>[] _retiredMeshAllocations = [[], []];
+    private uint _nextMeshHandle = 1;
     private readonly Dictionary<uint, VertexT[]> _viewportQuadVertices = new();
-    private readonly Dictionary<uint, List<(Vertex[] vertices, PushConstants pushConstants)>> _pendingViewportDraws = new();
+    private readonly Dictionary<uint, ulong> _viewportQuadGenerations = new();
+    private readonly Dictionary<uint, ulong[]> _uploadedViewportQuadGenerations = new();
+    private readonly Dictionary<uint, VertexT[][]> _uploadedViewportQuadVertices = new();
+    private readonly Dictionary<uint, List<RenderCommand>> _pendingViewportDraws = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private uint _nextViewportId = 1;
     private RenderPass _fboRenderPass;
 
-    // Persistent buffer for viewport draws (reused each frame)
-    private FrameVertexBuffers? _viewportDrawBuffers;
-
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
-    private FrameVertexBuffers? _overlayBuffers;
     private uint _activeFrameIndex;
 
     public bool IsRunning => _window != null && !_window.IsClosing;
@@ -129,6 +142,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public SilkWindow(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<SilkWindow>();
+        _rendererId = checked((uint)Interlocked.Increment(ref _nextRendererId));
     }
 
     public void Initialize(WindowOptions options)
@@ -173,10 +187,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     }
 
     /// <inheritdoc/>
-    public void SetUI(UIDrawList drawList)
+    public void SubmitUI(UIDrawList drawList)
     {
         _vertices = BuildUIVertices(drawList);
         _vertexCount = (uint)_vertices.Length;
+        _uiGeneration++;
+        _uiBuffers ??= new FrameVertexBuffers(
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Length),
+            "UI", FindMemoryType, _logger);
+        _textBuffers ??= new FrameVertexBuffers(
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_textVertices.Length),
+            "UI text", FindMemoryType, _logger);
     }
 
     public void SetPushConstants(PushConstants pushConstants)
@@ -219,10 +240,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         CreateLogicalDevice();
         _pipelines = new PipelineResources(_vk!, _device);
         _frameScheduler = new FrameScheduler(_vk!, _device, _graphicsQueue, FindQueueFamilies(_physicalDevice).GraphicsFamily!.Value);
-        _viewportDrawBuffers = new FrameVertexBuffers(_vk, _device, MaxFramesInFlight, 1024,
-            "viewport draw", FindMemoryType, _logger);
-        _overlayBuffers = new FrameVertexBuffers(_vk, _device, MaxFramesInFlight, 256,
-            "overlay", FindMemoryType, _logger);
+        _persistentVertices = new PersistentVertexArena(_vk, _device, FindMemoryType, _logger);
+        _transientArena = new FrameTransientArena(
+            _vk, _device, MaxFramesInFlight, FindMemoryType, _logger);
         CreateSwapchain();
         CreateFboRenderPass();
         CreateRenderPass();
@@ -232,6 +252,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         CreateFramebuffers();
         CreateSyncObjects();
         CreateTexturePipeline();
+        _fontAtlas = new FontAtlasTexture(_vk, _device, _fontRasterizer, FindMemoryType,
+            _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
 
         _logger.LogInformation("Vulkan initialization complete");
     }
@@ -251,10 +273,22 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Math.Max(1, (int)MathF.Round(_requestedWidth * _uiFramebufferScale)),
             Math.Max(1, (int)MathF.Round(_requestedHeight * _uiFramebufferScale)));
         _windowsWindowChrome?.EnsureVisible();
+        var framebufferSize = _window.FramebufferSize;
+        _pendingInitialLogicalWidth = Math.Max(1,
+            (int)MathF.Round(framebufferSize.X / _uiFramebufferScale));
+        _pendingInitialLogicalHeight = Math.Max(1,
+            (int)MathF.Round(framebufferSize.Y / _uiFramebufferScale));
     }
 
     private void OnUpdate(double delta)
     {
+        if (_pendingInitialLogicalWidth > 0 && _pendingInitialLogicalHeight > 0)
+        {
+            Resized?.Invoke(_pendingInitialLogicalWidth, _pendingInitialLogicalHeight);
+            _pendingInitialLogicalWidth = 0;
+            _pendingInitialLogicalHeight = 0;
+        }
+
         Update?.Invoke(delta);
     }
 
@@ -1500,18 +1534,18 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             throw new Exception($"Failed to create texture descriptor set layout: {result}");
 
         // Create descriptor pool for max viewports
-        const uint maxViewports = 16;
+        const uint maxTextureSets = 32;
         var poolSize = new DescriptorPoolSize
         {
             Type = DescriptorType.CombinedImageSampler,
-            DescriptorCount = maxViewports
+            DescriptorCount = maxTextureSets
         };
         var poolInfo = new DescriptorPoolCreateInfo
         {
             SType = StructureType.DescriptorPoolCreateInfo,
             PoolSizeCount = 1,
             PPoolSizes = &poolSize,
-            MaxSets = maxViewports
+            MaxSets = maxTextureSets
         };
         result = _vk.CreateDescriptorPool(_device, &poolInfo, null, out _pipelines.TextureDescriptorPool);
         if (result != Result.Success)
@@ -1647,7 +1681,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 var colorBlendAttachment = new PipelineColorBlendAttachmentState
                 {
                     ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
-                    BlendEnable = new Bool32(false)
+                    BlendEnable = new Bool32(true),
+                    SrcColorBlendFactor = BlendFactor.SrcAlpha,
+                    DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                    ColorBlendOp = BlendOp.Add,
+                    SrcAlphaBlendFactor = BlendFactor.One,
+                    DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                    AlphaBlendOp = BlendOp.Add
                 };
 
                 var colorBlending = new PipelineColorBlendStateCreateInfo
@@ -1717,7 +1757,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     // ── Viewport FBO Management ────────────────────────────────
 
     /// <inheritdoc/>
-    public uint RegisterViewport(float width, float height)
+    public RenderViewHandle CreateRenderView(float width, float height)
     {
         var id = _nextViewportId++;
         var fbo = new ViewportFbo(id, (uint)width, (uint)height);
@@ -1727,12 +1767,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
         _viewportFbos[id] = fbo;
         _logger.LogInformation("Viewport {Id} registered ({Width}x{Height})", id, (uint)width, (uint)height);
-        return id;
+        return new RenderViewHandle(CreateOwnedHandle(id));
     }
 
     /// <inheritdoc/>
-    public void UnregisterViewport(uint viewportId)
+    public void DestroyRenderView(RenderViewHandle view)
     {
+        var viewportId = GetLocalId(view);
         _vk!.DeviceWaitIdle(_device);
 
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
@@ -1747,6 +1788,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _viewportQuadBuffers.Remove(viewportId);
         }
         _viewportQuadVertices.Remove(viewportId);
+        _viewportQuadGenerations.Remove(viewportId);
+        _uploadedViewportQuadGenerations.Remove(viewportId);
+        _uploadedViewportQuadVertices.Remove(viewportId);
 
         _pendingGridDraws.Remove(viewportId);
 
@@ -1754,15 +1798,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     }
 
     /// <inheritdoc/>
-    public void ResizeViewport(uint viewportId, float width, float height)
+    public void ResizeRenderView(RenderViewHandle view, float width, float height)
     {
+        var viewportId = GetLocalId(view);
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
             fbo.Resize((uint)width, (uint)height);
     }
 
     /// <inheritdoc/>
-    public void SetViewportQuadVertices(uint viewportId, VertexT[] vertices)
+    public void SetViewportQuadVertices(RenderViewHandle view, VertexT[] vertices)
     {
+        var viewportId = GetLocalId(view);
         ArgumentNullException.ThrowIfNull(vertices);
         if (!_viewportQuadBuffers.ContainsKey(viewportId))
         {
@@ -1772,37 +1818,73 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         }
 
         _viewportQuadVertices[viewportId] = vertices;
+        _viewportQuadGenerations[viewportId] = _viewportQuadGenerations.GetValueOrDefault(viewportId) + 1;
+        _uploadedViewportQuadGenerations.TryAdd(viewportId, new ulong[MaxFramesInFlight]);
+        _uploadedViewportQuadVertices.TryAdd(viewportId, [[], []]);
     }
 
     /// <inheritdoc/>
-    public ViewportRenderContext CreateRenderContext(uint viewportId)
+    public ViewportRenderContext CreateRenderContext(RenderViewHandle view)
     {
+        var viewportId = GetLocalId(view);
         var fbo = _viewportFbos[viewportId];
         return new ViewportRenderContext
         {
-            ViewportId = viewportId,
+            View = view,
             Width = fbo.Width,
             Height = fbo.Height
         };
     }
 
     /// <inheritdoc/>
-    public void Submit(uint viewportId, RenderQueue renderQueue)
+    public void Submit(RenderViewHandle view, RenderQueue renderQueue)
     {
+        var viewportId = GetLocalId(view);
         ArgumentNullException.ThrowIfNull(renderQueue);
         if (!_viewportFbos.ContainsKey(viewportId))
             throw new ArgumentOutOfRangeException(nameof(viewportId), viewportId, "Viewport is not registered.");
 
         if (!_pendingViewportDraws.ContainsKey(viewportId))
-            _pendingViewportDraws[viewportId] = new List<(Vertex[], PushConstants)>();
+            _pendingViewportDraws[viewportId] = [];
 
         foreach (var command in renderQueue.Commands)
-            _pendingViewportDraws[viewportId].Add((command.Vertices, command.PushConstants));
+        {
+            ValidateOwner(command.Mesh);
+            _pendingViewportDraws[viewportId].Add(command);
+        }
     }
 
     /// <inheritdoc/>
-    public void DrawGroundGrid(uint viewportId, Matrix4x4 view, Matrix4x4 projection)
+    public MeshHandle CreateMesh(MeshDescription description)
     {
+        ArgumentNullException.ThrowIfNull(description);
+        ArgumentNullException.ThrowIfNull(description.Vertices);
+        var handle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
+        _persistentVertices!.Add(handle, description.Vertices);
+        return handle;
+    }
+
+    /// <inheritdoc/>
+    public void UpdateMesh(MeshHandle mesh, MeshUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        ArgumentNullException.ThrowIfNull(update.Vertices);
+        ValidateOwner(mesh);
+        _persistentVertices!.Update(mesh, update);
+    }
+
+    /// <inheritdoc/>
+    public void DestroyMesh(MeshHandle mesh)
+    {
+        ValidateOwner(mesh);
+        var allocation = _persistentVertices!.Remove(mesh);
+        _retiredMeshAllocations[_activeFrameIndex].Add(allocation);
+    }
+
+    /// <inheritdoc/>
+    public void DrawGroundGrid(RenderViewHandle renderView, Matrix4x4 view, Matrix4x4 projection)
+    {
+        var viewportId = GetLocalId(renderView);
         var viewProjection = view * projection;
         if (!_viewportFbos.ContainsKey(viewportId)
             || !Matrix4x4.Invert(viewProjection, out var inverseViewProjection))
@@ -1816,16 +1898,45 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     }
 
     /// <inheritdoc/>
-    public void DrawOverlay(Vertex[] vertices)
+    public void SubmitTransient(TransientGeometry geometry)
     {
-        _overlayVertices = vertices;
+        ArgumentNullException.ThrowIfNull(geometry);
+        ArgumentNullException.ThrowIfNull(geometry.Vertices);
+        _overlayVertices = geometry.Vertices;
     }
 
     /// <inheritdoc/>
-    public void SetViewportClearColor(uint viewportId, float r, float g, float b, float a = 1.0f)
+    public void SetViewportClearColor(RenderViewHandle view, float r, float g, float b, float a = 1.0f)
     {
+        var viewportId = GetLocalId(view);
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
             fbo.ClearColor = new Vector4(r, g, b, a);
+    }
+
+    /// <summary>Combines this renderer's identity with a local resource identifier.</summary>
+    /// <param name="localId">Non-zero renderer-local identifier.</param>
+    /// <returns>Opaque renderer-owned handle value.</returns>
+    private ulong CreateOwnedHandle(uint localId)
+    {
+        return ((ulong)_rendererId << 32) | localId;
+    }
+
+    /// <summary>Validates a render-view owner and extracts its local identifier.</summary>
+    /// <param name="view">Render view handle to validate.</param>
+    /// <returns>Renderer-local view identifier.</returns>
+    private uint GetLocalId(RenderViewHandle view)
+    {
+        if (!view.IsValid || (uint)(view.Value >> 32) != _rendererId)
+            throw new ArgumentException("Render view belongs to a different renderer.", nameof(view));
+        return (uint)view.Value;
+    }
+
+    /// <summary>Ensures a mesh handle belongs to this renderer.</summary>
+    /// <param name="mesh">Mesh handle to validate.</param>
+    private void ValidateOwner(MeshHandle mesh)
+    {
+        if (!mesh.IsValid || (uint)(mesh.Value >> 32) != _rendererId)
+            throw new ArgumentException("Mesh belongs to a different renderer.", nameof(mesh));
     }
 
     private void RecreateDirtyFbos()
@@ -1847,22 +1958,6 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         }
     }
 
-    // ── Old method removed — now per-viewport via SetViewportQuadVertices ──
-
-    public void CreateVertexBuffer()
-    {
-        _uiBuffers ??= new FrameVertexBuffers(
-            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Length),
-            "UI", FindMemoryType, _logger);
-    }
-
-    /// <inheritdoc/>
-    public void UpdateUI(UIDrawList drawList)
-    {
-        _vertices = BuildUIVertices(drawList);
-        _vertexCount = (uint)_vertices.Length;
-    }
-
     /// <summary>Translates semantic UI rectangles into backend triangle vertices.</summary>
     /// <param name="drawList">UI draw list.</param>
     /// <returns>Colored triangle vertices.</returns>
@@ -1871,34 +1966,34 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         ArgumentNullException.ThrowIfNull(drawList);
         var framebufferScale = GetFramebufferScale();
         var contentVertices = new List<Vertex>(drawList.Commands.Count * 6);
-        var overlayVertices = new List<Vertex>();
+        var textVertices = new List<VertexT>();
+        _uiBatches.Clear();
         foreach (var command in drawList.Commands)
         {
-            var target = command.Layer == UIDrawLayer.Overlay ? overlayVertices : contentVertices;
-            AppendUICommandVertices(target, command, framebufferScale);
+            if (command.Type == UIDrawCommandType.Text)
+            {
+                var firstVertex = (uint)textVertices.Count;
+                _fontRasterizer.AppendVertices(textVertices, command, framebufferScale);
+                AddUiBatch(UiGeometryKind.Text, command.Layer, firstVertex,
+                    (uint)textVertices.Count - firstVertex);
+            }
+            else
+            {
+                var firstVertex = (uint)contentVertices.Count;
+                AppendUICommandVertices(contentVertices, command);
+                AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
+                    (uint)contentVertices.Count - firstVertex);
+            }
         }
-        _contentUiVertexCount = (uint)contentVertices.Count;
-        _overlayUiFirstVertex = _contentUiVertexCount;
-        _overlayUiVertexCount = (uint)overlayVertices.Count;
-        contentVertices.AddRange(overlayVertices);
+        _textVertices = textVertices.ToArray();
         return contentVertices.ToArray();
     }
 
     /// <summary>Translates one semantic UI command into triangle vertices.</summary>
     /// <param name="vertices">Destination vertex collection.</param>
     /// <param name="command">Semantic UI command.</param>
-    /// <param name="framebufferScale">Physical framebuffer scale used for font rasterization.</param>
-    private void AppendUICommandVertices(
-        List<Vertex> vertices,
-        UIDrawCommand command,
-        float framebufferScale)
+    private static void AppendUICommandVertices(List<Vertex> vertices, UIDrawCommand command)
     {
-        if (command.Type == UIDrawCommandType.Text)
-        {
-            _fontRasterizer.AppendVertices(vertices, command, framebufferScale);
-            return;
-        }
-
         if (command.Type == UIDrawCommandType.Ellipse)
         {
             AppendEllipseVertices(vertices, command);
@@ -1911,6 +2006,32 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
         vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), command.Color));
         vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+    }
+
+    /// <summary>Adds or extends one ordered UI geometry batch.</summary>
+    /// <param name="kind">Vertex/pipeline kind.</param>
+    /// <param name="layer">UI composition layer.</param>
+    /// <param name="firstVertex">First vertex in the kind-specific buffer.</param>
+    /// <param name="vertexCount">Number of vertices added.</param>
+    private void AddUiBatch(
+        UiGeometryKind kind,
+        UIDrawLayer layer,
+        uint firstVertex,
+        uint vertexCount)
+    {
+        if (vertexCount == 0)
+            return;
+        if (_uiBatches.Count > 0)
+        {
+            var previous = _uiBatches[^1];
+            if (previous.Kind == kind && previous.Layer == layer
+                && previous.FirstVertex + previous.VertexCount == firstVertex)
+            {
+                _uiBatches[^1] = previous with { VertexCount = previous.VertexCount + vertexCount };
+                return;
+            }
+        }
+        _uiBatches.Add(new UiBatch(kind, layer, firstVertex, vertexCount));
     }
 
     /// <summary>Tessellates one filled UI ellipse into triangles.</summary>
@@ -2042,6 +2163,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         // ── Begin frame (waits for previous frame's fence) ──
         var frameIndex = _frameScheduler!.BeginFrame();
         _activeFrameIndex = frameIndex;
+        _transientArena!.Reset(frameIndex);
+        foreach (var allocation in _retiredMeshAllocations[frameIndex])
+            _persistentVertices!.Release(allocation);
+        _retiredMeshAllocations[frameIndex].Clear();
 
         // ── Acquire swapchain image ──
         uint imageIndex = 0;
@@ -2105,29 +2230,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void RecordFboPass(CommandBuffer commandBuffer)
     {
+        _persistentVertices!.RecordPendingUploads(commandBuffer, _transientArena!, _activeFrameIndex);
         // ═══════════════════════════════════════════════════════════════
         // Render each viewport's content into its own FBO
         // ═══════════════════════════════════════════════════════════════
 
-        // First pass: count total vertices across all viewports
-        uint totalVertices = 0;
-        foreach (var (viewportId, fbo) in _viewportFbos)
-        {
-            if (fbo.IsDirty)
-                continue;
-
-            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws))
-            {
-                foreach (var (verts, _) in draws)
-                    totalVertices += (uint)verts.Length;
-            }
-        }
-
-        if (totalVertices > 0)
-            _viewportDrawBuffers!.Ensure(_activeFrameIndex, totalVertices, Vertex.Stride);
-
-        // Second pass: record draw commands into the shared buffer
-        uint vertexOffset = 0;
         var clearValues = stackalloc ClearValue[2];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
@@ -2196,26 +2303,19 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             {
                 _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.ViewportPipeline);
 
-                foreach (var (verts, push) in draws)
+                foreach (var draw in draws)
                 {
-                    var vertsSize = (nuint)(verts.Length * Vertex.Stride);
-                    fixed (Vertex* pVerts = verts)
-                    {
-                        var dst = (byte*)_viewportDrawBuffers!.GetMappedPointer(_activeFrameIndex)
-                            + (vertexOffset * Vertex.Stride);
-                        System.Buffer.MemoryCopy(pVerts, dst, vertsSize, vertsSize);
-                    }
-
-                    var vb = _viewportDrawBuffers!.GetBuffer(_activeFrameIndex);
-                    ulong bufOffset = vertexOffset * Vertex.Stride;
+                    var binding = _persistentVertices!.GetBinding(draw.Mesh);
+                    if (binding.VertexCount == 0)
+                        continue;
+                    var vb = binding.Buffer;
+                    var bufOffset = binding.ByteOffset;
                     _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
 
-                    var pc = push;
+                    var pc = draw.PushConstants;
                     _vk.CmdPushConstants(commandBuffer, _pipelines.ViewportLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
 
-                    _vk.CmdDraw(commandBuffer, (uint)verts.Length, 1, 0, 0);
-
-                    vertexOffset += (uint)verts.Length;
+                    _vk.CmdDraw(commandBuffer, binding.VertexCount, 1, 0, 0);
                 }
 
                 draws.Clear();
@@ -2227,6 +2327,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void RecordSwapchainPass(CommandBuffer commandBuffer, uint imageIndex)
     {
+        _fontAtlas!.RecordPendingUpload(commandBuffer, _transientArena!, _activeFrameIndex);
         // ═══════════════════════════════════════════════════════════════
         // Render editor UI + viewport quads to swapchain
         // ═══════════════════════════════════════════════════════════════
@@ -2269,28 +2370,32 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         Silk.NET.Vulkan.Buffer uiFrameBuffer = default;
         if (_vertexCount > 0)
         {
-            _uiBuffers!.Ensure(_activeFrameIndex, _vertexCount, Vertex.Stride);
-            var uiSize = (nuint)(_vertices.Length * Vertex.Stride);
-            fixed (Vertex* source = _vertices)
+            var reallocated = _uiBuffers!.Ensure(_activeFrameIndex, _vertexCount, Vertex.Stride);
+            if (_uploadedUiGenerations[_activeFrameIndex] != _uiGeneration)
             {
-                System.Buffer.MemoryCopy(source,
-                    _uiBuffers.GetMappedPointer(_activeFrameIndex), uiSize, uiSize);
+                UploadChangedRanges(_vertices, ref _uploadedUiVertices[_activeFrameIndex],
+                    _uiBuffers.GetMappedPointer(_activeFrameIndex), Vertex.Stride, reallocated);
+                _uploadedUiGenerations[_activeFrameIndex] = _uiGeneration;
             }
             uiFrameBuffer = _uiBuffers.GetBuffer(_activeFrameIndex);
+        }
+        Silk.NET.Vulkan.Buffer textFrameBuffer = default;
+        if (_textVertices.Length > 0)
+        {
+            var reallocated = _textBuffers!.Ensure(
+                _activeFrameIndex, (uint)_textVertices.Length, VertexT.Stride);
+            if (_uploadedTextGenerations[_activeFrameIndex] != _uiGeneration)
+            {
+                UploadChangedRanges(_textVertices, ref _uploadedTextVertices[_activeFrameIndex],
+                    _textBuffers.GetMappedPointer(_activeFrameIndex), VertexT.Stride, reallocated);
+                _uploadedTextGenerations[_activeFrameIndex] = _uiGeneration;
+            }
+            textFrameBuffer = _textBuffers.GetBuffer(_activeFrameIndex);
         }
 
         // Draw persistent editor chrome below viewport textures.
         var pushConstants = _pushConstants;
-        if (_contentUiVertexCount > 0)
-        {
-            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
-
-            ulong offset = 0;
-            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &uiFrameBuffer, &offset);
-            _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
-                0, (uint)sizeof(PushConstants), &pushConstants);
-            _vk.CmdDraw(commandBuffer, _contentUiVertexCount, 1, 0, 0);
-        }
+        DrawUiBatches(commandBuffer, UIDrawLayer.Content, uiFrameBuffer, textFrameBuffer, pushConstants);
 
         // Draw FBO textures for each viewport
         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.TexturePipeline);
@@ -2304,12 +2409,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 && _viewportQuadVertices.TryGetValue(viewportId, out var quadVertices))
             {
                 var vertexCount = (uint)quadVertices.Length;
-                quadBuffers.Ensure(_activeFrameIndex, vertexCount, VertexT.Stride);
-                var quadSize = (nuint)(quadVertices.Length * VertexT.Stride);
-                fixed (VertexT* source = quadVertices)
+                var reallocated = quadBuffers.Ensure(_activeFrameIndex, vertexCount, VertexT.Stride);
+                var generation = _viewportQuadGenerations[viewportId];
+                var uploadedGenerations = _uploadedViewportQuadGenerations[viewportId];
+                if (uploadedGenerations[_activeFrameIndex] != generation)
                 {
-                    System.Buffer.MemoryCopy(source,
-                        quadBuffers.GetMappedPointer(_activeFrameIndex), quadSize, quadSize);
+                    var snapshots = _uploadedViewportQuadVertices[viewportId];
+                    UploadChangedRanges(quadVertices, ref snapshots[_activeFrameIndex],
+                        quadBuffers.GetMappedPointer(_activeFrameIndex), VertexT.Stride, reallocated);
+                    uploadedGenerations[_activeFrameIndex] = generation;
                 }
                 fixed (DescriptorSet* pDescSet = &fbo.DescriptorSet)
                 {
@@ -2331,18 +2439,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         // Draw 2D overlay (gizmo lines, etc.)
         if (_overlayVertices.Length > 0)
         {
-            _overlayBuffers!.Ensure(_activeFrameIndex, (uint)_overlayVertices.Length, Vertex.Stride);
-
             _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
-            var ovSize = (nuint)(_overlayVertices.Length * Vertex.Stride);
+            var ovSize = checked((uint)(_overlayVertices.Length * Vertex.Stride));
+            var overlayAllocation = _transientArena!.Allocate(_activeFrameIndex, ovSize);
             fixed (Vertex* pVerts = _overlayVertices)
             {
-                System.Buffer.MemoryCopy(pVerts, _overlayBuffers.GetMappedPointer(_activeFrameIndex), ovSize, ovSize);
+                System.Buffer.MemoryCopy(pVerts, overlayAllocation.MappedPointer, ovSize, ovSize);
             }
 
-            var ovB = _overlayBuffers.GetBuffer(_activeFrameIndex);
-            ulong ovOffset = 0;
+            var ovB = overlayAllocation.Buffer;
+            var ovOffset = overlayAllocation.ByteOffset;
             _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &ovB, &ovOffset);
 
             _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
@@ -2352,19 +2459,114 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         }
 
         // Draw floating UI last so menus and dialogs cover viewport textures and gizmos.
-        if (_overlayUiVertexCount > 0)
-        {
-            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
-
-            ulong uiOffset = 0;
-            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &uiFrameBuffer, &uiOffset);
-            _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
-                0, (uint)sizeof(PushConstants), &pushConstants);
-            _vk.CmdDraw(commandBuffer, _overlayUiVertexCount, 1, _overlayUiFirstVertex, 0);
-        }
+        DrawUiBatches(commandBuffer, UIDrawLayer.Overlay, uiFrameBuffer, textFrameBuffer, pushConstants);
 
         _vk.CmdEndRenderPass(commandBuffer);
     }
+
+    /// <summary>Draws ordered colored and glyph-atlas batches for one UI layer.</summary>
+    /// <param name="commandBuffer">Recording command buffer.</param>
+    /// <param name="layer">Layer to draw.</param>
+    /// <param name="colorBuffer">Colored UI vertex buffer.</param>
+    /// <param name="textBuffer">Textured glyph vertex buffer.</param>
+    /// <param name="pushConstants">Screen-space transforms.</param>
+    private void DrawUiBatches(
+        CommandBuffer commandBuffer,
+        UIDrawLayer layer,
+        Silk.NET.Vulkan.Buffer colorBuffer,
+        Silk.NET.Vulkan.Buffer textBuffer,
+        PushConstants pushConstants)
+    {
+        foreach (var batch in _uiBatches.Where(batch => batch.Layer == layer))
+        {
+            ulong offset = 0;
+            if (batch.Kind == UiGeometryKind.Color)
+            {
+                _vk!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
+                _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &colorBuffer, &offset);
+                _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
+                    0, (uint)sizeof(PushConstants), &pushConstants);
+            }
+            else
+            {
+                _vk!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.TexturePipeline);
+                var descriptorSet = _fontAtlas!.DescriptorSet;
+                _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                    _pipelines.TextureLayout, 0, 1, &descriptorSet, 0, null);
+                _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &textBuffer, &offset);
+                _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout, ShaderStageFlags.VertexBit,
+                    0, (uint)sizeof(PushConstants), &pushConstants);
+            }
+            _vk.CmdDraw(commandBuffer, batch.VertexCount, 1, batch.FirstVertex, 0);
+        }
+    }
+
+    /// <summary>Copies only changed contiguous vertex ranges into a retained mapped buffer.</summary>
+    /// <typeparam name="T">Unmanaged vertex type.</typeparam>
+    /// <param name="current">Current CPU vertices.</param>
+    /// <param name="uploaded">Snapshot represented by the destination buffer.</param>
+    /// <param name="destination">Mapped destination buffer.</param>
+    /// <param name="stride">Vertex stride in bytes.</param>
+    /// <param name="forceFullUpload">Whether the destination backing allocation changed.</param>
+    private static void UploadChangedRanges<T>(
+        T[] current,
+        ref T[] uploaded,
+        void* destination,
+        uint stride,
+        bool forceFullUpload)
+        where T : unmanaged
+    {
+        fixed (T* source = current)
+        {
+            if (forceFullUpload || uploaded.Length != current.Length)
+            {
+                var byteCount = (nuint)(current.Length * stride);
+                System.Buffer.MemoryCopy(source, destination, byteCount, byteCount);
+            }
+            else
+            {
+                var comparer = EqualityComparer<T>.Default;
+                var index = 0;
+                while (index < current.Length)
+                {
+                    if (comparer.Equals(current[index], uploaded[index]))
+                    {
+                        index++;
+                        continue;
+                    }
+                    var first = index++;
+                    while (index < current.Length && !comparer.Equals(current[index], uploaded[index]))
+                        index++;
+                    var byteCount = (nuint)((index - first) * stride);
+                    var sourceRange = (byte*)source + first * stride;
+                    var destinationRange = (byte*)destination + first * stride;
+                    System.Buffer.MemoryCopy(sourceRange, destinationRange, byteCount, byteCount);
+                }
+            }
+        }
+        uploaded = current.ToArray();
+    }
+
+    /// <summary>Identifies the pipeline and vertex format for a UI batch.</summary>
+    private enum UiGeometryKind
+    {
+        /// <summary>Solid colored geometry.</summary>
+        Color,
+
+        /// <summary>Glyph-atlas textured geometry.</summary>
+        Text
+    }
+
+    /// <summary>Describes one ordered UI draw range.</summary>
+    /// <param name="Kind">Pipeline and vertex format.</param>
+    /// <param name="Layer">Composition layer.</param>
+    /// <param name="FirstVertex">First vertex in the kind-specific buffer.</param>
+    /// <param name="VertexCount">Number of vertices.</param>
+    private readonly record struct UiBatch(
+        UiGeometryKind Kind,
+        UIDrawLayer Layer,
+        uint FirstVertex,
+        uint VertexCount);
 
     public void Run()
     {
@@ -2407,11 +2609,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _viewportQuadVertices.Clear();
 
         // Cleanup persistent viewport draw buffer
-        _viewportDrawBuffers?.Destroy();
-        _overlayBuffers?.Destroy();
+        _persistentVertices?.Destroy();
+        _transientArena?.Destroy();
 
         // Cleanup shared resources
         _uiBuffers?.Destroy();
+        _textBuffers?.Destroy();
+        _fontAtlas?.Destroy();
         _pipelines?.Dispose();
         if (_device.Handle != 0 && _fboRenderPass.Handle != 0)
             _vk.DestroyRenderPass(_device, _fboRenderPass, null);

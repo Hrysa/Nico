@@ -3,9 +3,9 @@ namespace Engine.Graphics;
 /// <summary>
 /// Describes one backend-independent mesh submission.
 /// </summary>
-/// <param name="Vertices">Geometry to render.</param>
+/// <param name="Mesh">Registered geometry to render.</param>
 /// <param name="PushConstants">Object and camera transforms.</param>
-public readonly record struct RenderCommand(Vertex[] Vertices, PushConstants PushConstants);
+public readonly record struct RenderCommand(MeshHandle Mesh, PushConstants PushConstants);
 
 /// <summary>
 /// Collects ordered render commands for one viewport and one frame.
@@ -18,12 +18,13 @@ public sealed class RenderQueue
     public IReadOnlyList<RenderCommand> Commands => _commands;
 
     /// <summary>Adds geometry to the queue.</summary>
-    /// <param name="vertices">Geometry to render.</param>
+    /// <param name="mesh">Registered geometry to render.</param>
     /// <param name="pushConstants">Object and camera transforms.</param>
-    public void Add(Vertex[] vertices, PushConstants pushConstants)
+    public void Add(MeshHandle mesh, PushConstants pushConstants)
     {
-        ArgumentNullException.ThrowIfNull(vertices);
-        _commands.Add(new RenderCommand(vertices, pushConstants));
+        if (!mesh.IsValid)
+            throw new ArgumentException("A valid mesh handle is required.", nameof(mesh));
+        _commands.Add(new RenderCommand(mesh, pushConstants));
     }
 
     /// <summary>Removes all commands so the queue can be reused.</summary>

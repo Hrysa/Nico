@@ -264,6 +264,10 @@ public class UIThemeTests
         Assert.Contains(descendants, child => child.Name == "Inspector");
         Assert.Contains(descendants, child => child.Name == "BottomDock");
         Assert.Contains(descendants, child => child.Name == "SceneToolbar");
+        Assert.Equal(1f, view.TitleBar.Margin.Bottom);
+        Assert.Equal(640f, view.PlayButton.Left + view.PlayButton.Width / 2f);
+        Assert.Equal(view.TitleBar.Top + (view.TitleBar.Height - view.PlayButton.Height) / 2f,
+            view.PlayButton.Top);
     }
 
     /// <summary>Verifies title-bar drag regions and window buttons dispatch separate actions.</summary>
@@ -307,6 +311,43 @@ public class UIThemeTests
         router.Release(invokeClick: true);
 
         Assert.True(closed);
+    }
+
+    /// <summary>Verifies title-bar content uses semantic left, center, and right zones.</summary>
+    [Fact]
+    public void TitleBar_Zones_AlignContentWithoutSemanticNameChecks()
+    {
+        var titleBar = new TitleBar(900f, 30f, style: TitleBarStyle.Windows);
+        var left = new Button(60f, 30f, "Left") { Name = "ArbitraryLeft" };
+        var center = new Button(60f, 30f, "Center") { Name = "ArbitraryCenter" };
+        titleBar.LeftZone.AddChild(left);
+        titleBar.CenterZone.AddChild(center);
+        titleBar.Measure(new(900f, 30f));
+        titleBar.Arrange(new(0f, 0f), new(900f, 30f));
+
+        Assert.Equal(8f, left.Left);
+        Assert.Equal(420f, center.Left);
+        Assert.Contains(titleBar.RightZone.Children,
+            child => child.Name == "WindowClose");
+        var close = Assert.IsType<Button>(titleBar.RightZone.Children.Single(
+            child => child.Name == "WindowClose"));
+        Assert.Equal(titleBar.Right, close.Right);
+        Assert.All(titleBar.RightZone.Children.OfType<Button>(),
+            button => Assert.Equal(0f, button.CornerRadius));
+        Assert.DoesNotContain(titleBar.LeftZone.Children,
+            child => child.Name.StartsWith("Window", StringComparison.Ordinal));
+    }
+
+    /// <summary>Verifies macOS window controls occupy the left title-bar zone.</summary>
+    [Fact]
+    public void TitleBar_MacOS_WindowControlsAreInLeftZone()
+    {
+        var titleBar = new TitleBar(900f, 30f, style: TitleBarStyle.MacOS);
+
+        Assert.Equal(3, titleBar.LeftZone.Children.Count(
+            child => child.Name.StartsWith("Window", StringComparison.Ordinal)));
+        Assert.DoesNotContain(titleBar.RightZone.Children,
+            child => child.Name.StartsWith("Window", StringComparison.Ordinal));
     }
 
     /// <summary>Enumerates all descendants beneath one UI element.</summary>

@@ -25,16 +25,45 @@ public class Label : UIElement
     ];
 
     /// <summary>Gets or sets the displayed text.</summary>
-    public string Text { get; set; }
+    private string _text = string.Empty;
+    private float _fontSize = UITheme.Dark.FontSize;
+    private float _paddingLeft = 4f;
+    private bool _paintBackground;
+
+    /// <summary>Gets or sets the displayed text.</summary>
+    public string Text
+    {
+        get => _text;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (_text == value)
+                return;
+            _text = value;
+            InvalidateMeasure();
+        }
+    }
 
     /// <summary>Gets or sets the font height in logical pixels.</summary>
-    public float FontSize { get; set; } = UITheme.Dark.FontSize;
+    public float FontSize
+    {
+        get => _fontSize;
+        set { if (_fontSize != value) { _fontSize = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the left text inset.</summary>
-    public float PaddingLeft { get; set; } = 4f;
+    public float PaddingLeft
+    {
+        get => _paddingLeft;
+        set { if (_paddingLeft != value) { _paddingLeft = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets whether the label paints its background.</summary>
-    public bool PaintBackground { get; set; }
+    public bool PaintBackground
+    {
+        get => _paintBackground;
+        set { if (_paintBackground != value) { _paintBackground = value; InvalidateVisual(); } }
+    }
 
     /// <summary>
     /// Creates a text label.

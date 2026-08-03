@@ -7,11 +7,22 @@ namespace Engine.UI;
 /// </summary>
 public class Surface : Panel
 {
+    private Color _borderColor;
+    private float _borderThickness = 1f;
+
     /// <summary>Gets or sets the border color.</summary>
-    public Color BorderColor { get; set; }
+    public Color BorderColor
+    {
+        get => _borderColor;
+        set { if (!_borderColor.Equals(value)) { _borderColor = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Gets or sets the border thickness in logical pixels.</summary>
-    public float BorderThickness { get; set; } = 1f;
+    public float BorderThickness
+    {
+        get => _borderThickness;
+        set { if (_borderThickness != value) { _borderThickness = value; InvalidateVisual(); } }
+    }
 
     /// <summary>
     /// Creates a themed surface.

@@ -8,11 +8,22 @@ namespace Engine.UI;
 /// </summary>
 public class StackPanel : Panel
 {
+    private float _spacing;
+    private float _paddingTop;
+
     /// <summary>Gets or sets the space between children.</summary>
-    public float Spacing { get; set; }
+    public float Spacing
+    {
+        get => _spacing;
+        set { if (_spacing != value) { _spacing = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the top content inset.</summary>
-    public float PaddingTop { get; set; }
+    public float PaddingTop
+    {
+        get => _paddingTop;
+        set { if (_paddingTop != value) { _paddingTop = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>
     /// Creates a vertical stack panel.

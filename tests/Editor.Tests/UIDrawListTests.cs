@@ -6,6 +6,42 @@ namespace Editor.Tests;
 
 public class UIDrawListTests
 {
+    /// <summary>Verifies unchanged retained UI reuses its paint snapshot.</summary>
+    [Fact]
+    public void BuildDrawList_UnchangedTree_ReusesSnapshotUntilVisualChanges()
+    {
+        var root = new Panel(Color.Black, 200f, 40f);
+        var label = new Label("Before", 100f, 40f);
+        root.AddChild(label);
+
+        var first = root.BuildDrawList();
+        var unchanged = root.BuildDrawList();
+        label.Text = "After";
+        var changed = root.BuildDrawList();
+
+        Assert.Same(first, unchanged);
+        Assert.NotSame(first, changed);
+        Assert.Contains(changed.Commands, command => command.Text == "After");
+    }
+
+    /// <summary>Verifies a visual change reuses unaffected siblings' cached paint commands.</summary>
+    [Fact]
+    public void BuildDrawList_ChangedChild_DoesNotRepaintSibling()
+    {
+        var root = new Panel(Color.Black, 200f, 40f);
+        var changed = new CountingElement();
+        var sibling = new CountingElement();
+        root.AddChild(changed);
+        root.AddChild(sibling);
+        root.BuildDrawList();
+
+        changed.InvalidateVisual();
+        root.BuildDrawList();
+
+        Assert.Equal(2, changed.PaintCount);
+        Assert.Equal(1, sibling.PaintCount);
+    }
+
     /// <summary>Verifies parent-before-child paint ordering.</summary>
     [Fact]
     public void BuildDrawList_ChildPanel_PaintsAfterParent()
@@ -64,6 +100,20 @@ public class UIDrawListTests
         Assert.Equal("A", command.Text);
         Assert.Equal(14f, command.FontPixelHeight);
         Assert.Equal(Color.Black, command.BackgroundColor);
+    }
+
+    /// <summary>Counts local paint executions for snapshot tests.</summary>
+    private sealed class CountingElement : UIElement
+    {
+        /// <summary>Gets the number of paint executions.</summary>
+        internal int PaintCount { get; private set; }
+
+        /// <inheritdoc/>
+        protected override void Paint(UIDrawList drawList)
+        {
+            PaintCount++;
+            base.Paint(drawList);
+        }
     }
 
 }

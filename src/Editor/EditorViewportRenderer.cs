@@ -7,11 +7,11 @@ namespace Editor;
 /// <summary>
 /// Builds and submits the Scene and Game viewport render queues for each frame.
 /// </summary>
-public sealed class EditorViewportRenderer
+public sealed class EditorViewportRenderer : IDisposable
 {
     private readonly IRenderer _renderer;
-    private readonly uint _sceneViewportId;
-    private readonly uint _gameViewportId;
+    private readonly RenderViewHandle _sceneViewport;
+    private readonly RenderViewHandle _gameViewport;
     private readonly PerspectiveCamera _sceneCamera;
     private ICamera _gameCamera;
     private IReadOnlyList<MeshInstance3D> _sceneObjects;
@@ -20,29 +20,31 @@ public sealed class EditorViewportRenderer
     private readonly OriginAxesMesh _originAxes = new();
     private readonly RenderQueue _sceneQueue = new();
     private readonly RenderQueue _gameQueue = new();
+    private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
+    private bool _disposed;
 
     /// <summary>
     /// Creates the editor viewport renderer.
     /// </summary>
     /// <param name="renderer">Rendering service.</param>
-    /// <param name="sceneViewportId">Scene viewport identifier.</param>
-    /// <param name="gameViewportId">Game viewport identifier.</param>
+    /// <param name="sceneViewport">Scene render view.</param>
+    /// <param name="gameViewport">Game render view.</param>
     /// <param name="sceneCamera">Scene camera.</param>
     /// <param name="gameCamera">Scene-owned camera used by the Game viewport.</param>
     /// <param name="sceneObjects">Objects rendered in the Scene viewport.</param>
     /// <param name="selection">Selection and gizmo controller.</param>
     public EditorViewportRenderer(
         IRenderer renderer,
-        uint sceneViewportId,
-        uint gameViewportId,
+        RenderViewHandle sceneViewport,
+        RenderViewHandle gameViewport,
         PerspectiveCamera sceneCamera,
         ICamera gameCamera,
         IReadOnlyList<MeshInstance3D> sceneObjects,
         SceneSelectionController selection)
     {
         _renderer = renderer;
-        _sceneViewportId = sceneViewportId;
-        _gameViewportId = gameViewportId;
+        _sceneViewport = sceneViewport;
+        _gameViewport = gameViewport;
         _sceneCamera = sceneCamera;
         _gameCamera = gameCamera;
         _sceneObjects = sceneObjects;
@@ -61,6 +63,7 @@ public sealed class EditorViewportRenderer
         ArgumentNullException.ThrowIfNull(gameObjects);
         _gameCamera = gameCamera;
         _gameObjects = gameObjects;
+        ReleaseUnusedMeshes();
     }
 
     /// <summary>Changes the objects rendered and edited in the Scene viewport.</summary>
@@ -69,6 +72,18 @@ public sealed class EditorViewportRenderer
     {
         ArgumentNullException.ThrowIfNull(sceneObjects);
         _sceneObjects = sceneObjects;
+        ReleaseUnusedMeshes();
+    }
+
+    /// <summary>Releases retained renderer resources created by this viewport renderer.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        foreach (var handle in _meshHandles.Values)
+            _renderer.DestroyMesh(handle);
+        _meshHandles.Clear();
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>
@@ -85,7 +100,7 @@ public sealed class EditorViewportRenderer
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
         RenderSceneViewport();
-        _renderer.DrawOverlay(_selection.BuildOverlay());
+        _renderer.SubmitTransient(new TransientGeometry(_selection.BuildOverlay()));
         RenderGameViewport(gameViewport.Width, gameViewport.Height);
     }
 
@@ -94,8 +109,8 @@ public sealed class EditorViewportRenderer
     {
         var view = _sceneCamera.GetViewMatrix();
         var projection = _sceneCamera.GetProjectionMatrix();
-        _renderer.DrawGroundGrid(_sceneViewportId, view, projection);
-        _sceneQueue.Add(_originAxes.Vertices, new PushConstants
+        _renderer.DrawGroundGrid(_sceneViewport, view, projection);
+        _sceneQueue.Add(GetMeshHandle(_originAxes), new PushConstants
         {
             Model = Matrix4x4.Identity,
             View = view,
@@ -105,10 +120,10 @@ public sealed class EditorViewportRenderer
         foreach (var instance in _sceneObjects)
         {
             if (instance.Mesh is { } mesh)
-                _sceneQueue.Add(mesh.Vertices, _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
+                _sceneQueue.Add(GetMeshHandle(mesh), _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
         }
 
-        _renderer.Submit(_sceneViewportId, _sceneQueue);
+        _renderer.Submit(_sceneViewport, _sceneQueue);
     }
 
     /// <summary>Builds and submits the scene through the active Game camera.</summary>
@@ -120,8 +135,35 @@ public sealed class EditorViewportRenderer
         foreach (var instance in _gameObjects)
         {
             if (instance.Mesh is { } mesh)
-                _gameQueue.Add(mesh.Vertices, _gameCamera.GetPushConstants(instance.GetModelMatrix()));
+                _gameQueue.Add(GetMeshHandle(mesh), _gameCamera.GetPushConstants(instance.GetModelMatrix()));
         }
-        _renderer.Submit(_gameViewportId, _gameQueue);
+        _renderer.Submit(_gameViewport, _gameQueue);
+    }
+
+    /// <summary>Gets or creates the retained renderer resource for a mesh.</summary>
+    /// <param name="mesh">Engine mesh resource.</param>
+    /// <returns>Renderer-local mesh handle.</returns>
+    private MeshHandle GetMeshHandle(Mesh mesh)
+    {
+        if (_meshHandles.TryGetValue(mesh, out var handle))
+            return handle;
+        handle = _renderer.CreateMesh(new MeshDescription(mesh.Vertices));
+        _meshHandles.Add(mesh, handle);
+        return handle;
+    }
+
+    /// <summary>Releases meshes no longer referenced by either editor viewport.</summary>
+    private void ReleaseUnusedMeshes()
+    {
+        var retained = _sceneObjects.Concat(_gameObjects)
+            .Select(instance => instance.Mesh)
+            .OfType<Mesh>()
+            .Append(_originAxes)
+            .ToHashSet();
+        foreach (var mesh in _meshHandles.Keys.Where(mesh => !retained.Contains(mesh)).ToArray())
+        {
+            _renderer.DestroyMesh(_meshHandles[mesh]);
+            _meshHandles.Remove(mesh);
+        }
     }
 }

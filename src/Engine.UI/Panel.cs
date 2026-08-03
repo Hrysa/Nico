@@ -7,8 +7,14 @@ namespace Engine.UI;
 /// </summary>
 public class Panel : UIElement
 {
+    private bool _paintBackground = true;
+
     /// <summary>Gets or sets whether the panel emits a background rectangle.</summary>
-    public bool PaintBackground { get; set; } = true;
+    public bool PaintBackground
+    {
+        get => _paintBackground;
+        set { if (_paintBackground != value) { _paintBackground = value; InvalidateVisual(); } }
+    }
 
     /// <summary>
     /// Creates a new Panel at the specified position and size.

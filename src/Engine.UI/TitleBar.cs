@@ -21,6 +21,16 @@ public enum TitleBarStyle
 public sealed class TitleBar : Surface
 {
     private readonly TitleBarStyle _resolvedStyle;
+
+    /// <summary>Gets the left-aligned content zone.</summary>
+    public Panel LeftZone { get; }
+
+    /// <summary>Gets the horizontally centered content zone.</summary>
+    public Panel CenterZone { get; }
+
+    /// <summary>Gets the right-aligned content zone.</summary>
+    public Panel RightZone { get; }
+
     /// <summary>Occurs when pointer dragging begins in an unoccupied title-bar region.</summary>
     public event Action? DragStarted;
 
@@ -55,6 +65,13 @@ public sealed class TitleBar : Surface
         _resolvedStyle = style == TitleBarStyle.Auto
             ? OperatingSystem.IsMacOS() ? TitleBarStyle.MacOS : TitleBarStyle.Windows
             : style;
+        LeftZone = new TitleBarZone(HorizontalAlignment.Left) { Name = "TitleBarLeft" };
+        CenterZone = new TitleBarZone(HorizontalAlignment.Center) { Name = "TitleBarCenter" };
+        RightZone = new TitleBarZone(HorizontalAlignment.Right) { Name = "TitleBarRight" };
+        AddChild(LeftZone);
+        AddChild(CenterZone);
+        AddChild(RightZone);
+
         UIElement minimize;
         UIElement maximize;
         UIElement close;
@@ -70,11 +87,12 @@ public sealed class TitleBar : Surface
         else
         {
             minimize = new Button(36f, height, "−", resolvedTheme)
-                { Name = "WindowMinimize", PaddingLeft = 13f };
+                { Name = "WindowMinimize", PaddingLeft = 13f, CornerRadius = 0f };
             maximize = new Button(36f, height, "□", resolvedTheme)
-                { Name = "WindowMaximize", PaddingLeft = 12f };
+                { Name = "WindowMaximize", PaddingLeft = 12f, CornerRadius = 0f };
             close = new Button(36f, height, "×", resolvedTheme)
-                { Name = "WindowClose", PaddingLeft = 12f, ForegroundColor = Color.FromSrgb(0xEC, 0x62, 0x5C) };
+                { Name = "WindowClose", PaddingLeft = 12f, CornerRadius = 0f,
+                    ForegroundColor = Color.FromSrgb(0xEC, 0x62, 0x5C) };
         }
         minimize.Click += () => MinimizeRequested?.Invoke();
         maximize.Click += () =>
@@ -85,9 +103,19 @@ public sealed class TitleBar : Surface
                 MaximizeRequested?.Invoke();
         };
         close.Click += () => CloseRequested?.Invoke();
-        AddChild(minimize);
-        AddChild(maximize);
-        AddChild(close);
+        var windowZone = _resolvedStyle == TitleBarStyle.MacOS ? LeftZone : RightZone;
+        if (_resolvedStyle == TitleBarStyle.MacOS)
+        {
+            windowZone.AddChild(close);
+            windowZone.AddChild(minimize);
+            windowZone.AddChild(maximize);
+        }
+        else
+        {
+            windowZone.AddChild(minimize);
+            windowZone.AddChild(maximize);
+            windowZone.AddChild(close);
+        }
         Measure(new System.Numerics.Vector2(width, height));
         Arrange(System.Numerics.Vector2.Zero, new System.Numerics.Vector2(width, height));
     }
@@ -95,40 +123,64 @@ public sealed class TitleBar : Surface
     /// <inheritdoc/>
     protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
     {
-        var controls = Children.OfType<UIElement>()
-            .Where(child => child.Name.StartsWith("Window", StringComparison.Ordinal)).ToArray();
-        if (_resolvedStyle == TitleBarStyle.MacOS)
+        var zoneWidth = contentSize.X / 3f;
+        LeftZone.Arrange(System.Numerics.Vector2.Zero,
+            new System.Numerics.Vector2(zoneWidth, contentSize.Y));
+        CenterZone.Arrange(new System.Numerics.Vector2(zoneWidth, 0f),
+            new System.Numerics.Vector2(zoneWidth, contentSize.Y));
+        RightZone.Arrange(new System.Numerics.Vector2(zoneWidth * 2f, 0f),
+            new System.Numerics.Vector2(contentSize.X - zoneWidth * 2f, contentSize.Y));
+    }
+
+    /// <summary>Arranges a title-bar zone's children as one aligned horizontal group.</summary>
+    private sealed class TitleBarZone : Panel
+    {
+        private const float EdgeInset = 8f;
+        private readonly HorizontalAlignment _contentAlignment;
+
+        /// <summary>Creates an aligned title-bar content zone.</summary>
+        /// <param name="contentAlignment">Alignment of the child group within the zone.</param>
+        public TitleBarZone(HorizontalAlignment contentAlignment)
+            : base(Color.Black)
         {
-            var x = 8f;
-            foreach (var control in controls.Reverse())
-            {
-                control.Measure(new System.Numerics.Vector2(24f, contentSize.Y));
-                control.Arrange(new System.Numerics.Vector2(x, 0f),
-                    new System.Numerics.Vector2(24f, contentSize.Y));
-                x += 24f;
-            }
-        }
-        else
-        {
-            var x = contentSize.X;
-            foreach (var control in controls.Reverse())
-            {
-                control.Measure(new System.Numerics.Vector2(36f, contentSize.Y));
-                x -= 36f;
-                control.Arrange(new System.Numerics.Vector2(x, 0f),
-                    new System.Numerics.Vector2(36f, contentSize.Y));
-            }
+            _contentAlignment = contentAlignment;
+            PaintBackground = false;
+            IsHitTestVisible = false;
         }
 
-        foreach (var child in Children.OfType<UIElement>().Except(controls))
+        /// <inheritdoc/>
+        protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
         {
-            child.Measure(contentSize);
-            var x = child.Name == "Play"
-                ? contentSize.X - (_resolvedStyle == TitleBarStyle.Windows ? 108f : 0f)
-                    - child.DesiredSize.X - 10f
-                : _resolvedStyle == TitleBarStyle.MacOS ? 88f : 8f;
-            child.Arrange(new System.Numerics.Vector2(x, 0f),
-                new System.Numerics.Vector2(child.DesiredSize.X, contentSize.Y));
+            var desiredWidth = 0f;
+            var desiredHeight = 0f;
+            foreach (var child in Children.OfType<UIElement>())
+            {
+                child.Measure(availableSize);
+                desiredWidth += child.DesiredSize.X;
+                desiredHeight = MathF.Max(desiredHeight, child.DesiredSize.Y);
+            }
+            return new System.Numerics.Vector2(desiredWidth, desiredHeight);
+        }
+
+        /// <inheritdoc/>
+        protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
+        {
+            var children = Children.OfType<UIElement>().ToArray();
+            var groupWidth = children.Sum(child => child.DesiredSize.X);
+            var x = _contentAlignment switch
+            {
+                HorizontalAlignment.Center => (contentSize.X - groupWidth) / 2f,
+                HorizontalAlignment.Right => contentSize.X - groupWidth,
+                _ => EdgeInset
+            };
+            foreach (var child in children)
+            {
+                var childHeight = MathF.Min(contentSize.Y, child.DesiredSize.Y);
+                var y = (contentSize.Y - childHeight) / 2f;
+                child.Arrange(new System.Numerics.Vector2(x, y),
+                    new System.Numerics.Vector2(child.DesiredSize.X, childHeight));
+                x += child.DesiredSize.X;
+            }
         }
     }
 

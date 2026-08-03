@@ -8,7 +8,7 @@ namespace Engine.Graphics;
 public class ViewportRenderContext
 {
     /// <summary>Gets the viewport ID this context renders into.</summary>
-    public uint ViewportId { get; init; }
+    public RenderViewHandle View { get; init; }
 
     /// <summary>Gets the viewport width in pixels.</summary>
     public uint Width { get; init; }

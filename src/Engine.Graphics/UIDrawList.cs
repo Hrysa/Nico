@@ -61,6 +61,14 @@ public sealed class UIDrawList
     /// <summary>Gets or sets the layer assigned to subsequently added commands.</summary>
     public UIDrawLayer CurrentLayer { get; set; }
 
+    /// <summary>Appends previously generated semantic commands.</summary>
+    /// <param name="commands">Cached commands to append in order.</param>
+    public void AddRange(IEnumerable<UIDrawCommand> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        _commands.AddRange(commands);
+    }
+
     /// <summary>Adds a solid rectangle.</summary>
     /// <param name="left">Left edge.</param>
     /// <param name="top">Top edge.</param>

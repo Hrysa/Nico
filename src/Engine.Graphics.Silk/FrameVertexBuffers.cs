@@ -13,6 +13,7 @@ internal unsafe sealed class FrameVertexBuffers
     private readonly Func<uint, MemoryPropertyFlags, uint> _findMemoryType;
     private readonly ILogger _logger;
     private readonly string _name;
+    private readonly BufferUsageFlags _usage;
     private readonly uint _minimumCapacity;
     private readonly Silk.NET.Vulkan.Buffer[] _buffers;
     private readonly DeviceMemory[] _memories;
@@ -29,6 +30,7 @@ internal unsafe sealed class FrameVertexBuffers
     /// <param name="name">Diagnostic buffer name.</param>
     /// <param name="findMemoryType">Memory-type resolver.</param>
     /// <param name="logger">Backend logger.</param>
+    /// <param name="usage">Vulkan usage for allocated buffers.</param>
     public FrameVertexBuffers(
         Vk vk,
         Device device,
@@ -36,7 +38,8 @@ internal unsafe sealed class FrameVertexBuffers
         uint minimumCapacity,
         string name,
         Func<uint, MemoryPropertyFlags, uint> findMemoryType,
-        ILogger logger)
+        ILogger logger,
+        BufferUsageFlags usage = BufferUsageFlags.VertexBufferBit)
     {
         _vk = vk;
         _device = device;
@@ -44,6 +47,7 @@ internal unsafe sealed class FrameVertexBuffers
         _name = name;
         _findMemoryType = findMemoryType;
         _logger = logger;
+        _usage = usage;
         _buffers = new Silk.NET.Vulkan.Buffer[frameCount];
         _memories = new DeviceMemory[frameCount];
         _mappedPointers = new nint[frameCount];
@@ -54,19 +58,25 @@ internal unsafe sealed class FrameVertexBuffers
     /// <param name="frameIndex">Frame slot.</param>
     /// <param name="requiredVertices">Required vertex count.</param>
     /// <param name="vertexStride">Vertex size in bytes.</param>
-    public void Ensure(uint frameIndex, uint requiredVertices, uint vertexStride)
+    /// <returns>True when a new backing buffer was allocated.</returns>
+    public bool Ensure(uint frameIndex, uint requiredVertices, uint vertexStride)
     {
         if (_capacities[frameIndex] >= requiredVertices)
-            return;
+            return false;
 
+        var previousCapacity = _capacities[frameIndex];
+        var grownCapacity = previousCapacity == 0
+            ? _minimumCapacity
+            : previousCapacity <= uint.MaxValue / 2 ? previousCapacity * 2 : uint.MaxValue;
+        var newCapacity = Math.Max(requiredVertices, Math.Max(_minimumCapacity, grownCapacity));
         DestroyFrame(frameIndex);
-        _capacities[frameIndex] = Math.Max(requiredVertices, _minimumCapacity);
+        _capacities[frameIndex] = newCapacity;
         var bufferSize = (nuint)(_capacities[frameIndex] * vertexStride);
         var bufferInfo = new BufferCreateInfo
         {
             SType = StructureType.BufferCreateInfo,
             Size = bufferSize,
-            Usage = BufferUsageFlags.VertexBufferBit,
+            Usage = _usage,
             SharingMode = SharingMode.Exclusive
         };
         Check(_vk.CreateBuffer(_device, &bufferInfo, null, out _buffers[frameIndex]), "create buffer");
@@ -85,6 +95,7 @@ internal unsafe sealed class FrameVertexBuffers
         _mappedPointers[frameIndex] = (nint)mapped;
         _logger.LogDebug("Frame {Frame} {Name} buffer capacity is {Capacity} vertices",
             frameIndex, _name, _capacities[frameIndex]);
+        return true;
     }
 
     /// <summary>Gets the Vulkan buffer for a frame slot.</summary>

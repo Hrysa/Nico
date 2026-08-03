@@ -43,6 +43,7 @@ public static class EditorUI
 
         var titleBar = new TitleBar(width, titleBarHeight, theme);
         titleBar.Width = 0f;
+        titleBar.Margin = new Thickness(0f, 0f, 0f, 1f);
         var projectLabel = new Label("scene.node", 180f, titleBarHeight)
         {
             Name = "ProjectLabel",
@@ -53,8 +54,8 @@ public static class EditorUI
         var playButton = new Button(28f, "Play", theme, ButtonStyle.Primary)
             { Name = "Play" };
 
-        titleBar.AddChild(projectLabel);
-        titleBar.AddChild(playButton);
+        titleBar.LeftZone.AddChild(projectLabel);
+        titleBar.CenterZone.AddChild(playButton);
 
         var bottomDock = new Surface(theme.Surface, theme.Border,
             MathF.Max(0f, width - hierarchyWidth - inspectorWidth - separatorWidth * 2f),
@@ -292,7 +293,7 @@ public static class EditorUI
 /// <param name="HierarchyTree">Scene hierarchy tree.</param>
 /// <param name="FileSystemTree">Project-root filesystem tree.</param>
 /// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
-/// <param name="PlayButton">Title-bar control that starts and stops play mode.</param>
+/// <param name="PlayButton">Editor control that starts and stops play mode.</param>
 /// <param name="Inspector">Selection-bound scene property Inspector.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 /// <param name="Overlay">Canvas hosting floating editor UI.</param>

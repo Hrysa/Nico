@@ -16,7 +16,7 @@ public class ViewportPanel : Panel
     /// Gets or sets the viewport ID assigned by the window's FBO manager.
     /// Zero means not yet registered.
     /// </summary>
-    public uint ViewportId { get; set; }
+    public RenderViewHandle RenderView { get; set; }
 
     /// <summary>
     /// Gets or sets the camera used for rendering this viewport's content.

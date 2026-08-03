@@ -12,9 +12,20 @@ public sealed class ListView : Panel
     private readonly UITheme _theme;
     private int _scrollIndex;
     private Vector2 _arrangedSize;
+    private float _rowHeight;
 
     /// <summary>Gets or sets the height of one item row.</summary>
-    public float RowHeight { get; set; }
+    public float RowHeight
+    {
+        get => _rowHeight;
+        set
+        {
+            if (_rowHeight == value)
+                return;
+            _rowHeight = value;
+            RebuildRows();
+        }
+    }
 
     /// <summary>Gets the selected item index, or -1 when selection is empty.</summary>
     public int SelectedIndex { get; private set; } = -1;

@@ -19,32 +19,83 @@ public class UIElement : Node
     private Vector2 _lastMeasureSize;
     private Vector2 _lastArrangePosition;
     private Vector2 _lastArrangeSize;
+    private UIDrawList? _cachedDrawList;
+    private bool _visualValid;
+    private UIDrawCommand[] _cachedPaintCommands = [];
+    private bool _paintValid;
+    private HorizontalAlignment _horizontalAlignment = HorizontalAlignment.Stretch;
+    private VerticalAlignment _verticalAlignment = VerticalAlignment.Stretch;
+    private Thickness _margin = Thickness.Zero;
+    private Thickness _padding = Thickness.Zero;
+    private float _minWidth;
+    private float _minHeight;
+    private float _maxWidth = float.PositiveInfinity;
+    private float _maxHeight = float.PositiveInfinity;
+    private Color _backgroundColor = Color.Black;
+    private Color _foregroundColor = Color.White;
+    private bool _isVisible = true;
+    private bool _isOverlay;
+    private bool _isHovered;
+    private bool _isPressed;
+    private bool _isFocused;
 
     /// <summary>Gets or sets horizontal placement within the parent allocation.</summary>
-    public HorizontalAlignment HorizontalAlignment { get; set; } = HorizontalAlignment.Stretch;
+    public HorizontalAlignment HorizontalAlignment
+    {
+        get => _horizontalAlignment;
+        set { if (_horizontalAlignment != value) { _horizontalAlignment = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets vertical placement within the parent allocation.</summary>
-    public VerticalAlignment VerticalAlignment { get; set; } = VerticalAlignment.Stretch;
+    public VerticalAlignment VerticalAlignment
+    {
+        get => _verticalAlignment;
+        set { if (_verticalAlignment != value) { _verticalAlignment = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets the size requested by the most recent measure pass, including margin.</summary>
     public Vector2 DesiredSize => _desiredSize;
     /// <summary>Gets or sets spacing outside the element's border box.</summary>
-    public Thickness Margin { get; set; } = Thickness.Zero;
+    public Thickness Margin
+    {
+        get => _margin;
+        set { if (_margin != value) { _margin = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets spacing between the element border and its content.</summary>
-    public Thickness Padding { get; set; } = Thickness.Zero;
+    public Thickness Padding
+    {
+        get => _padding;
+        set { if (_padding != value) { _padding = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the minimum permitted width.</summary>
-    public float MinWidth { get; set; }
+    public float MinWidth
+    {
+        get => _minWidth;
+        set { if (_minWidth != value) { _minWidth = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the minimum permitted height.</summary>
-    public float MinHeight { get; set; }
+    public float MinHeight
+    {
+        get => _minHeight;
+        set { if (_minHeight != value) { _minHeight = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the maximum permitted width.</summary>
-    public float MaxWidth { get; set; } = float.PositiveInfinity;
+    public float MaxWidth
+    {
+        get => _maxWidth;
+        set { if (_maxWidth != value) { _maxWidth = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the maximum permitted height.</summary>
-    public float MaxHeight { get; set; } = float.PositiveInfinity;
+    public float MaxHeight
+    {
+        get => _maxHeight;
+        set { if (_maxHeight != value) { _maxHeight = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets the element width in pixels.</summary>
     public float Width
@@ -71,28 +122,56 @@ public class UIElement : Node
     }
 
     /// <summary>Gets or sets the background color.</summary>
-    public Color BackgroundColor { get; set; } = Color.Black;
+    public Color BackgroundColor
+    {
+        get => _backgroundColor;
+        set { if (!_backgroundColor.Equals(value)) { _backgroundColor = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Gets or sets the foreground (text/icon) color.</summary>
-    public Color ForegroundColor { get; set; } = Color.White;
+    public Color ForegroundColor
+    {
+        get => _foregroundColor;
+        set { if (!_foregroundColor.Equals(value)) { _foregroundColor = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Gets or sets whether this element is visible.</summary>
-    public bool IsVisible { get; set; } = true;
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set { if (_isVisible != value) { _isVisible = value; InvalidateMeasure(); } }
+    }
 
     /// <summary>Gets or sets whether this element can receive pointer hit tests.</summary>
     public bool IsHitTestVisible { get; set; } = true;
 
     /// <summary>Gets or sets whether this subtree is composited above viewport textures.</summary>
-    public bool IsOverlay { get; set; }
+    public bool IsOverlay
+    {
+        get => _isOverlay;
+        set { if (_isOverlay != value) { _isOverlay = value; InvalidatePaintSubtree(); InvalidateTreeSnapshot(); } }
+    }
 
     /// <summary>Gets or sets whether the mouse is hovering over this element.</summary>
-    public bool IsHovered { get; set; }
+    public bool IsHovered
+    {
+        get => _isHovered;
+        set { if (_isHovered != value) { _isHovered = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Gets or sets whether this element is currently pressed.</summary>
-    public bool IsPressed { get; set; }
+    public bool IsPressed
+    {
+        get => _isPressed;
+        set { if (_isPressed != value) { _isPressed = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Gets or sets whether this element has keyboard focus.</summary>
-    public bool IsFocused { get; set; }
+    public bool IsFocused
+    {
+        get => _isFocused;
+        set { if (_isFocused != value) { _isFocused = value; InvalidateVisual(); } }
+    }
 
     /// <summary>Occurs when the mouse enters this element.</summary>
     public event Action? MouseEnter;
@@ -223,6 +302,8 @@ public class UIElement : Node
         height = Math.Clamp(height, MinHeight, MaxHeight);
         var x = slotPosition.X + Margin.Left + AlignOffset(availableWidth, width, HorizontalAlignment);
         var y = slotPosition.Y + Margin.Top + AlignOffset(availableHeight, height, VerticalAlignment);
+        if (Position.X != x || Position.Y != y || _actualWidth != width || _actualHeight != height)
+            InvalidatePaintSubtree();
         Position = new Vector3(x, y, Position.Z);
         _actualWidth = width;
         _actualHeight = height;
@@ -237,6 +318,9 @@ public class UIElement : Node
     {
         _measureValid = false;
         _arrangeValid = false;
+        _visualValid = false;
+        _paintValid = false;
+        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateMeasure();
     }
@@ -245,8 +329,40 @@ public class UIElement : Node
     public void InvalidateArrange()
     {
         _arrangeValid = false;
+        _visualValid = false;
+        _paintValid = false;
+        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateArrange();
+    }
+
+    /// <summary>Invalidates cached paint output without discarding layout.</summary>
+    public void InvalidateVisual()
+    {
+        _visualValid = false;
+        _paintValid = false;
+        _cachedDrawList = null;
+        if (Parent is UIElement parent)
+            parent.InvalidateTreeSnapshot();
+    }
+
+    /// <summary>Invalidates only the composed subtree snapshot while retaining local paint commands.</summary>
+    private void InvalidateTreeSnapshot()
+    {
+        _visualValid = false;
+        _cachedDrawList = null;
+        if (Parent is UIElement parent)
+            parent.InvalidateTreeSnapshot();
+    }
+
+    /// <summary>Invalidates cached paint commands for this element and every descendant.</summary>
+    private void InvalidatePaintSubtree()
+    {
+        _visualValid = false;
+        _paintValid = false;
+        _cachedDrawList = null;
+        foreach (var child in Children.OfType<UIElement>())
+            child.InvalidatePaintSubtree();
     }
 
     /// <summary>Adds a child and invalidates layout.</summary>
@@ -514,6 +630,8 @@ public class UIElement : Node
     /// <returns>The ordered UI draw list.</returns>
     public UIDrawList BuildDrawList()
     {
+        if (_visualValid && _cachedDrawList is not null)
+            return _cachedDrawList;
         if (Parent is null && Width > 0f && Height > 0f && (!_measureValid || !_arrangeValid))
         {
             var size = new Vector2(Width, Height);
@@ -522,7 +640,9 @@ public class UIElement : Node
         }
         var drawList = new UIDrawList();
         PaintRecursive(drawList, inheritedOverlay: false);
-        return drawList;
+        _cachedDrawList = drawList;
+        _visualValid = true;
+        return _cachedDrawList;
     }
 
     /// <summary>Recursively appends visible paint commands.</summary>
@@ -534,8 +654,15 @@ public class UIElement : Node
             return;
 
         var overlay = inheritedOverlay || IsOverlay;
-        drawList.CurrentLayer = overlay ? UIDrawLayer.Overlay : UIDrawLayer.Content;
-        Paint(drawList);
+        var layer = overlay ? UIDrawLayer.Overlay : UIDrawLayer.Content;
+        if (!_paintValid || _cachedPaintCommands.Any(command => command.Layer != layer))
+        {
+            var localDrawList = new UIDrawList { CurrentLayer = layer };
+            Paint(localDrawList);
+            _cachedPaintCommands = localDrawList.Commands.ToArray();
+            _paintValid = true;
+        }
+        drawList.AddRange(_cachedPaintCommands);
 
         foreach (var child in Children)
         {

@@ -9,6 +9,7 @@ public sealed class TextField : Surface
 {
     private readonly UITheme _theme;
     private string _text = string.Empty;
+    private string _placeholder = string.Empty;
     private int _caretIndex;
 
     /// <summary>Gets or sets the editable text.</summary>
@@ -19,11 +20,23 @@ public sealed class TextField : Surface
         {
             _text = value ?? string.Empty;
             _caretIndex = Math.Clamp(_caretIndex, 0, _text.Length);
+            InvalidateVisual();
         }
     }
 
     /// <summary>Gets or sets placeholder text displayed when empty and unfocused.</summary>
-    public string Placeholder { get; set; } = string.Empty;
+    public string Placeholder
+    {
+        get => _placeholder;
+        set
+        {
+            var resolved = value ?? string.Empty;
+            if (_placeholder == resolved)
+                return;
+            _placeholder = resolved;
+            InvalidateVisual();
+        }
+    }
 
     /// <summary>Gets or sets whether editing is allowed.</summary>
     public bool IsReadOnly { get; set; }
@@ -79,6 +92,7 @@ public sealed class TextField : Surface
         {
             _text = _text.Insert(_caretIndex, character.ToString());
             _caretIndex++;
+            InvalidateVisual();
             TextChanged?.Invoke(_text);
         }
         base.OnTextInput(character);
@@ -115,6 +129,7 @@ public sealed class TextField : Surface
         {
             _caretIndex = _text.Length;
         }
+        InvalidateVisual();
         base.OnKeyDown(keyCode);
     }
 }
