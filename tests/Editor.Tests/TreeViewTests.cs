@@ -65,7 +65,7 @@ public class TreeViewTests
 
         Assert.DoesNotContain(directory, tree.ExpandedItems);
         var row = Assert.IsType<TreeViewItem>(Assert.Single(tree.Children));
-        Assert.StartsWith("+", row.Label);
+        Assert.StartsWith("+", Assert.IsType<Label>(row.Content).Text);
     }
 
     /// <summary>Verifies clicking a row updates tree selection.</summary>

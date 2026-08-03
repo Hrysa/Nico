@@ -51,8 +51,18 @@ public static class EditorUI
             ForegroundColor = theme.TextSecondary,
             PaddingLeft = 0f
         };
-        var playButton = new Button(28f, "Play", theme, ButtonStyle.Primary)
-            { Name = "Play" };
+        var playButtonLabel = new Label("Play")
+        {
+            FontSize = theme.FontSize,
+            ForegroundColor = theme.Accent,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        };
+        var playButton = new Button(28f, theme, ButtonStyle.Primary)
+        {
+            Name = "Play",
+            Content = playButtonLabel
+        };
 
         titleBar.LeftZone.AddChild(projectLabel);
         titleBar.CenterZone.AddChild(playButton);
@@ -224,7 +234,7 @@ public static class EditorUI
         background.Arrange(Vector2.Zero, new Vector2(width, height));
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
-            projectLabel, playButton, inspector, titleBar, overlay);
+            projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay);
     }
 
     /// <summary>
@@ -294,6 +304,7 @@ public static class EditorUI
 /// <param name="FileSystemTree">Project-root filesystem tree.</param>
 /// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
 /// <param name="PlayButton">Editor control that starts and stops play mode.</param>
+/// <param name="PlayButtonLabel">Text content composed inside the play button.</param>
 /// <param name="Inspector">Selection-bound scene property Inspector.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 /// <param name="Overlay">Canvas hosting floating editor UI.</param>
@@ -305,6 +316,7 @@ public sealed record EditorView(
     TreeView FileSystemTree,
     Label ProjectLabel,
     Button PlayButton,
+    Label PlayButtonLabel,
     SceneInspector Inspector,
     TitleBar TitleBar,
     Canvas Overlay);

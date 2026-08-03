@@ -32,11 +32,43 @@ public class GameScriptHostTests
             var owner = new Node3D { Name = "Mover", ScriptType = "MoveScript" };
             root.AddChild(owner);
 
-            using var host = GameScriptHost.BuildAndLoad(workspace);
-            host.LoadScene(root);
-            host.Update(0.5);
+            using var compiler = new GameScriptCompiler(workspace);
+            using (var host = compiler.BuildAndLoad())
+            {
+                host.LoadScene(root);
+                host.Update(0.5);
+            }
+
+            using var cachedHost = compiler.BuildAndLoad();
 
             Assert.Equal(0.5f, owner.Position.X);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    /// <summary>Verifies compiler failures expose structured source diagnostics.</summary>
+    [Fact]
+    public void BuildAndLoad_InvalidGameScript_ReportsStructuredDiagnostic()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"game-script-error-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var workspace = ProjectSolutionScaffolder.Ensure(directory, typeof(Node).Assembly.Location);
+            var sourcePath = Path.Combine(directory, "Scripts", "BrokenScript.cs");
+            File.WriteAllText(sourcePath, "public sealed class BrokenScript { missing }");
+            using var compiler = new GameScriptCompiler(workspace);
+
+            var exception = Assert.Throws<ScriptBuildException>(() => compiler.BuildAndLoad());
+
+            var diagnostic = Assert.Single(exception.Diagnostics,
+                item => item.File.EndsWith("BrokenScript.cs", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("error", diagnostic.Severity);
+            Assert.StartsWith("CS", diagnostic.Code);
+            Assert.True(diagnostic.Line > 0);
         }
         finally
         {

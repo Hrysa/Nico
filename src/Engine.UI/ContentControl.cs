@@ -31,6 +31,22 @@ public class ContentControl : Box
     {
     }
 
+    /// <summary>Measures the content and includes the control's padding.</summary>
+    /// <param name="availableSize">Space offered for the complete control.</param>
+    /// <returns>Desired border-box size.</returns>
+    protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
+    {
+        if (_content is null)
+            return new System.Numerics.Vector2(Padding.Horizontal, Padding.Vertical);
+        var contentAvailable = new System.Numerics.Vector2(
+            MathF.Max(0f, availableSize.X - Padding.Horizontal),
+            MathF.Max(0f, availableSize.Y - Padding.Vertical));
+        _content.Measure(contentAvailable);
+        return new System.Numerics.Vector2(
+            _content.DesiredSize.X + Padding.Horizontal,
+            _content.DesiredSize.Y + Padding.Vertical);
+    }
+
     /// <summary>Arranges the content child within the box's padding.</summary>
     protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
     {

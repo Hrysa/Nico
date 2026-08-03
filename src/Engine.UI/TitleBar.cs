@@ -92,7 +92,9 @@ public sealed class TitleBar : Surface
                 { Name = "WindowMaximize", PaddingLeft = 12f, CornerRadius = 0f };
             close = new Button(36f, height, "×", resolvedTheme)
                 { Name = "WindowClose", PaddingLeft = 12f, CornerRadius = 0f,
-                    ForegroundColor = Color.FromSrgb(0xEC, 0x62, 0x5C) };
+                    ForegroundColor = Color.White,
+                    HoverColor = Color.FromSrgb(0xE8, 0x11, 0x23),
+                    PressedColor = Color.FromSrgb(0xC5, 0x0F, 0x1F) };
         }
         minimize.Click += () => MinimizeRequested?.Invoke();
         maximize.Click += () =>

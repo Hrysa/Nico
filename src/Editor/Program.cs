@@ -48,6 +48,7 @@ catch (Exception exception) when (exception is IOException or UnauthorizedAccess
 }
 
 using var window = new SilkWindow(loggerFactory);
+using var scriptCompiler = new GameScriptCompiler(scriptingWorkspace);
 var width = 1280;
 var height = 720;
 var options = new WindowOptions
@@ -136,6 +137,7 @@ GameScriptHost? scriptHost = null;
 LoadedScene? playScene = null;
 LoadedScene? pendingPlayScene = null;
 Task<GameScriptHost>? playBuildTask = null;
+CancellationTokenSource? playBuildCancellation = null;
 CompilationProgressDialog? compilationProgressDialog = null;
 Node3D? editSelectionBeforePlay = null;
 var isPlaying = false;
@@ -190,7 +192,10 @@ void StartPlayMode()
     {
         pendingPlayScene = ScenePlayClone.Create(sceneRoot, gameCamera);
         ShowCompilationProgress();
-        playBuildTask = Task.Run(() => GameScriptHost.BuildAndLoad(scriptingWorkspace));
+        playBuildCancellation = new CancellationTokenSource();
+        var cancellationToken = playBuildCancellation.Token;
+        playBuildTask = Task.Run(
+            () => scriptCompiler.BuildAndLoad(cancellationToken), cancellationToken);
     }
     catch (Exception exception)
     {
@@ -215,6 +220,8 @@ void UpdatePlayModeStart(double deltaTime)
 
     var candidateScene = pendingPlayScene;
     playBuildTask = null;
+    playBuildCancellation?.Dispose();
+    playBuildCancellation = null;
     pendingPlayScene = null;
     CloseCompilationProgress();
     GameScriptHost? candidateHost = null;
@@ -233,7 +240,7 @@ void UpdatePlayModeStart(double deltaTime)
         hierarchyTree.SetRoots(candidateScene.Root.Children);
         gameViewport.Camera = candidateScene.GameCamera;
         viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
-        editorView.PlayButton.Label = "Stop";
+        editorView.PlayButtonLabel.Text = "Stop";
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
     }
@@ -246,6 +253,15 @@ void UpdatePlayModeStart(double deltaTime)
         catch (Exception disposalException)
         {
             logger.LogError(disposalException, "Could not unload a failed game script build");
+        }
+        if (exception is ScriptBuildException buildException)
+        {
+            foreach (var diagnostic in buildException.Diagnostics)
+            {
+                logger.LogError("{File}({Line},{Column}): {Code}: {Message}",
+                    diagnostic.File, diagnostic.Line, diagnostic.Column,
+                    diagnostic.Code, diagnostic.Message);
+            }
         }
         logger.LogError(exception, "Could not enter play mode");
     }
@@ -297,7 +313,7 @@ void StopPlayMode()
     editSelectionBeforePlay = null;
     gameViewport.Camera = gameCamera;
     viewportRenderer.SetGameScene(gameCamera, sceneObjects);
-    editorView.PlayButton.Label = "Play";
+    editorView.PlayButtonLabel.Text = "Play";
     logger.LogInformation("Exited play mode");
     RefreshVertices();
 }
@@ -306,7 +322,7 @@ void StopPlayMode()
 /// <param name="playButton">Play/Stop button to attach.</param>
 void AttachPlayButton(Button playButton)
 {
-    playButton.Label = isPlaying ? "Stop" : "Play";
+    editorView.PlayButtonLabel.Text = isPlaying ? "Stop" : "Play";
     playButton.Click += () =>
     {
         if (isPlaying)
@@ -1241,6 +1257,7 @@ window.Run();
 StopPlayMode();
 if (playBuildTask is not null)
 {
+    playBuildCancellation?.Cancel();
     try
     {
         playBuildTask.GetAwaiter().GetResult().Dispose();
@@ -1250,5 +1267,6 @@ if (playBuildTask is not null)
         logger.LogError(exception, "Could not finish the pending game script build");
     }
 }
+playBuildCancellation?.Dispose();
 logger.LogInformation("Done.");
 return 0;

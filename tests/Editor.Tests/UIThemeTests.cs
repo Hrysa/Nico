@@ -89,7 +89,7 @@ public class UIThemeTests
             command => command.Type == UIDrawCommandType.Rectangle);
     }
 
-    /// <summary>Verifies content-sized buttons grow with their label unless width is explicit.</summary>
+    /// <summary>Verifies convenience labels size buttons while explicit width is preserved.</summary>
     [Fact]
     public void Button_AutoWidth_FollowsContentWhileExplicitWidthIsPreserved()
     {
@@ -100,12 +100,32 @@ public class UIThemeTests
         Assert.True(longButton.Width > shortButton.Width);
         Assert.Equal(123f, explicitButton.Width);
 
-        var originalWidth = shortButton.Width;
-        shortButton.Label = "A much longer action";
-        Assert.True(shortButton.Width > originalWidth);
-
-        explicitButton.Label = "A much longer action";
+        Assert.IsType<Label>(explicitButton.Content).Text = "A much longer action";
+        explicitButton.Measure(new Vector2(float.PositiveInfinity, 28f));
         Assert.Equal(123f, explicitButton.Width);
+    }
+
+    /// <summary>Verifies a button can host an arbitrary icon-and-label layout.</summary>
+    [Fact]
+    public void Button_ContentConstructor_AllowsCustomLayout()
+    {
+        var content = new Grid(UITheme.Dark.Surface);
+        content.Rows.Add(GridLength.Star());
+        content.Columns.Add(GridLength.Pixels(12f));
+        content.Columns.Add(GridLength.Pixels(4f));
+        content.Columns.Add(GridLength.Star());
+        var icon = new Box(12f, 12f) { BackgroundColor = Color.White };
+        var label = new Label("Import") { PaddingLeft = 0f };
+        content.Add(icon, 0, 0);
+        content.Add(label, 0, 2);
+        var button = new Button(100f, 30f, UITheme.Dark) { Content = content };
+
+        button.Measure(new Vector2(100f, 30f));
+        button.Arrange(Vector2.Zero, new Vector2(100f, 30f));
+
+        Assert.Same(content, button.Content);
+        Assert.Contains(button.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text && command.Text == "Import");
     }
 
     /// <summary>Verifies a surface paints one fill and four inset border edges.</summary>
@@ -214,7 +234,9 @@ public class UIThemeTests
         var listRow = Assert.IsType<ListViewItem>(Assert.Single(list.Children));
         Assert.Equal(list.RowHeight, tree.RowHeight);
         Assert.Equal(listRow.Height, treeRow.Height);
-        Assert.Equal(listRow.FontSize, treeRow.FontSize);
+        Assert.Equal(
+            Assert.IsType<Label>(listRow.Content).FontSize,
+            Assert.IsType<Label>(treeRow.Content).FontSize);
         Assert.Equal(listRow.PaddingLeft, treeRow.PaddingLeft);
     }
 
@@ -332,6 +354,8 @@ public class UIThemeTests
         var close = Assert.IsType<Button>(titleBar.RightZone.Children.Single(
             child => child.Name == "WindowClose"));
         Assert.Equal(titleBar.Right, close.Right);
+        Assert.Equal(Color.FromSrgb(0xE8, 0x11, 0x23), close.HoverColor);
+        Assert.Equal(Color.FromSrgb(0xC5, 0x0F, 0x1F), close.PressedColor);
         Assert.All(titleBar.RightZone.Children.OfType<Button>(),
             button => Assert.Equal(0f, button.CornerRadius));
         Assert.DoesNotContain(titleBar.LeftZone.Children,

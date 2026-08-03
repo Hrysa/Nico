@@ -110,6 +110,14 @@ public class Label : UIElement
         return codepoint == ' ' ? 576f : 1200f;
     }
 
+    /// <summary>Measures text content and its leading inset.</summary>
+    /// <param name="availableSize">Space offered by the parent.</param>
+    /// <returns>Desired label size.</returns>
+    protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
+    {
+        return new System.Numerics.Vector2(PaddingLeft + MeasureTextWidth(), FontSize);
+    }
+
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {

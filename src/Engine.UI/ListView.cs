@@ -145,10 +145,11 @@ public sealed class ListView : Panel
 public sealed class ListViewItem : Button
 {
     private readonly UITheme _theme;
+    private readonly Label _label;
     private bool _isSelected;
 
     /// <summary>Gets the displayed item text.</summary>
-    public string Text => Label;
+    public string Text => _label.Text;
 
     /// <summary>Gets or sets whether this row is selected.</summary>
     public bool IsSelected
@@ -170,10 +171,18 @@ public sealed class ListViewItem : Button
     /// <param name="text">Displayed item text.</param>
     /// <param name="theme">Theme supplying row colors.</param>
     public ListViewItem(float width, float height, string text, UITheme? theme = null)
-        : base(width, height, text, theme ?? UITheme.Dark)
+        : base(width, height, theme ?? UITheme.Dark)
     {
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;
+        _label = new Label(text)
+        {
+            FontSize = _theme.FontSize,
+            ForegroundColor = _theme.TextPrimary,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        };
+        Content = _label;
         PaddingLeft = _theme.ItemRowPadding;
         NormalColor = _theme.Surface;
         HoverColor = _theme.SurfaceHover;

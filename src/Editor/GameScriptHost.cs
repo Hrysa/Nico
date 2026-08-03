@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
 using Engine.Core;
@@ -27,19 +26,22 @@ public sealed class GameScriptHost : IDisposable
     public static GameScriptHost BuildAndLoad(ScriptingWorkspace workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
-        Build(workspace.ScriptProjectPath);
-        var projectName = Path.GetFileNameWithoutExtension(workspace.ScriptProjectPath);
-        var assemblyPath = Path.Combine(
-            Path.GetDirectoryName(workspace.ScriptProjectPath)!,
-            "bin", "Debug", "net11.0", $"{projectName}.dll");
+        using var compiler = new GameScriptCompiler(workspace);
+        return compiler.BuildAndLoad();
+    }
+
+    /// <summary>Loads one compiled script assembly without retaining file handles on build outputs.</summary>
+    /// <param name="assemblyPath">Absolute compiled assembly path.</param>
+    /// <returns>A host containing the compiled script assembly.</returns>
+    internal static GameScriptHost Load(string assemblyPath)
+    {
         if (!File.Exists(assemblyPath))
             throw new FileNotFoundException("The script build did not produce its expected assembly.",
                 assemblyPath);
         var loadContext = new ScriptLoadContext(assemblyPath);
         try
         {
-            return new GameScriptHost(loadContext,
-                loadContext.LoadFromAssemblyPath(Path.GetFullPath(assemblyPath)));
+            return new GameScriptHost(loadContext, loadContext.LoadMainAssembly());
         }
         catch
         {
@@ -117,36 +119,6 @@ public sealed class GameScriptHost : IDisposable
     }
 
     /// <summary>
-    /// Builds a game script project with the installed .NET SDK.
-    /// </summary>
-    /// <param name="scriptProjectPath">Absolute script project path.</param>
-    private static void Build(string scriptProjectPath)
-    {
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        startInfo.ArgumentList.Add("build");
-        startInfo.ArgumentList.Add(scriptProjectPath);
-        startInfo.ArgumentList.Add("--nologo");
-        startInfo.ArgumentList.Add("--verbosity");
-        startInfo.ArgumentList.Add("quiet");
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start the .NET SDK to build game scripts.");
-        var standardOutputTask = process.StandardOutput.ReadToEndAsync();
-        var standardErrorTask = process.StandardError.ReadToEndAsync();
-        process.WaitForExit();
-        Task.WaitAll(standardOutputTask, standardErrorTask);
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"Game script build failed.{Environment.NewLine}"
-                + standardOutputTask.Result + standardErrorTask.Result);
-    }
-
-    /// <summary>
     /// Resolves one serialized script type from the compiled game assembly.
     /// </summary>
     /// <param name="typeName">Full or assembly-qualified script type name.</param>
@@ -173,6 +145,21 @@ public sealed class GameScriptHost : IDisposable
             : base(isCollectible: true)
         {
             _resolver = new AssemblyDependencyResolver(assemblyPath);
+            AssemblyPath = Path.GetFullPath(assemblyPath);
+        }
+
+        private string AssemblyPath { get; }
+
+        /// <summary>Loads the main assembly and optional symbols from non-locking streams.</summary>
+        /// <returns>The loaded game assembly.</returns>
+        internal Assembly LoadMainAssembly()
+        {
+            using var assembly = OpenRead(AssemblyPath);
+            var symbolsPath = Path.ChangeExtension(AssemblyPath, ".pdb");
+            if (!File.Exists(symbolsPath))
+                return LoadFromStream(assembly);
+            using var symbols = OpenRead(symbolsPath);
+            return LoadFromStream(assembly, symbols);
         }
 
         /// <summary>
@@ -185,7 +172,19 @@ public sealed class GameScriptHost : IDisposable
             if (assemblyName.Name?.StartsWith("Engine.", StringComparison.Ordinal) == true)
                 return null;
             var path = _resolver.ResolveAssemblyToPath(assemblyName);
-            return path is null ? null : LoadFromAssemblyPath(path);
+            if (path is null)
+                return null;
+            using var stream = OpenRead(path);
+            return LoadFromStream(stream);
+        }
+
+        /// <summary>Opens an assembly without preventing replacement or deletion.</summary>
+        /// <param name="path">Assembly path.</param>
+        /// <returns>Readable assembly stream.</returns>
+        private static FileStream OpenRead(string path)
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
         }
     }
 }

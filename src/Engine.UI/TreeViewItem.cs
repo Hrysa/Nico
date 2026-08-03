@@ -6,6 +6,7 @@ namespace Engine.UI;
 public sealed class TreeViewItem : Button
 {
     private readonly UITheme _theme;
+    private readonly Label _label;
     private bool _isSelected;
 
     /// <summary>Gets the node represented by this row.</summary>
@@ -38,14 +39,21 @@ public sealed class TreeViewItem : Button
     /// <param name="theme">Theme supplying row colors, spacing, and typography.</param>
     public TreeViewItem(float width, float height, Node item, int depth, bool isExpanded,
         UITheme? theme = null)
-        : base(width, height, BuildLabel(item, isExpanded), theme ?? UITheme.Dark)
+        : base(width, height, theme ?? UITheme.Dark)
     {
         Item = item;
         Depth = depth;
         IsExpanded = isExpanded;
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;
-        FontSize = _theme.FontSize;
+        _label = new Label(BuildLabel(item, isExpanded))
+        {
+            FontSize = _theme.FontSize,
+            ForegroundColor = _theme.TextPrimary,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        };
+        Content = _label;
         PaddingLeft = _theme.ItemRowPadding + depth * _theme.TreeIndent;
         NormalColor = _theme.Surface;
         HoverColor = _theme.SurfaceHover;
