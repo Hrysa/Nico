@@ -5,19 +5,19 @@ namespace Engine.Graphics;
 
 /// <summary>
 /// 3D scene node with a world-space model matrix computed from
-/// Position, Rotation (euler), and Scale.
+/// Position, quaternion Orientation, and Scale.
 /// </summary>
 public class Node3D : Node
 {
     /// <summary>
-    /// Computes the model matrix from the node's Position, Rotation, and Scale.
-    /// Order: Scale → RotateZ → RotateY → RotateX → Translate.
+    /// Computes the model matrix from the node's Position, Orientation, and Scale.
+    /// Order: Scale → Rotate → Translate.
     /// </summary>
     /// <returns>The world-space model matrix.</returns>
     public Matrix4x4 GetModelMatrix()
     {
         var local = Matrix4x4.CreateScale(Scale)
-             * GizmoTransformMath.ToRotationMatrix(Rotation)
+             * Matrix4x4.CreateFromQuaternion(Orientation)
              * Matrix4x4.CreateTranslation(Position);
 
         return Parent is Node3D parent ? local * parent.GetModelMatrix() : local;
@@ -64,6 +64,7 @@ public class Node3D : Node
             return;
         var localRotation = GizmoTransformMath.ToRotationMatrix(worldRotation)
             * inverseParentRotation;
-        Rotation = GizmoTransformMath.ToEuler(localRotation);
+        if (Matrix4x4.Decompose(localRotation, out _, out var localOrientation, out _))
+            Orientation = localOrientation;
     }
 }

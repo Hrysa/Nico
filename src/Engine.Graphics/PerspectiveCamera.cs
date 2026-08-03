@@ -4,7 +4,7 @@ namespace Engine.Graphics;
 /// <summary>
 /// A 3D perspective camera that generates View and Projection matrices
 /// for perspective-correct rendering. Extends Node for scene-graph
-/// integration (Position = eye, Rotation = euler angles).
+/// integration (Position = eye, Orientation = quaternion).
 /// </summary>
 public class PerspectiveCamera : Node3D, ICamera
 {

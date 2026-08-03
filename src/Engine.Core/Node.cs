@@ -11,6 +11,7 @@ public class Node
     private Node? _parent;
     private Vector3 _position;
     private Vector3 _rotation;
+    private Quaternion _orientation = Quaternion.Identity;
     private Vector3 _scale = Vector3.One;
 
     /// <summary>Gets or sets the local position relative to the parent.</summary>
@@ -26,8 +27,9 @@ public class Node
         }
     }
 
-    /// <summary>Gets or sets the local rotation (Euler angles in radians).</summary>
-    public Vector3 Rotation
+    /// <summary>Gets or sets the local rotation as Euler angles in radians.</summary>
+    /// <remarks>This is a presentation and serialization facade over <see cref="Orientation"/>.</remarks>
+    public virtual Vector3 Rotation
     {
         get => _rotation;
         set
@@ -35,6 +37,25 @@ public class Node
             if (_rotation == value)
                 return;
             _rotation = value;
+            _orientation = Quaternion.CreateFromRotationMatrix(CreateEulerRotation(value));
+            OnTransformChanged();
+        }
+    }
+
+    /// <summary>Gets or sets the authoritative local quaternion orientation.</summary>
+    public Quaternion Orientation
+    {
+        get => _orientation;
+        set
+        {
+            var lengthSquared = value.LengthSquared();
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= float.Epsilon)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            var normalized = Quaternion.Normalize(value);
+            if (MathF.Abs(Quaternion.Dot(_orientation, normalized)) >= 0.9999999f)
+                return;
+            _orientation = normalized;
+            _rotation = ExtractEuler(Matrix4x4.CreateFromQuaternion(normalized));
             OnTransformChanged();
         }
     }
@@ -125,5 +146,31 @@ public class Node
     /// </summary>
     protected virtual void OnTransformChanged()
     {
+    }
+
+    /// <summary>Creates the engine's row-vector Rz * Ry * Rx Euler rotation matrix.</summary>
+    /// <param name="euler">Euler angles in radians.</param>
+    /// <returns>The equivalent rotation matrix.</returns>
+    private static Matrix4x4 CreateEulerRotation(Vector3 euler)
+    {
+        return Matrix4x4.CreateRotationZ(euler.Z)
+             * Matrix4x4.CreateRotationY(euler.Y)
+             * Matrix4x4.CreateRotationX(euler.X);
+    }
+
+    /// <summary>Extracts a canonical Euler presentation from a rotation matrix.</summary>
+    /// <param name="rotation">Normalized row-vector rotation matrix.</param>
+    /// <returns>Euler angles with Y in the range [-PI/2, PI/2].</returns>
+    private static Vector3 ExtractEuler(Matrix4x4 rotation)
+    {
+        const float singularityThreshold = 0.99999f;
+        var sinY = Math.Clamp(rotation.M31, -1f, 1f);
+        var y = MathF.Asin(sinY);
+        if (MathF.Abs(sinY) >= singularityThreshold)
+            return new Vector3(MathF.Atan2(rotation.M23, rotation.M22), y, 0f);
+        return new Vector3(
+            MathF.Atan2(-rotation.M32, rotation.M33),
+            y,
+            MathF.Atan2(-rotation.M21, rotation.M11));
     }
 }
