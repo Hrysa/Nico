@@ -41,4 +41,4 @@ public sealed record MeshUpdate(uint FirstVertex, Vertex[] Vertices);
 
 /// <summary>Describes colored geometry valid only for the current frame.</summary>
 /// <param name="Vertices">One-frame vertices.</param>
-public sealed record TransientGeometry(Vertex[] Vertices);
+public readonly record struct TransientGeometry(Vertex[] Vertices);

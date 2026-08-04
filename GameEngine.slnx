@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Engine.Assets/Engine.Assets.csproj" />
     <Project Path="src/Engine.Core/Engine.Core.csproj" />
     <Project Path="src/Engine.Graphics/Engine.Graphics.csproj" />
     <Project Path="src/Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
@@ -10,6 +11,7 @@
     <Project Path="src/Player/Player.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Engine.Assets.Tests/Engine.Assets.Tests.csproj" />
     <Project Path="tests/Engine.Core.Tests/Engine.Core.Tests.csproj" />
     <Project Path="tests/Editor.Tests/Editor.Tests.csproj" />
     <Project Path="tests/Engine.Graphics.Tests/Engine.Graphics.Tests.csproj" />

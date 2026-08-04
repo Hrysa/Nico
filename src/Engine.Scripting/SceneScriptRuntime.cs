@@ -18,28 +18,28 @@ public sealed class SceneScriptRuntime : IDisposable
     /// Attaches scripts declared by nodes in a scene graph.
     /// </summary>
     /// <param name="root">Synthetic scene root.</param>
-    /// <param name="resolveType">Function that resolves a serialized script type name.</param>
-    public void Attach(Node root, Func<string, Type?> resolveType)
+    /// <param name="catalog">Catalog resolving persistent script assets to compiled types.</param>
+    public void Attach(Node root, IScriptTypeCatalog catalog)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(root);
-        ArgumentNullException.ThrowIfNull(resolveType);
+        ArgumentNullException.ThrowIfNull(catalog);
         if (_scripts.Count != 0 || _started)
             throw new InvalidOperationException("The runtime already has an attached scene.");
 
         var context = new SceneContext(root);
         foreach (var node in SceneContext.Enumerate(root))
         {
-            if (string.IsNullOrWhiteSpace(node.ScriptType))
+            if (node.ScriptId is not { } scriptId)
                 continue;
-            var type = resolveType(node.ScriptType)
-                ?? throw new InvalidOperationException($"Script type '{node.ScriptType}' was not found.");
+            if (!catalog.TryResolve(scriptId, out var type) || type is null)
+                throw new InvalidOperationException($"Script asset '{scriptId}' was not found.");
             if (!typeof(SceneScript).IsAssignableFrom(type) || type.IsAbstract)
                 throw new InvalidOperationException(
-                    $"Script type '{node.ScriptType}' must be a concrete {nameof(SceneScript)}.");
+                    $"Script asset '{scriptId}' must resolve to a concrete {nameof(SceneScript)}.");
             if (Activator.CreateInstance(type) is not SceneScript script)
                 throw new InvalidOperationException(
-                    $"Script type '{node.ScriptType}' must have a public parameterless constructor.");
+                    $"Script asset '{scriptId}' must have a public parameterless constructor.");
             script.Owner = node;
             script.Scene = context;
             _scripts.Add(script);

@@ -43,7 +43,7 @@ UI produces semantic `UIDrawCommand` values. Only the Silk backend translates th
 
 `Node` owns hierarchy invariants and local transforms. `Node3D` composes parent transforms. Cameras implement `ICamera`; selection uses `MeshPicker`; `RenderQueue` separates scene submission from backend execution.
 
-A node may persist one assembly-qualified `ScriptType`. Entering play mode clones the authored graph, builds the game-owned script project, resolves those types from its output assembly, binds one `SceneScript` instance per runtime node, and invokes its lifecycle before rendering. Stopping play discards the clone, leaving authored state unchanged. Script assemblies are loaded into a collectible context; engine contract assemblies remain shared with the default context so node and script type identity is stable.
+A node may persist one script asset ID. Entering play mode clones the authored graph, builds the game-owned script project, semantically maps script assets to validated types in its output assembly, binds one `SceneScript` instance per runtime node, and invokes its lifecycle before rendering. Stopping play discards the clone, leaving authored state unchanged. Script assemblies are loaded into a collectible context; engine contract assemblies remain shared with the default context so node and script type identity is stable.
 
 The Vulkan backend separates resource lifetimes even though `SilkWindow` remains its facade:
 

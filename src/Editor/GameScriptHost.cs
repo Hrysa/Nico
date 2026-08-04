@@ -11,12 +11,15 @@ namespace Editor;
 public sealed class GameScriptHost : IDisposable
 {
     private readonly ScriptLoadContext _loadContext;
-    private readonly Assembly _gameAssembly;
+    private readonly CompiledScriptTypeCatalog? _catalog;
     private SceneScriptRuntime? _runtime;
     private bool _disposed;
 
     /// <summary>Gets the number of scripts attached to the active play scene.</summary>
     public int ScriptCount => _runtime?.Scripts.Count ?? 0;
+
+    /// <summary>Gets the compiled UUID script catalog when asset discovery was supplied.</summary>
+    public IScriptTypeCatalog? Catalog => _catalog;
 
     /// <summary>
     /// Builds and loads a generated game script project.
@@ -33,7 +36,9 @@ public sealed class GameScriptHost : IDisposable
     /// <summary>Loads one compiled script assembly without retaining file handles on build outputs.</summary>
     /// <param name="assemblyPath">Absolute compiled assembly path.</param>
     /// <returns>A host containing the compiled script assembly.</returns>
-    internal static GameScriptHost Load(string assemblyPath)
+    internal static GameScriptHost Load(
+        string assemblyPath,
+        IReadOnlyList<ScriptAssetDescriptor>? descriptors = null)
     {
         if (!File.Exists(assemblyPath))
             throw new FileNotFoundException("The script build did not produce its expected assembly.",
@@ -41,7 +46,10 @@ public sealed class GameScriptHost : IDisposable
         var loadContext = new ScriptLoadContext(assemblyPath);
         try
         {
-            return new GameScriptHost(loadContext, loadContext.LoadMainAssembly());
+            var assembly = loadContext.LoadMainAssembly();
+            var catalog = descriptors is null
+                ? null : new CompiledScriptTypeCatalog(assembly, descriptors);
+            return new GameScriptHost(loadContext, assembly, catalog);
         }
         catch
         {
@@ -63,7 +71,9 @@ public sealed class GameScriptHost : IDisposable
         var runtime = new SceneScriptRuntime();
         try
         {
-            runtime.Attach(root, ResolveType);
+            if (_catalog is null && Enumerate(root).Any(node => node.ScriptId is not null))
+                throw new InvalidOperationException("The compiled game has no script asset catalog.");
+            runtime.Attach(root, (IScriptTypeCatalog?)_catalog ?? EmptyScriptTypeCatalog.Instance);
             runtime.Start();
             _runtime = runtime;
         }
@@ -112,22 +122,39 @@ public sealed class GameScriptHost : IDisposable
     /// </summary>
     /// <param name="loadContext">Collectible assembly load context.</param>
     /// <param name="gameAssembly">Compiled game assembly.</param>
-    private GameScriptHost(ScriptLoadContext loadContext, Assembly gameAssembly)
+    /// <param name="catalog">Optional compiled UUID script catalog.</param>
+    private GameScriptHost(
+        ScriptLoadContext loadContext,
+        Assembly gameAssembly,
+        CompiledScriptTypeCatalog? catalog)
     {
         _loadContext = loadContext;
-        _gameAssembly = gameAssembly;
+        _catalog = catalog;
     }
 
-    /// <summary>
-    /// Resolves one serialized script type from the compiled game assembly.
-    /// </summary>
-    /// <param name="typeName">Full or assembly-qualified script type name.</param>
-    /// <returns>The resolved type, or null when it is not in the game assembly.</returns>
-    private Type? ResolveType(string typeName)
+    /// <summary>Enumerates a node subtree without exposing scripting internals.</summary>
+    /// <param name="root">Subtree root.</param>
+    /// <returns>The root and all descendants.</returns>
+    private static IEnumerable<Node> Enumerate(Node root)
     {
-        var separator = typeName.IndexOf(',');
-        var fullName = separator < 0 ? typeName : typeName[..separator];
-        return _gameAssembly.GetType(fullName.Trim(), throwOnError: false, ignoreCase: false);
+        yield return root;
+        foreach (var child in root.Children)
+        foreach (var descendant in Enumerate(child))
+            yield return descendant;
+    }
+
+    /// <summary>Provides an empty catalog for scenes without attached scripts.</summary>
+    private sealed class EmptyScriptTypeCatalog : IScriptTypeCatalog
+    {
+        /// <summary>Gets the shared empty catalog.</summary>
+        internal static EmptyScriptTypeCatalog Instance { get; } = new();
+
+        /// <inheritdoc/>
+        public bool TryResolve(AssetId asset, out Type? scriptType)
+        {
+            scriptType = null;
+            return false;
+        }
     }
 
     /// <summary>

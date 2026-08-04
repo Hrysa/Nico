@@ -1,4 +1,5 @@
 using Editor;
+using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
 using Xunit;
@@ -16,7 +17,8 @@ public class GameScriptHostTests
         try
         {
             var workspace = ProjectSolutionScaffolder.Ensure(directory, typeof(Node).Assembly.Location);
-            File.WriteAllText(Path.Combine(directory, "Scripts", "MoveScript.cs"), """
+            var scriptPath = Path.Combine(directory, "Scripts", "MoveScript.cs");
+            File.WriteAllText(scriptPath, """
                 using System.Numerics;
                 using Engine.Scripting;
 
@@ -28,13 +30,17 @@ public class GameScriptHostTests
                     }
                 }
                 """);
+            var database = new AssetDatabase(directory, EditorAssetImporters.Select);
+            var script = Assert.IsType<AssetMetadataRecord>(database.FindByPath(scriptPath));
             var root = new Node3D { Name = "Scene" };
-            var owner = new Node3D { Name = "Mover", ScriptType = "MoveScript" };
+            var owner = new Node3D { Name = "Mover", ScriptId = script.Id };
             root.AddChild(owner);
 
-            using var compiler = new GameScriptCompiler(workspace);
+            using var compiler = new GameScriptCompiler(workspace, database);
             using (var host = compiler.BuildAndLoad())
             {
+                Assert.NotNull(host.Catalog);
+                Assert.True(host.Catalog.TryResolve(script.Id, out _));
                 host.LoadScene(root);
                 host.Update(0.5);
             }

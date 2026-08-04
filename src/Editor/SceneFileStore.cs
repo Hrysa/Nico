@@ -11,7 +11,7 @@ namespace Editor;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 1;
+    private const int CurrentFormatVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -115,7 +115,7 @@ public static class SceneFileStore
             SceneVector3.From(node.Position),
             SceneVector3.From(node.Rotation),
             SceneVector3.From(node.Scale),
-            node.ScriptType,
+            node.ScriptId,
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
             children);
     }
@@ -146,7 +146,7 @@ public static class SceneFileStore
         node.Position = data.Position.ToVector3();
         node.Rotation = data.Rotation.ToVector3();
         node.Scale = data.Scale.ToVector3();
-        node.ScriptType = data.ScriptType;
+        node.ScriptId = data.ScriptId;
         nodesById.Add(data.Id, node);
         if (node is MeshInstance3D meshInstance)
             meshInstances.Add(meshInstance);
@@ -178,7 +178,7 @@ public static class SceneFileStore
         SceneVector3 Position,
         SceneVector3 Rotation,
         SceneVector3 Scale,
-        string? ScriptType,
+        AssetId? ScriptId,
         CameraData? Camera,
         List<SceneNodeData> Children);
 

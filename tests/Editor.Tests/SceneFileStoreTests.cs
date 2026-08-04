@@ -1,5 +1,6 @@
 using System.Numerics;
 using Editor;
+using Engine.Core;
 using Engine.Graphics;
 using Xunit;
 
@@ -27,7 +28,7 @@ public class SceneFileStoreTests
             var cube = new MeshInstance3D(new CubeMesh())
             {
                 Name = "Cube",
-                ScriptType = "Example.RotateCube, Example.Scripts"
+                ScriptId = AssetId.New()
             };
             var camera = new PerspectiveCamera(0.9f, near: 0.25f, far: 500f)
             {
@@ -48,7 +49,7 @@ public class SceneFileStoreTests
             Assert.Equal(group.Scale, loadedGroup.Scale);
             var loadedCube = Assert.IsType<MeshInstance3D>(loadedGroup.Children[0]);
             Assert.IsType<CubeMesh>(loadedCube.Mesh);
-            Assert.Equal(cube.ScriptType, loadedCube.ScriptType);
+            Assert.Equal(cube.ScriptId, loadedCube.ScriptId);
             Assert.Single(loaded.MeshInstances);
             Assert.Equal("GameCamera", loaded.GameCamera.Name);
             Assert.Equal(camera.Position, loaded.GameCamera.Position);

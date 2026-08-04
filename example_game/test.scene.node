@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "gameCameraId": "4448007c8d554027a713942fc8562044",
   "nodes": [
     {
@@ -21,6 +21,7 @@
         "y": 1,
         "z": 1
       },
+      "scriptId": null,
       "camera": null,
       "children": []
     },
@@ -43,6 +44,7 @@
         "y": 1,
         "z": 1
       },
+      "scriptId": null,
       "camera": {
         "fov": 0.7853982,
         "near": 0.1,

@@ -28,9 +28,13 @@ internal static class GizmoOverlayBuilder
         var highlighted = active != GizmoHandleKind.None ? active : hovered;
         if (highlighted != GizmoHandleKind.None)
         {
-            var handle = layout.Handles.FirstOrDefault(candidate => candidate.Kind == highlighted);
-            if (handle is not null)
+            foreach (var handle in layout.Handles)
+            {
+                if (handle.Kind != highlighted)
+                    continue;
                 AppendHandle(vertices, handle, HighlightColor, layout.Viewport);
+                break;
+            }
         }
 
         return vertices.ToArray();

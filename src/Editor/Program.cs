@@ -1,5 +1,6 @@
 using System.Numerics;
 using Editor;
+using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
@@ -33,6 +34,12 @@ Debug.SetLoggerFactory(loggerFactory);
 var logger = loggerFactory.CreateLogger<Program>();
 logger.LogInformation("Starting Editor for game project {ProjectRoot}...", project.RootPath);
 
+var assetDatabase = new AssetDatabase(project.RootPath, EditorAssetImporters.Select);
+logger.LogInformation("Indexed {AssetCount} project assets with {DiagnosticCount} diagnostics",
+    assetDatabase.Assets.Count, assetDatabase.Diagnostics.Count);
+foreach (var diagnostic in assetDatabase.Diagnostics)
+    logger.LogWarning("Asset metadata {AssetPath}: {Message}", diagnostic.Path, diagnostic.Message);
+
 ScriptingWorkspace scriptingWorkspace;
 try
 {
@@ -48,7 +55,7 @@ catch (Exception exception) when (exception is IOException or UnauthorizedAccess
 }
 
 using var window = new SilkWindow(loggerFactory);
-using var scriptCompiler = new GameScriptCompiler(scriptingWorkspace);
+using var scriptCompiler = new GameScriptCompiler(scriptingWorkspace, assetDatabase);
 var width = 1280;
 var height = 720;
 var options = new WindowOptions
@@ -64,6 +71,13 @@ var options = new WindowOptions
 logger.LogInformation("Initializing window...");
 window.Initialize(options);
 using var secondaryWindows = new SilkWindowGroup(window, loggerFactory);
+using var assetWatcher = new AssetDatabaseWatcher(project.RootPath);
+var assetRefreshPending = 0;
+assetWatcher.RefreshRequested += () =>
+{
+    Interlocked.Exchange(ref assetRefreshPending, 1);
+    window.RequestFrame();
+};
 
 logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
@@ -134,6 +148,7 @@ else
 }
 var hierarchyTree = editorView.HierarchyTree;
 var inspector = editorView.Inspector;
+inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
@@ -712,12 +727,22 @@ FileSystemNode BuildFileSystemNode(string path)
         return node;
 
     foreach (var directory in Directory.EnumerateDirectories(path)
+                 .Where(IsVisibleProjectDirectory)
                  .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         node.AddChild(BuildFileSystemNode(directory));
     foreach (var file in Directory.EnumerateFiles(path)
+                 .Where(file => !file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                  .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         node.AddChild(new FileSystemNode(file, isDirectory: false));
     return node;
+}
+
+/// <summary>Returns whether a project directory belongs in the editable FileSystem tree.</summary>
+/// <param name="path">Absolute directory path.</param>
+/// <returns>False for generated asset, build, and version-control directories.</returns>
+bool IsVisibleProjectDirectory(string path)
+{
+    return Path.GetFileName(path) is not (".git" or ".nico" or "bin" or "obj");
 }
 
 /// <summary>Enumerates one filesystem-node subtree.</summary>
@@ -1417,7 +1442,8 @@ window.MouseUp += button =>
         var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
         if (draggedItem is FileSystemNode fileSource)
         {
-            if (ScriptFileDrop.TryAttach(fileSource, uiEventRouter.HoveredElement, inspector))
+            if (ScriptFileDrop.TryAttach(
+                    fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
             {
                 logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
                     fileSource.FullPath, inspector.InspectedNode?.Name);
@@ -1504,6 +1530,19 @@ window.TextInput += character =>
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
+    if (Interlocked.Exchange(ref assetRefreshPending, 0) != 0)
+    {
+        var assetChanges = assetDatabase.Refresh();
+        foreach (var diagnostic in assetDatabase.Diagnostics)
+            logger.LogWarning("Asset metadata {AssetPath}: {Message}",
+                diagnostic.Path, diagnostic.Message);
+        if (assetChanges.Count > 0)
+        {
+            logger.LogInformation("Refreshed asset database with {ChangeCount} changes",
+                assetChanges.Count);
+            RefreshFileSystem();
+        }
+    }
     UpdatePlayModeStart(delta);
     if (pendingResizeTimestamp != 0)
     {

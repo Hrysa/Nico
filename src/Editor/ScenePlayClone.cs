@@ -73,7 +73,7 @@ public static class ScenePlayClone
         destination.Position = source.Position;
         destination.Orientation = source.Orientation;
         destination.Scale = source.Scale;
-        destination.ScriptType = source.ScriptType;
+        destination.ScriptId = source.ScriptId;
     }
 
     /// <summary>

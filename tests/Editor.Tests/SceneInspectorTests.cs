@@ -1,5 +1,7 @@
 using System.Numerics;
 using Editor;
+using Engine.Assets;
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 using Xunit;
@@ -35,7 +37,7 @@ public class SceneInspectorTests
         inspector.Bind(node);
         var name = Assert.IsType<TextField>(FindByName<TextField>(inspector, "NameField"));
         var positionX = Assert.IsType<TextField>(FindByName<TextField>(inspector, "PositionX"));
-        var script = Assert.IsType<TextField>(FindByName<TextField>(inspector, "ScriptTypeField"));
+        var script = Assert.IsType<TextField>(FindByName<TextField>(inspector, "ScriptAssetField"));
 
         name.SetFocus(true);
         name.InvokeTextInput('2');
@@ -43,13 +45,11 @@ public class SceneInspectorTests
         positionX.SetFocus(true);
         positionX.InvokeKeyDown((int)InputKey.Backspace);
         positionX.InvokeTextInput('5');
-        script.SetFocus(true);
-        script.InvokeTextInput('S');
-
         Assert.Equal("Cube2", node.Name);
         Assert.Equal(5f, node.Position.X);
         Assert.Equal(8f, node.Position.Y);
-        Assert.Equal("S", node.ScriptType);
+        Assert.True(script.IsReadOnly);
+        Assert.Null(node.ScriptId);
         Assert.True(changeCount >= 2);
         Assert.Equal(1, nameChangeCount);
     }
@@ -72,7 +72,7 @@ public class SceneInspectorTests
 
     /// <summary>Verifies dropping a scene-script source fills the Inspector attachment field.</summary>
     [Fact]
-    public void ScriptFileDrop_OnScriptTypeField_AttachesDeclaredType()
+    public void ScriptFileDrop_OnScriptAssetField_AttachesPersistentAsset()
     {
         var directory = Directory.CreateTempSubdirectory("nico-script-drop-");
         try
@@ -85,16 +85,19 @@ public class SceneInspectorTests
                 """);
             var node = new Node3D { Name = "Cube" };
             var inspector = new SceneInspector(300f, 500f);
+            var database = new AssetDatabase(directory.FullName, EditorAssetImporters.Select);
+            var script = Assert.IsType<AssetMetadataRecord>(database.FindByPath(path));
+            inspector.ResolveScriptName = id => database.Find(id)?.ProjectPath;
             inspector.Bind(node);
             var field = Assert.IsType<TextField>(
-                FindByName<TextField>(inspector, "ScriptTypeField"));
+                FindByName<TextField>(inspector, "ScriptAssetField"));
 
             var attached = ScriptFileDrop.TryAttach(
-                new FileSystemNode(path, isDirectory: false), field, inspector);
+                new FileSystemNode(path, isDirectory: false), field, inspector, database);
 
             Assert.True(attached);
-            Assert.Equal("ExampleGame.Gameplay.RotateObject", node.ScriptType);
-            Assert.Equal(node.ScriptType, field.Text);
+            Assert.Equal(script.Id, node.ScriptId);
+            Assert.Equal(script.ProjectPath, field.Text);
         }
         finally
         {
@@ -104,24 +107,25 @@ public class SceneInspectorTests
 
     /// <summary>Verifies ordinary C# files cannot be attached as scene scripts.</summary>
     [Fact]
-    public void ScriptFileDrop_OnNonScriptSource_IsRejected()
+    public void ScriptFileDrop_OnNonCSharpAsset_IsRejected()
     {
         var directory = Directory.CreateTempSubdirectory("nico-script-drop-");
         try
         {
-            var path = Path.Combine(directory.FullName, "Utility.cs");
-            File.WriteAllText(path, "namespace ExampleGame; public static class Utility { }");
+            var path = Path.Combine(directory.FullName, "Texture.png");
+            File.WriteAllText(path, "not an image");
+            var database = new AssetDatabase(directory.FullName, EditorAssetImporters.Select);
             var node = new Node3D { Name = "Cube" };
             var inspector = new SceneInspector(300f, 500f);
             inspector.Bind(node);
             var field = Assert.IsType<TextField>(
-                FindByName<TextField>(inspector, "ScriptTypeField"));
+                FindByName<TextField>(inspector, "ScriptAssetField"));
 
             var attached = ScriptFileDrop.TryAttach(
-                new FileSystemNode(path, isDirectory: false), field, inspector);
+                new FileSystemNode(path, isDirectory: false), field, inspector, database);
 
             Assert.False(attached);
-            Assert.Null(node.ScriptType);
+            Assert.Null(node.ScriptId);
         }
         finally
         {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Engine.Assets;
 
 namespace Editor;
 
@@ -10,6 +11,7 @@ public sealed partial class GameScriptCompiler : IDisposable
     private readonly FileSystemWatcher _watcher;
     private readonly object _stateLock = new();
     private readonly string _assemblyPath;
+    private readonly AssetDatabase? _assetDatabase;
     private long _changeVersion = 1;
     private long _projectChangeVersion = 1;
     private long _successfulVersion;
@@ -18,10 +20,11 @@ public sealed partial class GameScriptCompiler : IDisposable
 
     /// <summary>Creates a compiler that observes relevant project inputs without scanning them on Play.</summary>
     /// <param name="workspace">Scripting workspace to compile.</param>
-    public GameScriptCompiler(ScriptingWorkspace workspace)
+    public GameScriptCompiler(ScriptingWorkspace workspace, AssetDatabase? assetDatabase = null)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         _workspace = workspace;
+        _assetDatabase = assetDatabase;
         var projectDirectory = Path.GetDirectoryName(workspace.ScriptProjectPath)
             ?? throw new ArgumentException("The script project has no parent directory.", nameof(workspace));
         var projectName = Path.GetFileNameWithoutExtension(workspace.ScriptProjectPath);
@@ -68,7 +71,17 @@ public sealed partial class GameScriptCompiler : IDisposable
                     _restoredProjectVersion = projectVersion;
             }
         }
-        return GameScriptHost.Load(_assemblyPath);
+        IReadOnlyList<ScriptAssetDescriptor>? scripts = null;
+        if (_assetDatabase is not null)
+        {
+            _assetDatabase.Refresh();
+            var analysis = CSharpScriptAnalyzer.Analyze(
+                _assetDatabase, Path.GetDirectoryName(_assemblyPath)!);
+            if (analysis.Diagnostics.Count > 0)
+                throw new ScriptAnalysisException(analysis.Diagnostics);
+            scripts = analysis.Scripts;
+        }
+        return GameScriptHost.Load(_assemblyPath, scripts);
     }
 
     /// <summary>Stops observing script inputs.</summary>

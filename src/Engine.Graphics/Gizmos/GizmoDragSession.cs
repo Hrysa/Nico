@@ -68,8 +68,19 @@ internal sealed class GizmoDragSession
         if (!layout.IsValid || !IsFinite(pointer) || !IsFinite(original.Position) || !IsFinite(original.Rotation))
             return false;
 
-        var geometry = layout.Handles.FirstOrDefault(candidate => candidate.Kind == handle);
-        if (geometry is null || !geometry.Interactive || !TryGetAxis(handle, out var worldAxis))
+        var geometryIndex = -1;
+        for (var index = 0; index < layout.Handles.Count; index++)
+        {
+            if (layout.Handles[index].Kind == handle)
+            {
+                geometryIndex = index;
+                break;
+            }
+        }
+        if (geometryIndex < 0 || !TryGetAxis(handle, out var worldAxis))
+            return false;
+        var geometry = layout.Handles[geometryIndex];
+        if (!geometry.Interactive)
             return false;
 
         if (IsTranslation(handle))

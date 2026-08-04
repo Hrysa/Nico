@@ -1982,7 +1982,6 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <inheritdoc/>
     public void SubmitTransient(TransientGeometry geometry)
     {
-        ArgumentNullException.ThrowIfNull(geometry);
         ArgumentNullException.ThrowIfNull(geometry.Vertices);
         _overlayVertices = geometry.Vertices;
     }

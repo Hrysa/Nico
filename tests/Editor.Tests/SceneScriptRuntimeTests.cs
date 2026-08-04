@@ -1,4 +1,5 @@
 using Engine.Graphics;
+using Engine.Core;
 using Engine.Scripting;
 using Xunit;
 
@@ -14,13 +15,12 @@ public class SceneScriptRuntimeTests
         var owner = new Node3D
         {
             Name = "Target",
-            ScriptType = typeof(RecordingScript).FullName
+            ScriptId = AssetId.New()
         };
         root.AddChild(owner);
         using var runtime = new SceneScriptRuntime();
 
-        runtime.Attach(root, name => name == typeof(RecordingScript).FullName
-            ? typeof(RecordingScript) : null);
+        runtime.Attach(root, new TestScriptCatalog(owner.ScriptId.Value, typeof(RecordingScript)));
         runtime.Start();
         runtime.Update(0.25);
 
@@ -29,6 +29,16 @@ public class SceneScriptRuntimeTests
         Assert.Same(owner, script.Scene.FindNode("Target"));
         Assert.True(script.ReadyCalled);
         Assert.Equal(0.25, script.LastDeltaTime);
+    }
+
+    private sealed class TestScriptCatalog(AssetId id, Type type) : IScriptTypeCatalog
+    {
+        /// <inheritdoc />
+        public bool TryResolve(AssetId asset, out Type? scriptType)
+        {
+            scriptType = asset == id ? type : null;
+            return scriptType is not null;
+        }
     }
 
     /// <summary>Records lifecycle activity for a runtime test.</summary>

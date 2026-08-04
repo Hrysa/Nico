@@ -71,7 +71,7 @@ internal readonly record struct GizmoTriangle(Vector2 A, Vector2 B, Vector2 C);
 /// <summary>
 /// Stores all shared render and hit geometry for one semantic handle.
 /// </summary>
-internal sealed record GizmoHandleGeometry(
+internal readonly record struct GizmoHandleGeometry(
     GizmoHandleKind Kind,
     int Layer,
     Vector3 Color,

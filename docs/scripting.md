@@ -19,13 +19,13 @@ public sealed class RotateObject : SceneScript
 }
 ```
 
-Attach the compiled type to a node with its `scriptType` scene property:
+Attach the source asset to a node with its persistent `scriptId` scene property:
 
 ```json
 {
   "type": "cube",
   "name": "SceneCube",
-  "scriptType": "ExampleGame.RotateObject, example_game.Scripts"
+  "scriptId": "019fcbdc-bff3-7205-80fc-add216624bc2"
 }
 ```
 

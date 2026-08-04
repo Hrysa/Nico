@@ -14,6 +14,9 @@ public sealed class SceneInspector : Panel
     private readonly UITheme _theme;
     private readonly List<Func<bool>> _refreshBindings = new();
 
+    /// <summary>Gets or sets the editor display-name resolver for attached script assets.</summary>
+    public Func<AssetId, string?>? ResolveScriptName { get; set; }
+
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
 
@@ -84,17 +87,13 @@ public sealed class SceneInspector : Panel
             "Script", _theme.TextPrimary));
         var scriptField = new TextField(Width - 24f, 30f, _theme)
         {
-            Name = "ScriptTypeField",
-            Text = node.ScriptType ?? string.Empty,
+            Name = "ScriptAssetField",
+            Text = GetScriptDisplayName(node.ScriptId),
             Placeholder = "No script attached",
+            IsReadOnly = true,
             Margin = new Thickness(12f, 266f, 0f, 0f)
         };
-        scriptField.TextChanged += value =>
-        {
-            node.ScriptType = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-            NodeChanged?.Invoke(node);
-        };
-        RegisterRefresh(scriptField, () => node.ScriptType ?? string.Empty);
+        RegisterRefresh(scriptField, () => GetScriptDisplayName(node.ScriptId));
         AddChild(scriptField);
     }
 
@@ -110,22 +109,30 @@ public sealed class SceneInspector : Panel
         return changed;
     }
 
-    /// <summary>Attaches a resolved game-script type to the currently inspected node.</summary>
-    /// <param name="scriptType">Fully qualified game-script type name.</param>
+    /// <summary>Attaches a persistent game-script asset to the currently inspected node.</summary>
+    /// <param name="scriptId">Persistent C# source asset identity.</param>
     /// <returns>True when an inspected node received the script type.</returns>
-    public bool AttachScriptType(string scriptType)
+    public bool AttachScript(AssetId scriptId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scriptType);
         if (InspectedNode is not { } node)
             return false;
-        var resolvedType = scriptType.Trim();
-        node.ScriptType = resolvedType;
+        node.ScriptId = scriptId;
         var field = Children.OfType<TextField>()
-            .FirstOrDefault(element => element.Name == "ScriptTypeField");
+            .FirstOrDefault(element => element.Name == "ScriptAssetField");
         if (field is not null)
-            field.Text = resolvedType;
+            field.Text = GetScriptDisplayName(scriptId);
         NodeChanged?.Invoke(node);
         return true;
+    }
+
+    /// <summary>Formats one optional script asset for the read-only Inspector field.</summary>
+    /// <param name="scriptId">Optional persistent script asset identity.</param>
+    /// <returns>Resolved project path, UUID fallback, or empty text.</returns>
+    private string GetScriptDisplayName(AssetId? scriptId)
+    {
+        if (scriptId is not { } id)
+            return string.Empty;
+        return ResolveScriptName?.Invoke(id) ?? id.ToString();
     }
 
     /// <summary>
