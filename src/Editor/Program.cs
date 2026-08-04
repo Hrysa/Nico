@@ -1415,8 +1415,19 @@ window.MouseUp += button =>
     if (dragActive && pendingDragItem is { } draggedItem)
     {
         var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
-        if (draggedItem is FileSystemNode fileSource && IsInside(fileSystemTree, lastMousePos))
-            MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
+        if (draggedItem is FileSystemNode fileSource)
+        {
+            if (ScriptFileDrop.TryAttach(fileSource, uiEventRouter.HoveredElement, inspector))
+            {
+                logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
+                    fileSource.FullPath, inspector.InspectedNode?.Name);
+                RefreshVertices();
+            }
+            else if (IsInside(fileSystemTree, lastMousePos))
+            {
+                MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
+            }
+        }
         else if (draggedItem is not FileSystemNode && IsInside(hierarchyTree, lastMousePos))
             MoveHierarchyNode(draggedItem, targetRow?.Item);
     }

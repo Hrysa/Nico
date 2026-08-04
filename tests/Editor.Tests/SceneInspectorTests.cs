@@ -70,6 +70,65 @@ public class SceneInspectorTests
         Assert.Equal("2.5", positionX.Text);
     }
 
+    /// <summary>Verifies dropping a scene-script source fills the Inspector attachment field.</summary>
+    [Fact]
+    public void ScriptFileDrop_OnScriptTypeField_AttachesDeclaredType()
+    {
+        var directory = Directory.CreateTempSubdirectory("nico-script-drop-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "RotateObject.cs");
+            File.WriteAllText(path, """
+                using Engine.Scripting;
+                namespace ExampleGame.Gameplay;
+                public sealed class RotateObject : SceneScript { }
+                """);
+            var node = new Node3D { Name = "Cube" };
+            var inspector = new SceneInspector(300f, 500f);
+            inspector.Bind(node);
+            var field = Assert.IsType<TextField>(
+                FindByName<TextField>(inspector, "ScriptTypeField"));
+
+            var attached = ScriptFileDrop.TryAttach(
+                new FileSystemNode(path, isDirectory: false), field, inspector);
+
+            Assert.True(attached);
+            Assert.Equal("ExampleGame.Gameplay.RotateObject", node.ScriptType);
+            Assert.Equal(node.ScriptType, field.Text);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Verifies ordinary C# files cannot be attached as scene scripts.</summary>
+    [Fact]
+    public void ScriptFileDrop_OnNonScriptSource_IsRejected()
+    {
+        var directory = Directory.CreateTempSubdirectory("nico-script-drop-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "Utility.cs");
+            File.WriteAllText(path, "namespace ExampleGame; public static class Utility { }");
+            var node = new Node3D { Name = "Cube" };
+            var inspector = new SceneInspector(300f, 500f);
+            inspector.Bind(node);
+            var field = Assert.IsType<TextField>(
+                FindByName<TextField>(inspector, "ScriptTypeField"));
+
+            var attached = ScriptFileDrop.TryAttach(
+                new FileSystemNode(path, isDirectory: false), field, inspector);
+
+            Assert.False(attached);
+            Assert.Null(node.ScriptType);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     /// <summary>Finds a named UI element recursively.</summary>
     /// <typeparam name="TElement">Required UI element type.</typeparam>
     /// <param name="root">Subtree root.</param>

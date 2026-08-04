@@ -110,6 +110,24 @@ public sealed class SceneInspector : Panel
         return changed;
     }
 
+    /// <summary>Attaches a resolved game-script type to the currently inspected node.</summary>
+    /// <param name="scriptType">Fully qualified game-script type name.</param>
+    /// <returns>True when an inspected node received the script type.</returns>
+    public bool AttachScriptType(string scriptType)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scriptType);
+        if (InspectedNode is not { } node)
+            return false;
+        var resolvedType = scriptType.Trim();
+        node.ScriptType = resolvedType;
+        var field = Children.OfType<TextField>()
+            .FirstOrDefault(element => element.Name == "ScriptTypeField");
+        if (field is not null)
+            field.Text = resolvedType;
+        NodeChanged?.Invoke(node);
+        return true;
+    }
+
     /// <summary>
     /// Adds a three-component vector editor row.
     /// </summary>
