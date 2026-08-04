@@ -26,9 +26,10 @@ public static class ProjectSolutionScaffolder
 
         Directory.CreateDirectory(scriptsDirectory);
         if (!File.Exists(scriptProjectPath))
-            File.WriteAllText(scriptProjectPath, CreateScriptProject(engineCoreAssemblyPath));
+            File.WriteAllText(scriptProjectPath, CreateScriptProject());
         else
-            RefreshEngineReferences(scriptProjectPath, engineCoreAssemblyPath);
+            RemoveEngineReferences(scriptProjectPath);
+        RefreshEngineReferences(scriptProjectPath + ".user", engineCoreAssemblyPath);
         if (!File.Exists(solutionPath))
             File.WriteAllText(solutionPath, CreateSolution(projectName));
 
@@ -53,49 +54,25 @@ public static class ProjectSolutionScaffolder
     /// <summary>
     /// Creates the XML for the game script class-library project.
     /// </summary>
-    /// <param name="engineCoreAssemblyPath">Path to Engine.Core beside the other scripting API assemblies.</param>
     /// <returns>The script project XML.</returns>
-    private static string CreateScriptProject(string engineCoreAssemblyPath)
+    private static string CreateScriptProject()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Path.GetFullPath(engineCoreAssemblyPath))
-            ?? throw new ArgumentException("The engine assembly path has no parent directory.",
-                nameof(engineCoreAssemblyPath));
-        var corePath = SecurityElement.Escape(Path.Combine(assemblyDirectory, "Engine.Core.dll"));
-        var graphicsPath = SecurityElement.Escape(Path.Combine(assemblyDirectory, "Engine.Graphics.dll"));
-        var scriptingPath = SecurityElement.Escape(Path.Combine(assemblyDirectory, "Engine.Scripting.dll"));
-        return $"""
+        return """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <TargetFramework>net11.0</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <Nullable>enable</Nullable>
               </PropertyGroup>
-              <ItemGroup>
-                <Reference Include="Engine.Core">
-                  <HintPath>{corePath}</HintPath>
-                  <Private>false</Private>
-                </Reference>
-                <Reference Include="Engine.Graphics">
-                  <HintPath>{graphicsPath}</HintPath>
-                  <Private>false</Private>
-                </Reference>
-                <Reference Include="Engine.Scripting">
-                  <HintPath>{scriptingPath}</HintPath>
-                  <Private>false</Private>
-                </Reference>
-              </ItemGroup>
             </Project>
             """;
     }
 
     /// <summary>
-    /// Updates only engine-managed references in an existing generated script project.
+    /// Removes legacy machine-specific engine references from a committed script project.
     /// </summary>
     /// <param name="scriptProjectPath">Existing script project path.</param>
-    /// <param name="engineCoreAssemblyPath">Path to Engine.Core beside the other scripting API assemblies.</param>
-    private static void RefreshEngineReferences(
-        string scriptProjectPath,
-        string engineCoreAssemblyPath)
+    private static void RemoveEngineReferences(string scriptProjectPath)
     {
         XDocument document;
         try
@@ -109,15 +86,54 @@ public static class ProjectSolutionScaffolder
         var project = document.Root;
         if (project?.Name.LocalName != "Project")
             return;
+        var references = project.Descendants()
+            .Where(element => element.Name.LocalName == "Reference" &&
+                IsEngineReference((string?)element.Attribute("Include")))
+            .ToArray();
+        if (references.Length == 0)
+            return;
+        foreach (var reference in references)
+            reference.Remove();
+        foreach (var emptyGroup in project.Elements()
+                     .Where(element => element.Name.LocalName == "ItemGroup" && !element.Elements().Any())
+                     .ToArray())
+        {
+            emptyGroup.Remove();
+        }
+        SaveAtomically(document, scriptProjectPath);
+    }
+
+    /// <summary>Writes local engine references to the ignored per-user project file.</summary>
+    /// <param name="userProjectPath">Machine-local project user-file path.</param>
+    /// <param name="engineCoreAssemblyPath">Path to Engine.Core beside the other scripting API assemblies.</param>
+    private static void RefreshEngineReferences(
+        string userProjectPath,
+        string engineCoreAssemblyPath)
+    {
+        XDocument document;
+        try
+        {
+            document = File.Exists(userProjectPath)
+                ? XDocument.Load(userProjectPath, LoadOptions.PreserveWhitespace)
+                : new XDocument(new XElement("Project"));
+        }
+        catch (System.Xml.XmlException)
+        {
+            return;
+        }
+        var project = document.Root;
+        if (project?.Name.LocalName != "Project")
+            return;
         var assemblyDirectory = Path.GetDirectoryName(Path.GetFullPath(engineCoreAssemblyPath))
             ?? throw new ArgumentException("The engine assembly path has no parent directory.",
                 nameof(engineCoreAssemblyPath));
         var itemGroup = project.Elements().FirstOrDefault(element =>
             element.Name.LocalName == "ItemGroup"
-            && element.Elements().Any(child => child.Name.LocalName == "Reference"));
+            && string.Equals((string?)element.Attribute("Label"), "NicoEngineReferences",
+                StringComparison.Ordinal));
         if (itemGroup is null)
         {
-            itemGroup = new XElement("ItemGroup");
+            itemGroup = new XElement("ItemGroup", new XAttribute("Label", "NicoEngineReferences"));
             project.Add(itemGroup);
         }
         EnsureReference(itemGroup, "Engine.Core", Path.Combine(assemblyDirectory, "Engine.Core.dll"));
@@ -125,7 +141,33 @@ public static class ProjectSolutionScaffolder
             Path.Combine(assemblyDirectory, "Engine.Graphics.dll"));
         EnsureReference(itemGroup, "Engine.Scripting",
             Path.Combine(assemblyDirectory, "Engine.Scripting.dll"));
-        document.Save(scriptProjectPath);
+        SaveAtomically(document, userProjectPath);
+    }
+
+    /// <summary>Checks whether an assembly reference is managed by Nico.</summary>
+    /// <param name="assemblyName">Referenced assembly name.</param>
+    /// <returns>True for one of the game scripting API assemblies.</returns>
+    private static bool IsEngineReference(string? assemblyName)
+    {
+        return assemblyName is "Engine.Core" or "Engine.Graphics" or "Engine.Scripting";
+    }
+
+    /// <summary>Saves an XML document through an atomic same-directory replacement.</summary>
+    /// <param name="document">Document to save.</param>
+    /// <param name="path">Destination path.</param>
+    private static void SaveAtomically(XDocument document, string path)
+    {
+        var temporaryPath = path + ".tmp";
+        try
+        {
+            document.Save(temporaryPath);
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
     }
 
     /// <summary>
