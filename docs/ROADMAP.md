@@ -4,7 +4,7 @@
 
 ### Asset identity and content pipeline
 
-Version 0.2.0 establishes a general asset pipeline before script UUID attachment is introduced. Scripts are the first imported asset type, but metadata, identity, storage, dependencies, and runtime loading must remain independent of C# and rendering APIs.
+Version 0.2.0 completes the remaining script validation, packaged runtime catalog, cooking, and Player-loading work on top of the implemented general asset pipeline. Metadata, identity, storage, dependencies, and runtime loading remain independent of C# and rendering APIs.
 
 The persistent-to-runtime flow is:
 
@@ -18,96 +18,16 @@ AssetId
 
 An `AssetId` answers which persistent project asset is referenced. A project-relative path locates editable source content. A package entry locates cooked bytes. A runtime handle identifies a loaded CPU or GPU resource. These identities must not be collapsed into one type.
 
-### Phase 1: General asset metadata foundation
-
-- Add an immutable `AssetId` value type wrapping a UUIDv7 `Guid`, with parsing, formatting, equality, and JSON serialization.
-- Keep asset identity separate from scene-object identity (`NodeId`), sub-assets, native windows, and transient renderer handles.
-- Store authoritative metadata beside each source asset as `<asset-name>.<extension>.meta`.
-- Use a versioned, importer-neutral metadata envelope containing `version`, `id`, `importer`, and importer-owned `settings`.
-- Treat compiler results, resolved type names, diagnostics, hashes, and artifact paths as derived cache data rather than authoritative metadata.
-- Generate metadata for newly discovered supported assets and write it atomically.
-- Preserve an ID when an asset and its sidecar move or are renamed together.
-- Detect duplicate IDs caused by copying source and sidecar files; preserve the original asset and assign a new ID to the copy deterministically within the scan transaction.
-- Report missing, malformed, unsupported-version, orphaned, and duplicate metadata through structured diagnostics instead of silently discarding identity.
-- Restrict metadata and source operations to normalized project-relative paths beneath the opened project root.
-
-Initial metadata shape:
-
-```json
-{
-  "version": 1,
-  "id": "9cd98fe4-55eb-46ad-a856-78c0900ef530",
-  "importer": "csharp-script",
-  "settings": {}
-}
-```
-
-### Phase 2: Asset database and editor file operations
-
-- Add an `AssetDatabase` that owns the in-memory `AssetId <-> normalized project-relative path` index.
-- Expose lookup by ID and path, asset enumeration, importer identity, import status, diagnostics, and asset-change events.
-- Make the index authoritative only for the current editor session; any central on-disk index is a disposable startup cache regenerated from sidecars and import results.
-- Scan file metadata first so the FileSystem panel can appear without waiting for compilation or resource import.
-- Incrementally process filesystem watcher changes and reconcile events with editor-initiated operations.
-- Move, rename, duplicate, and delete source assets and sidecars as one editor transaction.
-- Update the FileSystem tree through asset database events instead of independently rebuilding filesystem state.
-- Add collision, external move, lost-sidecar, case-sensitivity, interrupted-write, and project-root escape tests on Windows, macOS, and Linux path semantics.
-
-### Phase 3: Importer and artifact contracts
-
-- Add importer registration independent of asset extensions and runtime resource types.
-- Define importer contexts, versioned settings, source fingerprints, artifacts, stable sub-asset keys, dependencies, warnings, and errors.
-- Select importers explicitly from metadata after initial extension-based metadata creation.
-- Store generated artifacts under a disposable project cache keyed by asset ID, importer version, settings, target platform, and source/dependency fingerprint.
-- Write artifact manifests atomically and retain the last successful artifact when a new import fails.
-- Reimport only changed assets and invalidate transitive dependents through a dependency graph.
-- Support cancellation and bounded parallel importing without allowing two jobs to publish the same asset generation.
-- Begin with `csharp-script` and `raw` importers; leave texture, shader, model, audio, material, scene, and prefab importers on the same contracts.
-- Represent outputs within a multi-output source using stable importer-defined sub-asset keys, such as `mesh/Body` or `animation/Walk`.
-
-### Phase 4: Virtual filesystem and package-ready storage
-
-- Define a read-oriented virtual filesystem with directory, package, memory, and built-in engine mounts.
-- Keep virtual paths human-readable for browsing, diagnostics, console commands, and mod tools, but never treat them as persistent asset identity.
-- Separate asset resolution from storage: `AssetId` resolves to an artifact location, and storage opens that location as a stream.
-- Use loose imported artifacts in the Editor and allow the same resource loaders to read cooked package entries in Player builds.
-- Design the package index for primary lookup by `AssetId` plus sub-asset key, with an optional virtual-path-to-ID alias table.
-- Record entry offset, stored size, original size, compression, checksum, artifact type, and target-platform version.
-- Support mount priority so project overrides, DLC, patches, and mods can shadow virtual paths without changing serialized asset references.
-- Keep package writing and final content cooking in the build layer; the asset database must not depend on a particular archive format.
-
-### Phase 5: Runtime resource boundary
-
-- Add a resource manager that translates persistent asset references into stable runtime handles.
-- Keep `Engine.Graphics` and `Engine.Graphics.Silk` unaware of `.meta` files, source paths, package indexes, and GUID resolution.
-- Continue using `TextureHandle`, `MeshHandle`, material handles, and other focused runtime identifiers in render queues and Vulkan code.
-- Return fallback resources while asynchronous loads are pending or failed.
-- Preserve stable runtime handles while replacing their underlying resource after asset reimport or hot reload.
-- Cache loaded resources by asset ID, sub-asset key, artifact generation, and load policy.
-- Release CPU, GPU, and streaming resources through explicit ownership and fence-safe lifetimes.
-
 ### Phase 6: Script asset importer and catalog
 
-- Treat a C# source file as a normal asset with the `csharp-script` importer.
-- Initially require exactly one public, concrete, non-generic `SceneScript` class with a public parameterless constructor per attachable source asset.
-- Use compiler semantic analysis rather than string or regular-expression matching to discover script symbols, inheritance, source locations, and diagnostics.
 - Analyze and compile against the generated game script project so editor discovery uses the same references, defines, nullable settings, and language version as Play builds.
-- Generate a catalog mapping `AssetId` to compiled `Type`; do not serialize assembly-qualified type names into scenes.
 - Preserve the previous successful runtime catalog when compilation fails while exposing current diagnostics and marking affected entries stale or invalid.
-- Share `Engine.Core` and `Engine.Scripting` from the default load context so collectible game assemblies retain compatible `Node` and `SceneScript` type identity.
-- Make dragging a valid script asset from FileSystem onto the Inspector script field assign its `AssetId`.
 - Display the resolved script name and validation state in the Inspector while persisting only the asset reference.
-- Reject non-script sources, ambiguous multi-script files, abstract classes, open generic classes, and types without an accessible parameterless constructor with actionable diagnostics.
+- Reject invalid C# assets during drag-and-drop instead of waiting for Play compilation.
 
-### Phase 7: Runtime scripting split
+### Phase 7: Packaged runtime scripting
 
-- Replace `Node.ScriptType` with an optional script asset reference and update scene serialization and example content without a long-term type-name compatibility layer.
-- Extract script attachment and lifecycle execution from the Editor-owned `GameScriptHost` into an `Engine.Scripting` runtime host.
-- Define an `IScriptTypeCatalog` contract that resolves script asset IDs to validated runtime types.
-- Keep project watching, `dotnet build`, compiler diagnostics, progress UI, and collectible assembly loading in the Editor.
 - Let Player builds consume a precompiled/generated catalog without invoking the SDK or scanning source files.
-- Resolve each node's script ID through the catalog, instantiate the script, bind `Owner` and `Scene`, then invoke `OnReady`, `OnUpdate`, and `OnDestroy` through the shared runtime host.
-- Unload the Editor's collectible script context on Stop after script destruction and disposal, while packaged Player assemblies use their normal application lifetime.
 
 ### Phase 8: Cooking and packaged Player loading
 
@@ -121,15 +41,8 @@ Initial metadata shape:
 
 ### Validation and completion criteria
 
-- Renaming or moving an asset with its sidecar does not change its ID or break a scene reference.
-- Copying an asset with its sidecar produces a distinct ID without modifying the original asset.
-- Deleting an asset produces a stable missing-asset diagnostic while preserving references for potential restoration.
-- Script class and namespace renames do not require scene rewrites.
 - A script compilation failure does not corrupt metadata, scenes, the last successful artifact set, or the running Editor.
 - Editor loose-file loading and Player package loading produce equivalent runtime resources from the same asset reference.
-- Rendering consumes runtime handles only and contains no metadata, GUID, VFS, or package lookup logic.
-- Asset imports are incremental, cancellable, atomic at publication, and covered by dependency invalidation tests.
-- Sidecar files are the source of truth; central indexes, compiler catalogs, and imported artifacts can be deleted and regenerated.
 
 ### Explicitly deferred
 
@@ -142,36 +55,31 @@ Initial metadata shape:
 
 ## Version 0.3.0
 
-### Implemented foundations
+### Retained transient geometry and frame-allocation control
 
-Persistent tool headers detach on double-click and dock again when their native window closes. The same `UIHost`/`DetachedToolWindow` boundary applies to future profiler, debugger, and settings tools when those components are introduced.
-
-### Generation-based UI geometry caching
-
-- Assign a monotonically increasing generation whenever UI layout or visual state changes.
-- Traverse the UI tree and rebuild semantic draw commands and vertices only for a new generation.
-- Track the uploaded generation independently for each frame-in-flight UI buffer.
-- Upload a generation at most once to each frame buffer, then reuse its mapped GPU geometry while the UI remains unchanged.
-- Preserve full-frame UI drawing and the existing content/overlay ordering; the optimization targets CPU traversal, tessellation, font vertex generation, and redundant memory copies.
-- Keep component-level dirty rectangles and partial swapchain redraw outside this work unless profiling demonstrates a need.
+- Make unchanged Editor and game frames allocate no managed memory, or remain within a measured near-zero budget, without attempting to remove event-driven allocations from loading, compilation, serialization, or UI construction.
+- Begin with gizmos, selection overlays, debug drawing, text geometry, sprite batches, particle staging, and other geometry regenerated during sustained rendering.
+- Reuse ordinary pre-sized `List<T>` instances and retained arrays by clearing and refilling them; do not introduce a custom list implementation without profiler evidence that the standard collection itself is a bottleneck.
+- Avoid `ToArray()`, LINQ iterators, temporary result wrappers, and newly allocated intermediate primitive collections in continuous update and render paths.
+- Allow tessellators to append into caller-owned buffers and expose completed geometry through spans or explicit written counts without transferring ownership or copying.
+- Track the input generation of cached geometry and rebuild only when relevant semantic inputs change.
+- For gizmos, include selection identity, object transform, camera matrices, viewport dimensions, DPI/window context, interaction mode, hovered handle, and active handle in invalidation state.
+- Preserve viewport- and native-window-specific caches where projection, dimensions, or DPI differ while sharing immutable semantic data where valid.
+- Grow retained buffers geometrically when required and keep their capacity for later frames; add bounded trimming only if profiling shows long-lived pathological peaks.
+- Upload regenerated ranges through the existing transient arena without creating a second managed snapshot of identical geometry.
+- Keep `DEBUG_GC_ALLOC` instrumentation available for measuring Update + Render allocation bytes per frame, compiled out when disabled.
+- Validate three distinct budgets: idle with no selection, idle with a selected object, and active gizmo dragging. Optimize sustained allocations first; selection-change and other one-frame spikes are secondary.
+- Target approximately 0–1 KB per idle Editor frame, 0–2 KB for an unchanged active viewport, and less than 10 KB per gizmo-drag frame, then revise budgets from representative profiling data.
 
 ### Multi-window editor
 
-- Add a reusable `UIHost` boundary so editor component trees can be hosted by either the main dock layout or an independent native tool window.
-- Support multiple native presentation windows from one renderer and shared Vulkan device.
-- Give each native window its own surface, swapchain, framebuffers, input router, UI root, DPI scale, resize lifecycle, and presentation lifecycle.
-- Allow persistent editor tools to detach, move to another monitor, and dock again.
 - Prioritize detachable Scene and Game viewports, followed by Inspector, Hierarchy, FileSystem, profiler, debugger, and settings.
 - Keep temporary workflows such as Open Scene as in-window modal overlays.
-- Avoid creating a separate engine or Vulkan device for each tool window; share queues, pipelines, fonts, and immutable GPU assets where valid.
 
 ### Dynamic glyph generation and runtime cache
 
-- Generate glyphs on demand for the codepoints, font faces, sizes, weights, and DPI scales actually requested by visible UI.
-- Cache rasterized glyph metrics and atlas placements so unchanged text reuses existing CPU and GPU resources.
-- Upload only newly generated or replaced atlas regions instead of rebuilding or transferring the complete atlas.
-- Keep glyph generation independent of layout and window ownership so multiple windows can share immutable font data safely.
-- Preserve antialiasing quality with oversampled rasterization and filtered atlas sampling.
+- Add selectable font faces, weights, and fallback chains to the existing on-demand glyph cache.
+- Share compatible immutable glyph data safely across native windows and DPI contexts.
 
 ### AI and automation interface
 

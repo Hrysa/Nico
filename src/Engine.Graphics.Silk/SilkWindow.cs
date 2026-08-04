@@ -60,6 +60,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private double _targetFrameRate;
     private Timer? _continuousWakeTimer;
     private bool _firstFramePresented;
+#if DEBUG_GC_ALLOC
+    private long _frameAllocationStart;
+    private ulong _allocationFrameNumber;
+#endif
 
     private Vk? _vk;
 
@@ -352,6 +356,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnUpdate(double delta)
     {
+#if DEBUG_GC_ALLOC
+        _frameAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+#endif
         if (_pendingInitialLogicalWidth > 0 && _pendingInitialLogicalHeight > 0)
         {
             Resized?.Invoke(_pendingInitialLogicalWidth, _pendingInitialLogicalHeight);
@@ -371,6 +378,14 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         try
         {
             DrawFrame();
+#if DEBUG_GC_ALLOC
+            var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
+            var allocatedBytes = Math.Max(0L, allocationEnd - _frameAllocationStart);
+            _allocationFrameNumber++;
+            _logger.LogInformation(
+                "Frame {FrameNumber} GC allocation: {AllocatedBytes} bytes",
+                _allocationFrameNumber, allocatedBytes);
+#endif
         }
         finally
         {
