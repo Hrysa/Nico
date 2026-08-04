@@ -96,13 +96,32 @@ public class UIThemeTests
         var shortButton = new Button(28f, "Go", UITheme.Dark);
         var longButton = new Button(28f, "Open Project", UITheme.Dark);
         var explicitButton = new Button(123f, 28f, "Go", UITheme.Dark);
+        var available = new Vector2(float.PositiveInfinity, 28f);
+        shortButton.Measure(available);
+        longButton.Measure(available);
 
-        Assert.True(longButton.Width > shortButton.Width);
+        Assert.True(longButton.DesiredSize.X > shortButton.DesiredSize.X);
         Assert.Equal(123f, explicitButton.Width);
 
         Assert.IsType<Label>(explicitButton.Content).Text = "A much longer action";
-        explicitButton.Measure(new Vector2(float.PositiveInfinity, 28f));
+        explicitButton.Measure(available);
         Assert.Equal(123f, explicitButton.Width);
+    }
+
+    /// <summary>Verifies content-sized buttons remeasure when their label grows beyond two characters.</summary>
+    [Fact]
+    public void Button_AutoWidth_ExpandsWhenLabelTextChanges()
+    {
+        var button = new Button(28f, "Go", UITheme.Dark);
+        var label = Assert.IsType<Label>(button.Content);
+        var available = new Vector2(float.PositiveInfinity, 28f);
+        button.Measure(available);
+        var initialWidth = button.DesiredSize.X;
+
+        label.Text = "Continue";
+        button.Measure(available);
+
+        Assert.True(button.DesiredSize.X > initialWidth);
     }
 
     /// <summary>Verifies a button can host an arbitrary icon-and-label layout.</summary>
@@ -298,6 +317,24 @@ public class UIThemeTests
         Assert.EndsWith("ScriptsX", textCommand.Text);
         Assert.Equal(textCommand.Text.Length, textCommand.CaretIndex);
         Assert.EndsWith("ScriptsX", field.Text);
+    }
+
+    /// <summary>Verifies focused text uses proportional glyph widths instead of a two-character estimate.</summary>
+    [Fact]
+    public void TextField_FocusedNarrowValue_UsesFullEditingWidth()
+    {
+        var field = new TextField(60f, 30f) { Text = "123456" };
+        var router = new UIEventRouter(field, () => { });
+        router.MovePointer(new(20f, 15f));
+        router.Press();
+        router.Release(invokeClick: true);
+
+        var textCommand = Assert.Single(field.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+
+        Assert.True(textCommand.Text.Length >= 5);
+        Assert.Equal(textCommand.Text.Length, textCommand.CaretIndex);
+        Assert.Equal(field.Left + 4f, textCommand.Left);
     }
 
     /// <summary>Verifies the editor shell prioritizes Scene while retaining hierarchy, files, Game, and Inspector docks.</summary>

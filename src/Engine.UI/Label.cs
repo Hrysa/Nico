@@ -90,10 +90,20 @@ public class Label : UIElement
     /// <returns>The estimated horizontal glyph advance in logical pixels.</returns>
     public float MeasureTextWidth()
     {
+        return MeasureTextWidth(Text, FontSize);
+    }
+
+    /// <summary>Measures text using the bundled Inter font metrics.</summary>
+    /// <param name="text">Text whose horizontal advance is measured.</param>
+    /// <param name="fontSize">Font height in logical pixels.</param>
+    /// <returns>The estimated horizontal glyph advance in logical pixels.</returns>
+    public static float MeasureTextWidth(string text, float fontSize)
+    {
+        ArgumentNullException.ThrowIfNull(text);
         var advanceUnits = 0f;
-        foreach (var rune in Text.EnumerateRunes())
+        foreach (var rune in text.EnumerateRunes())
             advanceUnits += GetInterAdvanceUnits(rune.Value);
-        return advanceUnits * FontSize / InterVerticalMetricsUnits;
+        return advanceUnits * fontSize / InterVerticalMetricsUnits;
     }
 
     /// <summary>Returns the bundled Inter font's unscaled horizontal glyph advance.</summary>

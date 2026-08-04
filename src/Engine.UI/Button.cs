@@ -132,8 +132,7 @@ public class Button : ContentControl
         ButtonStyle style = ButtonStyle.Subtle)
         : this(height, theme, style)
     {
-        SetTextContent(label, theme.FontSize);
-        Width = MathF.Ceiling(Content!.DesiredSize.X + Padding.Horizontal);
+        Content = CreateLabel(label, theme.FontSize);
     }
 
     /// <summary>Creates a fixed-size themed button.</summary>
@@ -191,16 +190,6 @@ public class Button : ContentControl
             PaddingLeft = 0f,
             IsHitTestVisible = false
         };
-    }
-
-    /// <summary>Creates, measures, and assigns convenience text content.</summary>
-    /// <param name="text">Label text.</param>
-    /// <param name="fontSize">Label font height.</param>
-    private void SetTextContent(string text, float fontSize)
-    {
-        var label = CreateLabel(text, fontSize);
-        label.Measure(new System.Numerics.Vector2(float.PositiveInfinity, Height));
-        Content = label;
     }
 
     /// <inheritdoc/>

@@ -7,6 +7,7 @@ namespace Engine.UI;
 /// </summary>
 public sealed class TextField : Surface
 {
+    private const float HorizontalTextPadding = 4f;
     private readonly UITheme _theme;
     private string _text = string.Empty;
     private string _placeholder = string.Empty;
@@ -74,20 +75,12 @@ public sealed class TextField : Surface
         }
         else if (IsFocused)
         {
-            var visibleCharacterCount = Math.Max(1,
-                (int)MathF.Floor(MathF.Max(0f, Width - 20f) / _theme.FontSize));
-            if (_caretIndex < _textWindowStart)
-                _textWindowStart = _caretIndex;
-            else if (_caretIndex > _textWindowStart + visibleCharacterCount)
-                _textWindowStart = _caretIndex - visibleCharacterCount;
-            _textWindowStart = Math.Clamp(_textWindowStart, 0,
-                Math.Max(0, _text.Length - visibleCharacterCount));
-            var displayLength = Math.Min(visibleCharacterCount,
-                _text.Length - _textWindowStart);
-            displayText = _text.Substring(_textWindowStart, displayLength);
+            var displayEnd = ResolveEditingWindowEnd(
+                MathF.Max(0f, Width - HorizontalTextPadding * 2f));
+            displayText = _text.Substring(_textWindowStart, displayEnd - _textWindowStart);
             displayCaretIndex -= _textWindowStart;
         }
-        var textLeft = Left + 10f;
+        var textLeft = Left + HorizontalTextPadding;
         var textTop = Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f);
         if (IsFocused)
             drawList.AddTextWithCaret(displayText, textLeft, textTop, _theme.FontSize,
@@ -95,6 +88,35 @@ public sealed class TextField : Surface
         else
             drawList.AddText(displayText, textLeft, textTop,
                 _theme.FontSize, color, BackgroundColor);
+    }
+
+    /// <summary>Moves the editing window to the caret and fits text using proportional glyph widths.</summary>
+    /// <param name="availableWidth">Horizontal space available for editable text.</param>
+    /// <returns>The exclusive UTF-16 end index of the visible editing window.</returns>
+    private int ResolveEditingWindowEnd(float availableWidth)
+    {
+        if (_caretIndex < _textWindowStart)
+            _textWindowStart = _caretIndex;
+
+        while (_textWindowStart < _caretIndex &&
+               Label.MeasureTextWidth(
+                   _text.Substring(_textWindowStart, _caretIndex - _textWindowStart),
+                   _theme.FontSize) > availableWidth)
+        {
+            _textWindowStart++;
+        }
+
+        var end = _textWindowStart;
+        while (end < _text.Length)
+        {
+            var candidateEnd = end + 1;
+            var candidate = _text.Substring(_textWindowStart, candidateEnd - _textWindowStart);
+            if (Label.MeasureTextWidth(candidate, _theme.FontSize) > availableWidth)
+                break;
+            end = candidateEnd;
+        }
+
+        return end;
     }
 
     /// <inheritdoc/>
