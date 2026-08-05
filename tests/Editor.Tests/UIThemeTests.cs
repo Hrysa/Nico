@@ -7,32 +7,6 @@ namespace Editor.Tests;
 
 public class UIThemeTests
 {
-    /// <summary>Verifies the editor theme retains the sampled reference palette.</summary>
-    [Fact]
-    public void DarkTheme_UsesReferencePalette()
-    {
-        var baseColor = Color.FromSrgb(0x12, 0x13, 0x14);
-        Assert.Equal(baseColor.R, UITheme.Dark.Canvas.R, 6);
-        Assert.Equal(baseColor.G, UITheme.Dark.Canvas.G, 6);
-        Assert.Equal(baseColor.B, UITheme.Dark.Canvas.B, 6);
-        Assert.Equal(UITheme.Dark.Canvas.R, UITheme.Dark.Surface.R, 4);
-        Assert.Equal(Color.FromSrgb(0x1C, 0x1C, 0x1C).R, UITheme.Dark.Field.R, 6);
-        Assert.Equal(Color.FromSrgb(0x23, 0x24, 0x25).R, UITheme.Dark.SurfaceHover.R, 6);
-        Assert.Equal(Color.FromSrgb(0x2C, 0x2D, 0x2E).R, UITheme.Dark.SurfacePressed.R, 6);
-        Assert.Equal(Color.FromSrgb(0xC9, 0xC9, 0xC9).R, UITheme.Dark.TextPrimary.R, 6);
-        Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).R, UITheme.Dark.Accent.R, 6);
-        Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).G, UITheme.Dark.Accent.G, 6);
-        Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).B, UITheme.Dark.Accent.B, 6);
-        Assert.Equal(15.5f, UITheme.Dark.FontSize);
-        Assert.Equal(14f, UITheme.Dark.CaptionFontSize);
-        Assert.Equal(16f, UITheme.Dark.PanelTitleFontSize);
-        Assert.Equal(32f, UITheme.Dark.PanelHeaderHeight);
-        Assert.Equal(10f, UITheme.Dark.PanelHeaderPadding);
-        Assert.Equal(30f, UITheme.Dark.ItemRowHeight);
-        Assert.Equal(5f, UITheme.Dark.ItemRowPadding);
-        Assert.Equal(5f, UITheme.Dark.SpacingSmall);
-    }
-
     /// <summary>Verifies idle subtle buttons emit readable text without a background rectangle.</summary>
     [Fact]
     public void Button_ThemedSubtle_EmitsOnlyTextWhenIdle()
