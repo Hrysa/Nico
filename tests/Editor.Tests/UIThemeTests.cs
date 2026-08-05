@@ -23,13 +23,14 @@ public class UIThemeTests
         Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).R, UITheme.Dark.Accent.R, 6);
         Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).G, UITheme.Dark.Accent.G, 6);
         Assert.Equal(Color.FromSrgb(0x68, 0x9C, 0xF8).B, UITheme.Dark.Accent.B, 6);
-        Assert.Equal(17.5f, UITheme.Dark.FontSize);
-        Assert.Equal(15f, UITheme.Dark.CaptionFontSize);
-        Assert.Equal(18f, UITheme.Dark.PanelTitleFontSize);
-        Assert.Equal(36f, UITheme.Dark.PanelHeaderHeight);
+        Assert.Equal(15.5f, UITheme.Dark.FontSize);
+        Assert.Equal(14f, UITheme.Dark.CaptionFontSize);
+        Assert.Equal(16f, UITheme.Dark.PanelTitleFontSize);
+        Assert.Equal(32f, UITheme.Dark.PanelHeaderHeight);
         Assert.Equal(10f, UITheme.Dark.PanelHeaderPadding);
         Assert.Equal(30f, UITheme.Dark.ItemRowHeight);
-        Assert.Equal(10f, UITheme.Dark.ItemRowPadding);
+        Assert.Equal(5f, UITheme.Dark.ItemRowPadding);
+        Assert.Equal(5f, UITheme.Dark.SpacingSmall);
     }
 
     /// <summary>Verifies idle subtle buttons emit readable text without a background rectangle.</summary>
@@ -190,7 +191,8 @@ public class UIThemeTests
     public void EditorView_ToolPanels_UseOneHeaderStandard()
     {
         var view = EditorUI.BuildView(1280f, 720f);
-        var panels = Descendants(view.Root).OfType<ToolPanel>().ToArray();
+        var panels = Descendants(view.Root).OfType<ToolPanel>()
+            .Where(panel => panel.IsVisible).ToArray();
 
         Assert.Equal(3, panels.Length);
         Assert.All(panels, panel =>

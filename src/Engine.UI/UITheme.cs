@@ -56,16 +56,16 @@ public sealed record UITheme
     public Color AccentPressed { get; init; } = Color.FromSrgb(0x4C, 0x75, 0xC7);
 
     /// <summary>Gets the standard body font size.</summary>
-    public float FontSize { get; init; } = 17.5f;
+    public float FontSize { get; init; } = 15.5f;
 
     /// <summary>Gets the compact caption font size.</summary>
-    public float CaptionFontSize { get; init; } = 15f;
+    public float CaptionFontSize { get; init; } = 14f;
 
     /// <summary>Gets the font size used by panel titles.</summary>
-    public float PanelTitleFontSize { get; init; } = 18f;
+    public float PanelTitleFontSize { get; init; } = 16f;
 
     /// <summary>Gets the standard height of every docked panel header.</summary>
-    public float PanelHeaderHeight { get; init; } = 36f;
+    public float PanelHeaderHeight { get; init; } = 32f;
 
     /// <summary>Gets the horizontal inset used by every docked panel title.</summary>
     public float PanelHeaderPadding { get; init; } = 10f;
@@ -74,7 +74,7 @@ public sealed record UITheme
     public float ItemRowHeight { get; init; } = 30f;
 
     /// <summary>Gets the standard horizontal inset of hierarchy and filesystem rows.</summary>
-    public float ItemRowPadding { get; init; } = 10f;
+    public float ItemRowPadding { get; init; } = 5f;
 
     /// <summary>Gets the additional horizontal inset for each hierarchy depth.</summary>
     public float TreeIndent { get; init; } = 14f;
@@ -83,7 +83,7 @@ public sealed record UITheme
     public float ControlHeight { get; init; } = 30f;
 
     /// <summary>Gets the standard small spacing unit.</summary>
-    public float SpacingSmall { get; init; } = 6f;
+    public float SpacingSmall { get; init; } = 5f;
 
     /// <summary>Gets the standard spacing unit.</summary>
     public float Spacing { get; init; } = 10f;
