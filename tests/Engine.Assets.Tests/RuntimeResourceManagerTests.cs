@@ -24,7 +24,7 @@ public class RuntimeResourceManagerTests
         Assert.Null(manager.GetError(handle));
     }
 
-    /// <summary>Verifies repeated acquisitions share a handle and retire only after final release.</summary>
+    /// <summary>Verifies repeated acquisitions share a handle and remain cached after final release.</summary>
     [Fact]
     public async Task Acquire_SameReferenceAndType_SharesReferenceCount()
     {
@@ -39,9 +39,50 @@ public class RuntimeResourceManagerTests
         Assert.Equal("loaded", manager.Get(second).Value);
         manager.Release(second);
 
+        var third = manager.Acquire(fixture.Reference, new TestResource("fallback-3"));
+        Assert.Equal(first, third);
+        Assert.Equal("loaded", manager.Get(third).Value);
+        Assert.Empty(fixture.Retirement.Retired);
+        manager.Release(third);
+    }
+
+    /// <summary>Verifies the least-recently-used unpinned resource is retired at capacity.</summary>
+    [Fact]
+    public async Task Release_AboveUnusedCapacity_RetiresLeastRecentlyUsedResource()
+    {
+        var fixture = new ResourceFixture("first");
+        using var manager = fixture.CreateManager(unusedCapacity: 1);
+        var first = manager.Acquire(fixture.Reference, new TestResource("fallback"));
+        await manager.WaitAsync(first);
+        var firstResource = manager.Get(first);
+        manager.Release(first);
+        var otherReference = new AssetReference(AssetId.New());
+        var second = manager.Acquire(otherReference, new TestResource("fallback"));
+        await manager.WaitAsync(second);
+
+        manager.Release(second);
+
+        Assert.Contains(firstResource, fixture.Retirement.Retired);
         Assert.Throws<KeyNotFoundException>(() => manager.Get(first));
-        Assert.Single(fixture.Retirement.Retired,
-            resource => resource is TestResource { Value: "loaded" });
+    }
+
+    /// <summary>Verifies asset invalidation removes its unpinned decoded generations.</summary>
+    [Fact]
+    public async Task Invalidate_UnpinnedAsset_ForcesNextAcquisitionToReload()
+    {
+        var fixture = new ResourceFixture("first");
+        using var manager = fixture.CreateManager();
+        var first = manager.Acquire(fixture.Reference, new TestResource("fallback"));
+        await manager.WaitAsync(first);
+        manager.Release(first);
+        fixture.SetContent("second", "generation-2");
+
+        manager.Invalidate(fixture.Reference.Asset);
+        var second = manager.Acquire(fixture.Reference, new TestResource("fallback"));
+        await manager.WaitAsync(second);
+
+        Assert.NotEqual(first, second);
+        Assert.Equal("second", manager.Get(second).Value);
     }
 
     /// <summary>Verifies reload replaces a resource without changing its stable typed handle.</summary>
@@ -129,10 +170,10 @@ public class RuntimeResourceManagerTests
 
         /// <summary>Creates a manager registered with the fixture loader.</summary>
         /// <returns>The configured runtime resource manager.</returns>
-        internal RuntimeResourceManager CreateManager()
+        internal RuntimeResourceManager CreateManager(int unusedCapacity = 128)
         {
             var manager = new RuntimeResourceManager(_resolver,
-                new AssetStorageRouter(_mounted), Retirement);
+                new AssetStorageRouter(_mounted), Retirement, unusedCapacity);
             manager.RegisterLoader(Loader);
             return manager;
         }

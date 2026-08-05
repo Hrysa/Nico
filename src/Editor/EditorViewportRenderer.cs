@@ -21,6 +21,7 @@ public sealed class EditorViewportRenderer : IDisposable
     private readonly RenderQueue _sceneQueue = new();
     private readonly RenderQueue _gameQueue = new();
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
+    private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
     private bool _disposed;
 
     /// <summary>
@@ -101,6 +102,9 @@ public sealed class EditorViewportRenderer : IDisposable
         _disposed = true;
         foreach (var handle in _meshHandles.Values)
             _renderer.DestroyMesh(handle);
+        foreach (var resource in _assetMeshes.Values)
+            DestroyAssetMeshResource(resource);
+        _assetMeshes.Clear();
         _meshHandles.Clear();
     }
 
@@ -115,6 +119,37 @@ public sealed class EditorViewportRenderer : IDisposable
     {
         RenderScene(sceneViewport, pointerPosition);
         RenderGame(gameViewport);
+    }
+
+    /// <summary>Creates or replaces renderer resources for one persistent imported model.</summary>
+    /// <param name="instance">Persistent scene instance.</param>
+    /// <param name="mesh">Imported indexed mesh.</param>
+    /// <param name="material">Imported standard material.</param>
+    /// <param name="texture">Optional imported base-color texture.</param>
+    public void SetAssetMeshResource(
+        MeshInstance3D instance,
+        StaticMeshResource mesh,
+        StandardMaterialResource material,
+        TextureResource? texture = null)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(material);
+        if (_assetMeshes.Remove(instance, out var previous))
+            DestroyAssetMeshResource(previous);
+        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        try
+        {
+            material.BaseColorTexture = textureHandle;
+            var meshHandle = _renderer.CreateStaticMesh(mesh, material);
+            _assetMeshes.Add(instance, new AssetMeshGpuResource(meshHandle, textureHandle));
+        }
+        catch
+        {
+            if (textureHandle.IsValid)
+                _renderer.DestroyTexture(textureHandle);
+            throw;
+        }
     }
 
     /// <summary>Builds and submits only the Scene viewport for its owning native window.</summary>
@@ -149,11 +184,13 @@ public sealed class EditorViewportRenderer : IDisposable
             View = view,
             Projection = projection
         });
-
         foreach (var instance in _sceneObjects)
         {
-            if (instance.Mesh is { } mesh)
-                _sceneQueue.Add(GetMeshHandle(mesh), _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
+            if (_assetMeshes.TryGetValue(instance, out var resource))
+            {
+                _sceneQueue.Add(resource.Mesh,
+                    _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
+            }
         }
 
         _renderer.Submit(_sceneViewport, _sceneQueue);
@@ -167,8 +204,11 @@ public sealed class EditorViewportRenderer : IDisposable
         _gameCamera.UpdateViewport(width, height);
         foreach (var instance in _gameObjects)
         {
-            if (instance.Mesh is { } mesh)
-                _gameQueue.Add(GetMeshHandle(mesh), _gameCamera.GetPushConstants(instance.GetModelMatrix()));
+            if (_assetMeshes.TryGetValue(instance, out var resource))
+            {
+                _gameQueue.Add(resource.Mesh,
+                    _gameCamera.GetPushConstants(instance.GetModelMatrix()));
+            }
         }
         _renderer.Submit(_gameViewport, _gameQueue);
     }
@@ -188,15 +228,36 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <summary>Releases meshes no longer referenced by either editor viewport.</summary>
     private void ReleaseUnusedMeshes()
     {
-        var retained = _sceneObjects.Concat(_gameObjects)
-            .Select(instance => instance.Mesh)
-            .OfType<Mesh>()
-            .Append(_originAxes)
-            .ToHashSet();
+        var retained = new HashSet<Mesh> { _originAxes };
         foreach (var mesh in _meshHandles.Keys.Where(mesh => !retained.Contains(mesh)).ToArray())
         {
             _renderer.DestroyMesh(_meshHandles[mesh]);
             _meshHandles.Remove(mesh);
         }
+        var retainedAssetMeshes = _sceneObjects.Concat(_gameObjects)
+            .Where(instance => instance.Mesh.Asset.Value != Guid.Empty)
+            .ToHashSet();
+        foreach (var instance in _assetMeshes.Keys
+            .Where(instance => !retainedAssetMeshes.Contains(instance)).ToArray())
+        {
+            DestroyAssetMeshResource(_assetMeshes[instance]);
+            _assetMeshes.Remove(instance);
+        }
     }
+
+    /// <summary>Queues renderer-owned imported model resources for destruction.</summary>
+    /// <param name="resource">Imported GPU resource pair.</param>
+    private void DestroyAssetMeshResource(AssetMeshGpuResource resource)
+    {
+        _renderer.DestroyMesh(resource.Mesh);
+        if (resource.Texture.IsValid)
+            _renderer.DestroyTexture(resource.Texture);
+    }
+
+    /// <summary>Groups renderer handles owned for one imported scene instance.</summary>
+    /// <param name="Mesh">Indexed mesh handle.</param>
+    /// <param name="Texture">Optional sampled texture handle.</param>
+    private readonly record struct AssetMeshGpuResource(
+        MeshHandle Mesh,
+        TextureHandle Texture);
 }

@@ -25,6 +25,47 @@ public sealed record AssetImportOutcome(
     IReadOnlyList<AssetReference> Dependencies,
     IReadOnlyList<AssetImportDiagnostic> Diagnostics);
 
+/// <summary>Resolves references through the latest published loose import generation.</summary>
+public sealed class PublishedArtifactResolver : IAssetResolver
+{
+    private readonly AssetDatabase _database;
+    private readonly AssetImportPipeline _pipeline;
+    private readonly string _target;
+
+    /// <summary>Creates a resolver for one import target.</summary>
+    /// <param name="database">Asset identity database.</param>
+    /// <param name="pipeline">Published artifact pipeline.</param>
+    /// <param name="target">Stable import target.</param>
+    public PublishedArtifactResolver(
+        AssetDatabase database,
+        AssetImportPipeline pipeline,
+        string target)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        _database = database;
+        _pipeline = pipeline;
+        _target = target;
+    }
+
+    /// <inheritdoc/>
+    public ResolvedAsset Resolve(AssetReference reference)
+    {
+        var record = _database.Find(reference.Asset)
+            ?? throw new FileNotFoundException($"Asset '{reference.Asset}' is missing.");
+        var outcome = _pipeline.TryGetLatestPublished(record, _target)
+            ?? throw new FileNotFoundException($"Asset '{reference.Asset}' has no published import.");
+        var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+            candidate.Key == reference.SubAsset)
+            ?? throw new FileNotFoundException($"Sub-asset '{reference}' is missing.");
+        return new ResolvedAsset(
+            new LooseFileAssetLocation(Path.Combine(outcome.ArtifactDirectory!, artifact.RelativePath)),
+            artifact.ContentType,
+            outcome.Fingerprint);
+    }
+}
+
 /// <summary>Executes importers and atomically publishes fingerprinted artifact generations.</summary>
 public sealed class AssetImportPipeline
 {
@@ -75,6 +116,38 @@ public sealed class AssetImportPipeline
             cancellationToken.ThrowIfCancellationRequested();
             return ImportCore(record, target, cancellationToken);
         }
+    }
+
+    /// <summary>Finds the most recently published cached generation without reading source bytes.</summary>
+    /// <param name="record">Current asset record.</param>
+    /// <param name="target">Stable build target identifier.</param>
+    /// <returns>The latest matching successful outcome, or null when none has been published.</returns>
+    public AssetImportOutcome? TryGetLatestPublished(
+        AssetMetadataRecord record,
+        string target)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        var assetRoot = Path.Combine(_artifactRoot, record.Id.ToString());
+        if (!Directory.Exists(assetRoot))
+            return null;
+        foreach (var generationPath in Directory.EnumerateDirectories(assetRoot)
+                     .Where(path => !Path.GetFileName(path).StartsWith(".staging-",
+                         StringComparison.Ordinal))
+                     .OrderByDescending(Directory.GetLastWriteTimeUtc))
+        {
+            var manifestPath = Path.Combine(generationPath, ManifestFileName);
+            if (!File.Exists(manifestPath))
+                continue;
+            using var stream = File.OpenRead(manifestPath);
+            var manifest = JsonSerializer.Deserialize<AssetArtifactManifest>(stream, _jsonOptions);
+            if (manifest is null || manifest.Asset != record.Id ||
+                !string.Equals(manifest.Target, target, StringComparison.Ordinal))
+                continue;
+            return new AssetImportOutcome(manifest.Asset, manifest.Fingerprint, generationPath,
+                true, true, manifest.Artifacts, manifest.Dependencies, manifest.Diagnostics);
+        }
+        return null;
     }
 
     /// <summary>Imports several assets with bounded concurrency and deterministic result order.</summary>

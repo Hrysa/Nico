@@ -58,14 +58,23 @@ public sealed class UIDrawList
     private static long _nextGeneration;
     private readonly List<UIDrawCommand> _commands = [];
 
-    /// <summary>Gets the globally monotonic identity of this immutable paint snapshot.</summary>
-    public ulong Generation { get; } = checked((ulong)Interlocked.Increment(ref _nextGeneration));
+    /// <summary>Gets the globally monotonic identity of the current paint snapshot.</summary>
+    public ulong Generation { get; private set; } = NextGeneration();
 
     /// <summary>Gets the ordered paint commands.</summary>
     public IReadOnlyList<UIDrawCommand> Commands => _commands;
 
     /// <summary>Gets or sets the layer assigned to subsequently added commands.</summary>
     public UIDrawLayer CurrentLayer { get; set; }
+
+    /// <summary>Clears commands while retaining capacity for the next paint snapshot.</summary>
+    /// <param name="layer">Layer assigned to subsequently added commands.</param>
+    public void Reset(UIDrawLayer layer = UIDrawLayer.Content)
+    {
+        _commands.Clear();
+        CurrentLayer = layer;
+        Generation = NextGeneration();
+    }
 
     /// <summary>Appends previously generated semantic commands.</summary>
     /// <param name="commands">Cached commands to append in order.</param>
@@ -208,5 +217,12 @@ public sealed class UIDrawList
             backgroundColor,
             CurrentLayer,
             caretIndex));
+    }
+
+    /// <summary>Returns the next globally monotonic paint generation.</summary>
+    /// <returns>Paint generation identity.</returns>
+    private static ulong NextGeneration()
+    {
+        return checked((ulong)Interlocked.Increment(ref _nextGeneration));
     }
 }

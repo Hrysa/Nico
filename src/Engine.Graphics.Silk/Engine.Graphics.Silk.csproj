@@ -31,6 +31,8 @@
     <EmbeddedResource Include="../Shaders/texture.frag.spv" LogicalName="texture.frag.spv" />
     <EmbeddedResource Include="../Shaders/grid.vert.spv" LogicalName="grid.vert.spv" />
     <EmbeddedResource Include="../Shaders/grid.frag.spv" LogicalName="grid.frag.spv" />
+    <EmbeddedResource Include="../Shaders/model.vert.spv" LogicalName="model.vert.spv" />
+    <EmbeddedResource Include="../Shaders/model.frag.spv" LogicalName="model.frag.spv" />
     <EmbeddedResource Include="Assets/Inter-Regular.ttf" LogicalName="Inter-Regular.ttf" />
   </ItemGroup>
 

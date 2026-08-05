@@ -73,7 +73,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="command">Text paint command.</param>
     /// <param name="framebufferScale">Physical pixels per logical UI pixel.</param>
     /// <returns>The logical horizontal position of the requested caret.</returns>
-    internal float AppendVertices(List<VertexT> vertices, UIDrawCommand command, float framebufferScale)
+    internal float AppendVertices(NativeBuffer<VertexT> vertices, UIDrawCommand command, float framebufferScale)
     {
         framebufferScale = MathF.Max(1f, framebufferScale);
         var pixelHeight = Math.Max(1, (int)MathF.Round(command.FontPixelHeight * framebufferScale));
@@ -240,7 +240,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="bottom">Logical bottom edge.</param>
     /// <param name="glyph">Atlas glyph.</param>
     private static void AppendQuad(
-        List<VertexT> vertices,
+        NativeBuffer<VertexT> vertices,
         float left,
         float top,
         float right,

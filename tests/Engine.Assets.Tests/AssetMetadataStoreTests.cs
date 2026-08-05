@@ -495,6 +495,30 @@ public class AssetMetadataStoreTests
             Path.Combine(first.ArtifactDirectory!, artifact.RelativePath)));
     }
 
+    /// <summary>Reads published artifact metadata without executing the importer again.</summary>
+    [Fact]
+    public void ImportPipeline_LatestPublished_ReturnsCachedManifestForTarget()
+    {
+        using var temporary = new TemporaryDirectory();
+        var sourcePath = Path.Combine(temporary.Path, "Data.bin");
+        File.WriteAllBytes(sourcePath, [1, 2, 3]);
+        var database = new AssetDatabase(temporary.Path,
+            path => Path.GetExtension(path) == ".bin" ? "raw" : null);
+        var registry = new AssetImporterRegistry();
+        registry.Register(new RawAssetImporter());
+        var pipeline = new AssetImportPipeline(database, registry);
+        var record = Assert.Single(database.Assets);
+        var imported = pipeline.Import(record, "editor");
+
+        var published = pipeline.TryGetLatestPublished(record, "editor");
+
+        Assert.NotNull(published);
+        Assert.True(published.CacheHit);
+        Assert.Equal(imported.Fingerprint, published.Fingerprint);
+        Assert.Equal(imported.Artifacts, published.Artifacts);
+        Assert.Null(pipeline.TryGetLatestPublished(record, "player"));
+    }
+
     /// <summary>Verifies source changes publish a new generation without deleting the old one.</summary>
     [Fact]
     public void ImportPipeline_ChangedSource_PreservesPreviousGeneration()

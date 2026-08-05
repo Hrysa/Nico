@@ -13,12 +13,14 @@ public class ScenePlayCloneTests
     public void Create_RuntimeMutation_PreservesAuthoredScene()
     {
         var root = new Node3D { Name = "Scene" };
-        var cube = new MeshInstance3D(new CubeMesh())
+        var cube = new MeshInstance3D
         {
             Name = "Cube",
             Position = new Vector3(2f, 0f, 0f),
             ScriptId = AssetId.New()
         };
+        var material = new AssetReference(AssetId.New(), "material/0");
+        cube.Materials.Add(material);
         var camera = new PerspectiveCamera { Name = "Camera" };
         root.AddChild(cube);
         root.AddChild(camera);
@@ -27,9 +29,10 @@ public class ScenePlayCloneTests
         playScene.MeshInstances[0].Position = new Vector3(20f, 0f, 0f);
 
         Assert.NotSame(cube, playScene.MeshInstances[0]);
-        Assert.NotSame(cube.Mesh, playScene.MeshInstances[0].Mesh);
+        Assert.Equal(cube.Mesh, playScene.MeshInstances[0].Mesh);
         Assert.Equal(new Vector3(2f, 0f, 0f), cube.Position);
         Assert.Equal(cube.ScriptId, playScene.MeshInstances[0].ScriptId);
+        Assert.Equal(material, Assert.Single(playScene.MeshInstances[0].Materials));
         Assert.NotSame(camera, playScene.GameCamera);
     }
 
@@ -41,5 +44,31 @@ public class ScenePlayCloneTests
 
         Assert.Throws<InvalidOperationException>(() =>
             ScenePlayClone.Create(root, new PerspectiveCamera()));
+    }
+
+    /// <summary>Preserves asset mesh references so play mode can recreate GPU resources.</summary>
+    [Fact]
+    public void Create_AssetMesh_PreservesResourceReferences()
+    {
+        var root = new Node3D { Name = "Scene" };
+        var reference = new AssetReference(AssetId.New(), "mesh/0");
+        var material = new AssetReference(reference.Asset, "material/0");
+        var imported = new MeshInstance3D
+        {
+            Mesh = reference,
+            Name = "Character"
+        };
+        imported.Materials.Add(material);
+        var camera = new PerspectiveCamera { Name = "Camera" };
+        root.AddChild(imported);
+        root.AddChild(camera);
+
+        var playScene = ScenePlayClone.Create(root, camera);
+
+        var clone = Assert.IsType<MeshInstance3D>(playScene.MeshInstances[0]);
+        Assert.NotSame(imported, clone);
+        Assert.Equal(reference, clone.Mesh);
+        Assert.Equal(material, Assert.Single(clone.Materials));
+        Assert.Equal("Character", clone.Name);
     }
 }

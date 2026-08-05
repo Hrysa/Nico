@@ -96,6 +96,18 @@ public class EditorGizmoTests
         Assert.Empty(gizmo.BuildOverlay());
     }
 
+    /// <summary>Reuses retained overlay geometry while layout and interaction stay unchanged.</summary>
+    [Fact]
+    public void BuildOverlay_UnchangedSelection_ReusesVertexArray()
+    {
+        var (gizmo, _) = CreateGizmo();
+
+        var first = gizmo.BuildOverlay();
+        var second = gizmo.BuildOverlay();
+
+        Assert.Same(first, second);
+    }
+
     /// <summary>
     /// Creates a facade and the equivalent layout used to locate handles.
     /// </summary>

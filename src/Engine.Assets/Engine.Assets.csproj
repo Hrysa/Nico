@@ -10,4 +10,8 @@
     <ProjectReference Include="../Engine.Core/Engine.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+  </ItemGroup>
+
 </Project>

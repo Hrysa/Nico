@@ -131,6 +131,17 @@ public class UIHostTests
         public MeshHandle CreateMesh(MeshDescription description) => default;
 
         /// <inheritdoc/>
+        public MeshHandle CreateStaticMesh(
+            StaticMeshResource mesh,
+            StandardMaterialResource material) => default;
+
+        /// <inheritdoc/>
+        public TextureHandle CreateTexture(TextureResource texture) => default;
+
+        /// <inheritdoc/>
+        public void DestroyTexture(TextureHandle texture) { }
+
+        /// <inheritdoc/>
         public void UpdateMesh(MeshHandle mesh, MeshUpdate update) { }
 
         /// <inheritdoc/>

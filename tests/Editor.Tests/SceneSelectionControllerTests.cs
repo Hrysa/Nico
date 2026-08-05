@@ -35,8 +35,8 @@ public class SceneSelectionControllerTests
     [Fact]
     public void SetObjects_RuntimeScene_ClearsAuthoredSelection()
     {
-        var authoredObject = new MeshInstance3D(new CubeMesh());
-        var runtimeObject = new MeshInstance3D(new CubeMesh());
+        var authoredObject = new MeshInstance3D();
+        var runtimeObject = new MeshInstance3D();
         var controller = new SceneSelectionController(
             new[] { authoredObject }, new PerspectiveCamera(),
             () => new GizmoViewport(0f, 0f, 200f, 200f));

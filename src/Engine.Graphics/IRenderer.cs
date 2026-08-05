@@ -12,6 +12,21 @@ public interface IRenderer
     /// <returns>Opaque handle used by render submissions.</returns>
     MeshHandle CreateMesh(MeshDescription description);
 
+    /// <summary>Creates an immutable mesh for the built-in forward model path.</summary>
+    /// <param name="mesh">Indexed model geometry.</param>
+    /// <param name="material">Initial standard material.</param>
+    /// <returns>Opaque handle used by render submissions.</returns>
+    MeshHandle CreateStaticMesh(StaticMeshResource mesh, StandardMaterialResource material);
+
+    /// <summary>Creates an immutable sampled texture.</summary>
+    /// <param name="texture">Decoded RGBA8 texture.</param>
+    /// <returns>Opaque renderer-owned texture handle.</returns>
+    TextureHandle CreateTexture(TextureResource texture);
+
+    /// <summary>Releases a sampled texture after in-flight work completes.</summary>
+    /// <param name="texture">Texture to release.</param>
+    void DestroyTexture(TextureHandle texture);
+
     /// <summary>Updates a contiguous range of an existing mesh.</summary>
     /// <param name="mesh">Mesh to update.</param>
     /// <param name="update">Replacement range.</param>

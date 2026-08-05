@@ -103,3 +103,29 @@ An `AssetId` answers which persistent project asset is referenced. A project-rel
 - Support fallback font chains and dynamically generated Unicode glyphs without baking every supported codepoint at startup.
 - Share compatible glyph-cache pages across native windows while keeping per-window descriptors and synchronization explicit.
 - Add cache hit-rate, atlas occupancy, generation, upload, and eviction diagnostics for profiling.
+
+## Version 0.4.0
+
+### Temporal anti-aliasing
+
+Replace viewport MSAA with a full temporal anti-aliasing pipeline while preserving the existing `RenderView` → offscreen render target → viewport texture → presentation architecture.
+
+- Split viewport rendering into explicit scene, temporal resolve, and presentation stages so post-processing can be extended without changing public viewport APIs.
+- Render each view with a sub-pixel jittered projection using a stable low-discrepancy sequence, while keeping unjittered camera matrices available for input, gizmos, culling, and editor overlays.
+- Produce per-pixel motion vectors from current and previous camera and object transforms, including support for static geometry, moving objects, and camera-only motion.
+- Store per-view color history, depth history, previous matrices, jitter state, and frame validity; never share mutable temporal state between viewports or native windows.
+- Reproject history with motion vectors and reject invalid samples using depth, bounds, disocclusion, and camera-cut tests.
+- Add neighborhood clipping or variance clipping, responsive weighting, and configurable feedback to limit ghosting, trails, flicker, and history poisoning.
+- Invalidate or reset history after viewport resize, DPI or render-scale changes, scene switches, camera cuts, projection changes, long frame gaps, device-resource recreation, and incompatible rendering-setting changes.
+- Handle transparent geometry, particles, emissive surfaces, animated materials, editor gizmos, selection outlines, and UI overlays explicitly instead of allowing them to contaminate temporal history.
+- Support render-scale-aware reconstruction so TAA can later evolve into temporal upsampling without changing asset, scene, viewport, or presentation contracts.
+- Add debug views and metrics for motion vectors, jitter, history weight, rejected history, disocclusion, and resolve cost.
+- Retain MSAA as a temporary fallback during development, then remove the multisampled viewport attachments and resolve path once TAA meets the completion criteria.
+
+### Validation and completion criteria
+
+- Static and moving scenes remain stable at native resolution with visibly less edge and shader aliasing than the current MSAA path.
+- Camera movement, object motion, newly revealed surfaces, animation, particles, and viewport resizing do not produce persistent ghosting or invalid history.
+- Scene and Game viewports maintain independent history across different sizes, cameras, render scales, and native windows.
+- Picking, gizmos, editor overlays, and UI remain spatially aligned despite projection jitter.
+- TAA works with both perspective and orthographic cameras and becomes the default viewport anti-aliasing mode before MSAA is removed.

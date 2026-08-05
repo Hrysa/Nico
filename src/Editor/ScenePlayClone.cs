@@ -47,7 +47,7 @@ public static class ScenePlayClone
         {
             PerspectiveCamera camera => new PerspectiveCamera(
                 camera.Fov, near: camera.Near, far: camera.Far),
-            MeshInstance3D meshInstance => new MeshInstance3D(CloneMesh(meshInstance.Mesh)),
+            MeshInstance3D => new MeshInstance3D(),
             Node3D when source.GetType() == typeof(Node3D) => new Node3D(),
             _ => throw new NotSupportedException(
                 $"Scene node type '{source.GetType().Name}' cannot enter play mode.")
@@ -74,20 +74,13 @@ public static class ScenePlayClone
         destination.Orientation = source.Orientation;
         destination.Scale = source.Scale;
         destination.ScriptId = source.ScriptId;
+        if (source is MeshInstance3D sourceMesh && destination is MeshInstance3D destinationMesh)
+        {
+            destinationMesh.Mesh = sourceMesh.Mesh;
+            destinationMesh.LocalBounds = sourceMesh.LocalBounds;
+            destinationMesh.Materials.AddRange(sourceMesh.Materials);
+            destinationMesh.MaterialOverride = sourceMesh.MaterialOverride?.Clone();
+        }
     }
 
-    /// <summary>
-    /// Clones mutable mesh resource data used by a play-mode mesh instance.
-    /// </summary>
-    /// <param name="source">Authored mesh resource, or null.</param>
-    /// <returns>An isolated mesh resource, or null.</returns>
-    private static Mesh? CloneMesh(Mesh? source)
-    {
-        if (source is null)
-            return null;
-        var clone = source is CubeMesh ? new CubeMesh() : new Mesh();
-        clone.Name = source.Name;
-        clone.Vertices = source.Vertices.ToArray();
-        return clone;
-    }
 }

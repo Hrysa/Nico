@@ -17,6 +17,9 @@ public sealed class SceneSelectionController
     /// <summary>Gets the currently selected transformable scene node.</summary>
     public Node3D? SelectedNode { get; private set; }
 
+    /// <summary>Gets whether the transform gizmo currently owns a pointer drag.</summary>
+    public bool IsDragging => _gizmo.IsDragging;
+
     /// <summary>Occurs when the selected transformable scene node changes.</summary>
     public event Action<Node3D?>? SelectionChanged;
 

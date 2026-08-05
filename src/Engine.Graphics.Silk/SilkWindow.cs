@@ -31,6 +31,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private SurfaceKHR _surface;
     private PhysicalDevice _physicalDevice;
     private SampleCountFlags _msaaSamples = SampleCountFlags.Count1Bit;
+    private int _requestedMsaaSamples = 4;
     private Device _device;
     private Queue _graphicsQueue;
     private Queue _presentQueue;
@@ -46,6 +47,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private bool _macFullScreen;
     private float _uiFramebufferScale = 1f;
     private float _uiInputScale = 1f;
+    private float _viewportRenderScale = 1f;
     private WindowsWindowChrome? _windowsWindowChrome;
     private WindowsWindowCloak? _windowsWindowCloak;
     private bool _customTitleBar;
@@ -74,8 +76,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private readonly TrueTypeFontRasterizer _fontRasterizer = new();
 
     // New: Vertex buffer
-    private Vertex[] _vertices = [];
-    private VertexT[] _textVertices = [];
+    private readonly NativeBuffer<Vertex> _vertices = new();
+    private readonly NativeBuffer<VertexT> _textVertices = new();
     private readonly List<UiBatch> _uiBatches = [];
     private uint _vertexCount;
     private ulong _uiGeneration = 1;
@@ -86,16 +88,23 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private FrameVertexBuffers? _textBuffers;
     private FontAtlasTexture? _fontAtlas;
     private readonly ulong[] _uploadedTextGenerations = new ulong[MaxFramesInFlight];
-    private readonly Vertex[][] _uploadedUiVertices = [[], []];
-    private readonly VertexT[][] _uploadedTextVertices = [[], []];
+    private readonly NativeBuffer<Vertex>[] _uploadedUiVertices = [new(), new()];
+    private readonly NativeBuffer<VertexT>[] _uploadedTextVertices = [new(), new()];
 
     // Viewport FBO management
     private readonly Dictionary<uint, ViewportFbo> _viewportFbos = new();
     private readonly Dictionary<uint, FrameVertexBuffers> _viewportQuadBuffers = new();
     private PersistentVertexArena? _persistentVertices;
+    private PersistentIndexedMeshStore? _persistentIndexedMeshes;
+    private PersistentTextureStore? _persistentTextures;
     private FrameTransientArena? _transientArena;
-    private readonly List<PersistentVertexArena.Allocation>[] _retiredMeshAllocations = [[], []];
+    private readonly List<MeshHandle>[] _retiredMeshes = [[], []];
+    private readonly List<TextureHandle>[] _retiredTextures = [[], []];
+    private readonly HashSet<MeshHandle> _pendingMeshRetirements = [];
+    private readonly HashSet<TextureHandle> _pendingTextureRetirements = [];
     private uint _nextMeshHandle = 1;
+    private uint _nextTextureHandle = 1;
+    private TextureHandle _defaultModelTexture;
     private readonly Dictionary<uint, VertexT[]> _viewportQuadVertices = new();
     private readonly Dictionary<uint, ulong> _viewportQuadGenerations = new();
     private readonly Dictionary<uint, ulong[]> _uploadedViewportQuadGenerations = new();
@@ -179,6 +188,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _customTitleBar = options.CustomTitleBar;
         _eventDrivenIdle = options.IsEventDriven;
         _targetFrameRate = options.TargetFrameRate;
+        if (options.ViewportRenderScale < 0f)
+            throw new ArgumentOutOfRangeException(nameof(options),
+                "Viewport render scale cannot be negative.");
+        _viewportRenderScale = options.ViewportRenderScale == 0f
+            ? 1f : options.ViewportRenderScale;
+        if (options.MsaaSamples is not (0 or 1 or 2 or 4 or 8))
+            throw new ArgumentOutOfRangeException(nameof(options),
+                "MSAA samples must be zero, one, two, four, or eight.");
+        _requestedMsaaSamples = options.MsaaSamples == 0 ? 4 : options.MsaaSamples;
         _requestedWidth = options.Width;
         _requestedHeight = options.Height;
         _logger.LogInformation("Creating window '{Title}' ({Width}x{Height}) [Vulkan]", options.Title, options.Width, options.Height);
@@ -223,15 +241,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         ArgumentNullException.ThrowIfNull(drawList);
         if (_submittedUiGeneration == drawList.Generation)
             return;
-        _vertices = BuildUIVertices(drawList);
-        _vertexCount = (uint)_vertices.Length;
+        BuildUIVertices(drawList);
+        _vertexCount = (uint)_vertices.Count;
         _uiGeneration = drawList.Generation;
         _submittedUiGeneration = drawList.Generation;
         _uiBuffers ??= new FrameVertexBuffers(
-            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Length),
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Count),
             "UI", FindMemoryType, _logger);
         _textBuffers ??= new FrameVertexBuffers(
-            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_textVertices.Length),
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_textVertices.Count),
             "UI text", FindMemoryType, _logger);
     }
 
@@ -286,6 +304,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _frameScheduler = new FrameScheduler(
             _vk!, _device, _graphicsQueue, _graphicsQueueFamily);
         _persistentVertices = new PersistentVertexArena(_vk!, _device, FindMemoryType, _logger);
+        _persistentIndexedMeshes = new PersistentIndexedMeshStore(
+            _vk!, _device, FindMemoryType, _logger);
         _transientArena = new FrameTransientArena(
             _vk!, _device, MaxFramesInFlight, FindMemoryType, _logger);
         CreateSwapchain();
@@ -293,6 +313,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         CreateRenderPass();
         CreateGraphicsPipeline();
         CreateFboGraphicsPipeline();
+        CreateModelPipeline();
+        _persistentTextures = new PersistentTextureStore(_vk!, _device, FindMemoryType,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorPool);
+        _defaultModelTexture = CreateTexture(new TextureResource(1, 1,
+            [255, 255, 255, 255], TextureColorSpace.Srgb));
         CreateGridPipeline();
         CreateFramebuffers();
         CreateSyncObjects();
@@ -703,7 +729,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             {
                 _physicalDevice = device;
                 var props = _vk.GetPhysicalDeviceProperties(device);
-                _msaaSamples = SelectMsaaSamples(props);
+                _msaaSamples = SelectMsaaSamples(props, _requestedMsaaSamples);
                 _logger.LogInformation("Using GPU: {Name}", SilkMarshal.PtrToString((nint)props.DeviceName, NativeStringEncoding.UTF8));
                 _logger.LogInformation("Viewport MSAA: {Samples}", _msaaSamples);
                 return;
@@ -714,17 +740,22 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     }
 
     /// <summary>
-    /// Selects the highest color/depth sample count up to four samples.
+    /// Selects the highest supported color/depth sample count up to the requested value.
     /// </summary>
     /// <param name="properties">Physical-device properties.</param>
+    /// <param name="requestedSamples">Requested maximum sample count.</param>
     /// <returns>The selected sample count.</returns>
-    private static SampleCountFlags SelectMsaaSamples(PhysicalDeviceProperties properties)
+    private static SampleCountFlags SelectMsaaSamples(
+        PhysicalDeviceProperties properties,
+        int requestedSamples)
     {
         var supported = properties.Limits.FramebufferColorSampleCounts
             & properties.Limits.FramebufferDepthSampleCounts;
-        if ((supported & SampleCountFlags.Count4Bit) != 0)
+        if (requestedSamples >= 8 && (supported & SampleCountFlags.Count8Bit) != 0)
+            return SampleCountFlags.Count8Bit;
+        if (requestedSamples >= 4 && (supported & SampleCountFlags.Count4Bit) != 0)
             return SampleCountFlags.Count4Bit;
-        if ((supported & SampleCountFlags.Count2Bit) != 0)
+        if (requestedSamples >= 2 && (supported & SampleCountFlags.Count2Bit) != 0)
             return SampleCountFlags.Count2Bit;
         return SampleCountFlags.Count1Bit;
     }
@@ -1058,7 +1089,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                     RasterizerDiscardEnable = new Bool32(false),
                     PolygonMode = PolygonMode.Fill,
                     LineWidth = 1.0f,
-                    CullMode = CullModeFlags.BackBit,
+                    CullMode = CullModeFlags.None,
                     FrontFace = FrontFace.CounterClockwise,
                     DepthBiasEnable = new Bool32(false)
                 };
@@ -1333,6 +1364,207 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         SilkMarshal.Free(entryPointName);
         _logger.LogInformation("FBO graphics pipeline created");
+    }
+
+    /// <summary>Creates the built-in forward pipeline for indexed static models.</summary>
+    private void CreateModelPipeline()
+    {
+        _logger.LogDebug("Creating indexed model pipeline");
+        var textureBinding = new DescriptorSetLayoutBinding
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        var descriptorLayoutInfo = new DescriptorSetLayoutCreateInfo
+        {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 1,
+            PBindings = &textureBinding
+        };
+        var descriptorResult = _vk!.CreateDescriptorSetLayout(_device, &descriptorLayoutInfo,
+            null, out _pipelines.ModelTextureDescriptorSetLayout);
+        if (descriptorResult != Result.Success)
+            throw new InvalidOperationException(
+                $"Failed to create model texture descriptor layout: {descriptorResult}");
+        const uint maximumModelTextures = 1024;
+        var poolSize = new DescriptorPoolSize
+        {
+            Type = DescriptorType.CombinedImageSampler,
+            DescriptorCount = maximumModelTextures
+        };
+        var poolInfo = new DescriptorPoolCreateInfo
+        {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+            PoolSizeCount = 1,
+            PPoolSizes = &poolSize,
+            MaxSets = maximumModelTextures
+        };
+        descriptorResult = _vk.CreateDescriptorPool(_device, &poolInfo, null,
+            out _pipelines.ModelTextureDescriptorPool);
+        if (descriptorResult != Result.Success)
+            throw new InvalidOperationException(
+                $"Failed to create model texture descriptor pool: {descriptorResult}");
+        var pushConstantRange = new PushConstantRange
+        {
+            StageFlags = ShaderStageFlags.VertexBit,
+            Size = (uint)sizeof(PushConstants)
+        };
+        var descriptorLayout = _pipelines.ModelTextureDescriptorSetLayout;
+        var modelLayoutInfo = new PipelineLayoutCreateInfo
+        {
+            SType = StructureType.PipelineLayoutCreateInfo,
+            SetLayoutCount = 1,
+            PSetLayouts = &descriptorLayout,
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
+        };
+        descriptorResult = _vk.CreatePipelineLayout(_device, &modelLayoutInfo, null,
+            out _pipelines.ModelLayout);
+        if (descriptorResult != Result.Success)
+            throw new InvalidOperationException(
+                $"Failed to create model pipeline layout: {descriptorResult}");
+        _pipelines.ModelVertexShader = CreateShaderModule("model.vert.spv");
+        _pipelines.ModelFragmentShader = CreateShaderModule("model.frag.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+        try
+        {
+            var stages = new[]
+            {
+                new PipelineShaderStageCreateInfo
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.VertexBit,
+                    Module = _pipelines.ModelVertexShader,
+                    PName = (byte*)entryPointName
+                },
+                new PipelineShaderStageCreateInfo
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.FragmentBit,
+                    Module = _pipelines.ModelFragmentShader,
+                    PName = (byte*)entryPointName
+                }
+            };
+            var binding = new VertexInputBindingDescription
+            {
+                Binding = 0,
+                Stride = ForwardModelVertex.Stride,
+                InputRate = VertexInputRate.Vertex
+            };
+            var attributes = new[]
+            {
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 0, Format = Format.R32G32B32Sfloat, Offset = 0
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 1, Format = Format.R32G32B32Sfloat,
+                    Offset = sizeof(float) * 3u
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 2, Format = Format.R32G32Sfloat,
+                    Offset = sizeof(float) * 6u
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 3, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 8u
+                }
+            };
+            fixed (PipelineShaderStageCreateInfo* stagePointer = stages)
+            fixed (VertexInputAttributeDescription* attributePointer = attributes)
+            {
+                var vertexInput = new PipelineVertexInputStateCreateInfo
+                {
+                    SType = StructureType.PipelineVertexInputStateCreateInfo,
+                    VertexBindingDescriptionCount = 1,
+                    PVertexBindingDescriptions = &binding,
+                    VertexAttributeDescriptionCount = checked((uint)attributes.Length),
+                    PVertexAttributeDescriptions = attributePointer
+                };
+                var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+                {
+                    SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                    Topology = PrimitiveTopology.TriangleList
+                };
+                var dynamicStates = stackalloc[] { DynamicState.Viewport, DynamicState.Scissor };
+                var dynamicState = new PipelineDynamicStateCreateInfo
+                {
+                    SType = StructureType.PipelineDynamicStateCreateInfo,
+                    DynamicStateCount = 2,
+                    PDynamicStates = dynamicStates
+                };
+                var viewportState = new PipelineViewportStateCreateInfo
+                {
+                    SType = StructureType.PipelineViewportStateCreateInfo,
+                    ViewportCount = 1,
+                    ScissorCount = 1
+                };
+                var rasterizer = new PipelineRasterizationStateCreateInfo
+                {
+                    SType = StructureType.PipelineRasterizationStateCreateInfo,
+                    PolygonMode = PolygonMode.Fill,
+                    CullMode = CullModeFlags.BackBit,
+                    FrontFace = FrontFace.CounterClockwise,
+                    LineWidth = 1f
+                };
+                var multisampling = new PipelineMultisampleStateCreateInfo
+                {
+                    SType = StructureType.PipelineMultisampleStateCreateInfo,
+                    RasterizationSamples = _msaaSamples
+                };
+                var depthStencil = new PipelineDepthStencilStateCreateInfo
+                {
+                    SType = StructureType.PipelineDepthStencilStateCreateInfo,
+                    DepthTestEnable = true,
+                    DepthWriteEnable = true,
+                    DepthCompareOp = CompareOp.LessOrEqual
+                };
+                var blendAttachment = new PipelineColorBlendAttachmentState
+                {
+                    ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+                        ColorComponentFlags.BBit | ColorComponentFlags.ABit
+                };
+                var blending = new PipelineColorBlendStateCreateInfo
+                {
+                    SType = StructureType.PipelineColorBlendStateCreateInfo,
+                    AttachmentCount = 1,
+                    PAttachments = &blendAttachment
+                };
+                var pipelineInfo = new GraphicsPipelineCreateInfo
+                {
+                    SType = StructureType.GraphicsPipelineCreateInfo,
+                    StageCount = 2,
+                    PStages = stagePointer,
+                    PVertexInputState = &vertexInput,
+                    PInputAssemblyState = &inputAssembly,
+                    PViewportState = &viewportState,
+                    PRasterizationState = &rasterizer,
+                    PMultisampleState = &multisampling,
+                    PDepthStencilState = &depthStencil,
+                    PColorBlendState = &blending,
+                    PDynamicState = &dynamicState,
+                    Layout = _pipelines.ModelLayout,
+                    RenderPass = _fboRenderPass,
+                    Subpass = 0
+                };
+                var result = _vk!.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                    null, out _pipelines.ModelPipeline);
+                if (result != Result.Success)
+                    throw new InvalidOperationException(
+                        $"Failed to create indexed model pipeline: {result}");
+            }
+        }
+        finally
+        {
+            SilkMarshal.Free(entryPointName);
+        }
+        _logger.LogInformation("Indexed model pipeline created");
     }
 
     /// <summary>
@@ -1853,13 +2085,17 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public RenderViewHandle CreateRenderView(float width, float height)
     {
         var id = _nextViewportId++;
-        var fbo = new ViewportFbo(id, (uint)width, (uint)height);
+        var pixelSize = CalculateViewportPixelSize(width, height);
+        var fbo = new ViewportFbo(id, pixelSize.Width, pixelSize.Height);
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
         fbo.Create(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
             deviceLocalMemoryType,
             _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
         _viewportFbos[id] = fbo;
-        _logger.LogInformation("Viewport {Id} registered ({Width}x{Height})", id, (uint)width, (uint)height);
+        _logger.LogInformation(
+            "Viewport {Id} registered ({LogicalWidth}x{LogicalHeight} logical, {PixelWidth}x{PixelHeight} pixels, {Scale:F2}x scale)",
+            id, width, height, pixelSize.Width, pixelSize.Height,
+            _uiFramebufferScale * _viewportRenderScale);
         return new RenderViewHandle(CreateOwnedHandle(id));
     }
 
@@ -1897,7 +2133,22 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     {
         var viewportId = GetLocalId(view);
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
-            fbo.Resize((uint)width, (uint)height);
+        {
+            var pixelSize = CalculateViewportPixelSize(width, height);
+            fbo.Resize(pixelSize.Width, pixelSize.Height);
+        }
+    }
+
+    /// <summary>Converts a logical viewport extent into physical render-target pixels.</summary>
+    /// <param name="width">Logical viewport width.</param>
+    /// <param name="height">Logical viewport height.</param>
+    /// <returns>The clamped physical render-target extent.</returns>
+    private (uint Width, uint Height) CalculateViewportPixelSize(float width, float height)
+    {
+        var scale = _uiFramebufferScale * _viewportRenderScale;
+        return (
+            checked((uint)Math.Max(1, MathF.Round(width * scale))),
+            checked((uint)Math.Max(1, MathF.Round(height * scale))));
     }
 
     /// <inheritdoc/>
@@ -1961,11 +2212,46 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     }
 
     /// <inheritdoc/>
+    public MeshHandle CreateStaticMesh(StaticMeshResource mesh, StandardMaterialResource material)
+    {
+        var handle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
+        var vertices = BuiltInForwardMeshBuilder.BuildIndexedVertices(mesh, material);
+        var texture = material.BaseColorTexture.IsValid
+            ? material.BaseColorTexture : _defaultModelTexture;
+        ValidateOwner(texture);
+        _persistentTextures!.GetDescriptor(texture);
+        _persistentIndexedMeshes!.Add(handle, vertices, mesh.Indices, texture);
+        return handle;
+    }
+
+    /// <inheritdoc/>
+    public TextureHandle CreateTexture(TextureResource texture)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        var handle = new TextureHandle(CreateOwnedHandle(_nextTextureHandle++));
+        _persistentTextures!.Add(handle, texture);
+        return handle;
+    }
+
+    /// <inheritdoc/>
+    public void DestroyTexture(TextureHandle texture)
+    {
+        ValidateOwner(texture);
+        if (texture == _defaultModelTexture)
+            throw new InvalidOperationException("The renderer default texture cannot be destroyed.");
+        if (!_pendingTextureRetirements.Add(texture))
+            throw new InvalidOperationException("The texture is already pending destruction.");
+        _retiredTextures[_activeFrameIndex].Add(texture);
+    }
+
+    /// <inheritdoc/>
     public void UpdateMesh(MeshHandle mesh, MeshUpdate update)
     {
         ArgumentNullException.ThrowIfNull(update);
         ArgumentNullException.ThrowIfNull(update.Vertices);
         ValidateOwner(mesh);
+        if (_persistentIndexedMeshes!.Contains(mesh))
+            throw new InvalidOperationException("Immutable static model meshes cannot be updated.");
         _persistentVertices!.Update(mesh, update);
     }
 
@@ -1973,8 +2259,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public void DestroyMesh(MeshHandle mesh)
     {
         ValidateOwner(mesh);
-        var allocation = _persistentVertices!.Remove(mesh);
-        _retiredMeshAllocations[_activeFrameIndex].Add(allocation);
+        if (!_persistentIndexedMeshes!.Contains(mesh))
+            _persistentVertices!.GetBinding(mesh);
+        if (!_pendingMeshRetirements.Add(mesh))
+            throw new InvalidOperationException("The mesh is already pending destruction.");
+        _retiredMeshes[_activeFrameIndex].Add(mesh);
     }
 
     /// <inheritdoc/>
@@ -2035,6 +2324,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             throw new ArgumentException("Mesh belongs to a different renderer.", nameof(mesh));
     }
 
+    /// <summary>Ensures a texture handle belongs to this renderer.</summary>
+    /// <param name="texture">Texture handle to validate.</param>
+    private void ValidateOwner(TextureHandle texture)
+    {
+        if (!texture.IsValid || (uint)(texture.Value >> 32) != _rendererId)
+            throw new ArgumentException("Texture handle belongs to another renderer.",
+                nameof(texture));
+    }
+
     private void RecreateDirtyFbos()
     {
         if (!_viewportFbos.Values.Any(fbo => fbo.IsDirty))
@@ -2056,50 +2354,48 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     /// <summary>Translates semantic UI rectangles into backend triangle vertices.</summary>
     /// <param name="drawList">UI draw list.</param>
-    /// <returns>Colored triangle vertices.</returns>
-    private Vertex[] BuildUIVertices(UIDrawList drawList)
+    private void BuildUIVertices(UIDrawList drawList)
     {
         ArgumentNullException.ThrowIfNull(drawList);
         var framebufferScale = GetFramebufferScale();
-        var contentVertices = new List<Vertex>(drawList.Commands.Count * 6);
-        var textVertices = new List<VertexT>();
+        _vertices.Clear();
+        _textVertices.Clear();
+        _vertices.EnsureCapacity(drawList.Commands.Count * 6);
         _uiBatches.Clear();
         foreach (var command in drawList.Commands)
         {
             if (command.Type == UIDrawCommandType.Text)
             {
-                var firstVertex = (uint)textVertices.Count;
+                var firstVertex = (uint)_textVertices.Count;
                 var caretLeft = _fontRasterizer.AppendVertices(
-                    textVertices, command, framebufferScale);
+                    _textVertices, command, framebufferScale);
                 AddUiBatch(UiGeometryKind.Text, command.Layer, firstVertex,
-                    (uint)textVertices.Count - firstVertex);
+                    (uint)_textVertices.Count - firstVertex);
                 if (command.CaretIndex >= 0)
                 {
-                    firstVertex = (uint)contentVertices.Count;
-                    AppendUICommandVertices(contentVertices, new UIDrawCommand(
+                    firstVertex = (uint)_vertices.Count;
+                    AppendUICommandVertices(_vertices, new UIDrawCommand(
                         caretLeft, command.Top, caretLeft + 1f,
                         command.Top + command.FontPixelHeight, command.Color,
                         Layer: command.Layer));
                     AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
-                        (uint)contentVertices.Count - firstVertex);
+                        (uint)_vertices.Count - firstVertex);
                 }
             }
             else
             {
-                var firstVertex = (uint)contentVertices.Count;
-                AppendUICommandVertices(contentVertices, command);
+                var firstVertex = (uint)_vertices.Count;
+                AppendUICommandVertices(_vertices, command);
                 AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
-                    (uint)contentVertices.Count - firstVertex);
+                    (uint)_vertices.Count - firstVertex);
             }
         }
-        _textVertices = textVertices.ToArray();
-        return contentVertices.ToArray();
     }
 
     /// <summary>Translates one semantic UI command into triangle vertices.</summary>
     /// <param name="vertices">Destination vertex collection.</param>
     /// <param name="command">Semantic UI command.</param>
-    private static void AppendUICommandVertices(List<Vertex> vertices, UIDrawCommand command)
+    private static void AppendUICommandVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
     {
         if (command.Type == UIDrawCommandType.Ellipse)
         {
@@ -2144,7 +2440,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <summary>Tessellates one filled UI ellipse into triangles.</summary>
     /// <param name="vertices">Destination vertex collection.</param>
     /// <param name="command">Ellipse command and bounds.</param>
-    private static void AppendEllipseVertices(List<Vertex> vertices, UIDrawCommand command)
+    private static void AppendEllipseVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
     {
         const int SegmentCount = 24;
         var centerX = (command.Left + command.Right) / 2f;
@@ -2271,9 +2567,21 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         var frameIndex = _frameScheduler!.BeginFrame();
         _activeFrameIndex = frameIndex;
         _transientArena!.Reset(frameIndex);
-        foreach (var allocation in _retiredMeshAllocations[frameIndex])
-            _persistentVertices!.Release(allocation);
-        _retiredMeshAllocations[frameIndex].Clear();
+        foreach (var mesh in _retiredMeshes[frameIndex])
+        {
+            if (_persistentIndexedMeshes!.Contains(mesh))
+                _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
+            else
+                _persistentVertices!.Release(_persistentVertices.Remove(mesh));
+            _pendingMeshRetirements.Remove(mesh);
+        }
+        _retiredMeshes[frameIndex].Clear();
+        foreach (var texture in _retiredTextures[frameIndex])
+        {
+            _persistentTextures!.Release(_persistentTextures.Remove(texture));
+            _pendingTextureRetirements.Remove(texture);
+        }
+        _retiredTextures[frameIndex].Clear();
 
         // ── Acquire swapchain image ──
         uint imageIndex = 0;
@@ -2330,6 +2638,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private void RecordFboPass(CommandBuffer commandBuffer)
     {
         _persistentVertices!.RecordPendingUploads(commandBuffer, _transientArena!, _activeFrameIndex);
+        _persistentIndexedMeshes!.RecordPendingUploads(
+            commandBuffer, _transientArena!, _activeFrameIndex);
+        _persistentTextures!.RecordPendingUploads(
+            commandBuffer, _transientArena!, _activeFrameIndex);
         // ═══════════════════════════════════════════════════════════════
         // Render each viewport's content into its own FBO
         // ═══════════════════════════════════════════════════════════════
@@ -2404,6 +2716,31 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
                 foreach (var draw in draws)
                 {
+                    if (_persistentIndexedMeshes!.Contains(draw.Mesh))
+                    {
+                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                            _pipelines.ModelPipeline);
+                        var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
+                        if (indexed.IndexCount == 0)
+                            continue;
+                        var indexedVertexBuffer = indexed.VertexBuffer;
+                        var indexedOffset = 0UL;
+                        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                            &indexedVertexBuffer, &indexedOffset);
+                        _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0,
+                            IndexType.Uint32);
+                        var modelDescriptor = _persistentTextures.GetDescriptor(indexed.Texture);
+                        _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                            _pipelines.ModelLayout, 0, 1, &modelDescriptor, 0, null);
+                        var indexedConstants = draw.PushConstants;
+                        _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
+                            ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants),
+                            &indexedConstants);
+                        _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
+                        continue;
+                    }
+                    _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                        _pipelines.ViewportPipeline);
                     var binding = _persistentVertices!.GetBinding(draw.Mesh);
                     if (binding.VertexCount == 0)
                         continue;
@@ -2472,20 +2809,20 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             var reallocated = _uiBuffers!.Ensure(_activeFrameIndex, _vertexCount, Vertex.Stride);
             if (_uploadedUiGenerations[_activeFrameIndex] != _uiGeneration)
             {
-                UploadChangedRanges(_vertices, ref _uploadedUiVertices[_activeFrameIndex],
+                UploadChangedRanges(_vertices.WrittenSpan, _uploadedUiVertices[_activeFrameIndex],
                     _uiBuffers.GetMappedPointer(_activeFrameIndex), Vertex.Stride, reallocated);
                 _uploadedUiGenerations[_activeFrameIndex] = _uiGeneration;
             }
             uiFrameBuffer = _uiBuffers.GetBuffer(_activeFrameIndex);
         }
         Silk.NET.Vulkan.Buffer textFrameBuffer = default;
-        if (_textVertices.Length > 0)
+        if (_textVertices.Count > 0)
         {
             var reallocated = _textBuffers!.Ensure(
-                _activeFrameIndex, (uint)_textVertices.Length, VertexT.Stride);
+                _activeFrameIndex, (uint)_textVertices.Count, VertexT.Stride);
             if (_uploadedTextGenerations[_activeFrameIndex] != _uiGeneration)
             {
-                UploadChangedRanges(_textVertices, ref _uploadedTextVertices[_activeFrameIndex],
+                UploadChangedRanges(_textVertices.WrittenSpan, _uploadedTextVertices[_activeFrameIndex],
                     _textBuffers.GetMappedPointer(_activeFrameIndex), VertexT.Stride, reallocated);
                 _uploadedTextGenerations[_activeFrameIndex] = _uiGeneration;
             }
@@ -2608,6 +2945,53 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <param name="stride">Vertex stride in bytes.</param>
     /// <param name="forceFullUpload">Whether the destination backing allocation changed.</param>
     private static void UploadChangedRanges<T>(
+        ReadOnlySpan<T> current,
+        NativeBuffer<T> uploaded,
+        void* destination,
+        uint stride,
+        bool forceFullUpload)
+        where T : unmanaged
+    {
+        var uploadedSpan = uploaded.WrittenSpan;
+        fixed (T* source = current)
+        {
+            if (forceFullUpload || uploadedSpan.Length != current.Length)
+            {
+                var byteCount = (nuint)(current.Length * stride);
+                System.Buffer.MemoryCopy(source, destination, byteCount, byteCount);
+            }
+            else
+            {
+                var comparer = EqualityComparer<T>.Default;
+                var index = 0;
+                while (index < current.Length)
+                {
+                    if (comparer.Equals(current[index], uploadedSpan[index]))
+                    {
+                        index++;
+                        continue;
+                    }
+                    var first = index++;
+                    while (index < current.Length && !comparer.Equals(current[index], uploadedSpan[index]))
+                        index++;
+                    var byteCount = (nuint)((index - first) * stride);
+                    var sourceRange = (byte*)source + first * stride;
+                    var destinationRange = (byte*)destination + first * stride;
+                    System.Buffer.MemoryCopy(sourceRange, destinationRange, byteCount, byteCount);
+                }
+            }
+        }
+        uploaded.ReplaceWith(current);
+    }
+
+    /// <summary>Copies only changed contiguous array-backed vertex ranges into a mapped buffer.</summary>
+    /// <typeparam name="T">Unmanaged vertex type.</typeparam>
+    /// <param name="current">Current CPU vertices.</param>
+    /// <param name="uploaded">Snapshot represented by the destination buffer.</param>
+    /// <param name="destination">Mapped destination buffer.</param>
+    /// <param name="stride">Vertex stride in bytes.</param>
+    /// <param name="forceFullUpload">Whether the destination backing allocation changed.</param>
+    private static void UploadChangedRanges<T>(
         T[] current,
         ref T[] uploaded,
         void* destination,
@@ -2685,6 +3069,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             return;
 
         _shutdown = true;
+        _vertices.Dispose();
+        _textVertices.Dispose();
+        foreach (var uploaded in _uploadedUiVertices)
+            uploaded.Dispose();
+        foreach (var uploaded in _uploadedTextVertices)
+            uploaded.Dispose();
         _continuousWakeTimer?.Dispose();
         _continuousWakeTimer = null;
         _logger.LogInformation("Shutting down...");
@@ -2715,8 +3105,33 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _viewportQuadBuffers.Clear();
         _viewportQuadVertices.Clear();
 
-        // Cleanup persistent viewport draw buffer
+        // Drain deferred retirements while their lookup stores are still alive.
+        if (_persistentIndexedMeshes is not null && _persistentVertices is not null)
+        {
+            foreach (var retired in _retiredMeshes)
+            foreach (var mesh in retired)
+            {
+                if (_persistentIndexedMeshes.Contains(mesh))
+                    _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
+                else
+                    _persistentVertices.Release(_persistentVertices.Remove(mesh));
+            }
+        }
+        foreach (var retired in _retiredMeshes)
+            retired.Clear();
+        _pendingMeshRetirements.Clear();
+        _persistentIndexedMeshes?.Destroy();
         _persistentVertices?.Destroy();
+        if (_persistentTextures is not null)
+        {
+            foreach (var retired in _retiredTextures)
+            foreach (var texture in retired)
+                _persistentTextures.Release(_persistentTextures.Remove(texture));
+        }
+        foreach (var retired in _retiredTextures)
+            retired.Clear();
+        _pendingTextureRetirements.Clear();
+        _persistentTextures?.Destroy();
         _transientArena?.Destroy();
 
         // Cleanup shared resources

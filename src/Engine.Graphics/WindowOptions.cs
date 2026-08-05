@@ -20,4 +20,16 @@ public struct WindowOptions
 
     /// <summary>Gets or sets the maximum update and render rate, or zero for unlimited.</summary>
     public double TargetFrameRate { get; set; }
+
+    /// <summary>
+    /// Gets or sets the viewport render scale relative to physical framebuffer pixels.
+    /// Zero selects the default scale of one.
+    /// </summary>
+    public float ViewportRenderScale { get; set; }
+
+    /// <summary>
+    /// Gets or sets requested viewport MSAA samples: 1, 2, 4, or 8.
+    /// Zero selects the default of four.
+    /// </summary>
+    public int MsaaSamples { get; set; }
 }

@@ -21,7 +21,7 @@ public class UIElement : Node
     private Vector2 _lastArrangeSize;
     private UIDrawList? _cachedDrawList;
     private bool _visualValid;
-    private UIDrawCommand[] _cachedPaintCommands = [];
+    private readonly UIDrawList _cachedPaintCommands = new();
     private bool _paintValid;
     private HorizontalAlignment _horizontalAlignment = HorizontalAlignment.Stretch;
     private VerticalAlignment _verticalAlignment = VerticalAlignment.Stretch;
@@ -642,7 +642,7 @@ public class UIElement : Node
         PaintRecursive(drawList, inheritedOverlay: false);
         _cachedDrawList = drawList;
         _visualValid = true;
-        return _cachedDrawList;
+        return drawList;
     }
 
     /// <summary>Recursively appends visible paint commands.</summary>
@@ -655,14 +655,13 @@ public class UIElement : Node
 
         var overlay = inheritedOverlay || IsOverlay;
         var layer = overlay ? UIDrawLayer.Overlay : UIDrawLayer.Content;
-        if (!_paintValid || _cachedPaintCommands.Any(command => command.Layer != layer))
+        if (!_paintValid || _cachedPaintCommands.Commands.Any(command => command.Layer != layer))
         {
-            var localDrawList = new UIDrawList { CurrentLayer = layer };
-            Paint(localDrawList);
-            _cachedPaintCommands = localDrawList.Commands.ToArray();
+            _cachedPaintCommands.Reset(layer);
+            Paint(_cachedPaintCommands);
             _paintValid = true;
         }
-        drawList.AddRange(_cachedPaintCommands);
+        drawList.AddRange(_cachedPaintCommands.Commands);
 
         foreach (var child in Children)
         {

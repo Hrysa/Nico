@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Engine.Assets;
+using Engine.Scripting;
 
 namespace Editor;
 
@@ -80,6 +81,9 @@ public sealed partial class GameScriptCompiler : IDisposable
             if (analysis.Diagnostics.Count > 0)
                 throw new ScriptAnalysisException(analysis.Diagnostics);
             scripts = analysis.Scripts;
+            CompiledScriptCatalog.Save(
+                CompiledScriptCatalog.GetCatalogPath(_assemblyPath),
+                scripts.Select(script => new CompiledScriptEntry(script.Asset, script.TypeName)));
         }
         return GameScriptHost.Load(_assemblyPath, scripts);
     }

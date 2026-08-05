@@ -17,6 +17,7 @@ public static class EditorAssetImporters
         return Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".cs" => "csharp-script",
+            ".glb" => "gltf-model",
             _ => null
         };
     }

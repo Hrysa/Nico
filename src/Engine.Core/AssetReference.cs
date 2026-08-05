@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Engine.Core;
 
 /// <summary>References an asset or one stable imported output within that asset.</summary>
@@ -12,6 +14,7 @@ public readonly record struct AssetReference
     /// <summary>Creates a persistent asset reference.</summary>
     /// <param name="asset">Persistent source asset identifier.</param>
     /// <param name="subAsset">Optional importer-defined stable sub-asset key.</param>
+    [JsonConstructor]
     public AssetReference(AssetId asset, string? subAsset = null)
     {
         if (asset.Value == Guid.Empty)

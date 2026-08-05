@@ -2,6 +2,7 @@ using Editor;
 using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.Scripting;
 using Xunit;
 
 namespace Editor.Tests;
@@ -47,7 +48,18 @@ public class GameScriptHostTests
 
             using var cachedHost = compiler.BuildAndLoad();
 
-            Assert.Equal(0.5f, owner.Position.X);
+            var assemblyPath = Path.Combine(directory, "Scripts", "bin", "EditorPlay",
+                $"{Path.GetFileName(directory)}.Scripts.dll");
+            File.Delete(CompiledScriptCatalog.GetCatalogPath(assemblyPath));
+            using var runtimeCatalog = CompiledScriptCatalog.RecoverDevelopmentCatalog(
+                assemblyPath, [(script.Id, "MoveScript")]);
+            Assert.True(File.Exists(CompiledScriptCatalog.GetCatalogPath(assemblyPath)));
+            using var runtime = new SceneScriptRuntime();
+            runtime.Attach(root, runtimeCatalog);
+            runtime.Start();
+            runtime.Update(0.25);
+
+            Assert.Equal(0.75f, owner.Position.X);
         }
         finally
         {

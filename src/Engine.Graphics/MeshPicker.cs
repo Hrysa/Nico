@@ -104,18 +104,9 @@ public static class MeshPicker
         out float distance)
     {
         distance = 0f;
-        var vertices = instance.Mesh?.Vertices;
-        if (vertices is null || vertices.Length == 0
+        if (!TryGetBounds(instance, out var minimum, out var maximum)
             || !Matrix4x4.Invert(instance.GetModelMatrix(), out var inverseModel))
             return false;
-
-        var minimum = vertices[0].Position;
-        var maximum = minimum;
-        foreach (var vertex in vertices)
-        {
-            minimum = Vector3.Min(minimum, vertex.Position);
-            maximum = Vector3.Max(maximum, vertex.Position);
-        }
 
         var localOrigin = Vector3.Transform(rayOrigin, inverseModel);
         var localDirection = Vector3.TransformNormal(rayDirection, inverseModel);
@@ -126,6 +117,27 @@ public static class MeshPicker
         var worldHit = Vector3.Transform(localHit, instance.GetModelMatrix());
         distance = Vector3.Distance(rayOrigin, worldHit);
         return float.IsFinite(distance);
+    }
+
+    /// <summary>Gets decoded imported bounds or computes procedural mesh bounds.</summary>
+    /// <param name="instance">Candidate mesh instance.</param>
+    /// <param name="minimum">Resolved minimum corner.</param>
+    /// <param name="maximum">Resolved maximum corner.</param>
+    /// <returns>True when usable local bounds exist.</returns>
+    private static bool TryGetBounds(
+        MeshInstance3D instance,
+        out Vector3 minimum,
+        out Vector3 maximum)
+    {
+        if (instance.LocalBounds is { } imported)
+        {
+            minimum = imported.Minimum;
+            maximum = imported.Maximum;
+            return true;
+        }
+        minimum = default;
+        maximum = default;
+        return false;
     }
 
     /// <summary>Intersects a ray with an axis-aligned bounding box.</summary>

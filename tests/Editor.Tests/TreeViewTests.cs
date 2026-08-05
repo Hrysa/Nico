@@ -68,6 +68,25 @@ public class TreeViewTests
         Assert.StartsWith("+", Assert.IsType<Label>(row.Content).Text);
     }
 
+    /// <summary>Verifies an imported resource makes its physical source expandable.</summary>
+    [Fact]
+    public void FileNode_ImportedSubAsset_AppearsAsExpandableChild()
+    {
+        var source = new FileSystemNode(Path.Combine(Path.GetTempPath(), "Character.glb"), false);
+        var reference = new AssetReference(AssetId.New(), "mesh/Body/0");
+        var mesh = new ImportedSubAssetNode(source.FullPath, reference,
+            "nico/static-mesh", "Body [Mesh]");
+        source.AddChild(mesh);
+        var tree = new TreeView(200f, 200f);
+
+        tree.SetRoots([source]);
+
+        Assert.True(source.CanHaveChildren);
+        Assert.Equal(2, tree.Children.Count);
+        Assert.Same(mesh, Assert.IsType<TreeViewItem>(tree.Children[1]).Item);
+        Assert.Equal(reference, mesh.Reference);
+    }
+
     /// <summary>Verifies clicking a row updates tree selection.</summary>
     [Fact]
     public void Click_Row_SelectsRepresentedNode()

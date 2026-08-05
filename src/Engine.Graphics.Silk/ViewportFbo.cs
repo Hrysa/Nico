@@ -134,7 +134,7 @@ internal unsafe class ViewportFbo
         var samplerInfo = new SamplerCreateInfo
         {
             SType = StructureType.SamplerCreateInfo,
-            MagFilter = Filter.Nearest, MinFilter = Filter.Nearest,
+            MagFilter = Filter.Linear, MinFilter = Filter.Linear,
             AddressModeU = SamplerAddressMode.ClampToEdge, AddressModeV = SamplerAddressMode.ClampToEdge, AddressModeW = SamplerAddressMode.ClampToEdge,
             AnisotropyEnable = new Bool32(false), MaxAnisotropy = 1,
             BorderColor = BorderColor.IntOpaqueBlack, UnnormalizedCoordinates = new Bool32(false),

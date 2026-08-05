@@ -12,7 +12,7 @@ public sealed class FileSystemNode : Node
     public bool IsDirectory { get; }
 
     /// <inheritdoc/>
-    public override bool CanHaveChildren => IsDirectory;
+    public override bool CanHaveChildren => IsDirectory || Children.Count > 0;
 
     /// <summary>Creates a project filesystem tree node.</summary>
     /// <param name="fullPath">Absolute entry path.</param>

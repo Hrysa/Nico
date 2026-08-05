@@ -40,6 +40,43 @@ public interface IRuntimeResourceLoader
         CancellationToken cancellationToken);
 }
 
+/// <summary>Adapts a typed decoding delegate to the runtime resource loader contract.</summary>
+/// <typeparam name="TResource">Decoded resource type.</typeparam>
+public sealed class DelegateRuntimeResourceLoader<TResource> : IRuntimeResourceLoader
+    where TResource : class
+{
+    private readonly Func<Stream, ResolvedAsset, CancellationToken, TResource> _load;
+
+    /// <inheritdoc/>
+    public string ContentType { get; }
+
+    /// <inheritdoc/>
+    public Type ResourceType => typeof(TResource);
+
+    /// <summary>Creates a typed resource loader.</summary>
+    /// <param name="contentType">Stable artifact content type.</param>
+    /// <param name="load">Synchronous stream decoder.</param>
+    public DelegateRuntimeResourceLoader(
+        string contentType,
+        Func<Stream, ResolvedAsset, CancellationToken, TResource> load)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        ArgumentNullException.ThrowIfNull(load);
+        ContentType = contentType;
+        _load = load;
+    }
+
+    /// <inheritdoc/>
+    public ValueTask<object> LoadAsync(
+        Stream stream,
+        ResolvedAsset resolved,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<object>(_load(stream, resolved, cancellationToken));
+    }
+}
+
 /// <summary>Retires replaced runtime resources according to subsystem lifetime rules.</summary>
 public interface IRuntimeResourceRetirement
 {
@@ -68,6 +105,8 @@ public sealed class RuntimeResourceManager : IDisposable
     private readonly Dictionary<(AssetReference Reference, Type Type), Entry> _byReference = new();
     private readonly Dictionary<ulong, Entry> _byHandle = new();
     private readonly Dictionary<(string ContentType, Type Type), IRuntimeResourceLoader> _loaders = new();
+    private readonly LinkedList<Entry> _unusedRecency = new();
+    private readonly int _unusedCapacity;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _sync = new();
     private ulong _nextHandle = 1;
@@ -83,13 +122,17 @@ public sealed class RuntimeResourceManager : IDisposable
     public RuntimeResourceManager(
         IAssetResolver resolver,
         IAssetStorage storage,
-        IRuntimeResourceRetirement? retirement = null)
+        IRuntimeResourceRetirement? retirement = null,
+        int unusedCapacity = 128)
     {
         ArgumentNullException.ThrowIfNull(resolver);
         ArgumentNullException.ThrowIfNull(storage);
+        if (unusedCapacity < 0)
+            throw new ArgumentOutOfRangeException(nameof(unusedCapacity));
         _resolver = resolver;
         _storage = storage;
         _retirement = retirement ?? new ImmediateResourceRetirement();
+        _unusedCapacity = unusedCapacity;
     }
 
     /// <summary>Registers one unique content-type and runtime-type loader.</summary>
@@ -126,6 +169,11 @@ public sealed class RuntimeResourceManager : IDisposable
             var key = (reference, typeof(TResource));
             if (_byReference.TryGetValue(key, out entry!))
             {
+                if (entry.ReferenceCount == 0 && entry.UnusedNode is not null)
+                {
+                    _unusedRecency.Remove(entry.UnusedNode);
+                    entry.UnusedNode = null;
+                }
                 entry.ReferenceCount++;
                 return new ResourceHandle<TResource>(entry.Handle);
             }
@@ -207,26 +255,68 @@ public sealed class RuntimeResourceManager : IDisposable
         return Task.WhenAll(tasks);
     }
 
+    /// <summary>Evicts every unpinned decoded resource belonging to one persistent asset.</summary>
+    /// <param name="asset">Persistent asset identity whose published generation changed.</param>
+    public void Invalidate(AssetId asset)
+    {
+        List<object>? retired = null;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var entries = _byReference.Values
+                .Where(entry => entry.Reference.Asset == asset && entry.ReferenceCount == 0)
+                .ToArray();
+            foreach (var entry in entries)
+            {
+                if (entry.UnusedNode is not null)
+                    _unusedRecency.Remove(entry.UnusedNode);
+                entry.UnusedNode = null;
+                _byHandle.Remove(entry.Handle);
+                _byReference.Remove((entry.Reference, entry.ResourceType));
+                entry.Removed = true;
+                if (entry.OwnsCurrent)
+                    (retired ??= []).Add(entry.Current);
+            }
+        }
+        if (retired is not null)
+        {
+            foreach (var resource in retired)
+                _retirement.Retire(resource);
+        }
+    }
+
     /// <summary>Releases one acquired reference and retires its owned resource at zero references.</summary>
     /// <typeparam name="TResource">Runtime resource type.</typeparam>
     /// <param name="handle">Stable typed resource handle.</param>
     public void Release<TResource>(ResourceHandle<TResource> handle) where TResource : class
     {
-        object? retired = null;
+        List<object>? retired = null;
         lock (_sync)
         {
             var entry = Require(handle.Value, typeof(TResource));
+            if (entry.ReferenceCount <= 0)
+                throw new InvalidOperationException("A resource handle cannot be released twice.");
             entry.ReferenceCount--;
             if (entry.ReferenceCount > 0)
                 return;
-            _byHandle.Remove(entry.Handle);
-            _byReference.Remove((entry.Reference, entry.ResourceType));
-            entry.Removed = true;
-            if (entry.OwnsCurrent)
-                retired = entry.Current;
+            entry.UnusedNode = _unusedRecency.AddFirst(entry);
+            while (_unusedRecency.Count > _unusedCapacity)
+            {
+                var evicted = _unusedRecency.Last!.Value;
+                _unusedRecency.RemoveLast();
+                evicted.UnusedNode = null;
+                _byHandle.Remove(evicted.Handle);
+                _byReference.Remove((evicted.Reference, evicted.ResourceType));
+                evicted.Removed = true;
+                if (evicted.OwnsCurrent)
+                    (retired ??= []).Add(evicted.Current);
+            }
         }
         if (retired is not null)
-            _retirement.Retire(retired);
+        {
+            foreach (var resource in retired)
+                _retirement.Retire(resource);
+        }
     }
 
     /// <summary>Cancels active loads and retires every manager-owned resource.</summary>
@@ -245,6 +335,7 @@ public sealed class RuntimeResourceManager : IDisposable
                 entry.Removed = true;
             _byHandle.Clear();
             _byReference.Clear();
+            _unusedRecency.Clear();
         }
         foreach (var resource in retired)
             _retirement.Retire(resource);
@@ -364,6 +455,9 @@ public sealed class RuntimeResourceManager : IDisposable
 
         /// <summary>Gets or sets the latest asynchronous load generation.</summary>
         internal long LoadVersion { get; set; }
+
+        /// <summary>Gets or sets this entry's zero-reference LRU node.</summary>
+        internal LinkedListNode<Entry>? UnusedNode { get; set; }
 
         /// <summary>Creates one fallback-backed runtime resource slot.</summary>
         /// <param name="handle">Stable process-local handle.</param>

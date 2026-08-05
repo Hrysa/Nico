@@ -25,19 +25,35 @@ public class SceneFileStoreTests
                 Rotation = new Vector3(0.1f, 0.2f, 0.3f),
                 Scale = new Vector3(2f, 3f, 4f)
             };
-            var cube = new MeshInstance3D(new CubeMesh())
+            var cube = new MeshInstance3D
             {
                 Name = "Cube",
-                ScriptId = AssetId.New()
+                ScriptId = AssetId.New(),
+                MaterialOverride = new MaterialProperties
+                {
+                    BaseColor = new Vector4(0.2f, 0.3f, 0.4f, 1f),
+                    Metallic = 0.6f,
+                    Roughness = 0.7f
+                }
             };
             var camera = new PerspectiveCamera(0.9f, near: 0.25f, far: 500f)
             {
                 Name = "GameCamera",
                 Position = new Vector3(4f, 5f, 6f)
             };
+            var modelReference = new AssetReference(AssetId.New(), "mesh/Robot/0");
+            var materialReference = new AssetReference(modelReference.Asset, "material/0");
+            var importedModel = new MeshInstance3D
+            {
+                Mesh = modelReference,
+                Name = "Robot",
+                Position = new Vector3(7f, 8f, 9f)
+            };
+            importedModel.Materials.Add(materialReference);
             root.AddChild(group);
             group.AddChild(cube);
             root.AddChild(camera);
+            root.AddChild(importedModel);
 
             SceneFileStore.Save(path, root, camera);
             var loaded = SceneFileStore.Load(path);
@@ -48,9 +64,15 @@ public class SceneFileStoreTests
             Assert.Equal(group.Rotation, loadedGroup.Rotation);
             Assert.Equal(group.Scale, loadedGroup.Scale);
             var loadedCube = Assert.IsType<MeshInstance3D>(loadedGroup.Children[0]);
-            Assert.IsType<CubeMesh>(loadedCube.Mesh);
+            Assert.Equal(BuiltInAssets.CubeMesh, loadedCube.Mesh);
             Assert.Equal(cube.ScriptId, loadedCube.ScriptId);
-            Assert.Single(loaded.MeshInstances);
+            Assert.Equal(cube.MaterialOverride.BaseColor, loadedCube.MaterialOverride?.BaseColor);
+            Assert.Equal(cube.MaterialOverride.Metallic, loadedCube.MaterialOverride?.Metallic);
+            Assert.Equal(2, loaded.MeshInstances.Count);
+            var loadedModel = Assert.IsType<MeshInstance3D>(loaded.Root.Children[2]);
+            Assert.Equal(modelReference, loadedModel.Mesh);
+            Assert.Equal(materialReference, Assert.Single(loadedModel.Materials));
+            Assert.Equal(importedModel.Position, loadedModel.Position);
             Assert.Equal("GameCamera", loaded.GameCamera.Name);
             Assert.Equal(camera.Position, loaded.GameCamera.Position);
             Assert.Equal(camera.Fov, loaded.GameCamera.Fov);

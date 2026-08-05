@@ -35,6 +35,23 @@ var logger = loggerFactory.CreateLogger<Program>();
 logger.LogInformation("Starting Editor for game project {ProjectRoot}...", project.RootPath);
 
 var assetDatabase = new AssetDatabase(project.RootPath, EditorAssetImporters.Select);
+var assetImporterRegistry = new AssetImporterRegistry();
+assetImporterRegistry.Register(new GlbModelImporter());
+var assetImportPipeline = new AssetImportPipeline(assetDatabase, assetImporterRegistry);
+using var runtimeResources = new RuntimeResourceManager(
+    new PublishedArtifactResolver(assetDatabase, assetImportPipeline, "editor"),
+    new AssetStorageRouter(new MountedVirtualFileSystem()),
+    unusedCapacity: 128);
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
+    "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
+    "nico/standard-material", (stream, _, _) =>
+    {
+        var (material, textureSlot) = StandardMaterialResource.Load(stream);
+        return new DecodedStandardMaterial(material, textureSlot);
+    }));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TextureResource>(
+    "nico/texture2d", (stream, _, _) => TextureResource.Load(stream)));
 logger.LogInformation("Indexed {AssetCount} project assets with {DiagnosticCount} diagnostics",
     assetDatabase.Assets.Count, assetDatabase.Diagnostics.Count);
 foreach (var diagnostic in assetDatabase.Diagnostics)
@@ -130,7 +147,7 @@ if (activeScenePath is not null)
 }
 else
 {
-    var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
+var cube = new MeshInstance3D { Name = "SceneCube" };
     sceneObjects = [cube];
     sceneRoot = new Node3D { Name = "Scene" };
     gameCamera = new PerspectiveCamera(
@@ -149,6 +166,8 @@ else
 var hierarchyTree = editorView.HierarchyTree;
 var inspector = editorView.Inspector;
 inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
+inspector.ResolveMaterial = ResolveMaterialProperties;
+inspector.ResolveMaterialName = ResolveMaterialDisplayName;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
@@ -184,6 +203,8 @@ var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, se
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
 var renderScheduler = new EditorRenderScheduler();
+foreach (var assetMesh in sceneObjects)
+    LoadAssetMeshResources(assetMesh);
 DetachedToolWindow? detachedSceneWindow = null;
 DetachedToolWindow? detachedGameWindow = null;
 EditorViewportRenderer? detachedSceneRenderer = null;
@@ -201,6 +222,7 @@ FileSystemCreateDialog? fileSystemCreateDialog = null;
 ConfirmationDialog? confirmationDialog = null;
 DragPreview? dragPreview = null;
 var fileSystemTree = editorView.FileSystemTree;
+var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
 AttachFileSystem(fileSystemTree);
 AttachInspector(inspector);
@@ -235,6 +257,8 @@ void DetachSceneViewport()
     detachedSceneRenderer = new EditorViewportRenderer(
         detachedWindow, sceneViewportId, sceneViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+    foreach (var assetMesh in GetActiveSceneObjects())
+        LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
     detachedWindow.Resized += (_, _) =>
     {
         detachedWindow.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
@@ -294,6 +318,8 @@ void DetachGameViewport()
     detachedGameRenderer = new EditorViewportRenderer(
         detachedWindow, gameViewportId, gameViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+    foreach (var assetMesh in GetActiveSceneObjects())
+        LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
     detachedWindow.Resized += (_, _) =>
     {
         detachedWindow.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
@@ -490,6 +516,14 @@ void UpdatePlayModeStart(double deltaTime)
         hierarchyTree.SetRoots(candidateScene.Root.Children);
         gameViewport.Camera = candidateScene.GameCamera;
         viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
+        foreach (var assetMesh in candidateScene.MeshInstances)
+        {
+            LoadAssetMeshResources(assetMesh);
+            if (detachedSceneRenderer is not null)
+                LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
+            if (detachedGameRenderer is not null)
+                LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
+        }
         editorView.PlayButtonLabel.Text = "Stop";
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
@@ -563,6 +597,14 @@ void StopPlayMode()
     editSelectionBeforePlay = null;
     gameViewport.Camera = gameCamera;
     viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+    foreach (var assetMesh in sceneObjects)
+    {
+        LoadAssetMeshResources(assetMesh);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
+    }
     editorView.PlayButtonLabel.Text = "Play";
     logger.LogInformation("Exited play mode");
     RefreshVertices();
@@ -656,7 +698,16 @@ bool LoadScene(string scenePath, bool makeActive)
         sceneObjects.AddRange(loadedScene.MeshInstances);
         gameCamera = loadedScene.GameCamera;
         gameViewport.Camera = gameCamera;
+        viewportRenderer.SetSceneObjects(sceneObjects);
         viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+        foreach (var assetMesh in sceneObjects)
+        {
+            LoadAssetMeshResources(assetMesh);
+            if (detachedSceneRenderer is not null)
+                LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
+            if (detachedGameRenderer is not null)
+                LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
+        }
         hierarchyTree.SetRoots(sceneRoot.Children);
         if (makeActive)
         {
@@ -723,7 +774,12 @@ FileSystemNode BuildFileSystemNode(string path)
 {
     var isDirectory = Directory.Exists(path);
     var node = new FileSystemNode(path, isDirectory);
-    if (!isDirectory || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+    if (!isDirectory)
+    {
+        AddImportedSubAssets(node);
+        return node;
+    }
+    if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
         return node;
 
     foreach (var directory in Directory.EnumerateDirectories(path)
@@ -733,8 +789,58 @@ FileSystemNode BuildFileSystemNode(string path)
     foreach (var file in Directory.EnumerateFiles(path)
                  .Where(file => !file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                  .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
-        node.AddChild(new FileSystemNode(file, isDirectory: false));
+        node.AddChild(BuildFileSystemNode(file));
     return node;
+}
+
+/// <summary>Adds cached imported resources beneath one supported physical asset.</summary>
+/// <param name="node">Physical file node receiving read-only children.</param>
+void AddImportedSubAssets(FileSystemNode node)
+{
+    if (!Path.GetExtension(node.FullPath).Equals(".glb", StringComparison.OrdinalIgnoreCase))
+        return;
+    var record = assetDatabase.FindByPath(node.FullPath);
+    if (record is null)
+        return;
+    var outcome = assetImportPipeline.TryGetLatestPublished(record, "editor");
+    if (outcome is null)
+        return;
+    foreach (var artifact in outcome.Artifacts
+                 .Where(artifact => IsVisibleImportedArtifact(artifact.ContentType))
+                 .OrderBy(artifact => artifact.ContentType, StringComparer.Ordinal)
+                 .ThenBy(artifact => artifact.Key, StringComparer.Ordinal))
+    {
+        node.AddChild(new ImportedSubAssetNode(node.FullPath,
+            new AssetReference(record.Id, artifact.Key), artifact.ContentType,
+            GetImportedArtifactDisplayName(artifact)));
+    }
+}
+
+/// <summary>Returns whether an imported artifact should appear as a selectable child.</summary>
+/// <param name="contentType">Artifact content type.</param>
+/// <returns>True for user-facing model resources.</returns>
+bool IsVisibleImportedArtifact(string contentType)
+{
+    return contentType is "nico/static-mesh" or "nico/standard-material" or "nico/texture2d";
+}
+
+/// <summary>Builds a concise typed label for one imported artifact.</summary>
+/// <param name="artifact">Imported artifact description.</param>
+/// <returns>Display label including resource type.</returns>
+string GetImportedArtifactDisplayName(AssetArtifact artifact)
+{
+    var type = artifact.ContentType switch
+    {
+        "nico/static-mesh" => "Mesh",
+        "nico/standard-material" => "Material",
+        "nico/texture2d" => "Texture",
+        _ => "Asset"
+    };
+    var keyParts = artifact.Key.Split('/');
+    var name = artifact.ContentType == "nico/static-mesh" && keyParts.Length > 1
+        ? string.Join(" / ", keyParts.Skip(1))
+        : Path.GetFileNameWithoutExtension(artifact.RelativePath);
+    return $"{name} [{type}]";
 }
 
 /// <summary>Returns whether a project directory belongs in the editable FileSystem tree.</summary>
@@ -763,9 +869,11 @@ void RefreshFileSystem()
     {
         var expandedPaths = fileSystemTree.ExpandedItems.OfType<FileSystemNode>()
             .Select(node => node.FullPath).ToHashSet(StringComparer.Ordinal);
+        expandedPaths.UnionWith(requestedFileSystemExpansion);
+        requestedFileSystemExpansion.Clear();
         var root = BuildFileSystemNode(project.RootPath);
         var expandedNodes = EnumerateFileSystemNodes(root)
-            .Where(node => !ReferenceEquals(node, root) && node.IsDirectory
+            .Where(node => !ReferenceEquals(node, root) && node.CanHaveChildren
                 && expandedPaths.Contains(node.FullPath)).ToArray();
         fileSystemTree.SetRoots(root.Children);
         fileSystemTree.SetExpanded(expandedNodes);
@@ -782,6 +890,8 @@ void RefreshFileSystem()
 /// <param name="item">Activated filesystem node.</param>
 void OpenFileSystemEntry(Node item)
 {
+    if (item is ImportedSubAssetNode)
+        return;
     if (item is not FileSystemNode node || node.IsDirectory)
         return;
     if (IsSceneFile(node.FullPath))
@@ -789,7 +899,304 @@ void OpenFileSystemEntry(Node item)
         LoadScene(node.FullPath, makeActive: true);
         return;
     }
+    if (Path.GetExtension(node.FullPath).Equals(".glb", StringComparison.OrdinalIgnoreCase))
+    {
+        var record = assetDatabase.FindByPath(node.FullPath);
+        if (record is null)
+        {
+            logger.LogWarning("GLB asset metadata is unavailable for {FilePath}", node.FullPath);
+            return;
+        }
+        var outcome = assetImportPipeline.Import(record, "editor");
+        if (outcome.Succeeded)
+        {
+            logger.LogInformation("Imported GLB {FilePath} into {ArtifactCount} artifacts",
+                node.FullPath, outcome.Artifacts.Count);
+            requestedFileSystemExpansion.Add(node.FullPath);
+            RefreshFileSystem();
+        }
+        else
+        {
+            foreach (var diagnostic in outcome.Diagnostics)
+                logger.LogError("GLB import {Code}: {Message}", diagnostic.Code,
+                    diagnostic.Message);
+        }
+        return;
+    }
     logger.LogInformation("No editor is registered for project file {FilePath}", node.FullPath);
+}
+
+/// <summary>Creates a scene node from a dragged imported mesh sub-asset.</summary>
+/// <param name="source">Dragged imported resource.</param>
+/// <param name="target">Hierarchy parent target, or null for the scene root.</param>
+void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
+{
+    if (source.ContentType != "nico/static-mesh")
+    {
+        logger.LogWarning("Imported {ContentType} cannot be placed in the Hierarchy",
+            source.ContentType);
+        return;
+    }
+    if (isPlaying)
+    {
+        logger.LogWarning("Imported meshes cannot be added while Play mode is active");
+        return;
+    }
+    var instance = new MeshInstance3D
+    {
+        Mesh = source.Reference,
+        Name = source.Name[..source.Name.LastIndexOf(" [", StringComparison.Ordinal)]
+    };
+    var destination = target ?? sceneRoot;
+    try
+    {
+        destination.AddChild(instance);
+        sceneObjects.Add(instance);
+        viewportRenderer.SetSceneObjects(sceneObjects);
+        LoadAssetMeshResources(instance);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedGameRenderer);
+        hierarchyTree.SetRoots(sceneRoot.Children);
+        if (!ReferenceEquals(destination, sceneRoot))
+            hierarchyTree.Expand(destination);
+        selection.Select(instance);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        renderScheduler.Invalidate(RenderInvalidation.GameViewport);
+        window.RequestFrame();
+    }
+    catch
+    {
+        sceneObjects.Remove(instance);
+        instance.Parent?.RemoveChild(instance);
+        throw;
+    }
+}
+
+/// <summary>Treats a dragged GLB source as its primary imported mesh.</summary>
+/// <param name="source">Dragged physical GLB file.</param>
+/// <param name="target">Hierarchy parent target, or null for the scene root.</param>
+void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
+{
+    if (!Path.GetExtension(source.FullPath).Equals(".glb", StringComparison.OrdinalIgnoreCase))
+        return;
+    var record = assetDatabase.FindByPath(source.FullPath);
+    if (record is null)
+    {
+        logger.LogWarning("GLB asset metadata is unavailable for {FilePath}", source.FullPath);
+        return;
+    }
+    var outcome = assetImportPipeline.Import(record, "editor");
+    var primaryMesh = outcome.Artifacts.FirstOrDefault(artifact =>
+        artifact.ContentType == "nico/static-mesh");
+    if (!outcome.Succeeded || primaryMesh is null)
+    {
+        logger.LogWarning("GLB {FilePath} has no importable primary mesh", source.FullPath);
+        return;
+    }
+    var displayName = $"{Path.GetFileNameWithoutExtension(source.FullPath)} [Mesh]";
+    InstantiateImportedMesh(new ImportedSubAssetNode(source.FullPath,
+        new AssetReference(record.Id, primaryMesh.Key), primaryMesh.ContentType, displayName),
+        target);
+}
+
+/// <summary>Imports and binds runtime resources for one persistent model instance.</summary>
+/// <param name="instance">Persistent scene model instance.</param>
+/// <param name="knownOutcome">Optional already imported source outcome.</param>
+/// <param name="targetRenderer">Renderer-local resource owner.</param>
+void LoadAssetMeshResources(
+    MeshInstance3D instance,
+    AssetImportOutcome? knownOutcome = null,
+    EditorViewportRenderer? targetRenderer = null)
+{
+    var meshReference = instance.Mesh;
+    AssetImportOutcome? outcome = null;
+    StaticMeshResource importedMesh;
+    if (BuiltInAssets.IsCubeMesh(meshReference))
+    {
+        importedMesh = BuiltInAssets.LoadMesh(meshReference);
+    }
+    else
+    {
+        var record = assetDatabase.Find(meshReference.Asset);
+        if (record is null)
+        {
+            logger.LogError("Mesh asset {AssetId} is missing", meshReference.Asset);
+            return;
+        }
+        outcome = knownOutcome ?? assetImportPipeline.Import(record, "editor");
+        if (!outcome.Succeeded || outcome.ArtifactDirectory is null ||
+            !outcome.Artifacts.Any(artifact => artifact.Key == meshReference.SubAsset &&
+                artifact.ContentType == "nico/static-mesh"))
+        {
+            logger.LogError("Mesh sub-asset {Reference} has no valid artifact", meshReference);
+            return;
+        }
+        importedMesh = LoadRuntimeResource(meshReference,
+            new StaticMeshResource([], [], []));
+    }
+    instance.LocalBounds = new MeshBounds(importedMesh.BoundsMinimum, importedMesh.BoundsMaximum);
+    var defaultMaterial = MaterialProperties.Default;
+    var material = new StandardMaterialResource
+    {
+        BaseColor = defaultMaterial.BaseColor,
+        Metallic = defaultMaterial.Metallic,
+        Roughness = defaultMaterial.Roughness,
+        DoubleSided = defaultMaterial.DoubleSided
+    };
+    TextureResource? textureResource = null;
+    var textureSlot = -1;
+    var materialSlot = importedMesh.Submeshes.Count > 0
+        ? importedMesh.Submeshes[0].MaterialSlot : -1;
+    var defaultMaterialArtifact = outcome?.Artifacts.FirstOrDefault(artifact =>
+        artifact.Key == $"material/{materialSlot}");
+    if (instance.Materials.Count == 0 && defaultMaterialArtifact is not null)
+        instance.Materials.Add(new AssetReference(meshReference.Asset, defaultMaterialArtifact.Key));
+    var materialReference = instance.Materials.FirstOrDefault();
+    var materialRecord = materialReference.Asset.Value == Guid.Empty
+        ? null : assetDatabase.Find(materialReference.Asset);
+    var materialOutcome = materialRecord is null
+        ? null
+        : materialReference.Asset == meshReference.Asset
+            ? outcome : assetImportPipeline.Import(materialRecord, "editor");
+    var materialArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
+        artifact.Key == materialReference.SubAsset &&
+        artifact.ContentType == "nico/standard-material");
+    if (materialArtifact is not null)
+    {
+        var decoded = LoadRuntimeResource(materialReference,
+            new DecodedStandardMaterial(new StandardMaterialResource(), -1));
+        material = CloneMaterial(decoded.Material);
+        textureSlot = decoded.BaseColorTextureSlot;
+    }
+    var textureArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
+        artifact.Key == $"texture/{textureSlot}");
+    if (textureArtifact is not null)
+    {
+        textureResource = LoadRuntimeResource(
+            new AssetReference(materialReference.Asset, textureArtifact.Key),
+            new TextureResource(0, 0, [], TextureColorSpace.Linear));
+    }
+    if (instance.MaterialOverride is { } materialOverride)
+    {
+        material.BaseColor = materialOverride.BaseColor;
+        material.Metallic = materialOverride.Metallic;
+        material.Roughness = materialOverride.Roughness;
+        material.DoubleSided = materialOverride.DoubleSided;
+        textureResource = ResolveTextureResource(materialOverride.BaseColorTexture)
+            ?? textureResource;
+    }
+    (targetRenderer ?? viewportRenderer).SetAssetMeshResource(instance, importedMesh, material,
+        textureResource);
+}
+
+/// <summary>Loads one imported texture reference for a material override.</summary>
+/// <param name="reference">Optional texture resource reference.</param>
+/// <returns>Decoded texture data, or null when unavailable.</returns>
+TextureResource? ResolveTextureResource(AssetReference? reference)
+{
+    if (reference is not { } textureReference)
+        return null;
+    var record = assetDatabase.Find(textureReference.Asset);
+    if (record is null)
+        return null;
+    var outcome = assetImportPipeline.Import(record, "editor");
+    var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+        candidate.Key == textureReference.SubAsset && candidate.ContentType == "nico/texture2d");
+    if (artifact is null || outcome.ArtifactDirectory is null)
+        return null;
+    return LoadRuntimeResource(textureReference,
+        new TextureResource(0, 0, [], TextureColorSpace.Linear));
+}
+
+/// <summary>Loads a decoded resource through the shared zero-reference LRU.</summary>
+/// <typeparam name="TResource">Decoded resource type.</typeparam>
+/// <param name="reference">Persistent artifact reference.</param>
+/// <param name="fallback">Value exposed only if initial loading fails.</param>
+/// <returns>The ready decoded resource.</returns>
+TResource LoadRuntimeResource<TResource>(AssetReference reference, TResource fallback)
+    where TResource : class
+{
+    var handle = runtimeResources.Acquire(reference, fallback);
+    try
+    {
+        runtimeResources.WaitAsync(handle).GetAwaiter().GetResult();
+        if (runtimeResources.GetState(handle) != ResourceLoadState.Ready)
+        {
+            throw new InvalidDataException($"Runtime resource '{reference}' failed to load.",
+                runtimeResources.GetError(handle));
+        }
+        return runtimeResources.Get(handle);
+    }
+    finally
+    {
+        runtimeResources.Release(handle);
+    }
+}
+
+/// <summary>Creates mutable renderer-local material values from a shared decoded resource.</summary>
+/// <param name="source">Shared decoded material.</param>
+/// <returns>An independent material copy.</returns>
+StandardMaterialResource CloneMaterial(StandardMaterialResource source)
+{
+    return new StandardMaterialResource
+    {
+        BaseColor = source.BaseColor,
+        Metallic = source.Metallic,
+        Roughness = source.Roughness,
+        DoubleSided = source.DoubleSided
+    };
+}
+
+/// <summary>Resolves material values used for Inspector copy-on-write editing.</summary>
+/// <param name="instance">Mesh instance whose effective slot zero is requested.</param>
+/// <returns>Resolved imported material or shared default values.</returns>
+MaterialProperties ResolveMaterialProperties(MeshInstance3D instance)
+{
+    if (instance.MaterialOverride is not null)
+        return instance.MaterialOverride;
+    var reference = instance.Materials.FirstOrDefault();
+    if (reference.Asset.Value == Guid.Empty)
+        return MaterialProperties.Default;
+    var record = assetDatabase.Find(reference.Asset);
+    if (record is null)
+        return MaterialProperties.Default;
+    var outcome = assetImportPipeline.TryGetLatestPublished(record, "editor");
+    if (outcome is null)
+        return MaterialProperties.Default;
+    var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+        candidate.Key == reference.SubAsset &&
+        candidate.ContentType == "nico/standard-material");
+    if (artifact is null || outcome.ArtifactDirectory is null)
+        return MaterialProperties.Default;
+    var decoded = LoadRuntimeResource(reference,
+        new DecodedStandardMaterial(new StandardMaterialResource(), -1));
+    var material = decoded.Material;
+    var textureSlot = decoded.BaseColorTextureSlot;
+    return new MaterialProperties
+    {
+        BaseColor = material.BaseColor,
+        Metallic = material.Metallic,
+        Roughness = material.Roughness,
+        DoubleSided = material.DoubleSided,
+        BaseColorTexture = textureSlot >= 0
+            ? new AssetReference(reference.Asset, $"texture/{textureSlot}") : null
+    };
+}
+
+/// <summary>Formats slot-zero material ownership for the Inspector.</summary>
+/// <param name="instance">Inspected mesh instance.</param>
+/// <returns>Readable material source name.</returns>
+string ResolveMaterialDisplayName(MeshInstance3D instance)
+{
+    if (instance.MaterialOverride is not null)
+        return "Scene Override";
+    var reference = instance.Materials.FirstOrDefault();
+    if (reference.Asset.Value == Guid.Empty)
+        return "BuiltIn/Default";
+    var path = assetDatabase.Find(reference.Asset)?.ProjectPath ?? reference.Asset.ToString();
+    return reference.SubAsset is null ? path : $"{path} / {reference.SubAsset}";
 }
 
 /// <summary>Connects scene opening to the project filesystem tree.</summary>
@@ -852,7 +1259,7 @@ void ResetToDefaultScene()
     selection.Select(null);
     sceneRoot.ClearChildren();
     sceneObjects.Clear();
-    var cube = new MeshInstance3D(new CubeMesh()) { Name = "SceneCube" };
+    var cube = new MeshInstance3D { Name = "SceneCube" };
     gameCamera = new PerspectiveCamera(
         fov: MathF.PI / 4f,
         aspect: gameViewport.Width / MathF.Max(1f, gameViewport.Height),
@@ -1080,8 +1487,13 @@ void AddSceneNode(Node parent, bool withCubeMesh)
     Node child;
     if (withCubeMesh)
     {
-        var meshInstance = new MeshInstance3D(new CubeMesh()) { Name = $"Cube {createdObjectIndex++}" };
+        var meshInstance = new MeshInstance3D { Name = $"Cube {createdObjectIndex++}" };
         activeObjects.Add(meshInstance);
+        LoadAssetMeshResources(meshInstance);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(meshInstance, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(meshInstance, targetRenderer: detachedGameRenderer);
         child = meshInstance;
     }
     else
@@ -1140,7 +1552,18 @@ void AttachHierarchy(TreeView tree)
 /// <param name="sceneInspector">Inspector to attach.</param>
 void AttachInspector(SceneInspector sceneInspector)
 {
-    sceneInspector.NodeChanged += _ => InvalidateViewports();
+    sceneInspector.NodeChanged += node =>
+    {
+        if (node is MeshInstance3D meshInstance)
+        {
+            LoadAssetMeshResources(meshInstance);
+            if (detachedSceneRenderer is not null)
+                LoadAssetMeshResources(meshInstance, targetRenderer: detachedSceneRenderer);
+            if (detachedGameRenderer is not null)
+                LoadAssetMeshResources(meshInstance, targetRenderer: detachedGameRenderer);
+        }
+        InvalidateViewports();
+    };
     sceneInspector.NodeNameChanged += _ =>
     {
         hierarchyTree.Refresh();
@@ -1339,6 +1762,19 @@ void MoveFileSystemEntry(FileSystemNode source, FileSystemNode? target)
     }
 }
 
+/// <summary>Assigns a typed imported resource to the active Inspector material panel.</summary>
+/// <param name="source">Dragged imported sub-asset.</param>
+/// <returns>True when the Inspector accepted the resource.</returns>
+bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
+{
+    return source.ContentType switch
+    {
+        "nico/standard-material" => inspector.AssignMaterial(source.Reference),
+        "nico/texture2d" => inspector.AssignBaseColorTexture(source.Reference),
+        _ => false
+    };
+}
+
 Node? pendingDragItem = null;
 var pendingDragStart = Vector2.Zero;
 var primaryPointerDown = false;
@@ -1361,8 +1797,8 @@ window.MouseMove += pos =>
         if (!dragActive)
         {
             dragActive = true;
-            if (pendingDragItem is FileSystemNode fileNode)
-                fileSystemTree.Select(fileNode);
+            if (pendingDragItem is FileSystemNode or ImportedSubAssetNode)
+                fileSystemTree.Select(pendingDragItem);
             else
                 hierarchyTree.Select(pendingDragItem);
             dragPreview = new DragPreview(string.IsNullOrWhiteSpace(pendingDragItem.Name)
@@ -1440,9 +1876,26 @@ window.MouseUp += button =>
     if (dragActive && pendingDragItem is { } draggedItem)
     {
         var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
-        if (draggedItem is FileSystemNode fileSource)
+        if (draggedItem is ImportedSubAssetNode importedSource &&
+            IsInside(inspector, lastMousePos) &&
+            TryAssignInspectorSubAsset(importedSource))
         {
-            if (ScriptFileDrop.TryAttach(
+            RefreshVertices();
+        }
+        else if (draggedItem is ImportedSubAssetNode hierarchySource &&
+            IsInside(hierarchyTree, lastMousePos))
+        {
+            InstantiateImportedMesh(hierarchySource, targetRow?.Item);
+        }
+        else if (draggedItem is FileSystemNode fileSource)
+        {
+            if (IsInside(hierarchyTree, lastMousePos) &&
+                Path.GetExtension(fileSource.FullPath).Equals(".glb",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                InstantiateGlbPrimaryMesh(fileSource, targetRow?.Item);
+            }
+            else if (ScriptFileDrop.TryAttach(
                     fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
             {
                 logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
@@ -1538,6 +1991,9 @@ window.Update += delta =>
                 diagnostic.Path, diagnostic.Message);
         if (assetChanges.Count > 0)
         {
+            foreach (var asset in assetChanges.Select(change =>
+                         change.Current?.Id ?? change.Previous!.Id).Distinct())
+                runtimeResources.Invalidate(asset);
             logger.LogInformation("Refreshed asset database with {ChangeCount} changes",
                 assetChanges.Count);
             RefreshFileSystem();
@@ -1568,7 +2024,7 @@ window.Update += delta =>
             StopPlayMode();
         }
     }
-    if (inspector.RefreshValues())
+    if (!selection.IsDragging && inspector.RefreshValues())
         RefreshVertices();
     var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
     var gameContinuous = scriptHost is not null;

@@ -4,14 +4,14 @@ using System.Text.Json.Serialization;
 using Engine.Core;
 using Engine.Graphics;
 
-namespace Editor;
+namespace Engine.Graphics;
 
 /// <summary>
 /// Loads and saves the editor's versioned JSON scene format.
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 2;
+    private const int CurrentFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -102,7 +102,7 @@ public static class SceneFileStore
         var type = node switch
         {
             PerspectiveCamera => SceneNodeType.PerspectiveCamera,
-            MeshInstance3D { Mesh: CubeMesh } => SceneNodeType.Cube,
+            MeshInstance3D => SceneNodeType.AssetMesh,
             Node3D when node.GetType() == typeof(Node3D) => SceneNodeType.Node3D,
             _ => throw new NotSupportedException($"Scene node type '{node.GetType().Name}' cannot be saved.")
         };
@@ -117,6 +117,11 @@ public static class SceneFileStore
             SceneVector3.From(node.Scale),
             node.ScriptId,
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
+            node is MeshInstance3D meshInstance
+                ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
+                    meshInstance.Materials.ToList()) : null,
+            node is MeshInstance3D { MaterialOverride: { } materialOverride }
+                ? MaterialOverrideData.From(materialOverride) : null,
             children);
     }
 
@@ -138,7 +143,8 @@ public static class SceneFileStore
         Node3D node = data.Type switch
         {
             SceneNodeType.Node3D => new Node3D(),
-            SceneNodeType.Cube => new MeshInstance3D(new CubeMesh()),
+            SceneNodeType.Cube => new MeshInstance3D(),
+            SceneNodeType.ImportedModel or SceneNodeType.AssetMesh => CreateAssetMesh(data.Model),
             SceneNodeType.PerspectiveCamera => CreateCamera(data.Camera),
             _ => throw new InvalidDataException($"Unsupported scene node type '{data.Type}'.")
         };
@@ -147,6 +153,8 @@ public static class SceneFileStore
         node.Rotation = data.Rotation.ToVector3();
         node.Scale = data.Scale.ToVector3();
         node.ScriptId = data.ScriptId;
+        if (node is MeshInstance3D meshNode && data.MaterialOverride is not null)
+            meshNode.MaterialOverride = data.MaterialOverride.ToMaterial();
         nodesById.Add(data.Id, node);
         if (node is MeshInstance3D meshInstance)
             meshInstances.Add(meshInstance);
@@ -169,6 +177,22 @@ public static class SceneFileStore
         return new PerspectiveCamera(data.Fov, near: data.Near, far: data.Far);
     }
 
+    /// <summary>Creates a mesh node from its persistent resource references.</summary>
+    /// <param name="model">Serialized imported mesh reference.</param>
+    /// <returns>The reconstructed mesh node.</returns>
+    private static MeshInstance3D CreateAssetMesh(ModelData? model)
+    {
+        if (model is null || model.Asset.Value == Guid.Empty)
+            throw new InvalidDataException("An asset mesh node is missing its mesh reference.");
+        var instance = new MeshInstance3D
+        {
+            Mesh = new AssetReference(model.Asset, model.SubAsset)
+        };
+        if (model.Materials is not null)
+            instance.Materials.AddRange(model.Materials);
+        return instance;
+    }
+
     private sealed record SceneDocument(int FormatVersion, string GameCameraId, List<SceneNodeData> Nodes);
 
     private sealed record SceneNodeData(
@@ -180,9 +204,42 @@ public static class SceneFileStore
         SceneVector3 Scale,
         AssetId? ScriptId,
         CameraData? Camera,
+        ModelData? Model,
+        MaterialOverrideData? MaterialOverride,
         List<SceneNodeData> Children);
 
     private sealed record CameraData(float Fov, float Near, float Far);
+
+    private sealed record ModelData(
+        AssetId Asset,
+        string? SubAsset,
+        List<AssetReference>? Materials = null);
+
+    private sealed record MaterialOverrideData(
+        SceneVector4 BaseColor,
+        float Metallic,
+        float Roughness,
+        bool DoubleSided,
+        AssetReference? BaseColorTexture)
+    {
+        /// <summary>Encodes editable material values.</summary>
+        /// <param name="material">Scene-local material.</param>
+        /// <returns>Serializable material data.</returns>
+        public static MaterialOverrideData From(MaterialProperties material) => new(
+            SceneVector4.From(material.BaseColor), material.Metallic, material.Roughness,
+            material.DoubleSided, material.BaseColorTexture);
+
+        /// <summary>Decodes editable material values.</summary>
+        /// <returns>A scene-local material.</returns>
+        public MaterialProperties ToMaterial() => new()
+        {
+            BaseColor = BaseColor.ToVector4(),
+            Metallic = Metallic,
+            Roughness = Roughness,
+            DoubleSided = DoubleSided,
+            BaseColorTexture = BaseColorTexture
+        };
+    }
 
     private sealed class SerializationContext
     {
@@ -212,10 +269,24 @@ public static class SceneFileStore
         public Vector3 ToVector3() => new(X, Y, Z);
     }
 
+    private readonly record struct SceneVector4(float X, float Y, float Z, float W)
+    {
+        /// <summary>Creates serializable vector data.</summary>
+        /// <param name="value">Runtime vector.</param>
+        /// <returns>Serializable vector data.</returns>
+        public static SceneVector4 From(Vector4 value) => new(value.X, value.Y, value.Z, value.W);
+
+        /// <summary>Creates a runtime vector.</summary>
+        /// <returns>Runtime vector.</returns>
+        public Vector4 ToVector4() => new(X, Y, Z, W);
+    }
+
     private enum SceneNodeType
     {
         Node3D,
         Cube,
+        ImportedModel,
+        AssetMesh,
         PerspectiveCamera
     }
 }

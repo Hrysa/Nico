@@ -9,6 +9,15 @@ public sealed class EditorGizmo
 {
     private GizmoLayoutResult _layout = GizmoLayoutResult.Empty;
     private GizmoDragSession? _dragSession;
+    private GizmoTransform _layoutTarget;
+    private Matrix4x4 _layoutView;
+    private Matrix4x4 _layoutProjection;
+    private GizmoViewport _layoutViewport;
+    private Vector2 _hoverPointer;
+    private Vertex[] _overlay = [];
+    private bool _hasLayoutInputs;
+    private bool _hasHoverPointer;
+    private bool _overlayDirty = true;
 
     /// <summary>Gets the handle currently under the pointer or captured by a drag.</summary>
     public GizmoHandleKind HoveredHandle { get; private set; }
@@ -28,6 +37,14 @@ public sealed class EditorGizmo
     /// <param name="viewport">Scene viewport.</param>
     public void UpdateLayout(GizmoTransform target, Matrix4x4 view, Matrix4x4 projection, GizmoViewport viewport)
     {
+        if (_hasLayoutInputs && target == _layoutTarget && view == _layoutView
+            && projection == _layoutProjection && viewport == _layoutViewport)
+            return;
+        _layoutTarget = target;
+        _layoutView = view;
+        _layoutProjection = projection;
+        _layoutViewport = viewport;
+        _hasLayoutInputs = true;
         var updated = GizmoLayout.Create(target.Position, view, projection, viewport);
         if (!updated.IsValid)
         {
@@ -36,6 +53,8 @@ public sealed class EditorGizmo
         }
 
         _layout = updated;
+        _hasHoverPointer = false;
+        _overlayDirty = true;
     }
 
     /// <summary>
@@ -47,11 +66,24 @@ public sealed class EditorGizmo
     {
         if (IsDragging)
         {
-            HoveredHandle = ActiveHandle;
+            if (HoveredHandle != ActiveHandle)
+            {
+                HoveredHandle = ActiveHandle;
+                _overlayDirty = true;
+            }
             return true;
         }
 
-        HoveredHandle = GizmoPicker.Pick(_layout, pointer);
+        if (_hasHoverPointer && pointer == _hoverPointer)
+            return HoveredHandle != GizmoHandleKind.None;
+        _hoverPointer = pointer;
+        _hasHoverPointer = true;
+        var hovered = GizmoPicker.Pick(_layout, pointer);
+        if (hovered != HoveredHandle)
+        {
+            HoveredHandle = hovered;
+            _overlayDirty = true;
+        }
         return HoveredHandle != GizmoHandleKind.None;
     }
 
@@ -75,6 +107,7 @@ public sealed class EditorGizmo
         _dragSession = session;
         ActiveHandle = picked;
         HoveredHandle = picked;
+        _overlayDirty = true;
         return true;
     }
 
@@ -98,6 +131,7 @@ public sealed class EditorGizmo
         _dragSession = null;
         ActiveHandle = GizmoHandleKind.None;
         HoveredHandle = GizmoHandleKind.None;
+        _overlayDirty = true;
     }
 
     /// <summary>
@@ -109,6 +143,9 @@ public sealed class EditorGizmo
         ActiveHandle = GizmoHandleKind.None;
         HoveredHandle = GizmoHandleKind.None;
         _layout = GizmoLayoutResult.Empty;
+        _hasLayoutInputs = false;
+        _hasHoverPointer = false;
+        _overlayDirty = true;
     }
 
     /// <summary>
@@ -117,6 +154,11 @@ public sealed class EditorGizmo
     /// <returns>Overlay vertices, or an empty array without a valid selection layout.</returns>
     public Vertex[] BuildOverlay()
     {
-        return GizmoOverlayBuilder.Build(_layout, HoveredHandle, ActiveHandle);
+        if (_overlayDirty)
+        {
+            _overlay = GizmoOverlayBuilder.Build(_layout, HoveredHandle, ActiveHandle);
+            _overlayDirty = false;
+        }
+        return _overlay;
     }
 }

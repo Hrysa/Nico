@@ -17,6 +17,12 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal Pipeline UiPipeline;
     internal Pipeline ViewportPipeline;
     internal PipelineLayout ViewportLayout;
+    internal ShaderModule ModelVertexShader;
+    internal ShaderModule ModelFragmentShader;
+    internal Pipeline ModelPipeline;
+    internal PipelineLayout ModelLayout;
+    internal DescriptorSetLayout ModelTextureDescriptorSetLayout;
+    internal DescriptorPool ModelTextureDescriptorPool;
     internal ShaderModule GridVertexShader;
     internal ShaderModule GridFragmentShader;
     internal PipelineLayout GridLayout;
@@ -50,22 +56,30 @@ internal unsafe sealed class PipelineResources : IDisposable
         _disposed = true;
         DestroyPipeline(TexturePipeline);
         DestroyPipeline(GridPipeline);
+        DestroyPipeline(ModelPipeline);
         DestroyPipeline(ViewportPipeline);
         DestroyPipeline(UiPipeline);
         DestroyPipelineLayout(TextureLayout);
         DestroyPipelineLayout(GridLayout);
+        DestroyPipelineLayout(ModelLayout);
         DestroyPipelineLayout(ViewportLayout);
         DestroyPipelineLayout(UiLayout);
 
         if (TextureDescriptorPool.Handle != 0)
             _vk.DestroyDescriptorPool(_device, TextureDescriptorPool, null);
+        if (ModelTextureDescriptorPool.Handle != 0)
+            _vk.DestroyDescriptorPool(_device, ModelTextureDescriptorPool, null);
         if (TextureDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, TextureDescriptorSetLayout, null);
+        if (ModelTextureDescriptorSetLayout.Handle != 0)
+            _vk.DestroyDescriptorSetLayout(_device, ModelTextureDescriptorSetLayout, null);
 
         DestroyShaderModule(TextureVertexShader);
         DestroyShaderModule(TextureFragmentShader);
         DestroyShaderModule(GridVertexShader);
         DestroyShaderModule(GridFragmentShader);
+        DestroyShaderModule(ModelVertexShader);
+        DestroyShaderModule(ModelFragmentShader);
         DestroyShaderModule(UiVertexShader);
         DestroyShaderModule(UiFragmentShader);
     }
