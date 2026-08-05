@@ -1,0 +1,139 @@
+using Editor;
+using Engine.Graphics;
+using Engine.UI;
+using Xunit;
+
+namespace Editor.Tests;
+
+/// <summary>Exercises retained profiler history and chart generation.</summary>
+public sealed class ProfilerViewTests
+{
+    /// <summary>Verifies the post-build hook records a real Editor method and its allocations.</summary>
+    [Fact]
+    public void AddSample_InstrumentedBuild_AppearsInManagedCallTree()
+    {
+        CpuProfiler.Enabled = true;
+        try
+        {
+            var profiler = new ProfilerView();
+            CpuProfiler.BeginFrame();
+
+            profiler.AddSample(new FrameProfileSample(1, 5d, 2d, 3d, 512L));
+
+            var tree = CpuProfiler.EndFrame();
+            var method = Assert.Single(tree, marker =>
+                marker.Name == "Editor.ProfilerView.AddSample(FrameProfileSample)");
+            Assert.Equal(1, method.SampleCount);
+            Assert.True(method.TotalMilliseconds >= 0d);
+            Assert.True(method.GcAllocatedBytes > 0L);
+        }
+        finally
+        {
+            CpuProfiler.Enabled = false;
+        }
+    }
+
+    /// <summary>Verifies profiler history remains bounded while accepting new frames.</summary>
+    [Fact]
+    public void AddSample_MoreThanCapacity_RetainsBoundedHistory()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 260f };
+
+        for (var index = 0; index < ProfilerView.HistoryCapacity + 20; index++)
+        {
+            profiler.AddSample(new FrameProfileSample(
+                (ulong)(index + 1), 4d + index % 8, 2d, 2d, index * 128L));
+        }
+
+        Assert.Equal(ProfilerView.HistoryCapacity, profiler.SampleCount);
+        Assert.NotEmpty(profiler.BuildDrawList().Commands);
+    }
+
+    /// <summary>Verifies visual refreshes are throttled after the first displayed frame.</summary>
+    [Fact]
+    public void AddSample_ActiveHistory_ThrottlesDisplayRefresh()
+    {
+        var profiler = new ProfilerView();
+        var sample = new FrameProfileSample(1, 5d, 2d, 3d, 512L);
+
+        Assert.True(profiler.AddSample(sample));
+        Assert.False(profiler.AddSample(sample with { FrameNumber = 2 }));
+    }
+
+    /// <summary>Verifies selecting a graph frame pauses capture and exposes its frame number.</summary>
+    [Fact]
+    public void SelectFrame_GraphPosition_PausesOnCapturedFrame()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 390f };
+        profiler.AddSample(new FrameProfileSample(42, 5d, 2d, 3d, 512L,
+        [
+            new CpuProfileMarker("Update", -1, 0, 2d, 2d, 128L, 128L)
+        ]));
+        profiler.BuildDrawList();
+
+        var selected = profiler.SelectFrame(new System.Numerics.Vector2(
+            profiler.Right - 13f, profiler.Top + 70f));
+
+        Assert.True(selected);
+        Assert.True(profiler.IsPaused);
+        Assert.Equal(42UL, profiler.SelectedFrameNumber);
+    }
+
+    /// <summary>Verifies a selected frame paints its nested method names.</summary>
+    [Fact]
+    public void BuildDrawList_SelectedFrame_PaintsMethodCallStack()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 390f };
+        profiler.AddSample(new FrameProfileSample(1, 5d, 2d, 3d, 512L,
+        [
+            new CpuProfileMarker("SilkWindow.OnRender", -1, 0, 3d, 1d, 256L, 64L),
+            new CpuProfileMarker("SilkWindow.DrawFrame", 0, 1, 2d, 2d, 192L, 192L)
+        ]));
+        profiler.SetPaused(true);
+        Layout(profiler);
+
+        var commands = profiler.BuildDrawList().Commands;
+
+        Assert.Contains(commands, command => command.Text == "Instrumented Call Tree");
+        Assert.Contains(commands, command => command.Text == "Method");
+        Assert.Contains(commands, command => command.Text == "Total");
+        Assert.Contains(commands, command => command.Text == "Self GC");
+        Assert.Contains(commands, command => command.Text?.Contains("SilkWindow.OnRender") == true);
+        Assert.Contains(commands, command => command.Text?.Contains("SilkWindow.DrawFrame") == true);
+        var root = Assert.IsType<TreeViewItem>(profiler.CallTree.Children[0]);
+        var child = Assert.IsType<TreeViewItem>(profiler.CallTree.Children[1]);
+        Assert.Equal(0, root.Depth);
+        Assert.Equal(1, child.Depth);
+    }
+
+    /// <summary>Verifies the mouse wheel reveals instrumented call-tree rows below the viewport.</summary>
+    [Fact]
+    public void InvokeScroll_LongCallTree_RevealsLaterRows()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 390f };
+        var markers = Enumerable.Range(0, 20)
+            .Select(index => new CpuProfileMarker(
+                $"Method{index}", index - 1, index, 1d, 1d, 0L, 0L, 1))
+            .ToArray();
+        profiler.AddSample(new FrameProfileSample(1, 5d, 2d, 3d, 0L, markers));
+        profiler.SetPaused(true);
+        Layout(profiler);
+
+        Assert.DoesNotContain(profiler.BuildDrawList().Commands,
+            command => command.Text?.Contains("Method10") == true);
+
+        profiler.InvokeScroll(-1f);
+
+        Assert.Contains(profiler.BuildDrawList().Commands,
+            command => command.Text?.Contains("Method10") == true);
+    }
+
+    /// <summary>Runs the profiler through a normal measure and arrange pass.</summary>
+    /// <param name="profiler">Profiler view to lay out.</param>
+    private static void Layout(ProfilerView profiler)
+    {
+        var size = new System.Numerics.Vector2(profiler.Width, profiler.Height);
+        profiler.Measure(size);
+        profiler.Arrange(System.Numerics.Vector2.Zero, size);
+    }
+}

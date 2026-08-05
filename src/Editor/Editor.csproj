@@ -8,12 +8,26 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../tools/Engine.Profiler.Weaver/Engine.Profiler.Weaver.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../Engine.Assets/Engine.Assets.csproj" />
     <ProjectReference Include="../Engine.Graphics/Engine.Graphics.csproj" />
     <ProjectReference Include="../Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
     <ProjectReference Include="../Engine.Scripting/Engine.Scripting.csproj" />
     <ProjectReference Include="../Engine.UI/Engine.UI.csproj" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <EnableManagedProfilerInstrumentation Condition="'$(EnableManagedProfilerInstrumentation)' == '' and '$(Configuration)' == 'Debug'">true</EnableManagedProfilerInstrumentation>
+  </PropertyGroup>
+
+  <Target Name="InstrumentManagedProfilerAssemblies" AfterTargets="Build"
+          Condition="'$(EnableManagedProfilerInstrumentation)' == 'true' and '$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <ProfilerWeaver>$(MSBuildProjectDirectory)/../../tools/Engine.Profiler.Weaver/bin/$(Configuration)/net11.0/Engine.Profiler.Weaver.dll</ProfilerWeaver>
+    </PropertyGroup>
+    <Exec Command="dotnet &quot;$(ProfilerWeaver)&quot; &quot;$(TargetDir)Engine.Graphics.dll&quot; &quot;$(TargetDir)Engine.Graphics.dll&quot; &quot;$(TargetDir)Engine.Graphics.Silk.dll&quot; &quot;$(TargetDir)Engine.UI.dll&quot; &quot;$(TargetPath)&quot;" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />

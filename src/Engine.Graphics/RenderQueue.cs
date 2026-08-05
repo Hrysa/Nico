@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace Engine.Graphics;
 
 /// <summary>
@@ -16,6 +18,9 @@ public sealed class RenderQueue
 
     /// <summary>Gets the ordered commands in this queue.</summary>
     public IReadOnlyList<RenderCommand> Commands => _commands;
+
+    /// <summary>Gets an allocation-free view of the ordered commands for immediate enumeration.</summary>
+    public ReadOnlySpan<RenderCommand> CommandSpan => CollectionsMarshal.AsSpan(_commands);
 
     /// <summary>Adds geometry to the queue.</summary>
     /// <param name="mesh">Registered geometry to render.</param>

@@ -121,6 +121,14 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 - GPU resources: implement `IDisposable`, use disposed-guard pattern
 - `null!` for uninitialized nullable properties
 - **XML documentation**: every public/private method must have `/// <summary>` doc comment with `<param>` tags for each parameter and `<returns>` for non-void methods
+- **GC-free enumeration**: every loop in frame, render, update, paint, and input hot paths must be allocation-free.
+  - Prefer direct `foreach` for arrays, spans, and variables statically typed as a concrete `List<T>`; these enumerators are value types and do not allocate.
+  - Do not use `foreach` through `IEnumerable<T>`, `ICollection<T>`, or `IReadOnlyList<T>` in hot paths because a value-type enumerator may be boxed behind the interface.
+  - Do not use LINQ in hot paths; operators such as `Where`, `Select`, and `OfType` create iterator objects or delegates.
+  - Use an indexed `for` loop or expose a `ReadOnlySpan<T>` when a hot-path collection is interface-typed.
+  - A `for` loop over `List<T>` can be marginally faster by avoiding the enumerator version check, but prefer the clearer direct `foreach` unless profiling proves loop overhead matters.
+  - Consider `CollectionsMarshal.AsSpan(list)` only for a proven bottleneck where the list cannot change during traversal.
+  - Add an allocation regression test when introducing a new hot-path collection or enumeration pattern.
 
 ## Known Pitfalls
 

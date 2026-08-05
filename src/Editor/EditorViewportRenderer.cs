@@ -184,8 +184,9 @@ public sealed class EditorViewportRenderer : IDisposable
             View = view,
             Projection = projection
         });
-        foreach (var instance in _sceneObjects)
+        for (var index = 0; index < _sceneObjects.Count; index++)
         {
+            var instance = _sceneObjects[index];
             if (_assetMeshes.TryGetValue(instance, out var resource))
             {
                 _sceneQueue.Add(resource.Mesh,
@@ -202,8 +203,9 @@ public sealed class EditorViewportRenderer : IDisposable
     private void RenderGameViewport(float width, float height)
     {
         _gameCamera.UpdateViewport(width, height);
-        foreach (var instance in _gameObjects)
+        for (var index = 0; index < _gameObjects.Count; index++)
         {
+            var instance = _gameObjects[index];
             if (_assetMeshes.TryGetValue(instance, out var resource))
             {
                 _gameQueue.Add(resource.Mesh,

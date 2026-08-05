@@ -113,6 +113,18 @@ public sealed class UILayoutTests
         Assert.Equal(900f, view.Root.Height);
     }
 
+    /// <summary>Verifies the Profiler is present as a collapsed bottom-dock tool.</summary>
+    [Fact]
+    public void EditorBottomDock_ProfilerStartsCollapsed()
+    {
+        var view = EditorUI.BuildView(1280f, 720f);
+
+        Assert.False(view.ProfilerPanel.IsVisible);
+        Assert.Equal("ProfilerButton", view.ProfilerButton.Name);
+        Assert.Contains(view.Profiler, Descendants(view.ProfilerPanel.Content));
+        Assert.Contains(view.ProfilerPauseButton, Descendants(view.ProfilerPanel.Content));
+    }
+
     /// <summary>Verifies unchanged draw-list builds reuse cached measurement and arrangement.</summary>
     [Fact]
     public void BuildDrawList_UnchangedLayout_DoesNotRerunMeasure()

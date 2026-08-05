@@ -61,7 +61,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private bool _eventDrivenIdle;
     private double _targetFrameRate;
     private Timer? _continuousWakeTimer;
+    private Timer? _deferredWakeTimer;
+    private int _frameRequested;
     private bool _firstFramePresented;
+    private long _profileAllocationStart;
+    private double _profileUpdateMilliseconds;
+    private ulong _profileFrameNumber;
 #if DEBUG_GC_ALLOC
     private long _frameAllocationStart;
     private ulong _allocationFrameNumber;
@@ -149,6 +154,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     public event Action<double>? Update;
 
     /// <inheritdoc/>
+    public event Action<FrameProfileSample>? FrameProfiled;
+
+    /// <inheritdoc/>
     public event Action<int, int>? Resized;
 
     /// <summary>
@@ -188,6 +196,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _customTitleBar = options.CustomTitleBar;
         _eventDrivenIdle = options.IsEventDriven;
         _targetFrameRate = options.TargetFrameRate;
+        if (_eventDrivenIdle)
+        {
+            _deferredWakeTimer = new Timer(
+                static state => ((SilkWindow)state!).WakeEventLoop(), this,
+                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
         if (options.ViewportRenderScale < 0f)
             throw new ArgumentOutOfRangeException(nameof(options),
                 "Viewport render scale cannot be negative.");
@@ -382,6 +396,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnUpdate(double delta)
     {
+        CpuProfiler.BeginFrame();
+        _profileFrameNumber++;
+        _profileAllocationStart = GC.GetTotalAllocatedBytes(precise: true);
+        var profileStart = System.Diagnostics.Stopwatch.GetTimestamp();
 #if DEBUG_GC_ALLOC
         _frameAllocationStart = GC.GetAllocatedBytesForCurrentThread();
 #endif
@@ -393,6 +411,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         }
 
         Update?.Invoke(delta);
+        _profileUpdateMilliseconds = System.Diagnostics.Stopwatch
+            .GetElapsedTime(profileStart).TotalMilliseconds;
     }
 
     private void OnRender(double delta)
@@ -401,9 +421,22 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             return;
 
         _renderingFrame = true;
+        Interlocked.Exchange(ref _frameRequested, 0);
+        var profileStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             DrawFrame();
+            var renderMilliseconds = System.Diagnostics.Stopwatch
+                .GetElapsedTime(profileStart).TotalMilliseconds;
+            var profiledAllocatedBytes = Math.Max(0L,
+                GC.GetTotalAllocatedBytes(precise: true) - _profileAllocationStart);
+            var frame = new PendingProfileFrame(
+                _profileFrameNumber,
+                _profileUpdateMilliseconds + renderMilliseconds,
+                _profileUpdateMilliseconds,
+                renderMilliseconds,
+                profiledAllocatedBytes);
+            PublishProfileFrame(frame);
 #if DEBUG_GC_ALLOC
             var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
             var allocatedBytes = Math.Max(0L, allocationEnd - _frameAllocationStart);
@@ -417,6 +450,18 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         {
             _renderingFrame = false;
         }
+    }
+
+    /// <summary>Publishes a completed frame with its managed instrumentation tree.</summary>
+    /// <param name="frame">Completed frame timing.</param>
+    private void PublishProfileFrame(PendingProfileFrame frame)
+    {
+        if (!CpuProfiler.Enabled)
+        {
+            FrameProfiled?.Invoke(frame.ToSample([]));
+            return;
+        }
+        FrameProfiled?.Invoke(frame.ToSample(CpuProfiler.EndFrame()));
     }
 
     private void OnClosing()
@@ -639,6 +684,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Key.Delete => InputKey.Delete,
             Key.Left => InputKey.Left,
             Key.Right => InputKey.Right,
+            Key.Up => InputKey.Up,
+            Key.Down => InputKey.Down,
             Key.Home => InputKey.Home,
             Key.End => InputKey.End,
             Key.Escape => InputKey.Escape,
@@ -2193,7 +2240,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         if (!_pendingViewportDraws.ContainsKey(viewportId))
             _pendingViewportDraws[viewportId] = [];
 
-        foreach (var command in renderQueue.Commands)
+        foreach (var command in renderQueue.CommandSpan)
         {
             ValidateOwner(command.Mesh);
             _pendingViewportDraws[viewportId].Add(command);
@@ -2560,7 +2607,6 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             RecreateSwapchain();
         }
 
-        // Recreate any dirty viewport FBOs
         RecreateDirtyFbos();
 
         // ── Begin frame (waits for previous frame's fence) ──
@@ -2587,7 +2633,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         uint imageIndex = 0;
         var imageAvailableSemaphore = _imageAvailableSemaphores![frameIndex];
         var result = _swapchainManager!.Extension.AcquireNextImage(
-            _device, _swapchainManager.Handle, ulong.MaxValue, imageAvailableSemaphore, default, &imageIndex);
+            _device, _swapchainManager.Handle, ulong.MaxValue,
+            imageAvailableSemaphore, default, &imageIndex);
 
         if (result == Result.ErrorOutOfDateKhr)
         {
@@ -2600,18 +2647,16 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         // A single queue submission avoids an unnecessary CPU/driver transition and the same-queue
         // semaphore that previously connected these passes.
         Silk.NET.Vulkan.Semaphore renderFinishedSemaphore;
-        {
-            var (cmdBuffer, sem) = _frameScheduler.BeginPass();
-            renderFinishedSemaphore = sem;
+        var (cmdBuffer, sem) = _frameScheduler.BeginPass();
+        renderFinishedSemaphore = sem;
 
-            RecordFboPass(cmdBuffer);
-            RecordSwapchainPass(cmdBuffer, imageIndex);
+        RecordFboPass(cmdBuffer);
+        RecordSwapchainPass(cmdBuffer, imageIndex);
 
-            _frameScheduler.EndPass(cmdBuffer);
-            _frameScheduler.PrepareCurrentFenceForSubmission();
-            _frameScheduler.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem,
-                _frameScheduler.GetCurrentFence());
-        }
+        _frameScheduler.EndPass(cmdBuffer);
+        _frameScheduler.PrepareCurrentFenceForSubmission();
+        _frameScheduler.SubmitPass(cmdBuffer, imageAvailableSemaphore, sem,
+            _frameScheduler.GetCurrentFence());
 
         // ── Present ──
         var swapchain = _swapchainManager.Handle;
@@ -2913,8 +2958,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         Silk.NET.Vulkan.Buffer textBuffer,
         PushConstants pushConstants)
     {
-        foreach (var batch in _uiBatches.Where(batch => batch.Layer == layer))
+        foreach (var batch in _uiBatches)
         {
+            if (batch.Layer != layer)
+                continue;
+
             ulong offset = 0;
             if (batch.Kind == UiGeometryKind.Color)
             {
@@ -2950,7 +2998,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         void* destination,
         uint stride,
         bool forceFullUpload)
-        where T : unmanaged
+        where T : unmanaged, IEquatable<T>
     {
         var uploadedSpan = uploaded.WrittenSpan;
         fixed (T* source = current)
@@ -2962,17 +3010,16 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             }
             else
             {
-                var comparer = EqualityComparer<T>.Default;
                 var index = 0;
                 while (index < current.Length)
                 {
-                    if (comparer.Equals(current[index], uploadedSpan[index]))
+                    if (current[index].Equals(uploadedSpan[index]))
                     {
                         index++;
                         continue;
                     }
                     var first = index++;
-                    while (index < current.Length && !comparer.Equals(current[index], uploadedSpan[index]))
+                    while (index < current.Length && !current[index].Equals(uploadedSpan[index]))
                         index++;
                     var byteCount = (nuint)((index - first) * stride);
                     var sourceRange = (byte*)source + first * stride;
@@ -2997,7 +3044,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         void* destination,
         uint stride,
         bool forceFullUpload)
-        where T : unmanaged
+        where T : unmanaged, IEquatable<T>
     {
         fixed (T* source = current)
         {
@@ -3008,17 +3055,16 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             }
             else
             {
-                var comparer = EqualityComparer<T>.Default;
                 var index = 0;
                 while (index < current.Length)
                 {
-                    if (comparer.Equals(current[index], uploaded[index]))
+                    if (current[index].Equals(uploaded[index]))
                     {
                         index++;
                         continue;
                     }
                     var first = index++;
-                    while (index < current.Length && !comparer.Equals(current[index], uploaded[index]))
+                    while (index < current.Length && !current[index].Equals(uploaded[index]))
                         index++;
                     var byteCount = (nuint)((index - first) * stride);
                     var sourceRange = (byte*)source + first * stride;
@@ -3027,7 +3073,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 }
             }
         }
-        uploaded = current.ToArray();
+        if (uploaded.Length != current.Length)
+            uploaded = GC.AllocateUninitializedArray<T>(current.Length);
+        current.AsSpan().CopyTo(uploaded);
     }
 
     /// <summary>Identifies the pipeline and vertex format for a UI batch.</summary>
@@ -3077,6 +3125,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             uploaded.Dispose();
         _continuousWakeTimer?.Dispose();
         _continuousWakeTimer = null;
+        _deferredWakeTimer?.Dispose();
+        _deferredWakeTimer = null;
         _logger.LogInformation("Shutting down...");
         _windowsWindowChrome?.Dispose();
         _windowsWindowChrome = null;
@@ -3184,7 +3234,27 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <inheritdoc/>
     public void RequestFrame()
     {
+        Interlocked.Exchange(ref _frameRequested, 1);
         _window?.ContinueEvents();
+        if (!_shutdown && _eventDrivenIdle)
+        {
+            _deferredWakeTimer?.Change(
+                TimeSpan.FromMilliseconds(1), Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>Keeps waking the native event loop until a render acknowledges the request.</summary>
+    private void WakeEventLoop()
+    {
+        if (_shutdown || Volatile.Read(ref _frameRequested) == 0)
+            return;
+
+        _window?.ContinueEvents();
+        if (Volatile.Read(ref _frameRequested) != 0)
+        {
+            _deferredWakeTimer?.Change(
+                TimeSpan.FromMilliseconds(8), Timeout.InfiniteTimeSpan);
+        }
     }
 
     /// <inheritdoc/>
@@ -3231,6 +3301,34 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         _window?.Dispose();
         _window = null;
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>Frame timing paired with a synchronous managed instrumentation tree.</summary>
+    /// <param name="FrameNumber">Monotonic rendered-frame number.</param>
+    /// <param name="CpuMilliseconds">Combined update and render duration.</param>
+    /// <param name="UpdateMilliseconds">Update callback duration.</param>
+    /// <param name="RenderMilliseconds">Render callback duration.</param>
+    /// <param name="GcAllocatedBytes">Exact current-thread frame allocation.</param>
+    private readonly record struct PendingProfileFrame(
+        ulong FrameNumber,
+        double CpuMilliseconds,
+        double UpdateMilliseconds,
+        double RenderMilliseconds,
+        long GcAllocatedBytes)
+    {
+        /// <summary>Creates the public frame snapshot with its instrumented call tree.</summary>
+        /// <param name="callTree">Instrumented method hierarchy.</param>
+        /// <returns>Completed public profiler sample.</returns>
+        internal FrameProfileSample ToSample(CpuProfileMarker[] callTree)
+        {
+            return new FrameProfileSample(
+                FrameNumber,
+                CpuMilliseconds,
+                UpdateMilliseconds,
+                RenderMilliseconds,
+                GcAllocatedBytes,
+                callTree);
+        }
     }
 
     private struct QueueFamilyIndices

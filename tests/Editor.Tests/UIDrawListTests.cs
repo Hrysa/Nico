@@ -16,11 +16,13 @@ public class UIDrawListTests
 
         var first = root.BuildDrawList();
         var unchanged = root.BuildDrawList();
+        var firstGeneration = first.Generation;
         label.Text = "After";
         var changed = root.BuildDrawList();
 
         Assert.Same(first, unchanged);
-        Assert.NotSame(first, changed);
+        Assert.Same(first, changed);
+        Assert.True(changed.Generation > firstGeneration);
         Assert.Contains(changed.Commands, command => command.Text == "After");
     }
 
@@ -40,6 +42,28 @@ public class UIDrawListTests
 
         Assert.Equal(2, changed.PaintCount);
         Assert.Equal(1, sibling.PaintCount);
+    }
+
+    /// <summary>Verifies repeated retained-tree composition reuses command storage.</summary>
+    [Fact]
+    public void BuildDrawList_RepeatedVisualChanges_DoNotAllocateAfterWarmup()
+    {
+        var root = new Panel(Color.Black, 500f, 500f);
+        for (var index = 0; index < 100; index++)
+            root.AddChild(new Panel(Color.Gray, 10f, 10f));
+        root.BuildDrawList();
+        root.BackgroundColor = Color.White;
+        root.BuildDrawList();
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 100; index++)
+        {
+            root.BackgroundColor = (index & 1) == 0 ? Color.Black : Color.White;
+            root.BuildDrawList();
+        }
+
+        var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Equal(allocationStart, allocationEnd);
     }
 
     /// <summary>Verifies parent-before-child paint ordering.</summary>
@@ -108,13 +132,16 @@ public class UIDrawListTests
     {
         var root = new Panel(Color.Black, 100f, 100f);
         var first = root.BuildDrawList();
+        var firstGeneration = first.Generation;
         var unchanged = root.BuildDrawList();
+        var unchangedGeneration = unchanged.Generation;
         root.BackgroundColor = Color.White;
         var changed = root.BuildDrawList();
 
         Assert.Same(first, unchanged);
-        Assert.Equal(first.Generation, unchanged.Generation);
-        Assert.True(changed.Generation > first.Generation);
+        Assert.Equal(firstGeneration, unchangedGeneration);
+        Assert.Same(first, changed);
+        Assert.True(changed.Generation > firstGeneration);
     }
 
     /// <summary>Counts local paint executions for snapshot tests.</summary>

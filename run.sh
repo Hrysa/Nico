@@ -12,4 +12,6 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-dotnet run --project src/Editor -- "$1"
+dotnet build src/Editor/Editor.csproj
+
+exec src/Editor/bin/Debug/net11.0/Editor "$1"

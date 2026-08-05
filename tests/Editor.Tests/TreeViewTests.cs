@@ -52,6 +52,38 @@ public class TreeViewTests
         Assert.Single(tree.Children);
     }
 
+    /// <summary>Verifies optional columns align values while preserving hierarchy indentation.</summary>
+    [Fact]
+    public void Columns_NestedRows_AlignValuesAndIndentHierarchy()
+    {
+        var root = new Node { Name = "Root" };
+        var child = new Node { Name = "Child" };
+        root.AddChild(child);
+        var tree = new TreeView(300f, 200f) { ShowColumnHeaders = true };
+        tree.SetColumns(
+        [
+            new TreeViewColumn("Name", 0f, node => node.Name),
+            new TreeViewColumn("Children", 80f,
+                node => node.Children.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                TreeViewColumnAlignment.Right)
+        ]);
+        tree.SetRoots([root]);
+
+        var commands = tree.BuildDrawList().Commands;
+        var rootText = Assert.Single(commands, command => command.Text == "- Root");
+        var childText = Assert.Single(commands, command => command.Text == "  Child");
+
+        Assert.Contains(commands, command => command.Text == "Name");
+        Assert.Contains(commands, command => command.Text == "Children");
+        Assert.True(childText.Left > rootText.Left);
+        var rootCount = Assert.Single(commands, command => command.Text == "1");
+        var childCount = Assert.Single(commands, command => command.Text == "0");
+        Assert.Equal(
+            rootCount.Left + Label.MeasureTextWidth(rootCount.Text, rootCount.FontPixelHeight),
+            childCount.Left + Label.MeasureTextWidth(childCount.Text, childCount.FontPixelHeight),
+            precision: 3);
+    }
+
     /// <summary>Verifies an empty container still exposes and toggles its disclosure state.</summary>
     [Fact]
     public void Toggle_EmptyContainer_ChangesExpandedState()
@@ -101,6 +133,95 @@ public class TreeViewTests
         router.Release(invokeClick: true);
 
         Assert.Same(root, tree.SelectedItem);
+    }
+
+    /// <summary>Verifies selection changes retain visible rows instead of allocating replacements.</summary>
+    [Fact]
+    public void Select_DifferentRow_ReusesVisibleRowControls()
+    {
+        var first = new Node { Name = "First" };
+        var second = new Node { Name = "Second" };
+        var tree = new TreeView(200f, 200f);
+        tree.SetRoots([first, second]);
+        var firstRow = Assert.IsType<TreeViewItem>(tree.Children[0]);
+        var secondRow = Assert.IsType<TreeViewItem>(tree.Children[1]);
+
+        tree.Select(first);
+        tree.Select(second);
+
+        Assert.Same(firstRow, tree.Children[0]);
+        Assert.Same(secondRow, tree.Children[1]);
+        Assert.False(firstRow.IsSelected);
+        Assert.True(secondRow.IsSelected);
+    }
+
+    /// <summary>Verifies up and down arrows move selection through visible rows.</summary>
+    [Fact]
+    public void ArrowUpDown_FocusedRow_MovesSelection()
+    {
+        var first = new Node { Name = "First" };
+        var second = new Node { Name = "Second" };
+        var third = new Node { Name = "Third" };
+        var tree = new TreeView(200f, 200f);
+        tree.SetRoots([first, second, third]);
+        var router = new UIEventRouter(tree, () => { });
+        router.MovePointer(new(10f, 10f));
+        router.Press();
+        router.Release(invokeClick: true);
+
+        router.KeyDown((int)InputKey.Down);
+        Assert.Same(second, tree.SelectedItem);
+
+        router.KeyDown((int)InputKey.Up);
+        Assert.Same(first, tree.SelectedItem);
+    }
+
+    /// <summary>Verifies right enters or expands children and left returns or collapses.</summary>
+    [Fact]
+    public void ArrowLeftRight_NestedSelection_NavigatesHierarchy()
+    {
+        var root = new Node { Name = "Root" };
+        var child = new Node { Name = "Child" };
+        var grandchild = new Node { Name = "Grandchild" };
+        child.AddChild(grandchild);
+        root.AddChild(child);
+        var tree = new TreeView(200f, 200f);
+        tree.SetRoots([root]);
+        tree.Select(root);
+        var row = Assert.IsType<TreeViewItem>(tree.Children[0]);
+
+        row.InvokeKeyDown((int)InputKey.Right);
+        Assert.Same(child, tree.SelectedItem);
+
+        row.InvokeKeyDown((int)InputKey.Right);
+        Assert.Contains(child, tree.ExpandedItems);
+        row.InvokeKeyDown((int)InputKey.Right);
+        Assert.Same(grandchild, tree.SelectedItem);
+
+        row.InvokeKeyDown((int)InputKey.Left);
+        Assert.Same(child, tree.SelectedItem);
+        row.InvokeKeyDown((int)InputKey.Left);
+        Assert.DoesNotContain(child, tree.ExpandedItems);
+        row.InvokeKeyDown((int)InputKey.Left);
+        Assert.Same(root, tree.SelectedItem);
+    }
+
+    /// <summary>Verifies keyboard selection scrolls a destination row into view.</summary>
+    [Fact]
+    public void ArrowDown_SmallViewport_ScrollsSelectionIntoView()
+    {
+        var roots = Enumerable.Range(0, 10)
+            .Select(index => new Node { Name = $"Node {index}" }).ToArray();
+        var tree = new TreeView(200f, 48f);
+        tree.SetRoots(roots);
+        tree.Select(roots[0]);
+        var focusedRow = Assert.IsType<TreeViewItem>(tree.Children[0]);
+
+        for (var index = 0; index < 4; index++)
+            focusedRow.InvokeKeyDown((int)InputKey.Down);
+
+        Assert.Same(roots[4], tree.SelectedItem);
+        Assert.Contains(tree.Children.OfType<TreeViewItem>(), row => row.Item == roots[4]);
     }
 
     /// <summary>Verifies wheel scrolling replaces the first visible row.</summary>

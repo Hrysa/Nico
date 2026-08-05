@@ -11,11 +11,15 @@ public sealed class TreeView : Panel
 {
     private readonly List<Node> _roots = [];
     private readonly HashSet<Node> _expanded = [];
+    private readonly List<TreeViewColumn> _columns = [];
     private Node? _selectedItem;
     private int _scrollRow;
     private readonly UITheme _theme;
     private Vector2 _arrangedSize;
     private float _rowHeight;
+    private Func<Node, string>? _itemText;
+    private bool _showColumnHeaders;
+    private float _columnHeaderHeight = 20f;
 
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
     public float RowHeight
@@ -26,6 +30,49 @@ public sealed class TreeView : Panel
             if (_rowHeight == value)
                 return;
             _rowHeight = value;
+            RebuildRows();
+        }
+    }
+
+    /// <summary>Gets or sets an optional formatter for each node's visible row text.</summary>
+    public Func<Node, string>? ItemText
+    {
+        get => _itemText;
+        set
+        {
+            if (ReferenceEquals(_itemText, value))
+                return;
+            _itemText = value;
+            RebuildRows();
+        }
+    }
+
+    /// <summary>Gets the configured data columns.</summary>
+    public IReadOnlyList<TreeViewColumn> Columns => _columns;
+
+    /// <summary>Gets or sets whether configured column headers are visible.</summary>
+    public bool ShowColumnHeaders
+    {
+        get => _showColumnHeaders;
+        set
+        {
+            if (_showColumnHeaders == value)
+                return;
+            _showColumnHeaders = value;
+            RebuildRows();
+        }
+    }
+
+    /// <summary>Gets or sets the column-header height.</summary>
+    public float ColumnHeaderHeight
+    {
+        get => _columnHeaderHeight;
+        set
+        {
+            value = MathF.Max(0f, value);
+            if (_columnHeaderHeight == value)
+                return;
+            _columnHeaderHeight = value;
             RebuildRows();
         }
     }
@@ -72,6 +119,16 @@ public sealed class TreeView : Panel
         RebuildRows();
     }
 
+    /// <summary>Replaces the optional aligned data columns.</summary>
+    /// <param name="columns">Columns to display, with zero-width columns sharing flexible space.</param>
+    public void SetColumns(IEnumerable<TreeViewColumn> columns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        _columns.Clear();
+        _columns.AddRange(columns);
+        RebuildRows();
+    }
+
     /// <summary>Selects a node, or clears selection.</summary>
     /// <param name="item">Node to select.</param>
     public void Select(Node? item)
@@ -79,8 +136,18 @@ public sealed class TreeView : Panel
         if (ReferenceEquals(item, _selectedItem))
             return;
         _selectedItem = item;
-        RebuildRows();
+        UpdateSelectionRows();
         SelectionChanged?.Invoke(item);
+    }
+
+    /// <summary>Updates selection styling without recreating the visible row controls.</summary>
+    private void UpdateSelectionRows()
+    {
+        foreach (var child in Children)
+        {
+            if (child is TreeViewItem row)
+                row.IsSelected = ReferenceEquals(row.Item, _selectedItem);
+        }
     }
 
     /// <summary>Toggles one node's expanded state.</summary>
@@ -123,7 +190,7 @@ public sealed class TreeView : Panel
     private void ScrollRows(float offset)
     {
         var rows = Flatten();
-        var visibleCount = Math.Max(1, (int)MathF.Floor(Height / RowHeight));
+        var visibleCount = GetVisibleRowCount(roundUp: false);
         var maximum = Math.Max(0, rows.Count - visibleCount);
         _scrollRow = Math.Clamp(_scrollRow - Math.Sign(offset) * 3, 0, maximum);
         RebuildRows();
@@ -134,10 +201,18 @@ public sealed class TreeView : Panel
     {
         ClearChildren();
         var rows = Flatten();
-        var visibleCount = Math.Max(1, (int)MathF.Ceiling(Height / RowHeight));
+        var visibleCount = GetVisibleRowCount(roundUp: true);
         foreach (var (item, depth) in rows.Skip(_scrollRow).Take(visibleCount))
         {
-            var row = new TreeViewItem(Width, RowHeight, item, depth, _expanded.Contains(item), _theme)
+            var row = new TreeViewItem(
+                Width,
+                RowHeight,
+                item,
+                depth,
+                _expanded.Contains(item),
+                _theme,
+                _itemText?.Invoke(item),
+                _columns)
             {
                 IsSelected = ReferenceEquals(item, _selectedItem)
             };
@@ -147,11 +222,132 @@ public sealed class TreeView : Panel
                 Toggle(item);
                 ItemActivated?.Invoke(item);
             };
+            row.KeyDown += HandleKeyDown;
             row.Scroll += ScrollRows;
             AddChild(row);
         }
         if (Width > 0f && Height > 0f)
             ArrangeRows(new Vector2(ContentWidth, ContentHeight));
+    }
+
+    /// <inheritdoc/>
+    protected override void OnKeyDown(int keyCode)
+    {
+        HandleKeyDown(keyCode);
+        base.OnKeyDown(keyCode);
+    }
+
+    /// <summary>Handles keyboard selection and expansion for a focused tree or row.</summary>
+    /// <param name="keyCode">Engine input key code.</param>
+    private void HandleKeyDown(int keyCode)
+    {
+        var key = (InputKey)keyCode;
+        var rows = Flatten();
+        if (rows.Count == 0)
+            return;
+
+        var selectedIndex = rows.FindIndex(row => ReferenceEquals(row.Item, _selectedItem));
+        switch (key)
+        {
+            case InputKey.Up:
+                MoveSelection(rows, selectedIndex < 0 ? rows.Count - 1 : selectedIndex - 1);
+                break;
+            case InputKey.Down:
+                MoveSelection(rows, selectedIndex < 0 ? 0 : selectedIndex + 1);
+                break;
+            case InputKey.Home:
+                MoveSelection(rows, 0);
+                break;
+            case InputKey.End:
+                MoveSelection(rows, rows.Count - 1);
+                break;
+            case InputKey.Right:
+                NavigateRight(rows, selectedIndex);
+                break;
+            case InputKey.Left:
+                NavigateLeft(rows, selectedIndex);
+                break;
+        }
+    }
+
+    /// <summary>Moves selection to a visible row and scrolls it into view.</summary>
+    /// <param name="rows">Current expanded rows.</param>
+    /// <param name="index">Requested row index.</param>
+    private void MoveSelection(List<(Node Item, int Depth)> rows, int index)
+    {
+        index = Math.Clamp(index, 0, rows.Count - 1);
+        Select(rows[index].Item);
+        EnsureRowVisible(index, rows.Count);
+    }
+
+    /// <summary>Expands the selected node or enters its first child.</summary>
+    /// <param name="rows">Current expanded rows.</param>
+    /// <param name="selectedIndex">Selected visible-row index.</param>
+    private void NavigateRight(List<(Node Item, int Depth)> rows, int selectedIndex)
+    {
+        if (selectedIndex < 0)
+        {
+            MoveSelection(rows, 0);
+            return;
+        }
+
+        var selected = rows[selectedIndex].Item;
+        if (!selected.CanHaveChildren)
+            return;
+        if (!_expanded.Contains(selected))
+        {
+            _expanded.Add(selected);
+            RebuildRows();
+            return;
+        }
+        if (selected.Children.Count == 0)
+            return;
+        var expandedRows = Flatten();
+        var childIndex = expandedRows.FindIndex(row => ReferenceEquals(row.Item, selected.Children[0]));
+        if (childIndex >= 0)
+            MoveSelection(expandedRows, childIndex);
+    }
+
+    /// <summary>Collapses the selected node or moves selection to its parent.</summary>
+    /// <param name="rows">Current expanded rows.</param>
+    /// <param name="selectedIndex">Selected visible-row index.</param>
+    private void NavigateLeft(List<(Node Item, int Depth)> rows, int selectedIndex)
+    {
+        if (selectedIndex < 0)
+        {
+            MoveSelection(rows, 0);
+            return;
+        }
+
+        var selected = rows[selectedIndex].Item;
+        if (selected.CanHaveChildren && _expanded.Remove(selected))
+        {
+            RebuildRows();
+            return;
+        }
+        if (selected.Parent is null)
+            return;
+        var parentIndex = rows.FindIndex(row => ReferenceEquals(row.Item, selected.Parent));
+        if (parentIndex >= 0)
+            MoveSelection(rows, parentIndex);
+    }
+
+    /// <summary>Adjusts the scroll window so the selected row remains visible.</summary>
+    /// <param name="rowIndex">Selected row index.</param>
+    /// <param name="rowCount">Total visible row count.</param>
+    private void EnsureRowVisible(int rowIndex, int rowCount)
+    {
+        var visibleCount = GetVisibleRowCount(roundUp: false);
+        var nextScroll = _scrollRow;
+        if (rowIndex < nextScroll)
+            nextScroll = rowIndex;
+        else if (rowIndex >= nextScroll + visibleCount)
+            nextScroll = rowIndex - visibleCount + 1;
+        nextScroll = Math.Clamp(nextScroll, 0, Math.Max(0, rowCount - visibleCount));
+        if (nextScroll == _scrollRow)
+            return;
+        _scrollRow = nextScroll;
+        RebuildRows();
     }
 
     /// <inheritdoc/>
@@ -169,13 +365,54 @@ public sealed class TreeView : Panel
     /// <param name="contentSize">Available tree content size.</param>
     private void ArrangeRows(Vector2 contentSize)
     {
-        var y = 0f;
+        var y = GetColumnHeaderHeight();
         foreach (var child in Children.OfType<UIElement>())
         {
             child.Measure(new Vector2(contentSize.X, RowHeight));
             child.Arrange(new Vector2(0f, y), new Vector2(contentSize.X, RowHeight));
             y += RowHeight;
         }
+    }
+
+    /// <inheritdoc/>
+    protected override void Paint(UIDrawList drawList)
+    {
+        base.Paint(drawList);
+        if (!_showColumnHeaders || _columns.Count == 0)
+            return;
+
+        var x = Left;
+        foreach (var column in _columns)
+        {
+            var width = TreeViewColumnLayout.ResolveWidth(_columns, column, Width);
+            var textWidth = Label.MeasureTextWidth(column.Header, _theme.CaptionFontSize);
+            var textX = column.Alignment == TreeViewColumnAlignment.Right
+                ? x + MathF.Max(4f, width - textWidth - 6f)
+                : x + 6f;
+            drawList.AddText(column.Header, textX,
+                Top + MathF.Max(0f, (_columnHeaderHeight - _theme.CaptionFontSize) / 2f),
+                _theme.CaptionFontSize, _theme.TextSecondary, BackgroundColor);
+            x += width;
+        }
+    }
+
+    /// <summary>Returns the vertical space reserved for visible column headers.</summary>
+    /// <returns>Header height, or zero when headers are hidden.</returns>
+    private float GetColumnHeaderHeight()
+    {
+        return _showColumnHeaders && _columns.Count > 0 ? _columnHeaderHeight : 0f;
+    }
+
+    /// <summary>Calculates the number of body rows fitting below optional headers.</summary>
+    /// <param name="roundUp">Whether to include a partially visible final row.</param>
+    /// <returns>At least one row.</returns>
+    private int GetVisibleRowCount(bool roundUp)
+    {
+        var bodyHeight = MathF.Max(0f, Height - GetColumnHeaderHeight());
+        var rowCount = roundUp
+            ? (int)MathF.Ceiling(bodyHeight / RowHeight)
+            : (int)MathF.Floor(bodyHeight / RowHeight);
+        return Math.Max(1, rowCount);
     }
 
     /// <summary>Flattens expanded nodes in display order.</summary>

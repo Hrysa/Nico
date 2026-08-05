@@ -24,5 +24,7 @@ public enum InputKey
     Right,
     Home,
     End,
-    Escape
+    Escape,
+    Up,
+    Down
 }

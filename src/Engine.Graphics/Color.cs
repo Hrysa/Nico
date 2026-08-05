@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace Engine.Graphics;
 
-public readonly struct Color
+public readonly struct Color : IEquatable<Color>
 {
     public Vector3 Rgb { get; }
 
@@ -25,6 +25,32 @@ public readonly struct Color
 
     public static Color Lerp(Color a, Color b, float t)
         => new(Vector3.Lerp(a.Rgb, b.Rgb, t));
+
+    /// <summary>Compares two colors without boxing.</summary>
+    /// <param name="other">Color to compare.</param>
+    /// <returns>True when all linear RGB components match.</returns>
+    public bool Equals(Color other) => Rgb.Equals(other.Rgb);
+
+    /// <summary>Compares this color with an object.</summary>
+    /// <param name="obj">Object to compare.</param>
+    /// <returns>True when the object is an equal color.</returns>
+    public override bool Equals(object? obj) => obj is Color other && Equals(other);
+
+    /// <summary>Returns an allocation-free hash for the linear RGB components.</summary>
+    /// <returns>Hash code for this color.</returns>
+    public override int GetHashCode() => Rgb.GetHashCode();
+
+    /// <summary>Tests two colors for equality.</summary>
+    /// <param name="left">Left color.</param>
+    /// <param name="right">Right color.</param>
+    /// <returns>True when the colors match.</returns>
+    public static bool operator ==(Color left, Color right) => left.Equals(right);
+
+    /// <summary>Tests two colors for inequality.</summary>
+    /// <param name="left">Left color.</param>
+    /// <param name="right">Right color.</param>
+    /// <returns>True when the colors differ.</returns>
+    public static bool operator !=(Color left, Color right) => !left.Equals(right);
 
     /// <summary>
     /// Converts display-referred sRGB bytes into linear color components suitable for shader output.

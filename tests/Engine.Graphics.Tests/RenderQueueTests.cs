@@ -30,4 +30,26 @@ public sealed class RenderQueueTests
 
         Assert.Throws<ArgumentException>(() => queue.Add(default, default));
     }
+
+    /// <summary>Verifies repeated command enumeration through the hot-path span does not allocate.</summary>
+    [Fact]
+    public void CommandSpan_RepeatedEnumerationDoesNotAllocate()
+    {
+        var queue = new RenderQueue();
+        queue.Add(new MeshHandle(42), default);
+        var warmup = queue.CommandSpan[0].Mesh.Value;
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        ulong sum = 0;
+        for (var iteration = 0; iteration < 10_000; iteration++)
+        {
+            foreach (var command in queue.CommandSpan)
+                sum += command.Mesh.Value;
+        }
+
+        var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Equal(42UL, warmup);
+        Assert.Equal(420_000UL, sum);
+        Assert.Equal(allocationStart, allocationEnd);
+    }
 }

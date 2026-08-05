@@ -320,7 +320,6 @@ public class UIElement : Node
         _arrangeValid = false;
         _visualValid = false;
         _paintValid = false;
-        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateMeasure();
     }
@@ -331,7 +330,6 @@ public class UIElement : Node
         _arrangeValid = false;
         _visualValid = false;
         _paintValid = false;
-        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateArrange();
     }
@@ -341,7 +339,6 @@ public class UIElement : Node
     {
         _visualValid = false;
         _paintValid = false;
-        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateTreeSnapshot();
     }
@@ -350,7 +347,6 @@ public class UIElement : Node
     private void InvalidateTreeSnapshot()
     {
         _visualValid = false;
-        _cachedDrawList = null;
         if (Parent is UIElement parent)
             parent.InvalidateTreeSnapshot();
     }
@@ -360,9 +356,12 @@ public class UIElement : Node
     {
         _visualValid = false;
         _paintValid = false;
-        _cachedDrawList = null;
-        foreach (var child in Children.OfType<UIElement>())
-            child.InvalidatePaintSubtree();
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (children[index] is UIElement child)
+                child.InvalidatePaintSubtree();
+        }
     }
 
     /// <summary>Adds a child and invalidates layout.</summary>
@@ -638,9 +637,9 @@ public class UIElement : Node
             Measure(size);
             Arrange(new Vector2(Position.X, Position.Y), size);
         }
-        var drawList = new UIDrawList();
+        var drawList = _cachedDrawList ??= new UIDrawList();
+        drawList.Reset();
         PaintRecursive(drawList, inheritedOverlay: false);
-        _cachedDrawList = drawList;
         _visualValid = true;
         return drawList;
     }
@@ -655,7 +654,16 @@ public class UIElement : Node
 
         var overlay = inheritedOverlay || IsOverlay;
         var layer = overlay ? UIDrawLayer.Overlay : UIDrawLayer.Content;
-        if (!_paintValid || _cachedPaintCommands.Commands.Any(command => command.Layer != layer))
+        var paintCommands = _cachedPaintCommands.Commands;
+        var layerChanged = false;
+        for (var index = 0; index < paintCommands.Count; index++)
+        {
+            if (paintCommands[index].Layer == layer)
+                continue;
+            layerChanged = true;
+            break;
+        }
+        if (!_paintValid || layerChanged)
         {
             _cachedPaintCommands.Reset(layer);
             Paint(_cachedPaintCommands);
@@ -663,9 +671,10 @@ public class UIElement : Node
         }
         drawList.AddRange(_cachedPaintCommands.Commands);
 
-        foreach (var child in Children)
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
         {
-            if (child is UIElement ui)
+            if (children[index] is UIElement ui)
                 ui.PaintRecursive(drawList, overlay);
         }
     }

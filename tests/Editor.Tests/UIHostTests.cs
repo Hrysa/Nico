@@ -42,6 +42,9 @@ public class UIHostTests
         public event Action<double>? Update;
 
         /// <inheritdoc/>
+        public event Action<FrameProfileSample>? FrameProfiled { add { } remove { } }
+
+        /// <inheritdoc/>
         public event Action<int, int>? Resized;
 
         /// <inheritdoc/>

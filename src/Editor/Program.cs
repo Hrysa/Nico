@@ -224,11 +224,28 @@ DragPreview? dragPreview = null;
 var fileSystemTree = editorView.FileSystemTree;
 var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
+var profilerVisible = false;
+var profilerRefreshPending = 0;
+window.FrameProfiled += sample =>
+{
+    if (profilerVisible && editorView.Profiler.AddSample(sample))
+        Interlocked.Exchange(ref profilerRefreshPending, 1);
+};
 AttachFileSystem(fileSystemTree);
 AttachInspector(inspector);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
+editorView.ProfilerButton.Click += ToggleProfiler;
+editorView.ProfilerPauseButton.Click += ToggleProfilerPause;
+editorView.Profiler.Click += () =>
+{
+    if (editorView.Profiler.SelectFrame(lastMousePos))
+    {
+        CpuProfiler.Enabled = false;
+        editorView.ProfilerPauseLabel.Text = "Record";
+    }
+};
 editorView.SceneToolbar.DoubleClick += DetachSceneViewport;
 editorView.GameHeader.DoubleClick += DetachGameViewport;
 editorView.HierarchyPanel.Header.DoubleClick += DetachHierarchy;
@@ -622,6 +639,31 @@ void AttachPlayButton(Button playButton)
         else
             StartPlayMode();
     };
+}
+
+/// <summary>Expands or collapses the live CPU and allocation Profiler.</summary>
+void ToggleProfiler()
+{
+    const float expandedHeight = 460f;
+    profilerVisible = !profilerVisible;
+    CpuProfiler.Enabled = profilerVisible && !editorView.Profiler.IsPaused;
+    editorView.ProfilerPanel.IsVisible = profilerVisible;
+    if (uiRoot is Grid rootGrid)
+        rootGrid.Rows[2] = GridLength.Pixels(profilerVisible ? expandedHeight : 30f);
+    uiRoot.InvalidateMeasure();
+    ResizeEditor(width, height);
+    ResizeViewportTargets();
+    renderScheduler.Invalidate(
+        RenderInvalidation.SceneViewport | RenderInvalidation.GameViewport);
+    window.RequestFrame();
+}
+
+/// <summary>Toggles live frame recording while retaining captured history.</summary>
+void ToggleProfilerPause()
+{
+    editorView.Profiler.SetPaused(!editorView.Profiler.IsPaused);
+    CpuProfiler.Enabled = profilerVisible && !editorView.Profiler.IsPaused;
+    editorView.ProfilerPauseLabel.Text = editorView.Profiler.IsPaused ? "Record" : "Pause";
 }
 
 /// <summary>Closes the hierarchy's object-creation menu.</summary>
@@ -1716,13 +1758,17 @@ void MoveFileSystemEntry(FileSystemNode source, FileSystemNode? target)
         ? target.FullPath
         : target is not null ? Path.GetDirectoryName(target.FullPath) ?? project.RootPath
         : project.RootPath;
-    var sourcePath = source.FullPath;
+    var sourcePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source.FullPath));
+    destinationDirectory = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(destinationDirectory));
     var destinationPath = Path.Combine(destinationDirectory,
-        Path.GetFileName(sourcePath.TrimEnd(Path.DirectorySeparatorChar)));
-    if (string.Equals(sourcePath, destinationPath, StringComparison.Ordinal))
+        Path.GetFileName(sourcePath));
+    if (ReferenceEquals(source, target)
+        || string.Equals(sourcePath, destinationDirectory, StringComparison.Ordinal)
+        || string.Equals(sourcePath, destinationPath, StringComparison.Ordinal))
         return;
     if (source.IsDirectory && destinationDirectory.StartsWith(
-            sourcePath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+            sourcePath + Path.DirectorySeparatorChar,
             StringComparison.Ordinal))
     {
         logger.LogWarning("Cannot move folder {SourcePath} inside itself", sourcePath);
@@ -1983,6 +2029,8 @@ window.TextInput += character =>
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
+    if (Interlocked.Exchange(ref profilerRefreshPending, 0) != 0)
+        RefreshUI();
     if (Interlocked.Exchange(ref assetRefreshPending, 0) != 0)
     {
         var assetChanges = assetDatabase.Refresh();
@@ -2049,7 +2097,8 @@ window.Update += delta =>
         DockInspector();
     window.SetContinuousRendering(
         flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
-            || pendingResizeTimestamp != 0);
+            || pendingResizeTimestamp != 0
+            || profilerVisible && !editorView.Profiler.IsPaused);
 };
 
 logger.LogInformation("Running main loop...");

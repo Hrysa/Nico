@@ -59,6 +59,9 @@ public interface IWindow : IDisposable
     /// <summary>Occurs before rendering each frame.</summary>
     event Action<double>? Update;
 
+    /// <summary>Occurs after a rendered frame has been measured.</summary>
+    event Action<FrameProfileSample>? FrameProfiled;
+
     /// <summary>Occurs after the native client area changes size.</summary>
     event Action<int, int>? Resized;
 }

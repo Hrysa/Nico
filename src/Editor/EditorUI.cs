@@ -71,14 +71,58 @@ public static class EditorUI
             MathF.Max(0f, width - hierarchyWidth - inspectorWidth - separatorWidth * 2f),
             bottomDockHeight) { Name = "BottomDock" };
         bottomDock.Width = 0f;
-        bottomDock.AddChild(new Label("Output    Debugger    Audio    Animation",
-            bottomDock.Width - 28f, bottomDockHeight)
+        var bottomTabs = new Grid(theme.Surface);
+        bottomTabs.Rows.Add(GridLength.Star());
+        bottomTabs.Columns.Add(GridLength.Pixels(270f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
+        bottomTabs.Columns.Add(GridLength.Star());
+        bottomTabs.Add(new Label("Output    Debugger    Audio    Animation",
+            270f, bottomDockHeight)
         {
             Name = "BottomDockTabs",
             FontSize = theme.CaptionFontSize,
             ForegroundColor = theme.TextSecondary,
             PaddingLeft = 0f
-        });
+        }, 0, 0);
+        var profilerButton = new Button(90f, bottomDockHeight, "Profiler", theme)
+        {
+            Name = "ProfilerButton"
+        };
+        bottomTabs.Add(profilerButton, 0, 1);
+        bottomDock.AddChild(bottomTabs);
+
+        var profilerPanel = new ToolPanel(width, 0f, "Profiler", theme)
+        {
+            Name = "Profiler",
+            IsVisible = false
+        };
+        profilerPanel.Width = 0f;
+        profilerPanel.Height = 0f;
+        var profilerPauseLabel = new Label("Pause")
+        {
+            FontSize = theme.CaptionFontSize,
+            ForegroundColor = theme.TextPrimary,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        };
+        var profilerPauseButton = new Button(80f, theme.ControlHeight, theme)
+        {
+            Name = "ProfilerPause",
+            Content = profilerPauseLabel
+        };
+        var profiler = new ProfilerView(theme) { Name = "ProfilerView" };
+        var profilerLayout = new Grid(theme.Surface);
+        profilerLayout.Rows.Add(GridLength.Pixels(theme.ControlHeight));
+        profilerLayout.Rows.Add(GridLength.Star());
+        profilerLayout.Columns.Add(GridLength.Star());
+        var profilerToolbar = new Grid(theme.SurfaceRaised);
+        profilerToolbar.Rows.Add(GridLength.Star());
+        profilerToolbar.Columns.Add(GridLength.Pixels(88f));
+        profilerToolbar.Columns.Add(GridLength.Star());
+        profilerToolbar.Add(profilerPauseButton, 0, 0);
+        profilerLayout.Add(profilerToolbar, 0, 0);
+        profilerLayout.Add(profiler, 1, 0);
+        profilerPanel.Content.AddChild(profilerLayout);
 
         var hierarchyPanel = new ToolPanel(hierarchyWidth, hierarchyHeight,
             "Hierarchy", theme) { Name = "Hierarchy" };
@@ -221,6 +265,7 @@ public static class EditorUI
         workspace.Add(inspectorPanel, 0, 4);
 
         var bottomShell = new Grid(theme.Canvas) { Name = "BottomShell" };
+        bottomShell.Rows.Add(GridLength.Pixels(bottomDockHeight));
         bottomShell.Rows.Add(GridLength.Star());
         bottomShell.Columns.Add(GridLength.Pixels(hierarchyWidth));
         bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
@@ -228,6 +273,7 @@ public static class EditorUI
         bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
         bottomShell.Columns.Add(GridLength.Pixels(inspectorWidth));
         bottomShell.Add(bottomDock, 0, 2);
+        bottomShell.Add(profilerPanel, 1, 0, columnSpan: 5);
 
         var overlay = new Canvas { Name = "Overlay" };
 
@@ -241,7 +287,9 @@ public static class EditorUI
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
             projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay,
             viewportDock, sceneSlot, gameSlot, sceneTools, gameHeader,
-            workspace, leftDock, hierarchyPanel, filesystemPanel, inspectorPanel);
+            workspace, leftDock, hierarchyPanel, filesystemPanel, inspectorPanel,
+            bottomShell, profilerPanel, profiler, profilerButton,
+            profilerPauseButton, profilerPauseLabel);
     }
 
     /// <summary>
@@ -325,6 +373,12 @@ public static class EditorUI
 /// <param name="HierarchyPanel">Detachable Hierarchy tool.</param>
 /// <param name="FileSystemPanel">Detachable File System tool.</param>
 /// <param name="InspectorPanel">Detachable Inspector tool.</param>
+/// <param name="BottomShell">Bottom editor tool docking grid.</param>
+/// <param name="ProfilerPanel">Expandable Profiler tool panel.</param>
+/// <param name="Profiler">Live CPU and allocation history view.</param>
+/// <param name="ProfilerButton">Bottom-dock button that toggles the Profiler.</param>
+/// <param name="ProfilerPauseButton">Profiler toolbar pause/record toggle.</param>
+/// <param name="ProfilerPauseLabel">Text showing the current pause/record action.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
@@ -346,4 +400,10 @@ public sealed record EditorView(
     Grid LeftDock,
     ToolPanel HierarchyPanel,
     ToolPanel FileSystemPanel,
-    ToolPanel InspectorPanel);
+    ToolPanel InspectorPanel,
+    Grid BottomShell,
+    ToolPanel ProfilerPanel,
+    ProfilerView Profiler,
+    Button ProfilerButton,
+    Button ProfilerPauseButton,
+    Label ProfilerPauseLabel);
