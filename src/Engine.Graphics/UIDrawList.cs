@@ -16,11 +16,17 @@ public enum UIDrawCommandType
     /// <summary>A solid rectangle.</summary>
     Rectangle,
 
+    /// <summary>A solid rectangle with uniformly rounded corners.</summary>
+    RoundedRectangle,
+
     /// <summary>A line of TrueType text.</summary>
     Text,
 
     /// <summary>A filled ellipse bounded by the command rectangle.</summary>
     Ellipse,
+
+    /// <summary>An inward-stroked ellipse bounded by the command rectangle.</summary>
+    StrokedEllipse,
 
     /// <summary>A stroked line segment.</summary>
     Line,
@@ -75,6 +81,7 @@ public readonly record struct UIClipRect(float Left, float Top, float Right, flo
 /// <param name="Texture">Renderer-owned texture for image commands.</param>
 /// <param name="Opacity">Multiplicative opacity from zero through one.</param>
 /// <param name="TextDirection">Paragraph direction for text commands.</param>
+/// <param name="CornerRadius">Uniform rounded-rectangle corner radius.</param>
 public readonly record struct UIDrawCommand(
     float Left,
     float Top,
@@ -91,7 +98,8 @@ public readonly record struct UIDrawCommand(
     float StrokeWidth = 1f,
     TextureHandle Texture = default,
     float Opacity = 1f,
-    TextFlowDirection TextDirection = TextFlowDirection.LeftToRight);
+    TextFlowDirection TextDirection = TextFlowDirection.LeftToRight,
+    float CornerRadius = 0f);
 
 /// <summary>
 /// Collects semantic UI paint commands without exposing GPU vertex formats.
@@ -194,13 +202,9 @@ public sealed class UIDrawList
             return;
         }
 
-        AddRectangle(left + resolvedRadius, top, right - resolvedRadius, bottom, color);
-        AddRectangle(left, top + resolvedRadius, right, bottom - resolvedRadius, color);
-        var diameter = resolvedRadius * 2f;
-        AddEllipse(left, top, left + diameter, top + diameter, color);
-        AddEllipse(right - diameter, top, right, top + diameter, color);
-        AddEllipse(left, bottom - diameter, left + diameter, bottom, color);
-        AddEllipse(right - diameter, bottom - diameter, right, bottom, color);
+        _commands.Add(new UIDrawCommand(
+            left, top, right, bottom, color, UIDrawCommandType.RoundedRectangle,
+            Layer: CurrentLayer, Clip: CurrentClip, CornerRadius: resolvedRadius));
     }
 
     /// <summary>Adds a filled ellipse bounded by a rectangle.</summary>
@@ -214,6 +218,28 @@ public sealed class UIDrawList
         _commands.Add(new UIDrawCommand(
             left, top, right, bottom, color, UIDrawCommandType.Ellipse,
             Layer: CurrentLayer, Clip: CurrentClip));
+    }
+
+    /// <summary>Adds an analytically stroked ellipse inside a bounding rectangle.</summary>
+    /// <param name="left">Outer left edge.</param>
+    /// <param name="top">Outer top edge.</param>
+    /// <param name="right">Outer right edge.</param>
+    /// <param name="bottom">Outer bottom edge.</param>
+    /// <param name="thickness">Positive inward stroke thickness.</param>
+    /// <param name="color">Stroke color.</param>
+    public void AddEllipseStroke(
+        float left,
+        float top,
+        float right,
+        float bottom,
+        float thickness,
+        Color color)
+    {
+        if (thickness <= 0f)
+            throw new ArgumentOutOfRangeException(nameof(thickness));
+        _commands.Add(new UIDrawCommand(
+            left, top, right, bottom, color, UIDrawCommandType.StrokedEllipse,
+            Layer: CurrentLayer, Clip: CurrentClip, StrokeWidth: thickness));
     }
 
     /// <summary>Adds a stroked line segment.</summary>

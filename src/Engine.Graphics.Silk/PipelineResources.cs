@@ -15,6 +15,9 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal ShaderModule UiFragmentShader;
     internal PipelineLayout UiLayout;
     internal Pipeline UiPipeline;
+    internal ShaderModule UiShapeVertexShader;
+    internal ShaderModule UiShapeFragmentShader;
+    internal Pipeline UiShapePipeline;
     internal Pipeline ViewportPipeline;
     internal PipelineLayout ViewportLayout;
     internal ShaderModule ModelVertexShader;
@@ -58,6 +61,7 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(GridPipeline);
         DestroyPipeline(ModelPipeline);
         DestroyPipeline(ViewportPipeline);
+        DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);
         DestroyPipelineLayout(TextureLayout);
         DestroyPipelineLayout(GridLayout);
@@ -82,6 +86,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyShaderModule(ModelFragmentShader);
         DestroyShaderModule(UiVertexShader);
         DestroyShaderModule(UiFragmentShader);
+        DestroyShaderModule(UiShapeVertexShader);
+        DestroyShaderModule(UiShapeFragmentShader);
     }
 
     /// <summary>

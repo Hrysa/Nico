@@ -60,4 +60,22 @@ public sealed class IconTests
         Assert.Equal(2, commands.Count);
         Assert.All(commands, command => Assert.Equal(UIDrawCommandType.Line, command.Type));
     }
+
+    /// <summary>Verifies search icons use a true ellipse stroke instead of polygon segments.</summary>
+    [Fact]
+    public void Search_PaintsAnalyticLensAndHandle()
+    {
+        var icon = new Icon(IconKind.Search, 20f)
+        {
+            ForegroundColor = Color.White,
+            StrokeThickness = 2f
+        };
+
+        var commands = icon.BuildDrawList().Commands;
+
+        Assert.Equal(2, commands.Count);
+        Assert.Equal(UIDrawCommandType.StrokedEllipse, commands[0].Type);
+        Assert.Equal(2f, commands[0].StrokeWidth);
+        Assert.Equal(UIDrawCommandType.Line, commands[1].Type);
+    }
 }

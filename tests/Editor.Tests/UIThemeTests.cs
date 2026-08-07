@@ -85,7 +85,7 @@ public class UIThemeTests
         button.SetHover(true);
 
         Assert.Contains(button.BuildDrawList().Commands,
-            command => command.Type == UIDrawCommandType.Rectangle);
+            command => command.Type == UIDrawCommandType.RoundedRectangle);
     }
 
     /// <summary>Verifies convenience labels size buttons while explicit width is preserved.</summary>

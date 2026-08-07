@@ -48,6 +48,8 @@ compile_shader() {
 
 compile_shader basic.slang vertexMain vertex basic.vert.spv
 compile_shader basic.slang fragmentMain fragment basic.frag.spv
+compile_shader ui_shape.slang vertexMain vertex ui_shape.vert.spv
+compile_shader ui_shape.slang fragmentMain fragment ui_shape.frag.spv
 compile_shader grid.slang vertexMain vertex grid.vert.spv
 compile_shader grid.slang fragmentMain fragment grid.frag.spv
 compile_shader texture.slang vertexMain vertex texture.vert.spv

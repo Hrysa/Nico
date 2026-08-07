@@ -92,18 +92,23 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
     // New: Vertex buffer
     private readonly NativeBuffer<Vertex> _vertices = new();
+    private readonly NativeBuffer<UIShapeVertex> _shapeVertices = new();
     private readonly NativeBuffer<VertexT> _textVertices = new();
     private readonly List<UiBatch> _uiBatches = [];
     private uint _vertexCount;
+    private uint _shapeVertexCount;
     private ulong _uiGeneration = 1;
     private ulong _submittedUiGeneration;
     private readonly ulong[] _uploadedUiGenerations = new ulong[MaxFramesInFlight];
+    private readonly ulong[] _uploadedShapeGenerations = new ulong[MaxFramesInFlight];
     private PushConstants _pushConstants;
     private FrameVertexBuffers? _uiBuffers;
+    private FrameVertexBuffers? _shapeBuffers;
     private FrameVertexBuffers? _textBuffers;
     private FontAtlasTexture? _fontAtlas;
     private readonly ulong[] _uploadedTextGenerations = new ulong[MaxFramesInFlight];
     private readonly NativeBuffer<Vertex>[] _uploadedUiVertices = [new(), new()];
+    private readonly NativeBuffer<UIShapeVertex>[] _uploadedShapeVertices = [new(), new()];
     private readonly NativeBuffer<VertexT>[] _uploadedTextVertices = [new(), new()];
 
     // Viewport FBO management
@@ -543,11 +548,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             return;
         BuildUIVertices(drawList);
         _vertexCount = (uint)_vertices.Count;
+        _shapeVertexCount = (uint)_shapeVertices.Count;
         _uiGeneration = drawList.Generation;
         _submittedUiGeneration = drawList.Generation;
         _uiBuffers ??= new FrameVertexBuffers(
             _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_vertices.Count),
             "UI", FindMemoryType, _logger);
+        _shapeBuffers ??= new FrameVertexBuffers(
+            _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_shapeVertices.Count),
+            "UI analytic shapes", FindMemoryType, _logger);
         _textBuffers ??= new FrameVertexBuffers(
             _vk!, _device, MaxFramesInFlight, Math.Max(1024u, (uint)_textVertices.Count),
             "UI text", FindMemoryType, _logger);
@@ -619,6 +628,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         CreateFboRenderPass();
         CreateRenderPass();
         CreateGraphicsPipeline();
+        CreateUiShapePipeline();
         CreateFboGraphicsPipeline();
         CreateModelPipeline();
         _persistentTextures = new PersistentTextureStore(_vk!, _device, FindMemoryType,
@@ -1656,6 +1666,157 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         SilkMarshal.Free(entryPointName);
 
         _logger.LogInformation("Graphics pipeline created");
+    }
+
+    /// <summary>Creates the derivative-based analytic UI-shape pipeline.</summary>
+    private void CreateUiShapePipeline()
+    {
+        _logger.LogDebug("Creating analytic UI-shape pipeline");
+        _pipelines.UiShapeVertexShader = CreateShaderModule("ui_shape.vert.spv");
+        _pipelines.UiShapeFragmentShader = CreateShaderModule("ui_shape.frag.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+        try
+        {
+            var shaderStages = new[]
+            {
+                new PipelineShaderStageCreateInfo
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.VertexBit,
+                    Module = _pipelines.UiShapeVertexShader,
+                    PName = (byte*)entryPointName
+                },
+                new PipelineShaderStageCreateInfo
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.FragmentBit,
+                    Module = _pipelines.UiShapeFragmentShader,
+                    PName = (byte*)entryPointName
+                }
+            };
+            var binding = new VertexInputBindingDescription
+            {
+                Binding = 0,
+                Stride = UIShapeVertex.Stride,
+                InputRate = VertexInputRate.Vertex
+            };
+            var attributes = new[]
+            {
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 0, Format = Format.R32G32B32Sfloat, Offset = 0
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 1, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 3
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 2, Format = Format.R32G32Sfloat,
+                    Offset = sizeof(float) * 7
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 3, Format = Format.R32G32Sfloat,
+                    Offset = sizeof(float) * 9
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 4, Format = Format.R32G32Sfloat,
+                    Offset = sizeof(float) * 11
+                }
+            };
+            fixed (PipelineShaderStageCreateInfo* stagePointer = shaderStages)
+            fixed (VertexInputAttributeDescription* attributePointer = attributes)
+            {
+                var vertexInput = new PipelineVertexInputStateCreateInfo
+                {
+                    SType = StructureType.PipelineVertexInputStateCreateInfo,
+                    VertexBindingDescriptionCount = 1,
+                    PVertexBindingDescriptions = &binding,
+                    VertexAttributeDescriptionCount = (uint)attributes.Length,
+                    PVertexAttributeDescriptions = attributePointer
+                };
+                var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+                {
+                    SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                    Topology = PrimitiveTopology.TriangleList
+                };
+                var dynamicStates = new[] { DynamicState.Viewport, DynamicState.Scissor };
+                fixed (DynamicState* dynamicStatePointer = dynamicStates)
+                {
+                    var dynamicState = new PipelineDynamicStateCreateInfo
+                    {
+                        SType = StructureType.PipelineDynamicStateCreateInfo,
+                        DynamicStateCount = (uint)dynamicStates.Length,
+                        PDynamicStates = dynamicStatePointer
+                    };
+                    var viewportState = new PipelineViewportStateCreateInfo
+                    {
+                        SType = StructureType.PipelineViewportStateCreateInfo,
+                        ViewportCount = 1,
+                        ScissorCount = 1
+                    };
+                    var rasterizer = new PipelineRasterizationStateCreateInfo
+                    {
+                        SType = StructureType.PipelineRasterizationStateCreateInfo,
+                        PolygonMode = PolygonMode.Fill,
+                        CullMode = CullModeFlags.None,
+                        FrontFace = FrontFace.CounterClockwise,
+                        LineWidth = 1f
+                    };
+                    var multisampling = new PipelineMultisampleStateCreateInfo
+                    {
+                        SType = StructureType.PipelineMultisampleStateCreateInfo,
+                        RasterizationSamples = SampleCountFlags.Count1Bit
+                    };
+                    var blendAttachment = new PipelineColorBlendAttachmentState
+                    {
+                        ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+                            ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+                        BlendEnable = new Bool32(true),
+                        SrcColorBlendFactor = BlendFactor.SrcAlpha,
+                        DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                        ColorBlendOp = BlendOp.Add,
+                        SrcAlphaBlendFactor = BlendFactor.One,
+                        DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                        AlphaBlendOp = BlendOp.Add
+                    };
+                    var blending = new PipelineColorBlendStateCreateInfo
+                    {
+                        SType = StructureType.PipelineColorBlendStateCreateInfo,
+                        AttachmentCount = 1,
+                        PAttachments = &blendAttachment
+                    };
+                    var pipelineInfo = new GraphicsPipelineCreateInfo
+                    {
+                        SType = StructureType.GraphicsPipelineCreateInfo,
+                        StageCount = (uint)shaderStages.Length,
+                        PStages = stagePointer,
+                        PVertexInputState = &vertexInput,
+                        PInputAssemblyState = &inputAssembly,
+                        PViewportState = &viewportState,
+                        PRasterizationState = &rasterizer,
+                        PMultisampleState = &multisampling,
+                        PColorBlendState = &blending,
+                        PDynamicState = &dynamicState,
+                        Layout = _pipelines.UiLayout,
+                        RenderPass = _renderPass,
+                        Subpass = 0
+                    };
+                    var result = _vk!.CreateGraphicsPipelines(
+                        _device, default, 1, &pipelineInfo, null, out _pipelines.UiShapePipeline);
+                    if (result != Result.Success)
+                        throw new Exception($"Failed to create analytic UI-shape pipeline: {result}");
+                }
+            }
+        }
+        finally
+        {
+            SilkMarshal.Free(entryPointName);
+        }
+        _logger.LogInformation("Analytic UI-shape pipeline created");
     }
 
     private void CreateFboGraphicsPipeline()
@@ -2862,6 +3023,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         ArgumentNullException.ThrowIfNull(drawList);
         var framebufferScale = GetFramebufferScale();
         _vertices.Clear();
+        _shapeVertices.Clear();
         _textVertices.Clear();
         _vertices.EnsureCapacity(drawList.Commands.Count * 6);
         _uiBatches.Clear();
@@ -2893,6 +3055,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
                 AddUiBatch(UiGeometryKind.Image, command.Layer, firstVertex,
                     (uint)_textVertices.Count - firstVertex, command.Clip, command.Texture);
             }
+            else if (command.Type is UIDrawCommandType.RoundedRectangle or
+                     UIDrawCommandType.Ellipse or UIDrawCommandType.StrokedEllipse or
+                     UIDrawCommandType.Line)
+            {
+                var firstVertex = (uint)_shapeVertices.Count;
+                AppendAnalyticShapeVertices(_shapeVertices, command);
+                AddUiBatch(UiGeometryKind.Shape, command.Layer, firstVertex,
+                    (uint)_shapeVertices.Count - firstVertex, command.Clip);
+            }
             else
             {
                 var firstVertex = (uint)_vertices.Count;
@@ -2923,17 +3094,6 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     /// <param name="command">Semantic UI command.</param>
     private static void AppendUICommandVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
     {
-        if (command.Type == UIDrawCommandType.Ellipse)
-        {
-            AppendEllipseVertices(vertices, command);
-            return;
-        }
-        if (command.Type == UIDrawCommandType.Line)
-        {
-            AppendLineVertices(vertices, command);
-            return;
-        }
-
         var color = new Vector4(command.Color.Rgb, command.Opacity);
         vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), color));
         vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), color));
@@ -2943,30 +3103,129 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), color));
     }
 
-    /// <summary>Tessellates one stroked UI line into a quad.</summary>
-    /// <param name="vertices">Destination vertex collection.</param>
-    /// <param name="command">Line endpoints, thickness, and color.</param>
-    private static void AppendLineVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
+    /// <summary>Appends one conservatively expanded analytic-shape quad.</summary>
+    /// <param name="vertices">Destination analytic vertex collection.</param>
+    /// <param name="command">Semantic shape command.</param>
+    internal static void AppendAnalyticShapeVertices(
+        NativeBuffer<UIShapeVertex> vertices,
+        UIDrawCommand command)
     {
-        var direction = new Vector2(command.Right - command.Left, command.Bottom - command.Top);
-        var length = direction.Length();
-        if (length <= float.Epsilon)
+        if (command.Type == UIDrawCommandType.Line)
+        {
+            AppendAnalyticLineVertices(vertices, command);
             return;
-        var halfWidth = command.StrokeWidth / 2f;
-        var normal = new Vector2(-direction.Y / length, direction.X / length) * halfWidth;
+        }
+
+        var center = new Vector2(
+            (command.Left + command.Right) * 0.5f,
+            (command.Top + command.Bottom) * 0.5f);
+        var halfSize = new Vector2(
+            MathF.Max(0f, (command.Right - command.Left) * 0.5f),
+            MathF.Max(0f, (command.Bottom - command.Top) * 0.5f));
+        if (halfSize.X <= float.Epsilon || halfSize.Y <= float.Epsilon)
+            return;
+        var strokedEllipse = command.Type == UIDrawCommandType.StrokedEllipse;
+        var shapeKind = command.Type == UIDrawCommandType.Ellipse
+            ? 2f
+            : strokedEllipse ? 3f : 1f;
+        var radius = command.Type == UIDrawCommandType.RoundedRectangle
+            ? MathF.Min(command.CornerRadius, MathF.Min(halfSize.X, halfSize.Y))
+            : strokedEllipse ? command.StrokeWidth : 0f;
+        if (strokedEllipse)
+        {
+            var halfStroke = command.StrokeWidth * 0.5f;
+            halfSize = Vector2.Max(
+                halfSize - new Vector2(halfStroke),
+                new Vector2(float.Epsilon));
+        }
+        AppendAnalyticQuad(vertices, center, Vector2.UnitX, Vector2.UnitY,
+            halfSize, shapeKind, radius, new Vector4(command.Color.Rgb, command.Opacity));
+    }
+
+    /// <summary>Appends an anti-aliased oriented box for one stroked line.</summary>
+    /// <param name="vertices">Destination analytic vertex collection.</param>
+    /// <param name="command">Line endpoints and thickness.</param>
+    private static void AppendAnalyticLineVertices(
+        NativeBuffer<UIShapeVertex> vertices,
+        UIDrawCommand command)
+    {
         var start = new Vector2(command.Left, command.Top);
         var end = new Vector2(command.Right, command.Bottom);
-        var first = start + normal;
-        var second = start - normal;
-        var third = end - normal;
-        var fourth = end + normal;
-        var color = new Vector4(command.Color.Rgb, command.Opacity);
-        vertices.Add(new Vertex(new Vector3(first, 0f), color));
-        vertices.Add(new Vertex(new Vector3(second, 0f), color));
-        vertices.Add(new Vertex(new Vector3(third, 0f), color));
-        vertices.Add(new Vertex(new Vector3(third, 0f), color));
-        vertices.Add(new Vertex(new Vector3(fourth, 0f), color));
-        vertices.Add(new Vertex(new Vector3(first, 0f), color));
+        var displacement = end - start;
+        var length = displacement.Length();
+        if (length <= float.Epsilon)
+            return;
+        var axisX = displacement / length;
+        var axisY = new Vector2(-axisX.Y, axisX.X);
+        AppendAnalyticQuad(vertices, (start + end) * 0.5f, axisX, axisY,
+            new Vector2(length * 0.5f, command.StrokeWidth * 0.5f), 1f, 0f,
+            new Vector4(command.Color.Rgb, command.Opacity));
+    }
+
+    /// <summary>Appends two triangles carrying local coordinates for analytic coverage.</summary>
+    /// <param name="vertices">Destination analytic vertex collection.</param>
+    /// <param name="center">Shape center in logical UI coordinates.</param>
+    /// <param name="axisX">Unit local horizontal axis.</param>
+    /// <param name="axisY">Unit local vertical axis.</param>
+    /// <param name="halfSize">Unexpanded half extent.</param>
+    /// <param name="shapeKind">Shader shape-kind identifier.</param>
+    /// <param name="parameter">Shape-specific scalar parameter.</param>
+    /// <param name="color">Linear RGBA color.</param>
+    private static void AppendAnalyticQuad(
+        NativeBuffer<UIShapeVertex> vertices,
+        Vector2 center,
+        Vector2 axisX,
+        Vector2 axisY,
+        Vector2 halfSize,
+        float shapeKind,
+        float parameter,
+        Vector4 color)
+    {
+        const float Fringe = 1f;
+        var strokeExpansion = shapeKind == 3f ? parameter * 0.5f : 0f;
+        var extent = halfSize + new Vector2(Fringe + strokeExpansion);
+        var topLeft = -extent;
+        var bottomLeft = new Vector2(-extent.X, extent.Y);
+        var bottomRight = extent;
+        var topRight = new Vector2(extent.X, -extent.Y);
+        AddAnalyticVertex(vertices, center, axisX, axisY, topLeft,
+            halfSize, shapeKind, parameter, color);
+        AddAnalyticVertex(vertices, center, axisX, axisY, bottomLeft,
+            halfSize, shapeKind, parameter, color);
+        AddAnalyticVertex(vertices, center, axisX, axisY, bottomRight,
+            halfSize, shapeKind, parameter, color);
+        AddAnalyticVertex(vertices, center, axisX, axisY, bottomRight,
+            halfSize, shapeKind, parameter, color);
+        AddAnalyticVertex(vertices, center, axisX, axisY, topRight,
+            halfSize, shapeKind, parameter, color);
+        AddAnalyticVertex(vertices, center, axisX, axisY, topLeft,
+            halfSize, shapeKind, parameter, color);
+    }
+
+    /// <summary>Transforms one local analytic vertex into logical UI space.</summary>
+    /// <param name="vertices">Destination analytic vertex collection.</param>
+    /// <param name="center">Shape center.</param>
+    /// <param name="axisX">Unit local horizontal axis.</param>
+    /// <param name="axisY">Unit local vertical axis.</param>
+    /// <param name="localPosition">Shape-local coordinate.</param>
+    /// <param name="halfSize">Unexpanded half extent.</param>
+    /// <param name="shapeKind">Shader shape-kind identifier.</param>
+    /// <param name="parameter">Shape-specific scalar parameter.</param>
+    /// <param name="color">Linear RGBA color.</param>
+    private static void AddAnalyticVertex(
+        NativeBuffer<UIShapeVertex> vertices,
+        Vector2 center,
+        Vector2 axisX,
+        Vector2 axisY,
+        Vector2 localPosition,
+        Vector2 halfSize,
+        float shapeKind,
+        float parameter,
+        Vector4 color)
+    {
+        var position = center + axisX * localPosition.X + axisY * localPosition.Y;
+        vertices.Add(new UIShapeVertex(new Vector3(position, 0f), color,
+            localPosition, halfSize, shapeKind, parameter));
     }
 
     /// <summary>Adds or extends one ordered UI geometry batch.</summary>
@@ -2998,34 +3257,6 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             }
         }
         _uiBatches.Add(new UiBatch(kind, layer, firstVertex, vertexCount, clip, texture));
-    }
-
-    /// <summary>Tessellates one filled UI ellipse into triangles.</summary>
-    /// <param name="vertices">Destination vertex collection.</param>
-    /// <param name="command">Ellipse command and bounds.</param>
-    private static void AppendEllipseVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
-    {
-        const int SegmentCount = 24;
-        var centerX = (command.Left + command.Right) / 2f;
-        var centerY = (command.Top + command.Bottom) / 2f;
-        var radiusX = MathF.Max(0f, (command.Right - command.Left) / 2f);
-        var radiusY = MathF.Max(0f, (command.Bottom - command.Top) / 2f);
-        var center = new Vector3(centerX, centerY, 0f);
-        var color = new Vector4(command.Color.Rgb, command.Opacity);
-        for (var index = 0; index < SegmentCount; index++)
-        {
-            var angleA = index * MathF.Tau / SegmentCount;
-            var angleB = (index + 1) * MathF.Tau / SegmentCount;
-            vertices.Add(new Vertex(center, color));
-            vertices.Add(new Vertex(new Vector3(
-                centerX + MathF.Cos(angleB) * radiusX,
-                centerY + MathF.Sin(angleB) * radiusY,
-                0f), color));
-            vertices.Add(new Vertex(new Vector3(
-                centerX + MathF.Cos(angleA) * radiusX,
-                centerY + MathF.Sin(angleA) * radiusY,
-                0f), color));
-        }
     }
 
     /// <summary>Gets physical framebuffer pixels per logical UI pixel.</summary>
@@ -3447,10 +3678,28 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             }
             textFrameBuffer = _textBuffers.GetBuffer(_activeFrameIndex);
         }
+        Silk.NET.Vulkan.Buffer shapeFrameBuffer = default;
+        if (_shapeVertexCount > 0)
+        {
+            var reallocated = _shapeBuffers!.Ensure(
+                _activeFrameIndex, _shapeVertexCount, UIShapeVertex.Stride);
+            if (_uploadedShapeGenerations[_activeFrameIndex] != _uiGeneration)
+            {
+                UploadChangedRanges(
+                    _shapeVertices.WrittenSpan,
+                    _uploadedShapeVertices[_activeFrameIndex],
+                    _shapeBuffers.GetMappedPointer(_activeFrameIndex),
+                    UIShapeVertex.Stride,
+                    reallocated);
+                _uploadedShapeGenerations[_activeFrameIndex] = _uiGeneration;
+            }
+            shapeFrameBuffer = _shapeBuffers.GetBuffer(_activeFrameIndex);
+        }
 
         // Draw persistent editor chrome below viewport textures.
         var pushConstants = _pushConstants;
-        DrawUiBatches(commandBuffer, UIDrawLayer.Content, uiFrameBuffer, textFrameBuffer, pushConstants);
+        DrawUiBatches(commandBuffer, UIDrawLayer.Content, uiFrameBuffer,
+            shapeFrameBuffer, textFrameBuffer, pushConstants);
 
         _vk.CmdSetScissor(commandBuffer, 0, 1, &windowScissor);
 
@@ -3516,7 +3765,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         }
 
         // Draw floating UI last so menus and dialogs cover viewport textures and gizmos.
-        DrawUiBatches(commandBuffer, UIDrawLayer.Overlay, uiFrameBuffer, textFrameBuffer, pushConstants);
+        DrawUiBatches(commandBuffer, UIDrawLayer.Overlay, uiFrameBuffer,
+            shapeFrameBuffer, textFrameBuffer, pushConstants);
 
         _vk.CmdEndRenderPass(commandBuffer);
     }
@@ -3525,12 +3775,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     /// <param name="commandBuffer">Recording command buffer.</param>
     /// <param name="layer">Layer to draw.</param>
     /// <param name="colorBuffer">Colored UI vertex buffer.</param>
+    /// <param name="shapeBuffer">Analytic-shape vertex buffer.</param>
     /// <param name="textBuffer">Textured glyph vertex buffer.</param>
     /// <param name="pushConstants">Screen-space transforms.</param>
     private void DrawUiBatches(
         CommandBuffer commandBuffer,
         UIDrawLayer layer,
         Silk.NET.Vulkan.Buffer colorBuffer,
+        Silk.NET.Vulkan.Buffer shapeBuffer,
         Silk.NET.Vulkan.Buffer textBuffer,
         PushConstants pushConstants)
     {
@@ -3546,6 +3798,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             {
                 _vk!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &colorBuffer, &offset);
+                _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
+                    0, (uint)sizeof(PushConstants), &pushConstants);
+            }
+            else if (batch.Kind == UiGeometryKind.Shape)
+            {
+                _vk!.CmdBindPipeline(
+                    commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiShapePipeline);
+                _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &shapeBuffer, &offset);
                 _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
                     0, (uint)sizeof(PushConstants), &pushConstants);
             }
@@ -3694,6 +3954,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         /// <summary>Solid colored geometry.</summary>
         Color,
 
+        /// <summary>Derivative-filtered analytic vector geometry.</summary>
+        Shape,
+
         /// <summary>Glyph-atlas textured geometry.</summary>
         Text,
 
@@ -3735,8 +3998,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
         _shutdown = true;
         _vertices.Dispose();
+        _shapeVertices.Dispose();
         _textVertices.Dispose();
         foreach (var uploaded in _uploadedUiVertices)
+            uploaded.Dispose();
+        foreach (var uploaded in _uploadedShapeVertices)
             uploaded.Dispose();
         foreach (var uploaded in _uploadedTextVertices)
             uploaded.Dispose();
@@ -3803,6 +4069,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
         // Cleanup shared resources
         _uiBuffers?.Destroy();
+        _shapeBuffers?.Destroy();
         _textBuffers?.Destroy();
         _fontAtlas?.Destroy();
         _pipelines?.Dispose();

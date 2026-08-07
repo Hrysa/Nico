@@ -120,6 +120,42 @@ public class UIDrawListTests
         Assert.Equal(new UIClipRect(0f, 0f, 50f, 50f), command.Clip);
     }
 
+    /// <summary>Verifies ellipse strokes retain their bounds, thickness, and clipping.</summary>
+    [Fact]
+    public void AddEllipseStroke_StoresSemanticStrokeCommand()
+    {
+        var drawList = new UIDrawList
+        {
+            CurrentClip = new UIClipRect(0f, 0f, 50f, 50f)
+        };
+
+        drawList.AddEllipseStroke(2f, 3f, 22f, 23f, 2.5f, Color.White);
+
+        var command = Assert.Single(drawList.Commands);
+        Assert.Equal(UIDrawCommandType.StrokedEllipse, command.Type);
+        Assert.Equal(2.5f, command.StrokeWidth);
+        Assert.Equal(new UIClipRect(0f, 0f, 50f, 50f), command.Clip);
+    }
+
+    /// <summary>Verifies a rounded rectangle remains one analytic semantic primitive.</summary>
+    [Fact]
+    public void AddRoundedRectangle_StoresSingleClampedShapeCommand()
+    {
+        var drawList = new UIDrawList
+        {
+            CurrentLayer = UIDrawLayer.Overlay,
+            CurrentClip = new UIClipRect(0f, 0f, 100f, 50f)
+        };
+
+        drawList.AddRoundedRectangle(10f, 10f, 90f, 40f, 30f, Color.White);
+
+        var command = Assert.Single(drawList.Commands);
+        Assert.Equal(UIDrawCommandType.RoundedRectangle, command.Type);
+        Assert.Equal(15f, command.CornerRadius);
+        Assert.Equal(UIDrawLayer.Overlay, command.Layer);
+        Assert.Equal(new UIClipRect(0f, 0f, 100f, 50f), command.Clip);
+    }
+
     /// <summary>Verifies clipping ancestors attach intersected clips to descendant commands.</summary>
     [Fact]
     public void BuildDrawList_ClippingAncestors_IntersectDescendantClip()

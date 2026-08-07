@@ -165,18 +165,17 @@ public sealed class Icon : UIElement
         }
     }
 
-    /// <summary>Draws an octagonal search lens and handle.</summary>
+    /// <summary>Draws an analytic circular search lens and handle.</summary>
     /// <param name="drawList">Draw list receiving strokes.</param>
     private void PaintSearch(UIDrawList drawList)
     {
-        AddLine(drawList, 0.25f, 0.18f, 0.55f, 0.18f);
-        AddLine(drawList, 0.55f, 0.18f, 0.72f, 0.35f);
-        AddLine(drawList, 0.72f, 0.35f, 0.72f, 0.55f);
-        AddLine(drawList, 0.72f, 0.55f, 0.55f, 0.72f);
-        AddLine(drawList, 0.55f, 0.72f, 0.35f, 0.72f);
-        AddLine(drawList, 0.35f, 0.72f, 0.18f, 0.55f);
-        AddLine(drawList, 0.18f, 0.55f, 0.18f, 0.35f);
-        AddLine(drawList, 0.18f, 0.35f, 0.25f, 0.18f);
+        drawList.AddEllipseStroke(
+            ContentLeft + ContentWidth * 0.18f,
+            ContentTop + ContentHeight * 0.18f,
+            ContentLeft + ContentWidth * 0.72f,
+            ContentTop + ContentHeight * 0.72f,
+            _strokeThickness,
+            ForegroundColor);
         AddLine(drawList, 0.62f, 0.64f, 0.84f, 0.86f);
     }
 
