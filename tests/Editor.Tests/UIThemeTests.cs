@@ -88,6 +88,28 @@ public class UIThemeTests
             command => command.Type == UIDrawCommandType.RoundedRectangle);
     }
 
+    /// <summary>Verifies static box styling suppresses state paint without changing toggle state.</summary>
+    [Fact]
+    public void ToggleButton_StaticVisualState_PreservesBehaviorWithoutStateFill()
+    {
+        var button = new ToggleButton(100f, 30f, "Header", UITheme.Dark)
+        {
+            VisualStateMode = BoxVisualStateMode.Static,
+            IsChecked = true
+        };
+
+        button.SetHover(true);
+        button.SetPressed(true);
+        var commands = button.BuildDrawList().Commands;
+
+        Assert.True(button.IsChecked);
+        Assert.True(button.IsHovered);
+        Assert.True(button.IsPressed);
+        Assert.DoesNotContain(commands,
+            command => command.Type is UIDrawCommandType.Rectangle or
+                UIDrawCommandType.RoundedRectangle);
+    }
+
     /// <summary>Verifies convenience labels size buttons while explicit width is preserved.</summary>
     [Fact]
     public void Button_AutoWidth_FollowsContentWhileExplicitWidthIsPreserved()
@@ -154,7 +176,8 @@ public class UIThemeTests
 
         var commands = surface.BuildDrawList().Commands;
 
-        Assert.Equal(5, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
+        Assert.Equal(1, commands.Count(command => command.Type == UIDrawCommandType.RoundedRectangle));
+        Assert.Equal(4, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
     }
 
     /// <summary>Verifies transparent dock surfaces omit redundant full-panel fill geometry.</summary>
@@ -169,6 +192,19 @@ public class UIThemeTests
         var commands = surface.BuildDrawList().Commands;
 
         Assert.Equal(4, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
+        Assert.Empty(commands.Where(command => command.Type == UIDrawCommandType.RoundedRectangle));
+    }
+
+    /// <summary>Verifies panel corners are rounded with theme radius by default.</summary>
+    [Fact]
+    public void Panel_DefaultRadius_FromTheme()
+    {
+        var panel = new Panel(UITheme.Dark.Canvas, 100f, 50f);
+
+        var command = Assert.Single(panel.BuildDrawList().Commands);
+
+        Assert.Equal(UIDrawCommandType.RoundedRectangle, command.Type);
+        Assert.Equal(UITheme.Dark.PanelCornerRadius, command.CornerRadius);
     }
 
     /// <summary>Verifies section headers use the same fill as their panel content.</summary>

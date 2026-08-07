@@ -46,8 +46,14 @@ public class ToggleButton : Button
     /// <param name="height">Button height.</param>
     /// <param name="label">Button label.</param>
     /// <param name="theme">Theme supplying visual states.</param>
-    public ToggleButton(float width, float height, string label, UITheme? theme = null)
-        : base(width, height, label, theme ?? UITheme.Dark)
+    /// <param name="style">Button emphasis and interaction treatment.</param>
+    public ToggleButton(
+        float width,
+        float height,
+        string label,
+        UITheme? theme = null,
+        ButtonStyle style = ButtonStyle.Subtle)
+        : base(width, height, label, theme ?? UITheme.Dark, style)
     {
         _theme = theme ?? UITheme.Dark;
     }
@@ -68,7 +74,7 @@ public class ToggleButton : Button
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        if (IsChecked)
+        if (IsChecked && VisualStateMode == BoxVisualStateMode.Interactive)
             drawList.AddRoundedRectangle(Left, Top, Right, Bottom, CornerRadius, _theme.AccentPressed);
         base.Paint(drawList);
     }

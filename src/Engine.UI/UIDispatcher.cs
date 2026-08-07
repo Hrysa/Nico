@@ -8,6 +8,7 @@ public sealed class UIDispatcher : IDisposable
     private readonly ConcurrentQueue<Action> _pending = new();
     private readonly Action _requestFrame;
     private readonly int _ownerThreadId;
+    private int _framePending;
     private bool _disposed;
 
     /// <summary>Creates a dispatcher owned by the calling thread.</summary>
@@ -41,14 +42,28 @@ public sealed class UIDispatcher : IDisposable
         ArgumentNullException.ThrowIfNull(action);
         ObjectDisposedException.ThrowIf(_disposed, this);
         _pending.Enqueue(action);
-        _requestFrame();
+        RequestFrameCore();
     }
 
     /// <summary>Requests one frame from the owning host without queuing work.</summary>
     public void RequestFrame()
     {
         VerifyAccess();
-        _requestFrame();
+        RequestFrameCore();
+    }
+
+    /// <summary>Begins one host update and allows later invalidations to schedule another frame.</summary>
+    internal void BeginFrame()
+    {
+        VerifyAccess();
+        Interlocked.Exchange(ref _framePending, 0);
+    }
+
+    /// <summary>Coalesces frame wakes from either the owner or a posting worker thread.</summary>
+    private void RequestFrameCore()
+    {
+        if (Interlocked.Exchange(ref _framePending, 1) == 0)
+            _requestFrame();
     }
 
     /// <summary>Executes all work queued before or during this drain operation.</summary>
@@ -72,6 +87,7 @@ public sealed class UIDispatcher : IDisposable
             return;
         VerifyAccess();
         _disposed = true;
+        Interlocked.Exchange(ref _framePending, 0);
         while (_pending.TryDequeue(out _))
         {
         }

@@ -81,7 +81,11 @@ public sealed class TabControl : UIElement
         ArgumentNullException.ThrowIfNull(content);
         var index = _items.Count;
         var item = new TabItem(header, content);
-        var button = new ToggleButton(DefaultHeaderWidth, HeaderHeight, header, _theme);
+        var button = new ToggleButton(
+            DefaultHeaderWidth, HeaderHeight, header, _theme, ButtonStyle.Header)
+        {
+            VisualStateMode = BoxVisualStateMode.Static
+        };
         button.Click += () =>
         {
             if (SelectedIndex == index)

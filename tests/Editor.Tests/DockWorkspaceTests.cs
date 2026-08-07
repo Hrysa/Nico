@@ -273,6 +273,31 @@ public sealed class DockWorkspaceTests
         Assert.Same(session.MainHost, profiler.Parent?.Parent?.Parent);
     }
 
+    /// <summary>Verifies floating recurring work contributes to the shared window-loop demand.</summary>
+    [Fact]
+    public void DockSession_FloatingFrameDemand_AggregatesOpenWindows()
+    {
+        var group = new DockTabGroup([
+            new DockTab("scene", "Scene"),
+            new DockTab("profiler", "Profiler")
+        ]);
+        var registry = new DockPanelRegistry();
+        registry.Register("scene", "Scene",
+            () => new Panel(Engine.Graphics.Color.Black, 10f, 10f));
+        registry.Register("profiler", "Profiler",
+            () => new Panel(Engine.Graphics.Color.Gray, 10f, 10f));
+        var factory = new FakeFloatingWindowFactory();
+        using var session = new DockSession(
+            new DockWorkspace { Root = group }, registry, factory);
+        Assert.True(session.FloatTab("profiler", 10f, 20f, 400f, 300f));
+
+        Assert.False(session.RequiresContinuousUpdates);
+        factory.Windows[0].RequiresContinuousUpdates = true;
+        Assert.True(session.RequiresContinuousUpdates);
+        factory.Windows[0].Dispose();
+        Assert.False(session.RequiresContinuousUpdates);
+    }
+
     /// <summary>Verifies a floating-host mutation refresh closes an emptied window and reparents content.</summary>
     [Fact]
     public void DockSession_FloatingMutation_ReconcilesAllPresentations()
@@ -372,8 +397,12 @@ public sealed class DockWorkspaceTests
         var factory = new FakeFloatingWindowFactory();
         using var session = new DockSession(workspace, registry, factory);
         var floatingWindow = factory.Windows[0];
+        floatingWindow.Content.Measure(new System.Numerics.Vector2(300f, 152f));
+        floatingWindow.Content.Arrange(
+            new System.Numerics.Vector2(0f, 48f),
+            new System.Numerics.Vector2(300f, 152f));
         var screenPosition = floatingWindow.CoordinateMapper.ClientToScreen(
-            new System.Numerics.Vector2(150f, 100f));
+            new System.Numerics.Vector2(150f, 148f));
 
         Assert.True(session.TryGetDropTarget(screenPosition, out var target));
         Assert.Same(floatingWindow.Content, target.Host);
@@ -505,8 +534,11 @@ public sealed class DockWorkspaceTests
         registry.Register("profiler", "Profiler",
             () => new Panel(Engine.Graphics.Color.Gray, 10f, 10f));
         var factory = new FakeFloatingWindowFactory();
+        var mainCoordinates = new FakeWindowCoordinateMapper(
+            new System.Numerics.Vector2(100f, 200f), 1f);
         using var session = new DockSession(
-            new DockWorkspace { Root = group }, registry, factory);
+            new DockWorkspace { Root = group }, registry, factory,
+            mainCoordinates: mainCoordinates);
         session.MainHost.Width = 400f;
         session.MainHost.Height = 200f;
         session.MainHost.BuildDrawList();
@@ -520,8 +552,8 @@ public sealed class DockWorkspaceTests
         Assert.Equal(["scene"], group.Tabs.Select(tab => tab.Id));
         Assert.Single(session.Workspace.FloatingRoots);
         Assert.Single(factory.Windows);
-        Assert.Equal(426f, session.Workspace.FloatingRoots[0].Left);
-        Assert.Equal(224f, session.Workspace.FloatingRoots[0].Top);
+        Assert.Equal(526f, session.Workspace.FloatingRoots[0].Left);
+        Assert.Equal(424f, session.Workspace.FloatingRoots[0].Top);
     }
 
     /// <summary>Verifies floating policy rejects drag-outside without disabling ordinary tab dragging.</summary>
@@ -972,9 +1004,9 @@ public sealed class DockWorkspaceTests
         Assert.Equal(["scene", "game"], group.Tabs.Select(tab => tab.Id));
     }
 
-    /// <summary>Verifies the visible header close button uses the host close mutation.</summary>
+    /// <summary>Verifies dock headers do not mount a trailing close button.</summary>
     [Fact]
-    public void DockHost_CloseButton_RemovesTab()
+    public void DockHost_Header_HasNoCloseButton()
     {
         var group = new DockTabGroup([
             new DockTab("scene", "Scene"),
@@ -993,7 +1025,7 @@ public sealed class DockWorkspaceTests
         router.Press();
         router.Release(invokeClick: true);
 
-        Assert.Equal(["game"], group.Tabs.Select(tab => tab.Id));
+        Assert.Equal(["scene", "game"], group.Tabs.Select(tab => tab.Id));
     }
 
     /// <summary>Verifies tabs can move within a retained group without duplication.</summary>
@@ -1095,7 +1127,7 @@ public sealed class DockWorkspaceTests
 
     /// <summary>Tracks fake floating-window lifecycle.</summary>
     private sealed class FakeFloatingWindow : IDockFloatingWindow, IDockFloatingGeometry,
-        IDockFloatingWindowCoordinates, IDockFloatingDragHost
+        IDockFloatingWindowCoordinates, IDockFloatingDragHost, IDockFloatingFrameDemand
     {
         private readonly FloatingDockRoot _model;
         /// <summary>Gets hosted dock content.</summary>
@@ -1109,6 +1141,9 @@ public sealed class DockWorkspaceTests
 
         /// <summary>Gets the number of dock-preview submissions.</summary>
         internal int PreviewRefreshCount { get; private set; }
+
+        /// <inheritdoc/>
+        public bool RequiresContinuousUpdates { get; internal set; }
 
         /// <summary>Gets or sets geometry copied into the model on synchronization.</summary>
         internal (float Left, float Top, float Width, float Height)? NextGeometry { get; set; }

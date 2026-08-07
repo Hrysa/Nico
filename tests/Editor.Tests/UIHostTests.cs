@@ -229,6 +229,64 @@ public class UIHostTests
         Assert.True(services.SubmitCount > initialSubmissions);
     }
 
+    /// <summary>Verifies retained invalidation schedules and submits a frame without another input event.</summary>
+    [Fact]
+    public void Host_VisualInvalidation_RequestsAndSubmitsNextFrame()
+    {
+        var services = new HostServices();
+        var root = new Panel(Color.Black);
+        using var host = new UIHost(services, services, services, root, 320f, 200f);
+        services.PumpFrame(0d);
+        var requests = services.RequestFrameCount;
+        var submissions = services.SubmitCount;
+
+        root.BackgroundColor = Color.Red;
+
+        Assert.Equal(requests + 1, services.RequestFrameCount);
+        services.PumpFrame(0d);
+        Assert.Equal(submissions + 1, services.SubmitCount);
+        services.PumpFrame(0d);
+        Assert.Equal(submissions + 1, services.SubmitCount);
+    }
+
+    /// <summary>Verifies several retained mutations share one pending host wake.</summary>
+    [Fact]
+    public void Host_MultipleInvalidations_CoalesceFrameRequest()
+    {
+        var services = new HostServices();
+        var root = new Panel(Color.Black);
+        using var host = new UIHost(services, services, services, root, 320f, 200f);
+        services.PumpFrame(0d);
+        var requests = services.RequestFrameCount;
+
+        root.BackgroundColor = Color.Red;
+        root.ForegroundColor = Color.White;
+        root.Padding = new Thickness(4f);
+
+        Assert.Equal(requests + 1, services.RequestFrameCount);
+    }
+
+    /// <summary>Verifies rebuilding a hosted dock tree paints on the next tick without new input.</summary>
+    [Fact]
+    public void Host_DockRefresh_SubmitsNextFrameWithoutInput()
+    {
+        var services = new HostServices();
+        var workspace = new DockWorkspace
+        {
+            Root = new DockTabGroup([new DockTab("scene", "Scene")])
+        };
+        var content = new Panel(Color.Black);
+        var root = new DockHost(workspace, id => id == "scene" ? content : null);
+        using var host = new UIHost(services, services, services, root, 320f, 200f);
+        services.PumpFrame(0d);
+        var submissions = services.SubmitCount;
+
+        root.Refresh();
+        services.PumpFrame(0d);
+
+        Assert.Equal(submissions + 1, services.SubmitCount);
+    }
+
     /// <summary>Verifies held repeat buttons advance from host update time and stop on release.</summary>
     [Fact]
     public void Host_Update_AdvancesHeldRepeatButton()
@@ -935,6 +993,36 @@ public class UIHostTests
         Assert.Equal(0, child.ActiveAnimationCount);
     }
 
+    /// <summary>Verifies routed drag completion can synchronously dispose its owning host.</summary>
+    [Fact]
+    public void Host_DragCompletionDisposesHost_DoesNotRefreshDisposedDispatcher()
+    {
+        var services = new VersionedHostServices();
+        var root = new Canvas();
+        var source = new Panel(Color.Red, 40f, 40f)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            DragData = new UIDragData("panel"),
+            AllowedDragEffects = UIDragEffect.Move
+        };
+        root.Add(source, Vector2.Zero);
+        var host = new UIHost(services, services, services, root, 100f, 100f);
+        source.Drag += (_, dragEvent) =>
+        {
+            if (dragEvent.Kind == UIDragEventKind.Cancel)
+                host.Dispose();
+        };
+
+        services.RaiseVersionedPress(new Vector2(10f, 10f));
+        services.RaiseVersionedMove(new Vector2(80f, 80f));
+        var exception = Record.Exception(() =>
+            services.RaiseVersionedRelease(new Vector2(80f, 80f)));
+
+        Assert.Null(exception);
+        host.Dispose();
+    }
+
     /// <summary>Verifies runtime culture propagates and derives root text direction once.</summary>
     [Fact]
     public void Host_SetCulture_PropagatesCultureAndFlowDirection()
@@ -1048,6 +1136,9 @@ public class UIHostTests
         /// <summary>Gets the number of retained UI submissions.</summary>
         internal int SubmitCount { get; private set; }
 
+        /// <summary>Gets the number of one-shot frame wake requests.</summary>
+        internal int RequestFrameCount { get; private set; }
+
         /// <summary>Gets the most recently requested recurring-update state.</summary>
         internal bool ContinuousRendering { get; private set; }
 
@@ -1145,7 +1236,7 @@ public class UIHostTests
         public void PumpFrame() => Update?.Invoke(0d);
 
         /// <inheritdoc/>
-        public void RequestFrame() { }
+        public void RequestFrame() => RequestFrameCount++;
 
         /// <inheritdoc/>
         public void SetContinuousRendering(bool enabled) => ContinuousRendering = enabled;

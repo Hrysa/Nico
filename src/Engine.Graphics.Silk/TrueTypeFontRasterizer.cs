@@ -17,6 +17,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     private const int AtlasPadding = 2;
     private const int GlyphOversampling = 2;
     private const int MaximumShapedRuns = 1024;
+    private const string CodiconResourceName = "codicon.ttf";
     private static readonly object SharedGlyphLock = new();
     private static readonly Dictionary<GlyphShapeKey, RasterizedGlyph> SharedGlyphs = [];
     private readonly List<FontFace> _fonts = [];
@@ -24,6 +25,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     private readonly Dictionary<ShapedRunKey, ShapedLine> _shapedRuns = [];
     private readonly Queue<ShapedRunKey> _shapedRunOrder = [];
     private readonly BidiResolver _bidiResolver = new();
+    private readonly int _codiconFontIndex;
     private int _nextX = AtlasPadding;
     private int _nextY = AtlasPadding;
     private int _rowHeight;
@@ -81,6 +83,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         }
         if (_fonts.Count == 0)
             throw new InvalidOperationException("No usable operating-system UI font was found.");
+        _codiconFontIndex = _fonts.Count;
+        _fonts.Add(LoadEmbeddedFace(CodiconResourceName));
     }
 
     /// <summary>Creates one rasterization and shaping face from a system font source.</summary>
@@ -88,16 +92,35 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <returns>Owned face, or null when the file is not a supported TrueType/OpenType face.</returns>
     private static FontFace? CreateFace(SystemFontSource source)
     {
+        try
+        {
+            return CreateFace(File.ReadAllBytes(source.Path), source.FaceIndex);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Creates one rasterization and shaping face from owned font bytes.</summary>
+    /// <param name="data">Complete TrueType or OpenType font data.</param>
+    /// <param name="faceIndex">Font collection face index.</param>
+    /// <returns>Owned face, or null when the bytes do not contain the requested face.</returns>
+    private static FontFace? CreateFace(byte[] data, int faceIndex)
+    {
         stbtt_fontinfo? rasterFont = null;
         Blob? blob = null;
         Face? shapingFace = null;
         HarfBuzzFont? shapingFont = null;
         try
         {
-            var data = File.ReadAllBytes(source.Path);
             int fontOffset;
             fixed (byte* pointer = data)
-                fontOffset = stbtt_GetFontOffsetForIndex(pointer, source.FaceIndex);
+                fontOffset = stbtt_GetFontOffsetForIndex(pointer, faceIndex);
             if (fontOffset < 0)
                 return null;
             rasterFont = CreateFont(data, fontOffset);
@@ -105,22 +128,33 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
                 return null;
             fixed (byte* pointer = data)
                 blob = new Blob((IntPtr)pointer, data.Length, MemoryMode.Duplicate);
-            shapingFace = new Face(blob, checked((uint)source.FaceIndex));
+            shapingFace = new Face(blob, checked((uint)faceIndex));
             shapingFont = new HarfBuzzFont(shapingFace);
             shapingFont.SetFunctionsOpenType();
             shapingFont.SetScale(shapingFace.UnitsPerEm, shapingFace.UnitsPerEm);
-            return new FontFace(source, rasterFont, blob, shapingFace, shapingFont);
+            return new FontFace(rasterFont, blob, shapingFace, shapingFont);
         }
-        catch (IOException)
+        catch
         {
             DisposePartialFace(rasterFont, blob, shapingFace, shapingFont);
-            return null;
+            throw;
         }
-        catch (UnauthorizedAccessException)
-        {
-            DisposePartialFace(rasterFont, blob, shapingFace, shapingFont);
-            return null;
-        }
+    }
+
+    /// <summary>Loads one required font face embedded in this renderer assembly.</summary>
+    /// <param name="resourceName">Manifest resource name.</param>
+    /// <returns>Owned rasterization and shaping face.</returns>
+    private static FontFace LoadEmbeddedFace(string resourceName)
+    {
+        using var stream = typeof(TrueTypeFontRasterizer).Assembly
+            .GetManifestResourceStream(resourceName) ??
+            throw new InvalidOperationException(
+                $"Required embedded font resource '{resourceName}' was not found.");
+        var data = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(data);
+        return CreateFace(data, 0) ??
+            throw new InvalidOperationException(
+                $"Embedded font resource '{resourceName}' is not a supported TrueType face.");
     }
 
     /// <summary>Releases a partially constructed system font face after loading fails.</summary>
@@ -159,7 +193,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     {
         if (fontSize <= 0f)
             throw new ArgumentOutOfRangeException(nameof(fontSize));
-        return BuildShapedLine(text.ToString(), fontSize, direction).Width;
+        return BuildShapedLine(
+            text.ToString(), fontSize, direction, UIFontFamily.Default).Width;
     }
 
     /// <summary>Finds the nearest caret using rendered glyph advances and kerning.</summary>
@@ -187,7 +222,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     {
         if (fontSize <= 0f)
             throw new ArgumentOutOfRangeException(nameof(fontSize));
-        var line = BuildShapedLine(text.ToString(), fontSize, direction);
+        var line = BuildShapedLine(
+            text.ToString(), fontSize, direction, UIFontFamily.Default);
         if (line.Carets.Length == 0)
             return 0;
         if (horizontalPosition <= line.Carets[0].Position)
@@ -218,7 +254,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
             throw new ArgumentOutOfRangeException(nameof(fontSize));
         if ((uint)caretIndex > (uint)text.Length)
             throw new ArgumentOutOfRangeException(nameof(caretIndex));
-        var line = BuildShapedLine(text.ToString(), fontSize, direction);
+        var line = BuildShapedLine(
+            text.ToString(), fontSize, direction, UIFontFamily.Default);
         return FindCaretPosition(line.Carets, caretIndex);
     }
 
@@ -244,7 +281,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         if (selectionLength == 0)
             return [];
         var selectionEnd = selectionStart + selectionLength;
-        var line = BuildShapedLine(text.ToString(), fontSize, direction);
+        var line = BuildShapedLine(
+            text.ToString(), fontSize, direction, UIFontFamily.Default);
         var result = new List<TextSelectionRange>();
         var rangeStart = 0f;
         var rangeEnd = 0f;
@@ -396,7 +434,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     {
         framebufferScale = MathF.Max(1f, framebufferScale);
         var pixelHeight = Math.Max(1, (int)MathF.Round(command.FontPixelHeight * framebufferScale));
-        var line = GetShapedRun(command.Text, pixelHeight, command.TextDirection);
+        var line = GetShapedRun(
+            command.Text, pixelHeight, command.TextDirection, command.FontFamily);
         var run = line.Glyphs;
         var baselineFont = GetFont(run.Length > 0 ? run[0].FontIndex : 0);
         int ascent;
@@ -453,7 +492,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         ArgumentNullException.ThrowIfNull(text);
         if (pixelHeight <= 0)
             throw new ArgumentOutOfRangeException(nameof(pixelHeight));
-        GetShapedRun(text, pixelHeight, direction);
+        GetShapedRun(text, pixelHeight, direction, UIFontFamily.Default);
     }
 
     /// <summary>Returns the shaped glyph count for diagnostics and regression tests.</summary>
@@ -465,7 +504,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         ArgumentNullException.ThrowIfNull(text);
         if (pixelHeight <= 0)
             throw new ArgumentOutOfRangeException(nameof(pixelHeight));
-        return GetShapedRun(text, pixelHeight, TextFlowDirection.Auto).Glyphs.Length;
+        return GetShapedRun(
+            text, pixelHeight, TextFlowDirection.Auto, UIFontFamily.Default).Glyphs.Length;
     }
 
     /// <summary>Returns the selected system fallback-chain face for diagnostics.</summary>
@@ -485,7 +525,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     internal int GetShapedFontIndex(string text, int pixelHeight, int textIndex)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var glyphs = GetShapedRun(text, pixelHeight, TextFlowDirection.Auto).Glyphs;
+        var glyphs = GetShapedRun(
+            text, pixelHeight, TextFlowDirection.Auto, UIFontFamily.Default).Glyphs;
         for (var index = 0; index < glyphs.Length; index++)
         {
             if (glyphs[index].TextIndex == textIndex)
@@ -501,7 +542,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     internal int GetMissingGlyphCount(string text, int pixelHeight)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var glyphs = GetShapedRun(text, pixelHeight, TextFlowDirection.Auto).Glyphs;
+        var glyphs = GetShapedRun(
+            text, pixelHeight, TextFlowDirection.Auto, UIFontFamily.Default).Glyphs;
         var count = 0;
         for (var index = 0; index < glyphs.Length; index++)
         {
@@ -518,7 +560,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     internal int GetVisibleGlyphCount(string text, int pixelHeight)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var glyphs = GetShapedRun(text, pixelHeight, TextFlowDirection.Auto).Glyphs;
+        var glyphs = GetShapedRun(
+            text, pixelHeight, TextFlowDirection.Auto, UIFontFamily.Default).Glyphs;
         var count = 0;
         for (var index = 0; index < glyphs.Length; index++)
         {
@@ -547,7 +590,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         ArgumentNullException.ThrowIfNull(text);
         if (pixelHeight <= 0)
             throw new ArgumentOutOfRangeException(nameof(pixelHeight));
-        var carets = GetShapedRun(text, pixelHeight, direction).Carets;
+        var carets = GetShapedRun(
+            text, pixelHeight, direction, UIFontFamily.Default).Carets;
         var result = new int[carets.Length];
         for (var index = 0; index < carets.Length; index++)
             result[index] = carets[index].TextIndex;
@@ -571,16 +615,18 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="text">Text to shape.</param>
     /// <param name="pixelHeight">Physical font height used as the cache key.</param>
     /// <param name="direction">Paragraph base direction.</param>
+    /// <param name="fontFamily">Requested renderer-provided typeface.</param>
     /// <returns>Cached visual glyph and caret sequence.</returns>
     private ShapedLine GetShapedRun(
         string text,
         int pixelHeight,
-        TextFlowDirection direction)
+        TextFlowDirection direction,
+        UIFontFamily fontFamily)
     {
-        var key = new ShapedRunKey(text, pixelHeight, direction);
+        var key = new ShapedRunKey(text, pixelHeight, direction, fontFamily);
         if (_shapedRuns.TryGetValue(key, out var cached))
             return cached;
-        var shaped = BuildShapedLine(text, pixelHeight, direction);
+        var shaped = BuildShapedLine(text, pixelHeight, direction, fontFamily);
         while (_shapedRuns.Count >= MaximumShapedRuns && _shapedRunOrder.Count > 0)
             _shapedRuns.Remove(_shapedRunOrder.Dequeue());
         _shapedRuns.Add(key, shaped);
@@ -592,11 +638,13 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="text">UTF-16 source text.</param>
     /// <param name="pixelHeight">Physical or logical font height.</param>
     /// <param name="direction">Paragraph base direction.</param>
+    /// <param name="fontFamily">Requested renderer-provided typeface.</param>
     /// <returns>Resolved shaped line.</returns>
     private ShapedLine BuildShapedLine(
         string text,
         float pixelHeight,
-        TextFlowDirection direction)
+        TextFlowDirection direction,
+        UIFontFamily fontFamily)
     {
         var resolved = _bidiResolver.Resolve(text.AsSpan(), direction);
         var glyphs = new List<ShapedGlyph>();
@@ -607,7 +655,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         {
             var run = resolved.Runs[runIndex];
             var runText = text.AsSpan(run.Utf16Start, run.Utf16Length);
-            var fontRuns = BuildFontRuns(runText);
+            var fontRuns = BuildFontRuns(runText, fontFamily);
             var fontRunIndex = run.IsRightToLeft ? fontRuns.Count - 1 : 0;
             var fontRunEnd = run.IsRightToLeft ? -1 : fontRuns.Count;
             var fontRunStep = run.IsRightToLeft ? -1 : 1;
@@ -666,10 +714,17 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
 
     /// <summary>Splits one directional run into grapheme-safe adjacent system-font runs.</summary>
     /// <param name="text">Logical UTF-16 directional run.</param>
+    /// <param name="fontFamily">Requested renderer-provided typeface.</param>
     /// <returns>Font runs in logical order.</returns>
-    private List<FontRun> BuildFontRuns(ReadOnlySpan<char> text)
+    private List<FontRun> BuildFontRuns(ReadOnlySpan<char> text, UIFontFamily fontFamily)
     {
         var runs = new List<FontRun>();
+        if (fontFamily == UIFontFamily.Codicon)
+        {
+            if (!text.IsEmpty)
+                runs.Add(new FontRun(0, text.Length, _codiconFontIndex));
+            return runs;
+        }
         var start = 0;
         while (start < text.Length)
         {
@@ -931,14 +986,16 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="PixelHeight">Physical pixel height.</param>
     private readonly record struct GlyphShapeKey(int FontIndex, int Codepoint, int PixelHeight);
 
-    /// <summary>Keys renderer-local shaped lines by text, physical height, and paragraph direction.</summary>
+    /// <summary>Keys renderer-local shaped lines by text, height, direction, and typeface.</summary>
     /// <param name="Text">Run text.</param>
     /// <param name="PixelHeight">Physical font height.</param>
     /// <param name="Direction">Paragraph base direction.</param>
+    /// <param name="FontFamily">Renderer-provided typeface.</param>
     private readonly record struct ShapedRunKey(
         string Text,
         int PixelHeight,
-        TextFlowDirection Direction);
+        TextFlowDirection Direction,
+        UIFontFamily FontFamily);
 
     /// <summary>Stores visual glyphs, caret stops, and total advance for one line.</summary>
     /// <param name="Glyphs">Glyphs in visual order.</param>
@@ -990,14 +1047,12 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="FontIndex">System fallback-chain face index.</param>
     private readonly record struct FontRun(int Utf16Start, int Utf16Length, int FontIndex);
 
-    /// <summary>Owns one system font's stb and HarfBuzz representations.</summary>
-    /// <param name="Source">System font source.</param>
+    /// <summary>Owns one font's stb and HarfBuzz representations.</summary>
     /// <param name="RasterFont">stb rasterization face.</param>
     /// <param name="ShapingBlob">HarfBuzz font bytes.</param>
     /// <param name="ShapingFace">HarfBuzz face.</param>
     /// <param name="ShapingFont">HarfBuzz shaping font.</param>
     private sealed record FontFace(
-        SystemFontSource Source,
         stbtt_fontinfo RasterFont,
         Blob ShapingBlob,
         Face ShapingFace,

@@ -88,6 +88,9 @@ public sealed record UITheme
     /// <summary>Gets the font size used by panel titles.</summary>
     public float PanelTitleFontSize { get; init; } = 16f;
 
+    /// <summary>Gets the standard corner radius used by panels.</summary>
+    public float PanelCornerRadius { get; init; } = 6f;
+
     /// <summary>Gets the standard height of every docked panel header.</summary>
     public float PanelHeaderHeight { get; init; } = 32f;
 

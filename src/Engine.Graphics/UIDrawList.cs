@@ -10,6 +10,16 @@ public enum UIDrawLayer
     Overlay
 }
 
+/// <summary>Identifies a renderer-provided UI typeface.</summary>
+public enum UIFontFamily
+{
+    /// <summary>Uses the platform UI font fallback chain.</summary>
+    Default,
+
+    /// <summary>Uses the bundled Visual Studio Code Codicons font.</summary>
+    Codicon
+}
+
 /// <summary>Identifies the semantic content of a UI draw command.</summary>
 public enum UIDrawCommandType
 {
@@ -82,6 +92,7 @@ public readonly record struct UIClipRect(float Left, float Top, float Right, flo
 /// <param name="Opacity">Multiplicative opacity from zero through one.</param>
 /// <param name="TextDirection">Paragraph direction for text commands.</param>
 /// <param name="CornerRadius">Uniform rounded-rectangle corner radius.</param>
+/// <param name="FontFamily">Renderer-provided typeface used for text commands.</param>
 public readonly record struct UIDrawCommand(
     float Left,
     float Top,
@@ -99,7 +110,8 @@ public readonly record struct UIDrawCommand(
     TextureHandle Texture = default,
     float Opacity = 1f,
     TextFlowDirection TextDirection = TextFlowDirection.LeftToRight,
-    float CornerRadius = 0f);
+    float CornerRadius = 0f,
+    UIFontFamily FontFamily = UIFontFamily.Default);
 
 /// <summary>
 /// Collects semantic UI paint commands without exposing GPU vertex formats.
@@ -291,15 +303,17 @@ public sealed class UIDrawList
     /// <param name="fontSize">Font height in logical pixels.</param>
     /// <param name="color">Text color.</param>
     /// <param name="direction">Paragraph base direction.</param>
+    /// <param name="fontFamily">Renderer-provided typeface.</param>
     public void AddText(
         string text,
         float left,
         float top,
         float fontSize,
         Color color,
-        TextFlowDirection direction = TextFlowDirection.LeftToRight)
+        TextFlowDirection direction = TextFlowDirection.LeftToRight,
+        UIFontFamily fontFamily = UIFontFamily.Default)
     {
-        AddText(text, left, top, fontSize, color, Color.Black, direction);
+        AddText(text, left, top, fontSize, color, Color.Black, direction, fontFamily);
     }
 
     /// <summary>Adds anti-aliased TrueType text over a known background.</summary>
@@ -310,6 +324,7 @@ public sealed class UIDrawList
     /// <param name="color">Text color.</param>
     /// <param name="backgroundColor">Color beneath the text.</param>
     /// <param name="direction">Paragraph base direction.</param>
+    /// <param name="fontFamily">Renderer-provided typeface.</param>
     public void AddText(
         string text,
         float left,
@@ -317,7 +332,8 @@ public sealed class UIDrawList
         float fontSize,
         Color color,
         Color backgroundColor,
-        TextFlowDirection direction = TextFlowDirection.LeftToRight)
+        TextFlowDirection direction = TextFlowDirection.LeftToRight,
+        UIFontFamily fontFamily = UIFontFamily.Default)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (fontSize <= 0f)
@@ -335,7 +351,8 @@ public sealed class UIDrawList
             backgroundColor,
             CurrentLayer,
             Clip: CurrentClip,
-            TextDirection: direction));
+            TextDirection: direction,
+            FontFamily: fontFamily));
     }
 
     /// <summary>Adds editable TrueType text with a separately rendered caret.</summary>

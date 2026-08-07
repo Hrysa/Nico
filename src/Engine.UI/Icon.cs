@@ -2,7 +2,7 @@ using Engine.Graphics;
 
 namespace Engine.UI;
 
-/// <summary>Identifies built-in resolution-independent icon geometry.</summary>
+/// <summary>Identifies built-in symbols sourced from Visual Studio Code Codicons.</summary>
 public enum IconKind
 {
     /// <summary>Draws no symbol.</summary>
@@ -33,12 +33,18 @@ public enum IconKind
     Search
 }
 
-/// <summary>Displays a texture-backed or resolution-independent symbolic icon.</summary>
+/// <summary>Displays a texture-backed image or a bundled Visual Studio Code Codicon glyph.</summary>
 public sealed class Icon : UIElement
 {
+    private const string AddGlyph = "\uEA60";
+    private const string SearchGlyph = "\uEA6D";
+    private const string CloseGlyph = "\uEA76";
+    private const string CheckGlyph = "\uEAB2";
+    private const string ChevronDownGlyph = "\uEAB4";
+    private const string ChevronRightGlyph = "\uEAB6";
+    private const string RemoveGlyph = "\uEB3B";
     private IconKind _kind;
     private TextureHandle _texture;
-    private float _strokeThickness = 1.5f;
 
     /// <summary>Creates a built-in symbolic icon.</summary>
     /// <param name="kind">Symbol to draw.</param>
@@ -96,21 +102,6 @@ public sealed class Icon : UIElement
         }
     }
 
-    /// <summary>Gets or sets symbolic stroke thickness in logical pixels.</summary>
-    public float StrokeThickness
-    {
-        get => _strokeThickness;
-        set
-        {
-            if (value <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(value));
-            if (_strokeThickness == value)
-                return;
-            _strokeThickness = value;
-            InvalidateVisual();
-        }
-    }
-
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
@@ -120,7 +111,7 @@ public sealed class Icon : UIElement
                 ContentLeft + ContentWidth, ContentTop + ContentHeight);
             return;
         }
-        PaintSymbol(drawList);
+        PaintCodicon(drawList);
     }
 
     /// <summary>Configures icons as clipped non-interactive visual content.</summary>
@@ -130,74 +121,31 @@ public sealed class Icon : UIElement
         ClipToBounds = true;
     }
 
-    /// <summary>Emits normalized line geometry for the selected built-in symbol.</summary>
-    /// <param name="drawList">Draw list receiving strokes.</param>
-    private void PaintSymbol(UIDrawList drawList)
+    /// <summary>Emits the official Codicon glyph for the selected built-in symbol.</summary>
+    /// <param name="drawList">Draw list receiving the glyph.</param>
+    private void PaintCodicon(UIDrawList drawList)
     {
-        switch (_kind)
+        var glyph = _kind switch
         {
-            case IconKind.Check:
-                AddLine(drawList, 0.16f, 0.52f, 0.40f, 0.76f);
-                AddLine(drawList, 0.40f, 0.76f, 0.84f, 0.25f);
-                break;
-            case IconKind.ChevronRight:
-                AddLine(drawList, 0.34f, 0.20f, 0.68f, 0.50f);
-                AddLine(drawList, 0.68f, 0.50f, 0.34f, 0.80f);
-                break;
-            case IconKind.ChevronDown:
-                AddLine(drawList, 0.20f, 0.34f, 0.50f, 0.68f);
-                AddLine(drawList, 0.50f, 0.68f, 0.80f, 0.34f);
-                break;
-            case IconKind.Close:
-                AddLine(drawList, 0.22f, 0.22f, 0.78f, 0.78f);
-                AddLine(drawList, 0.78f, 0.22f, 0.22f, 0.78f);
-                break;
-            case IconKind.Plus:
-                AddLine(drawList, 0.20f, 0.50f, 0.80f, 0.50f);
-                AddLine(drawList, 0.50f, 0.20f, 0.50f, 0.80f);
-                break;
-            case IconKind.Minus:
-                AddLine(drawList, 0.20f, 0.50f, 0.80f, 0.50f);
-                break;
-            case IconKind.Search:
-                PaintSearch(drawList);
-                break;
-        }
-    }
-
-    /// <summary>Draws an analytic circular search lens and handle.</summary>
-    /// <param name="drawList">Draw list receiving strokes.</param>
-    private void PaintSearch(UIDrawList drawList)
-    {
-        drawList.AddEllipseStroke(
-            ContentLeft + ContentWidth * 0.18f,
-            ContentTop + ContentHeight * 0.18f,
-            ContentLeft + ContentWidth * 0.72f,
-            ContentTop + ContentHeight * 0.72f,
-            _strokeThickness,
-            ForegroundColor);
-        AddLine(drawList, 0.62f, 0.64f, 0.84f, 0.86f);
-    }
-
-    /// <summary>Adds a line using normalized content-box coordinates.</summary>
-    /// <param name="drawList">Draw list receiving the stroke.</param>
-    /// <param name="startX">Normalized start X.</param>
-    /// <param name="startY">Normalized start Y.</param>
-    /// <param name="endX">Normalized end X.</param>
-    /// <param name="endY">Normalized end Y.</param>
-    private void AddLine(
-        UIDrawList drawList,
-        float startX,
-        float startY,
-        float endX,
-        float endY)
-    {
-        drawList.AddLine(
-            ContentLeft + ContentWidth * startX,
-            ContentTop + ContentHeight * startY,
-            ContentLeft + ContentWidth * endX,
-            ContentTop + ContentHeight * endY,
-            _strokeThickness,
-            ForegroundColor);
+            IconKind.Check => CheckGlyph,
+            IconKind.ChevronRight => ChevronRightGlyph,
+            IconKind.ChevronDown => ChevronDownGlyph,
+            IconKind.Close => CloseGlyph,
+            IconKind.Plus => AddGlyph,
+            IconKind.Minus => RemoveGlyph,
+            IconKind.Search => SearchGlyph,
+            _ => null
+        };
+        if (glyph is null)
+            return;
+        var size = MathF.Min(ContentWidth, ContentHeight);
+        drawList.AddText(
+            glyph,
+            ContentLeft + (ContentWidth - size) * 0.5f,
+            ContentTop + (ContentHeight - size) * 0.5f,
+            size,
+            ForegroundColor,
+            BackgroundColor,
+            fontFamily: UIFontFamily.Codicon);
     }
 }

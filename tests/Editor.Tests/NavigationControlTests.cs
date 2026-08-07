@@ -456,6 +456,32 @@ public class NavigationControlTests
         Assert.Equal(0, tabs.SelectedIndex);
     }
 
+    /// <summary>Verifies tab titles retain button behavior without hover, pressed, or checked fills.</summary>
+    [Fact]
+    public void TabControl_HeaderTitle_DoesNotPaintInteractionBackground()
+    {
+        var tabs = new TabControl(240f, 120f);
+        tabs.AddTab("First", new UIElement());
+        var router = new UIEventRouter(tabs, () => { });
+
+        Assert.DoesNotContain(tabs.BuildDrawList().Commands,
+            command => command.Left == 0f && command.Top == 0f &&
+                command.Right == 100f && command.Bottom == 30f &&
+                command.Type is UIDrawCommandType.Rectangle or
+                    UIDrawCommandType.RoundedRectangle);
+
+        router.MovePointer(new Vector2(20f, 15f));
+        router.Press();
+
+        Assert.DoesNotContain(tabs.BuildDrawList().Commands,
+            command => command.Left == 0f && command.Top == 0f &&
+                command.Right == 100f && command.Bottom == 30f &&
+                command.Type is UIDrawCommandType.Rectangle or
+                    UIDrawCommandType.RoundedRectangle);
+        router.Release(true);
+        Assert.Equal(0, tabs.SelectedIndex);
+    }
+
     /// <summary>Verifies toolbar items arrange horizontally with a semantic separator.</summary>
     [Fact]
     public void ToolBar_ItemsAndSeparator_ArrangeInHorizontalOrder()

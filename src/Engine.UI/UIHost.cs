@@ -240,7 +240,7 @@ public sealed class UIHost : IDisposable
         _ownsTextLayoutOverride = textLayout is not null;
         if (_ownsTextLayoutOverride)
             Root.TextLayoutOverride = textLayout;
-        InputRouter = new UIEventRouter(root, Refresh, window as IClipboardService);
+        InputRouter = new UIEventRouter(root, RefreshIfActive, window as IClipboardService);
         OverlayManager = overlay is null ? null : new UIOverlayManager(overlay, InputRouter);
         if (overlay is not null && window is IDisplayService displayService)
             overlay.PopupWorkAreaProvider = new ViewportDisplayPopupWorkAreaProvider(
@@ -283,12 +283,25 @@ public sealed class UIHost : IDisposable
     {
         Dispatcher.VerifyAccess();
         ObjectDisposedException.ThrowIf(_disposed, this);
+        SubmitSnapshot();
+        _window.RequestFrame();
+    }
+
+    /// <summary>Builds and submits the current retained snapshot without scheduling another tick.</summary>
+    private void SubmitSnapshot()
+    {
         var drawList = Root.BuildDrawList();
         LayoutUpdated?.Invoke();
         _renderer.SubmitUI(drawList);
         _windowsAccessibility?.Update();
         _macOSAccessibility?.Update();
-        _window.RequestFrame();
+    }
+
+    /// <summary>Refreshes routed visual state unless a synchronous event disposed this host.</summary>
+    private void RefreshIfActive()
+    {
+        if (!_disposed)
+            Refresh();
     }
 
     /// <summary>Measures, arranges, and submits the root at a new logical size.</summary>
@@ -418,14 +431,16 @@ public sealed class UIHost : IDisposable
     /// <param name="deltaTime">Elapsed update time, unused by dispatcher work.</param>
     private void OnUpdate(double deltaTime)
     {
+        Dispatcher.BeginFrame();
         Dispatcher.Drain();
         AdvanceNavigationRepeat(deltaTime);
         AdvanceKeyRepeat(deltaTime);
         var timeScale = double.IsFinite(SimulationTimeScale)
             ? Math.Max(0d, SimulationTimeScale)
             : 1d;
-        if (Root.AdvanceTime(deltaTime, deltaTime * timeScale))
-            Refresh();
+        var timeChanged = Root.AdvanceTime(deltaTime, deltaTime * timeScale);
+        if (timeChanged || Root.RequiresDrawListRebuild)
+            SubmitSnapshot();
         if (_schedulingMode is UIHostSchedulingMode.EventDriven or UIHostSchedulingMode.Hybrid)
             UpdateDemandDrivenScheduling();
     }
@@ -499,6 +514,8 @@ public sealed class UIHost : IDisposable
                 InputRouter.Release(logicalEvent,
                     invokeClick: routing == UIHostPointerRouting.Route);
         }
+        if (_disposed)
+            return;
         PointerButtonProcessed?.Invoke(logicalEvent, routed);
         UpdatePointerInteractionScheduling();
     }
@@ -681,6 +698,8 @@ public sealed class UIHost : IDisposable
     private void OnMouseUp(int button)
     {
         InputRouter.Release(invokeClick: true);
+        if (_disposed)
+            return;
         UpdatePointerInteractionScheduling();
     }
 

@@ -5,33 +5,19 @@ namespace Engine.UI;
 /// <summary>
 /// A rectangular panel container. Can hold child UI elements.
 /// </summary>
-public class Panel : UIElement
+public class Panel : Box
 {
-    private bool _paintBackground = true;
-
-    /// <summary>Gets or sets whether the panel emits a background rectangle.</summary>
-    public bool PaintBackground
-    {
-        get => _paintBackground;
-        set { if (_paintBackground != value) { _paintBackground = value; InvalidateVisual(); } }
-    }
-
     /// <summary>
     /// Creates a new Panel at the specified position and size.
     /// </summary>
     /// <param name="width">The panel width.</param>
     /// <param name="height">The panel height.</param>
     /// <param name="backgroundColor">The panel background color.</param>
-    public Panel(Color backgroundColor, float width = 0f, float height = 0f)
+    /// <param name="theme">Theme supplying the panel's default corner radius.</param>
+    public Panel(Color backgroundColor, float width = 0f, float height = 0f, UITheme? theme = null)
         : base(width, height)
     {
         BackgroundColor = backgroundColor;
-    }
-
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-        if (PaintBackground)
-            base.Paint(drawList);
+        CornerRadius = (theme ?? UITheme.Dark).PanelCornerRadius;
     }
 }

@@ -7,27 +7,22 @@ namespace Editor.Tests;
 /// <summary>Verifies reusable symbolic and texture-backed icons.</summary>
 public sealed class IconTests
 {
-    /// <summary>Verifies check icons emit two scaled semantic strokes.</summary>
+    /// <summary>Verifies check icons emit the official Codicon font glyph.</summary>
     [Fact]
-    public void Check_PaintsScaledLineGeometry()
+    public void Check_PaintsCodiconGlyph()
     {
         var icon = new Icon(IconKind.Check, 20f)
         {
-            ForegroundColor = Color.Green,
-            StrokeThickness = 2f
+            ForegroundColor = Color.Green
         };
 
-        var commands = icon.BuildDrawList().Commands;
+        var command = Assert.Single(icon.BuildDrawList().Commands);
 
-        Assert.Equal(2, commands.Count);
-        Assert.All(commands, command =>
-        {
-            Assert.Equal(UIDrawCommandType.Line, command.Type);
-            Assert.Equal(Color.Green, command.Color);
-            Assert.Equal(2f, command.StrokeWidth);
-        });
-        Assert.Equal(3.2f, commands[0].Left, 3);
-        Assert.Equal(10.4f, commands[0].Top, 3);
+        Assert.Equal(UIDrawCommandType.Text, command.Type);
+        Assert.Equal(UIFontFamily.Codicon, command.FontFamily);
+        Assert.Equal("\uEAB2", command.Text);
+        Assert.Equal(Color.Green, command.Color);
+        Assert.Equal(20f, command.FontPixelHeight);
     }
 
     /// <summary>Verifies texture icons use the shared semantic image primitive.</summary>
@@ -57,25 +52,25 @@ public sealed class IconTests
 
         var commands = button.BuildDrawList().Commands;
 
-        Assert.Equal(2, commands.Count);
-        Assert.All(commands, command => Assert.Equal(UIDrawCommandType.Line, command.Type));
+        var icon = Assert.Single(
+            commands, command => command.Type == UIDrawCommandType.Text);
+        Assert.Equal(UIFontFamily.Codicon, icon.FontFamily);
+        Assert.Equal("\uEA76", icon.Text);
     }
 
-    /// <summary>Verifies search icons use a true ellipse stroke instead of polygon segments.</summary>
+    /// <summary>Verifies search icons use the official Codicon search glyph.</summary>
     [Fact]
-    public void Search_PaintsAnalyticLensAndHandle()
+    public void Search_PaintsCodiconGlyph()
     {
         var icon = new Icon(IconKind.Search, 20f)
         {
-            ForegroundColor = Color.White,
-            StrokeThickness = 2f
+            ForegroundColor = Color.White
         };
 
-        var commands = icon.BuildDrawList().Commands;
+        var command = Assert.Single(icon.BuildDrawList().Commands);
 
-        Assert.Equal(2, commands.Count);
-        Assert.Equal(UIDrawCommandType.StrokedEllipse, commands[0].Type);
-        Assert.Equal(2f, commands[0].StrokeWidth);
-        Assert.Equal(UIDrawCommandType.Line, commands[1].Type);
+        Assert.Equal(UIDrawCommandType.Text, command.Type);
+        Assert.Equal(UIFontFamily.Codicon, command.FontFamily);
+        Assert.Equal("\uEA6D", command.Text);
     }
 }

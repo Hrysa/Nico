@@ -330,16 +330,24 @@ void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
         sceneViewportPresentation.Synchronize(detachedWindow);
     if (toolWindow.Content is DockHost sceneDockHost)
     {
-        sceneDockHost.SplitResizeCompleted += () => detachedWindow.ResizeRenderView(
-            sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+        sceneDockHost.SplitResizeCompleted += () =>
+        {
+            detachedWindow.ResizeRenderView(
+                sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+            detachedWindow.RequestFrame();
+        };
     }
     detachedSceneRenderer = new EditorViewportRenderer(
         detachedWindow, sceneViewportId, sceneViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
-    detachedWindow.Resized += (_, _) => detachedWindow.ResizeRenderView(
-        sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+    detachedWindow.Resized += (_, _) =>
+    {
+        detachedWindow.ResizeRenderView(
+            sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+        detachedWindow.RequestFrame();
+    };
     detachedWindow.Update += _ =>
     {
         detachedSceneRenderer?.SetSceneObjects(GetActiveSceneObjects());
@@ -368,6 +376,8 @@ void CloseFloatingSceneViewport(DetachedToolWindow toolWindow)
     window.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
     uiRoot.InvalidateMeasure();
     ResizeEditor(width, height);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
 }
 
 /// <summary>Transfers Game rendering into a newly opened dock window.</summary>
@@ -386,16 +396,24 @@ void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
         gameViewportPresentation.Synchronize(detachedWindow);
     if (toolWindow.Content is DockHost gameDockHost)
     {
-        gameDockHost.SplitResizeCompleted += () => detachedWindow.ResizeRenderView(
-            gameViewportId, gameViewport.Width, gameViewport.Height);
+        gameDockHost.SplitResizeCompleted += () =>
+        {
+            detachedWindow.ResizeRenderView(
+                gameViewportId, gameViewport.Width, gameViewport.Height);
+            detachedWindow.RequestFrame();
+        };
     }
     detachedGameRenderer = new EditorViewportRenderer(
         detachedWindow, gameViewportId, gameViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
-    detachedWindow.Resized += (_, _) => detachedWindow.ResizeRenderView(
-        gameViewportId, gameViewport.Width, gameViewport.Height);
+    detachedWindow.Resized += (_, _) =>
+    {
+        detachedWindow.ResizeRenderView(
+            gameViewportId, gameViewport.Width, gameViewport.Height);
+        detachedWindow.RequestFrame();
+    };
     detachedWindow.Update += _ =>
     {
         detachedGameRenderer?.SetGameScene(
@@ -422,6 +440,8 @@ void CloseFloatingGameViewport(DetachedToolWindow toolWindow)
     window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
     uiRoot.InvalidateMeasure();
     ResizeEditor(width, height);
+    renderScheduler.Invalidate(RenderInvalidation.GameViewport);
+    window.RequestFrame();
 }
 
 /// <summary>Starts an isolated runtime copy of the authored scene.</summary>
@@ -1604,10 +1624,21 @@ void ResizeEditor(int newWidth, int newHeight)
 /// <summary>Reallocates viewport FBOs once a live native resize has settled.</summary>
 void ResizeViewportTargets()
 {
+    var invalidation = RenderInvalidation.None;
     if (detachedSceneWindow is null)
+    {
         window.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+        invalidation |= RenderInvalidation.SceneViewport;
+    }
     if (detachedGameWindow is null)
+    {
         window.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
+        invalidation |= RenderInvalidation.GameViewport;
+    }
+    if (invalidation == RenderInvalidation.None)
+        return;
+    renderScheduler.Invalidate(invalidation);
+    window.RequestFrame();
 }
 
 var pendingResizeWidth = 0;
@@ -1988,11 +2019,18 @@ window.Update += delta =>
         && (gameContinuous || gameInvalid))
         viewportRenderer.RenderGame(gameViewport);
     secondaryWindows.PumpFrames();
+    if (detachedSceneWindow is null &&
+        renderScheduler.Consume(RenderInvalidation.SceneViewport))
+        viewportRenderer.RenderScene(sceneViewport, lastMousePos);
+    if (detachedGameWindow is null &&
+        renderScheduler.Consume(RenderInvalidation.GameViewport))
+        viewportRenderer.RenderGame(gameViewport);
     dockSession.SynchronizeFloatingWindows();
     window.SetContinuousRendering(
         flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
             || pendingResizeTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates
+            || dockSession.RequiresContinuousUpdates
             || dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId) &&
                !editorView.Profiler.IsPaused);
 };

@@ -831,6 +831,8 @@ public class UIElement : Node
         InvalidateTimeUpdateActivity();
         if (Parent is UIElement parent)
             parent.InvalidateMeasure();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates final placement without discarding the desired size.</summary>
@@ -841,6 +843,8 @@ public class UIElement : Node
         _paintValid = false;
         if (Parent is UIElement parent)
             parent.InvalidateArrange();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates cached paint output without discarding layout.</summary>
@@ -851,6 +855,8 @@ public class UIElement : Node
         InvalidateTimeUpdateActivity();
         if (Parent is UIElement parent)
             parent.InvalidateTreeSnapshot();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates only the composed subtree snapshot while retaining local paint commands.</summary>
@@ -859,6 +865,8 @@ public class UIElement : Node
         _visualValid = false;
         if (Parent is UIElement parent)
             parent.InvalidateTreeSnapshot();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates cached active-time state from this element through its visual root.</summary>
@@ -888,6 +896,8 @@ public class UIElement : Node
             if (children[index] is UIElement child)
                 child.InvalidatePaintSubtree();
         }
+        if (Parent is null)
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates cached measurement throughout this subtree after an inherited service change.</summary>
@@ -913,6 +923,8 @@ public class UIElement : Node
         }
         if (Parent is UIElement parent)
             parent.InvalidateMeasure();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates descendants affected by an inherited culture change.</summary>
@@ -939,6 +951,8 @@ public class UIElement : Node
         }
         if (Parent is UIElement parent)
             parent.InvalidateMeasure();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Invalidates descendants affected by an inherited motion preference change.</summary>
@@ -964,6 +978,8 @@ public class UIElement : Node
         }
         if (Parent is UIElement parent)
             parent.InvalidateTreeSnapshot();
+        else
+            Dispatcher?.RequestFrame();
     }
 
     /// <summary>Adds a child to both the visual and logical trees and invalidates layout.</summary>
@@ -1607,6 +1623,9 @@ public class UIElement : Node
         _visualValid = true;
         return drawList;
     }
+
+    /// <summary>Gets whether retained layout or paint state requires another draw-list build.</summary>
+    internal bool RequiresDrawListRebuild => !_measureValid || !_arrangeValid || !_visualValid;
 
     /// <summary>Recursively appends visible paint commands.</summary>
     /// <param name="drawList">Draw list receiving paint commands.</param>

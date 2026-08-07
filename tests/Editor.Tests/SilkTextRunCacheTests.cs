@@ -112,6 +112,24 @@ public sealed class SilkTextRunCacheTests
         Assert.Equal(2, rasterizer.ShapedRunCount);
     }
 
+    /// <summary>Verifies the bundled Codicon face rasterizes its official check glyph.</summary>
+    [Fact]
+    public void AppendVertices_CodiconGlyph_UsesBundledFont()
+    {
+        using var rasterizer = new TrueTypeFontRasterizer();
+        using var vertices = new NativeBuffer<VertexT>();
+        var command = new UIDrawCommand(
+            0f, 0f, 0f, 0f, Color.White,
+            UIDrawCommandType.Text,
+            "\uEAB2",
+            20f,
+            FontFamily: UIFontFamily.Codicon);
+
+        rasterizer.AppendVertices(vertices, command, 1f);
+
+        Assert.Equal(6, vertices.Count);
+    }
+
     /// <summary>Verifies mixed text exposes visual caret order without losing logical indices.</summary>
     [Fact]
     public void ShapeText_MixedDirection_ProducesReorderedCaretSequence()

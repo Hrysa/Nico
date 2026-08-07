@@ -187,7 +187,7 @@ public sealed class DockHost : UIElement
             var tab = group.Tabs[index];
             var content = _resolveContent(tab.Id) ?? CreateMissingContent(tab.Id);
             var tabId = tab.Id;
-            tabs.AddTab(tab.Title, content, () => CloseTab(tabId));
+            tabs.AddTab(tab.Title, content);
             tabs.GetHeader(index).DragData = new UIDragData(
                 new DockTabDragData(tab.Id), tab.Title);
             tabs.GetHeader(index).AllowedDragEffects = UIDragEffect.Move;

@@ -97,6 +97,13 @@ public interface IDockFloatingDragHost
     void RefreshDockPreview();
 }
 
+/// <summary>Exposes recurring update demand owned by a floating presentation.</summary>
+public interface IDockFloatingFrameDemand
+{
+    /// <summary>Gets whether hosted input, animation, or timers require recurring ticks.</summary>
+    bool RequiresContinuousUpdates { get; }
+}
+
 /// <summary>Describes a tab-well target resolved through a native screen coordinate.</summary>
 /// <param name="Host">Presentation host containing the target.</param>
 /// <param name="Group">Authoritative destination group.</param>
@@ -136,6 +143,21 @@ public sealed class DockSession : IDisposable
 
     /// <summary>Gets the main-window dock host.</summary>
     public DockHost MainHost { get; }
+
+    /// <summary>Gets whether any live floating presentation requires recurring update ticks.</summary>
+    public bool RequiresContinuousUpdates
+    {
+        get
+        {
+            foreach (var presentation in _floatingWindows.Values)
+            {
+                if (presentation.Window.IsOpen &&
+                    presentation.Window is IDockFloatingFrameDemand { RequiresContinuousUpdates: true })
+                    return true;
+            }
+            return false;
+        }
+    }
 
     /// <summary>Creates a dock presentation session.</summary>
     /// <param name="workspace">Workspace model.</param>
@@ -496,7 +518,8 @@ public sealed class DockSession : IDisposable
         Vector2 screenPosition,
         out DockScreenDropTarget target)
     {
-        var localPosition = coordinates.ScreenToClient(screenPosition);
+        var windowPosition = coordinates.ScreenToClient(screenPosition);
+        var localPosition = windowPosition - new Vector2(host.Left, host.Top);
         if (host.TryGetDropTarget(localPosition, out var group, out var bounds) && group is not null)
         {
             target = new DockScreenDropTarget(host, group, localPosition, bounds);
@@ -553,10 +576,13 @@ public sealed class DockSession : IDisposable
         Vector2 position,
         bool canFloat)
     {
+        var floatingPosition = position - new Vector2(24f, 16f);
         if (TryGetCoordinates(sourceHost, out var sourceCoordinates) &&
             sourceCoordinates is not null)
         {
             var screenPosition = sourceCoordinates.ClientToScreen(position);
+            floatingPosition = sourceCoordinates.ClientToScreen(
+                position - new Vector2(24f, 16f));
             if (TryGetDropTarget(screenPosition, out var target) &&
                 !ReferenceEquals(target.Host, sourceHost))
             {
@@ -569,7 +595,7 @@ public sealed class DockSession : IDisposable
             }
         }
         if (canFloat)
-            FloatTab(tabId, position.X - 24f, position.Y - 16f, 640f, 480f);
+            FloatTab(tabId, floatingPosition.X, floatingPosition.Y, 640f, 480f);
     }
 
     /// <summary>Pairs one floating model presentation with its retained host.</summary>

@@ -17,6 +17,9 @@ public sealed class DetachedToolWindow : IDisposable
     /// <summary>Gets the detached content.</summary>
     public UIElement Content { get; }
 
+    /// <summary>Gets the custom title bar shared with the main Editor window style.</summary>
+    public TitleBar TitleBar { get; }
+
     /// <summary>Gets the UI host and its per-window input state.</summary>
     public UIHost UIHost => _uiHost;
 
@@ -38,19 +41,47 @@ public sealed class DetachedToolWindow : IDisposable
         ArgumentNullException.ThrowIfNull(content);
         _windowGroup = windowGroup;
         Content = content;
-        _root = new Grid(UITheme.Dark.Canvas);
+        var theme = UITheme.Dark;
+        var titleBarHeight = OperatingSystem.IsWindows() ? 36f : 48f;
+        _root = new Grid(theme.Canvas);
+        _root.Rows.Add(GridLength.Pixels(titleBarHeight));
         _root.Rows.Add(GridLength.Star());
         _root.Columns.Add(GridLength.Star());
-        _root.Add(content, 0, 0);
+        TitleBar = new TitleBar(width, titleBarHeight, theme)
+        {
+            Width = 0f,
+            Margin = new Thickness(0f, 0f, 0f, 1f)
+        };
+        TitleBar.CenterZone.AddChild(new Label(title)
+        {
+            FontSize = theme.FontSize,
+            ForegroundColor = theme.TextSecondary,
+            PaddingLeft = 0f,
+            IsHitTestVisible = false
+        });
+        _root.Add(TitleBar, 0, 0);
+        _root.Add(content, 1, 0);
         Window = windowGroup.CreateWindow(new WindowOptions
         {
             Title = title,
             Width = width,
             Height = height,
-            CustomTitleBar = false
+            CustomTitleBar = true
         });
         _uiHost = new UIHost(
             Window, Window, Window, _root, width, height, textLayout: Window);
+        TitleBar.DragStarted += () => Window.BeginWindowDrag(_uiHost.PointerPosition);
+        TitleBar.MinimizeRequested += Window.Minimize;
+        TitleBar.MaximizeRequested += Window.ToggleMaximize;
+        TitleBar.FullScreenRequested += Window.ToggleFullScreen;
+        TitleBar.CloseRequested += Window.Close;
+        _uiHost.PointerMoveProcessed = (pointerEvent, _) =>
+            Window.UpdateWindowDrag(pointerEvent.Position);
+        _uiHost.PointerButtonProcessed = (pointerEvent, _) =>
+        {
+            if (!pointerEvent.IsPressed)
+                Window.EndWindowDrag();
+        };
     }
 
     /// <summary>Gets whether the native tool window remains open.</summary>

@@ -18,7 +18,7 @@ public sealed class ToolPanel : Surface
     /// <param name="title">Panel title.</param>
     /// <param name="theme">Theme supplying standardized panel tokens.</param>
     public ToolPanel(float width, float height, string title, UITheme? theme = null)
-        : base((theme ?? UITheme.Dark).Surface, (theme ?? UITheme.Dark).Border, width, height)
+        : base((theme ?? UITheme.Dark).Surface, (theme ?? UITheme.Dark).Border, width, height, theme)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         PaintBackground = false;
@@ -26,7 +26,7 @@ public sealed class ToolPanel : Surface
             { Name = "Header" };
         Header.Width = 0f;
         Content = new Panel(resolvedTheme.Surface, width,
-            MathF.Max(0f, height - Header.Height))
+            MathF.Max(0f, height - Header.Height), resolvedTheme)
         {
             Name = "Content",
             PaintBackground = false

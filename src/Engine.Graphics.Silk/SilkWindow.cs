@@ -662,6 +662,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _graphicsQueueFamily = owner._graphicsQueueFamily;
         _presentQueueFamily = owner._presentQueueFamily;
         _msaaSamples = owner._msaaSamples;
+
+        if (!_vk.TryGetInstanceExtension(_instance, out _khrSurface) || _khrSurface is null)
+            throw new InvalidOperationException(
+                "The shared Vulkan instance does not expose the VK_KHR_surface extension.");
     }
 
     /// <summary>Verifies the shared physical device supports presenting to this window surface.</summary>
@@ -699,6 +703,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
     private void OnUpdate(double delta)
     {
+        Interlocked.Exchange(ref _frameRequested, 0);
         CpuProfiler.BeginFrame();
         _profileFrameNumber++;
         _profileAllocationStart = GC.GetTotalAllocatedBytes(precise: true);
@@ -724,7 +729,6 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             return;
 
         _renderingFrame = true;
-        Interlocked.Exchange(ref _frameRequested, 0);
         var profileStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
@@ -4099,19 +4103,39 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     /// <inheritdoc/>
     public void PumpFrame()
     {
+        PumpFrameCore(processEvents: true);
+    }
+
+    /// <summary>Updates and renders a grouped window after the shared native event queue was processed.</summary>
+    internal void PumpUpdateAndRender()
+    {
+        PumpFrameCore(processEvents: false);
+    }
+
+    /// <summary>Processes one manually driven frame with optional native event polling.</summary>
+    /// <param name="processEvents">Whether this window should process the process-global event queue.</param>
+    private void PumpFrameCore(bool processEvents)
+    {
         if (_window is null || _window.IsClosing)
             return;
         if (!_firstFramePresented)
         {
             if (!_window.IsVisible)
             {
-                PresentFirstFrameAndReveal();
+                PresentFirstFrameAndReveal(processEvents);
                 return;
             }
             _firstFramePresented = true;
         }
-        _window.DoEvents();
+        if (processEvents)
+        {
+            _window.DoEvents();
+            if (_window.IsClosing)
+                return;
+        }
         _window.DoUpdate();
+        if (_window.IsClosing)
+            return;
         _window.DoRender();
     }
 
@@ -4178,13 +4202,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     }
 
     /// <summary>Renders complete initialized content before revealing a deferred Windows window.</summary>
-    private void PresentFirstFrameAndReveal()
+    private void PresentFirstFrameAndReveal(bool processEvents = true)
     {
         if (_window is null || _firstFramePresented)
             return;
         if (_windowsWindowCloak is not null && !_window.IsVisible)
             _window.IsVisible = true;
-        _window.DoEvents();
+        if (processEvents)
+            _window.DoEvents();
         _window.DoUpdate();
         _window.DoRender();
         if (OperatingSystem.IsWindows() && _vk is not null && _device.Handle != 0)

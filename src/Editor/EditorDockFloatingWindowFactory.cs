@@ -93,7 +93,7 @@ public sealed class EditorDockFloatingWindowFactory : IDockFloatingWindowFactory
 
     /// <summary>Adapts an Editor native tool window to the reusable docking contract.</summary>
     private sealed class FloatingWindow : IDockFloatingWindow, IDockFloatingGeometry,
-        IDockFloatingWindowCoordinates, IDockFloatingDragHost
+        IDockFloatingWindowCoordinates, IDockFloatingDragHost, IDockFloatingFrameDemand
     {
         private readonly FloatingDockRoot _model;
         private readonly DetachedToolWindow _window;
@@ -108,6 +108,9 @@ public sealed class EditorDockFloatingWindowFactory : IDockFloatingWindowFactory
 
         /// <inheritdoc/>
         public UIEventRouter InputRouter => _window.UIHost.InputRouter;
+
+        /// <inheritdoc/>
+        public bool RequiresContinuousUpdates => _window.UIHost.RequiresContinuousUpdates;
 
         /// <inheritdoc/>
         public void RefreshDockPreview() => _window.UIHost.Refresh();

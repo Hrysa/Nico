@@ -8,6 +8,7 @@ public sealed class SilkWindowGroup : IDisposable
     private readonly SilkWindow _primary;
     private readonly ILoggerFactory _loggerFactory;
     private readonly List<SilkWindow> _secondaryWindows = [];
+    private readonly HashSet<SilkWindow> _pendingDestruction = [];
     private bool _disposed;
 
     /// <summary>Creates a shared-device native window group.</summary>
@@ -44,16 +45,28 @@ public sealed class SilkWindowGroup : IDisposable
         }
     }
 
-    /// <summary>Pumps one frame for every open secondary window and removes closed windows.</summary>
+    /// <summary>Updates and renders secondary windows after the primary processed global events.</summary>
     public void PumpFrames()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        for (var index = _secondaryWindows.Count - 1; index >= 0; index--)
+        try
         {
-            var window = _secondaryWindows[index];
-            if (!window.IsRunning)
-                continue;
-            window.PumpFrame();
+            for (var index = _secondaryWindows.Count - 1; index >= 0; index--)
+            {
+                var window = _secondaryWindows[index];
+                if (_pendingDestruction.Contains(window))
+                    continue;
+                if (!window.IsRunning)
+                {
+                    _pendingDestruction.Add(window);
+                    continue;
+                }
+                window.PumpUpdateAndRender();
+            }
+        }
+        finally
+        {
+            DestroyPendingWindows();
         }
     }
 
@@ -64,10 +77,21 @@ public sealed class SilkWindowGroup : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(window);
-        if (!_secondaryWindows.Remove(window))
+        if (!_secondaryWindows.Contains(window) || !_pendingDestruction.Add(window))
             return false;
-        window.Dispose();
+        window.Close();
         return true;
+    }
+
+    /// <summary>Disposes windows after their active Silk.NET frame callbacks have returned.</summary>
+    private void DestroyPendingWindows()
+    {
+        foreach (var window in _pendingDestruction)
+        {
+            _secondaryWindows.Remove(window);
+            window.Dispose();
+        }
+        _pendingDestruction.Clear();
     }
 
     /// <summary>Closes and releases every secondary before the primary device is destroyed.</summary>
@@ -79,6 +103,7 @@ public sealed class SilkWindowGroup : IDisposable
         for (var index = _secondaryWindows.Count - 1; index >= 0; index--)
             _secondaryWindows[index].Dispose();
         _secondaryWindows.Clear();
+        _pendingDestruction.Clear();
         GC.SuppressFinalize(this);
     }
 }

@@ -9,7 +9,10 @@ public enum ButtonStyle
     Subtle,
 
     /// <summary>Filled button for a primary action.</summary>
-    Primary
+    Primary,
+
+    /// <summary>Text-only header action without hover or pressed background fills.</summary>
+    Header
 }
 
 /// <summary>A clickable content box with hover and press visual states.</summary>
@@ -191,12 +194,24 @@ public class Button : ContentControl
         IsTabStop = true;
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
-        _normalColor = style == ButtonStyle.Primary ? theme.SurfacePressed : theme.SurfaceRaised;
+        _normalColor = style switch
+        {
+            ButtonStyle.Primary => theme.SurfacePressed,
+            ButtonStyle.Header => theme.Surface,
+            _ => theme.SurfaceRaised
+        };
         _hoverColor = theme.SurfaceHover;
         _pressedColor = style == ButtonStyle.Primary ? theme.BorderStrong : theme.SurfacePressed;
         _paintNormalBackground = style == ButtonStyle.Primary;
+        if (style == ButtonStyle.Header)
+            CornerRadius = 0f;
         BackgroundColor = _normalColor;
-        ForegroundColor = style == ButtonStyle.Primary ? theme.Accent : theme.TextPrimary;
+        ForegroundColor = style switch
+        {
+            ButtonStyle.Primary => theme.Accent,
+            ButtonStyle.Header => theme.TextSecondary,
+            _ => theme.TextPrimary
+        };
     }
 
     /// <summary>Creates a non-interactive label child for text convenience constructors.</summary>
@@ -217,7 +232,8 @@ public class Button : ContentControl
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        var paintBackground = _paintNormalBackground || IsHovered || IsPressed;
+        var paintBackground = _paintNormalBackground ||
+            VisualStateMode == BoxVisualStateMode.Interactive && (IsHovered || IsPressed);
         base.PaintBackground = paintBackground;
         base.Paint(drawList);
     }
@@ -225,7 +241,8 @@ public class Button : ContentControl
     /// <inheritdoc/>
     protected override void OnMouseEnter()
     {
-        BackgroundColor = IsPressed ? _pressedColor : _hoverColor;
+        if (VisualStateMode == BoxVisualStateMode.Interactive)
+            BackgroundColor = IsPressed ? _pressedColor : _hoverColor;
         base.OnMouseEnter();
     }
 
@@ -239,14 +256,24 @@ public class Button : ContentControl
     /// <inheritdoc/>
     protected override void OnMouseDown()
     {
-        BackgroundColor = _pressedColor;
+        if (VisualStateMode == BoxVisualStateMode.Interactive)
+            BackgroundColor = _pressedColor;
         base.OnMouseDown();
     }
 
     /// <inheritdoc/>
     protected override void OnMouseUp()
     {
-        BackgroundColor = IsHovered ? _hoverColor : _normalColor;
+        if (VisualStateMode == BoxVisualStateMode.Interactive)
+            BackgroundColor = IsHovered ? _hoverColor : _normalColor;
         base.OnMouseUp();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnVisualStateModeChanged()
+    {
+        if (VisualStateMode == BoxVisualStateMode.Static)
+            BackgroundColor = _normalColor;
+        base.OnVisualStateModeChanged();
     }
 }
