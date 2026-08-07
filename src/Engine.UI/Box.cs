@@ -3,7 +3,7 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>Paints the visual border box used by compositional controls.</summary>
-public class Box : UIElement
+public class Box : Control
 {
     private bool _paintBackground = true;
     private float _cornerRadius;

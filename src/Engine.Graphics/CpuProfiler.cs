@@ -73,6 +73,32 @@ public static class CpuProfiler
             GC.GetAllocatedBytesForCurrentThread()));
     }
 
+    /// <summary>Records entry into an explicitly identified blocking operation.</summary>
+    /// <param name="waitName">Stable display name for the wait operation.</param>
+    public static void EnterWait(string waitName)
+    {
+        if (Volatile.Read(ref _recording) == 0)
+            return;
+        Append(Volatile.Read(ref _frameGeneration), new HookEvent(
+            HookEventKind.WaitEnter,
+            waitName,
+            Stopwatch.GetTimestamp(),
+            GC.GetAllocatedBytesForCurrentThread()));
+    }
+
+    /// <summary>Records exit from an explicitly identified blocking operation.</summary>
+    /// <param name="waitName">Stable display name used when the wait was entered.</param>
+    public static void LeaveWait(string waitName)
+    {
+        if (Volatile.Read(ref _recording) == 0)
+            return;
+        Append(Volatile.Read(ref _frameGeneration), new HookEvent(
+            HookEventKind.WaitLeave,
+            waitName,
+            Stopwatch.GetTimestamp(),
+            GC.GetAllocatedBytesForCurrentThread()));
+    }
+
     /// <summary>Stops recording and builds the exact call-path tree for the frame.</summary>
     /// <returns>Pre-order call-tree rows containing CPU and allocation measurements.</returns>
     public static CpuProfileMarker[] EndFrame()
@@ -135,19 +161,23 @@ public static class CpuProfiler
         var frameEndAllocation = events[^1].AllocatedBytes;
         foreach (var hookEvent in events)
         {
-            if (hookEvent.Kind == HookEventKind.Enter && hookEvent.MethodName is not null)
+            if (hookEvent.Kind is HookEventKind.Enter or HookEventKind.WaitEnter
+                && hookEvent.MethodName is not null)
             {
                 var siblings = calls.TryPeek(out var parent) ? parent.Node.Children : roots;
                 var node = siblings.FirstOrDefault(candidate => candidate.Name == hookEvent.MethodName);
                 if (node is null)
                 {
-                    node = new CallTreeNode(hookEvent.MethodName);
+                    node = new CallTreeNode(
+                        hookEvent.MethodName,
+                        hookEvent.Kind == HookEventKind.WaitEnter);
                     siblings.Add(node);
                 }
                 node.CallCount++;
                 calls.Push(new OpenCall(node, hookEvent.Timestamp, hookEvent.AllocatedBytes));
             }
-            else if (hookEvent.Kind == HookEventKind.Leave && calls.Count > 0)
+            else if (hookEvent.Kind is HookEventKind.Leave or HookEventKind.WaitLeave
+                && calls.Count > 0)
             {
                 CloseThroughMethod(
                     calls, hookEvent.MethodName, hookEvent.Timestamp, hookEvent.AllocatedBytes);
@@ -156,11 +186,13 @@ public static class CpuProfiler
         while (calls.Count > 0)
             CloseCall(calls, frameEndTimestamp, frameEndAllocation);
 
-        var totalTicks = 0L;
+        var totalElapsedTicks = 0L;
+        var totalWaitTicks = 0L;
         var allocatedBytes = 0L;
         for (var index = 0; index < roots.Count; index++)
         {
-            totalTicks += roots[index].TotalTicks;
+            totalElapsedTicks += roots[index].TotalElapsedTicks;
+            totalWaitTicks += roots[index].TotalWaitTicks;
             allocatedBytes += roots[index].AllocatedBytes;
         }
         var threadIndex = markers.Count;
@@ -168,12 +200,14 @@ public static class CpuProfiler
             capture.GetDisplayName(ReferenceEquals(capture, _frameThreadCapture)),
             -1,
             0,
-            totalTicks * 1000d / Stopwatch.Frequency,
+            totalElapsedTicks * 1000d / Stopwatch.Frequency,
             0d,
             allocatedBytes,
             0L,
-            1));
-        foreach (var root in roots.OrderByDescending(node => node.TotalTicks))
+            1,
+            totalWaitTicks * 1000d / Stopwatch.Frequency,
+            0d));
+        foreach (var root in roots.OrderByDescending(node => node.TotalElapsedTicks))
             Flatten(root, threadIndex, 1, markers);
     }
 
@@ -201,18 +235,27 @@ public static class CpuProfiler
     /// <param name="calls">Active invocation stack.</param>
     /// <param name="endTimestamp">Exit timestamp.</param>
     /// <param name="endAllocation">Current-thread allocated-byte counter at exit.</param>
-    private static void CloseCall(Stack<OpenCall> calls, long endTimestamp, long endAllocation)
+    private static void CloseCall(
+        Stack<OpenCall> calls,
+        long endTimestamp,
+        long endAllocation)
     {
         var call = calls.Pop();
-        var elapsed = Math.Max(0L, endTimestamp - call.StartTimestamp);
+        var elapsedTicks = Math.Max(0L, endTimestamp - call.StartTimestamp);
         var allocated = Math.Max(0L, endAllocation - call.StartAllocation);
-        call.Node.TotalTicks += elapsed;
-        call.Node.SelfTicks += Math.Max(0L, elapsed - call.ChildTicks);
+        var selfElapsedTicks = Math.Max(0L, elapsedTicks - call.ChildElapsedTicks);
+        var selfWaitTicks = call.Node.IsWait ? selfElapsedTicks : 0L;
+        var totalWaitTicks = call.ChildWaitTicks + selfWaitTicks;
+        call.Node.TotalElapsedTicks += elapsedTicks;
+        call.Node.SelfElapsedTicks += selfElapsedTicks;
+        call.Node.TotalWaitTicks += totalWaitTicks;
+        call.Node.SelfWaitTicks += selfWaitTicks;
         call.Node.AllocatedBytes += allocated;
         call.Node.SelfAllocatedBytes += Math.Max(0L, allocated - call.ChildAllocatedBytes);
         if (calls.TryPeek(out var parent))
         {
-            parent.ChildTicks += elapsed;
+            parent.ChildElapsedTicks += elapsedTicks;
+            parent.ChildWaitTicks += totalWaitTicks;
             parent.ChildAllocatedBytes += allocated;
         }
     }
@@ -229,19 +272,23 @@ public static class CpuProfiler
             node.Name,
             parentIndex,
             depth,
-            node.TotalTicks * 1000d / Stopwatch.Frequency,
-            node.SelfTicks * 1000d / Stopwatch.Frequency,
+            node.TotalElapsedTicks * 1000d / Stopwatch.Frequency,
+            node.SelfElapsedTicks * 1000d / Stopwatch.Frequency,
             node.AllocatedBytes,
             node.SelfAllocatedBytes,
-            node.CallCount));
-        foreach (var child in node.Children.OrderByDescending(candidate => candidate.TotalTicks))
+            node.CallCount,
+            node.TotalWaitTicks * 1000d / Stopwatch.Frequency,
+            node.SelfWaitTicks * 1000d / Stopwatch.Frequency));
+        foreach (var child in node.Children.OrderByDescending(candidate => candidate.TotalElapsedTicks))
             Flatten(child, index, depth + 1, markers);
     }
 
     private enum HookEventKind
     {
         Enter,
-        Leave
+        Leave,
+        WaitEnter,
+        WaitLeave
     }
 
     private readonly record struct HookEvent(
@@ -323,7 +370,8 @@ public static class CpuProfiler
         internal CallTreeNode Node { get; }
         internal long StartTimestamp { get; }
         internal long StartAllocation { get; }
-        internal long ChildTicks { get; set; }
+        internal long ChildElapsedTicks { get; set; }
+        internal long ChildWaitTicks { get; set; }
         internal long ChildAllocatedBytes { get; set; }
     }
 
@@ -331,15 +379,20 @@ public static class CpuProfiler
     {
         /// <summary>Creates one aggregated call-path node.</summary>
         /// <param name="name">Method display name.</param>
-        internal CallTreeNode(string name)
+        /// <param name="isWait">Whether this node represents an explicitly marked wait.</param>
+        internal CallTreeNode(string name, bool isWait)
         {
             Name = name;
+            IsWait = isWait;
         }
 
         internal string Name { get; }
+        internal bool IsWait { get; }
         internal List<CallTreeNode> Children { get; } = [];
-        internal long TotalTicks { get; set; }
-        internal long SelfTicks { get; set; }
+        internal long TotalElapsedTicks { get; set; }
+        internal long SelfElapsedTicks { get; set; }
+        internal long TotalWaitTicks { get; set; }
+        internal long SelfWaitTicks { get; set; }
         internal long AllocatedBytes { get; set; }
         internal long SelfAllocatedBytes { get; set; }
         internal int CallCount { get; set; }

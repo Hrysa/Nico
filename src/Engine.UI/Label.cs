@@ -1,5 +1,4 @@
 using Engine.Graphics;
-using System.Text;
 
 namespace Engine.UI;
 
@@ -8,21 +7,15 @@ namespace Engine.UI;
 /// </summary>
 public class Label : UIElement
 {
-    private const float InterVerticalMetricsUnits = 2478f;
-    private static readonly ushort[] _uppercaseAdvances =
-    [
-        1413, 1340, 1496, 1478, 1231, 1209, 1528, 1522, 550, 1169, 1376, 1158, 1850,
-        1543, 1566, 1308, 1566, 1318, 1314, 1322, 1524, 1413, 2018, 1397, 1390, 1288
-    ];
-    private static readonly ushort[] _lowercaseAdvances =
-    [
-        1150, 1254, 1170, 1254, 1194, 758, 1256, 1211, 496, 496, 1124, 496, 1794,
-        1210, 1228, 1254, 1254, 771, 1081, 670, 1211, 1151, 1676, 1118, 1151, 1131
-    ];
-    private static readonly ushort[] _digitAdvances =
-    [
-        1292, 833, 1249, 1265, 1323, 1215, 1270, 1159, 1267, 1270
-    ];
+    /// <inheritdoc/>
+    public override UISemanticInfo GetSemanticInfo() => new(
+        UISemanticRole.Text,
+        string.IsNullOrWhiteSpace(Name) ? Text : Name,
+        Text,
+        IsEnabled,
+        true,
+        false,
+        null);
 
     /// <summary>Gets or sets the displayed text.</summary>
     private string _text = string.Empty;
@@ -86,38 +79,22 @@ public class Label : UIElement
     {
     }
 
-    /// <summary>Measures the label text using the bundled Inter font metrics.</summary>
+    /// <summary>Measures label text using hosted system-font or approximate startup metrics.</summary>
     /// <returns>The estimated horizontal glyph advance in logical pixels.</returns>
     public float MeasureTextWidth()
     {
-        return MeasureTextWidth(Text, FontSize);
+        return TextLayout.MeasureWidth(
+            Text.AsSpan(), FontSize, FlowDirection.ToTextFlowDirection());
     }
 
-    /// <summary>Measures text using the bundled Inter font metrics.</summary>
+    /// <summary>Measures text using approximate startup metrics before a host is available.</summary>
     /// <param name="text">Text whose horizontal advance is measured.</param>
     /// <param name="fontSize">Font height in logical pixels.</param>
     /// <returns>The estimated horizontal glyph advance in logical pixels.</returns>
     public static float MeasureTextWidth(string text, float fontSize)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var advanceUnits = 0f;
-        foreach (var rune in text.EnumerateRunes())
-            advanceUnits += GetInterAdvanceUnits(rune.Value);
-        return advanceUnits * fontSize / InterVerticalMetricsUnits;
-    }
-
-    /// <summary>Returns the bundled Inter font's unscaled horizontal glyph advance.</summary>
-    /// <param name="codepoint">Unicode codepoint to measure.</param>
-    /// <returns>Horizontal advance in Inter font units.</returns>
-    private static float GetInterAdvanceUnits(int codepoint)
-    {
-        if (codepoint is >= 'A' and <= 'Z')
-            return _uppercaseAdvances[codepoint - 'A'];
-        if (codepoint is >= 'a' and <= 'z')
-            return _lowercaseAdvances[codepoint - 'a'];
-        if (codepoint is >= '0' and <= '9')
-            return _digitAdvances[codepoint - '0'];
-        return codepoint == ' ' ? 576f : 1200f;
+        return FallbackTextLayoutService.Instance.MeasureWidth(text.AsSpan(), fontSize);
     }
 
     /// <summary>Measures text content and its leading inset.</summary>
@@ -136,6 +113,6 @@ public class Label : UIElement
 
         var textHeight = FontSize;
         drawList.AddText(Text, Left + PaddingLeft, Top + MathF.Max(0f, (Height - textHeight) / 2f),
-            FontSize, ForegroundColor, BackgroundColor);
+            FontSize, ForegroundColor, BackgroundColor, FlowDirection.ToTextFlowDirection());
     }
 }

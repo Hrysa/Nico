@@ -1,0 +1,81 @@
+{
+  "Machine": "DESKTOP-E6KPJTI",
+  "Processor": "Intel64 Family 6 Model 165 Stepping 5, GenuineIntel",
+  "OperatingSystem": "Microsoft Windows 10.0.26100",
+  "Runtime": ".NET 11.0.0-preview.6.26359.118",
+  "CapturedAtUtc": "2026-08-07T03:23:01.3261898+00:00",
+  "Results": [
+    {
+      "Name": "unchanged-update-2000",
+      "Description": "Advance unscaled/scaled host time through 2,000 unchanged retained elements.",
+      "TargetMilliseconds": 0.05,
+      "AllocationBudgetBytes": 0,
+      "P50Milliseconds": 2.5E-05,
+      "P95Milliseconds": 3.1E-05,
+      "P50AllocatedBytesPerOperation": 0,
+      "P95AllocatedBytesPerOperation": 0,
+      "SampleCount": 31,
+      "OperationsPerSample": 100
+    },
+    {
+      "Name": "pointer-unchanged-2000",
+      "Description": "Route pointer movement while the hover target remains unchanged in a 2,000-element tree.",
+      "TargetMilliseconds": 0.05,
+      "AllocationBudgetBytes": 0,
+      "P50Milliseconds": 0.001029,
+      "P95Milliseconds": 0.001245,
+      "P50AllocatedBytesPerOperation": 0,
+      "P95AllocatedBytesPerOperation": 0,
+      "SampleCount": 31,
+      "OperationsPerSample": 100
+    },
+    {
+      "Name": "pointer-changed-2000",
+      "Description": "Route pointer movement while alternating hover between two targets.",
+      "TargetMilliseconds": 0.2,
+      "AllocationBudgetBytes": 0,
+      "P50Milliseconds": 0.001215,
+      "P95Milliseconds": 0.002419,
+      "P50AllocatedBytesPerOperation": 0,
+      "P95AllocatedBytesPerOperation": 0,
+      "SampleCount": 31,
+      "OperationsPerSample": 100
+    },
+    {
+      "Name": "cached-composition-10000",
+      "Description": "Return the unchanged retained snapshot containing 10,000 draw commands.",
+      "TargetMilliseconds": 0.2,
+      "AllocationBudgetBytes": 0,
+      "P50Milliseconds": 1.2E-06,
+      "P95Milliseconds": 1.2E-06,
+      "P50AllocatedBytesPerOperation": 0,
+      "P95AllocatedBytesPerOperation": 0,
+      "SampleCount": 31,
+      "OperationsPerSample": 1000
+    },
+    {
+      "Name": "dirty-layout-paint-2000",
+      "Description": "Invalidate one leaf measurement and rebuild a 2,000-element retained snapshot.",
+      "TargetMilliseconds": 1,
+      "AllocationBudgetBytes": 128,
+      "P50Milliseconds": 0.62176,
+      "P95Milliseconds": 0.9042,
+      "P50AllocatedBytesPerOperation": 96,
+      "P95AllocatedBytesPerOperation": 96,
+      "SampleCount": 31,
+      "OperationsPerSample": 10
+    },
+    {
+      "Name": "virtualized-scroll-100x100000",
+      "Description": "Scroll and rebuild 100 visible rows backed by 100,000 logical items.",
+      "TargetMilliseconds": 1,
+      "AllocationBudgetBytes": 12288,
+      "P50Milliseconds": 0.11335999999999999,
+      "P95Milliseconds": 0.13127,
+      "P50AllocatedBytesPerOperation": 9648,
+      "P95AllocatedBytesPerOperation": 9648,
+      "SampleCount": 31,
+      "OperationsPerSample": 10
+    }
+  ]
+}

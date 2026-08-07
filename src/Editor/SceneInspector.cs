@@ -14,6 +14,7 @@ public sealed class SceneInspector : Panel
     private readonly UITheme _theme;
     private readonly List<Func<bool>> _refreshBindings = new();
     private readonly Dictionary<Node, CachedInspectorView> _cachedViews = new();
+    private readonly UIEditForm _editForm;
     private MaterialProperties? _resolvedMaterial;
 
     /// <summary>Gets or sets the editor display-name resolver for attached script assets.</summary>
@@ -27,6 +28,9 @@ public sealed class SceneInspector : Panel
 
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
+
+    /// <summary>Gets the active Inspector edit-form scope.</summary>
+    public UIEditForm EditForm => _editForm;
 
     /// <summary>Occurs after an Inspector field changes the selected node.</summary>
     public event Action<Node>? NodeChanged;
@@ -44,6 +48,7 @@ public sealed class SceneInspector : Panel
         : base((theme ?? UITheme.Dark).Surface, width, height)
     {
         _theme = theme ?? UITheme.Dark;
+        _editForm = new UIEditForm(this);
         PaintBackground = false;
         Bind(null);
     }
@@ -62,6 +67,7 @@ public sealed class SceneInspector : Panel
         }
 
         InspectedNode = node;
+        _editForm.Clear();
         ClearChildren();
         _refreshBindings.Clear();
         ResolveBoundMaterial(node);
@@ -74,16 +80,18 @@ public sealed class SceneInspector : Panel
         if (RestoreCachedView(node))
             return;
 
-        AddChild(CreateLabel(12f, 8f, Width - 24f, 24f,
+        AddChild(CreateLabel(12f, 8f, MathF.Max(0f, Width - 148f), 24f,
             node.GetType().Name, _theme.TextSecondary));
+        AddEditActions();
         AddChild(CreateLabel(12f, 40f, 58f, 30f, "Name", _theme.TextSecondary));
         var nameField = new TextField(Width - 84f, 30f, _theme)
         {
             Name = "NameField",
             Text = node.Name,
+            UpdateTrigger = TextUpdateTrigger.TextChanged,
             Margin = new Thickness(72f, 40f, 0f, 0f)
         };
-        nameField.TextChanged += value =>
+        nameField.ValueUpdateRequested += value =>
         {
             node.Name = value;
             NodeChanged?.Invoke(node);
@@ -141,7 +149,12 @@ public sealed class SceneInspector : Panel
         if (!_cachedViews.TryGetValue(node, out var cached))
             return false;
         foreach (var child in cached.Children)
+        {
             AddChild(child);
+            if (child is TextBox editor && !editor.IsReadOnly &&
+                editor.UpdateTrigger != TextUpdateTrigger.TextChanged)
+                _editForm.Register(editor);
+        }
         _refreshBindings.AddRange(cached.RefreshBindings);
         RefreshValues();
         return true;
@@ -221,9 +234,11 @@ public sealed class SceneInspector : Panel
             {
                 Name = $"MaterialBaseColor{"RGBA"[index]}",
                 Text = Format(GetComponent(GetEffectiveMaterial(instance).BaseColor, index)),
+                UpdateTrigger = TextUpdateTrigger.Commit,
+                Validator = ValidateFloat,
                 Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing), y, 0f, 0f)
             };
-            field.TextChanged += text =>
+            field.ValueUpdateRequested += text =>
             {
                 if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
                         out var component))
@@ -232,7 +247,8 @@ public sealed class SceneInspector : Panel
                 material.BaseColor = WithComponent(material.BaseColor, componentIndex,
                     Math.Clamp(component, 0f, 1f));
             };
-            field.Blur += () => NodeChanged?.Invoke(instance);
+            field.EditCommitted += _ => NodeChanged?.Invoke(instance);
+            _editForm.Register(field);
             RegisterRefresh(field, () => Format(GetComponent(
                 GetEffectiveMaterial(instance).BaseColor, componentIndex)));
             AddChild(field);
@@ -259,16 +275,19 @@ public sealed class SceneInspector : Panel
         {
             Name = name,
             Text = Format(read(GetEffectiveMaterial(instance))),
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = ValidateFloat,
             Margin = new Thickness(92f, y, 0f, 0f)
         };
-        field.TextChanged += text =>
+        field.ValueUpdateRequested += text =>
         {
             if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
                     out var value))
                 return;
             write(GetOrCreateOverride(instance), value);
         };
-        field.Blur += () => NodeChanged?.Invoke(instance);
+        field.EditCommitted += _ => NodeChanged?.Invoke(instance);
+        _editForm.Register(field);
         RegisterRefresh(field, () => Format(read(GetEffectiveMaterial(instance))));
         AddChild(field);
     }
@@ -400,10 +419,12 @@ public sealed class SceneInspector : Panel
             {
                 Name = $"{namePrefix}{"XYZ"[index]}",
                 Text = Format(GetComponent(displayValue, index)),
+                UpdateTrigger = TextUpdateTrigger.Commit,
+                Validator = ValidateFloat,
                 Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing),
                     y, 0f, 0f)
             };
-            field.TextChanged += text =>
+            field.ValueUpdateRequested += text =>
             {
                 if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
                         out var component))
@@ -423,9 +444,37 @@ public sealed class SceneInspector : Panel
                     latest *= 180f / MathF.PI;
                 return Format(latest);
             });
+            _editForm.Register(field);
             fields[index] = field;
             AddChild(field);
         }
+    }
+
+    /// <summary>Validates invariant floating-point Inspector input.</summary>
+    /// <param name="text">Pending component text.</param>
+    /// <returns>An error message, or null when parseable.</returns>
+    private static string? ValidateFloat(string text) =>
+        float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+            ? null
+            : "Enter a valid number.";
+
+    /// <summary>Adds form-bound Apply and Revert actions to the Inspector header.</summary>
+    private void AddEditActions()
+    {
+        var revert = new Button(54f, 26f, "Revert", _theme)
+        {
+            Name = "InspectorRevert",
+            Margin = new Thickness(MathF.Max(12f, Width - 122f), 4f, 0f, 0f)
+        };
+        var apply = new Button(54f, 26f, "Apply", _theme, ButtonStyle.Primary)
+        {
+            Name = "InspectorApply",
+            Margin = new Thickness(MathF.Max(70f, Width - 64f), 4f, 0f, 0f)
+        };
+        _editForm.BindCancelButton(revert);
+        _editForm.BindCommitButton(apply);
+        AddChild(revert);
+        AddChild(apply);
     }
 
     /// <summary>Adds a non-destructive field refresh binding.</summary>

@@ -46,8 +46,11 @@ public sealed class ToolPanel : Surface
         Content.Arrange(new Vector2(0f, Header.Height),
             new Vector2(contentSize.X, MathF.Max(0f, contentSize.Y - Header.Height)));
         var childSize = new Vector2(Content.ContentWidth, Content.ContentHeight);
-        foreach (var child in Content.Children.OfType<UIElement>())
+        var children = Content.Children;
+        for (var index = 0; index < children.Count; index++)
         {
+            if (children[index] is not UIElement child)
+                continue;
             child.Measure(childSize);
             child.Arrange(Vector2.Zero, childSize);
         }

@@ -7,12 +7,19 @@ namespace Engine.Graphics;
 /// </summary>
 public enum GizmoHandleKind
 {
+    /// <summary>No handle.</summary>
     None,
+    /// <summary>Rotation around the X axis.</summary>
     RotateX,
+    /// <summary>Rotation around the Y axis.</summary>
     RotateY,
+    /// <summary>Rotation around the Z axis.</summary>
     RotateZ,
+    /// <summary>Translation along the X axis.</summary>
     TranslateX,
+    /// <summary>Translation along the Y axis.</summary>
     TranslateY,
+    /// <summary>Translation along the Z axis.</summary>
     TranslateZ
 }
 

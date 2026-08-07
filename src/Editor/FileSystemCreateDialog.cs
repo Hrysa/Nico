@@ -40,7 +40,8 @@ public sealed class FileSystemCreateDialog : Modal
         _nameField = new TextField(Dialog.Width - 32f, 34f, resolvedTheme)
         {
             Name = "ItemName",
-            Placeholder = $"{itemKind} name"
+            Placeholder = $"{itemKind} name",
+            Validator = ValidateName
         };
         _errorLabel = new Label(string.Empty, Dialog.Width - 32f, 28f)
         {
@@ -49,6 +50,8 @@ public sealed class FileSystemCreateDialog : Modal
             FontSize = resolvedTheme.CaptionFontSize,
             PaddingLeft = 0f
         };
+        _errorLabel.Text = _nameField.ValidationMessage ?? string.Empty;
+        _nameField.ValidationChanged += message => _errorLabel.Text = message ?? string.Empty;
         var createButton = new Button(34f,
             actionVerb == "Save" ? "Save" : "Create", resolvedTheme, ButtonStyle.Primary)
             { Name = "Create" };
@@ -72,26 +75,32 @@ public sealed class FileSystemCreateDialog : Modal
     /// <param name="message">Error text to display.</param>
     public void ShowError(string message)
     {
-        _errorLabel.Text = message;
+        _nameField.SetValidationError(message);
     }
 
     /// <summary>Validates and reports the entered leaf name.</summary>
     private void RequestCreate()
     {
         var name = _nameField.Text.Trim();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            ShowError("Enter a name.");
+        _nameField.Validate();
+        if (_nameField.HasValidationError)
             return;
-        }
+        CreateRequested?.Invoke(name);
+    }
+
+    /// <summary>Validates a candidate filesystem leaf name.</summary>
+    /// <param name="text">Pending field text.</param>
+    /// <returns>An error message, or null when valid.</returns>
+    private static string? ValidateName(string text)
+    {
+        var name = text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return "Enter a name.";
         if (name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
             || name.Contains(Path.DirectorySeparatorChar)
             || name.Contains(Path.AltDirectorySeparatorChar))
-        {
-            ShowError("Use a single valid file or folder name.");
-            return;
-        }
-        CreateRequested?.Invoke(name);
+            return "Use a single valid file or folder name.";
+        return null;
     }
 
     /// <summary>Requests that the dialog close without creating an item.</summary>

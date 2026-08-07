@@ -45,6 +45,7 @@ public class SceneInspectorTests
         positionX.SetFocus(true);
         positionX.InvokeKeyDown((int)InputKey.Backspace);
         positionX.InvokeTextInput('5');
+        Assert.True(inspector.EditForm.CommitAll());
         Assert.Equal("Cube2", node.Name);
         Assert.Equal(5f, node.Position.X);
         Assert.Equal(8f, node.Position.Y);
@@ -108,6 +109,7 @@ public class SceneInspectorTests
         red.InvokeTextInput('0');
         red.InvokeTextInput('.');
         red.InvokeTextInput('2');
+        Assert.True(inspector.EditForm.CommitAll());
 
         Assert.NotNull(cube.MaterialOverride);
         Assert.Equal(0.2f, cube.MaterialOverride.BaseColor.X);
@@ -188,6 +190,7 @@ public class SceneInspectorTests
         red.InvokeTextInput('0');
         red.InvokeTextInput('.');
         red.InvokeTextInput('2');
+        Assert.True(inspector.EditForm.CommitAll());
 
         Assert.NotNull(mesh.MaterialOverride);
         Assert.Equal(0.2f, mesh.MaterialOverride.BaseColor.X);
@@ -214,6 +217,7 @@ public class SceneInspectorTests
         router.Press();
         router.KeyDown((int)InputKey.Backspace);
         router.TextInput('0');
+        router.KeyDown((int)InputKey.Enter);
 
         Assert.Same(field, router.FocusedElement);
         Assert.NotNull(mesh.MaterialOverride);
@@ -221,7 +225,7 @@ public class SceneInspectorTests
 
     /// <summary>Defers expensive renderer notification until an imported material edit commits.</summary>
     [Fact]
-    public void ImportedMesh_MaterialTyping_NotifiesOnceWhenFieldLosesFocus()
+    public void ImportedMesh_MaterialTyping_NotifiesOnceWhenInspectorApplies()
     {
         var mesh = new MeshInstance3D
         {
@@ -243,13 +247,50 @@ public class SceneInspectorTests
         roughness.InvokeKeyDown((int)InputKey.Backspace);
         roughness.InvokeTextInput('0');
         roughness.InvokeTextInput('.');
-        roughness.InvokeTextInput('5');
+        roughness.InvokeTextInput('4');
         Assert.Equal(0, changes);
 
         roughness.SetFocus(false);
+        Assert.Equal(0, changes);
+        Assert.True(inspector.EditForm.CommitAll());
 
         Assert.Equal(1, changes);
-        Assert.Equal(0.5f, mesh.MaterialOverride?.Roughness);
+        Assert.Equal(0.4f, mesh.MaterialOverride?.Roughness);
+    }
+
+    /// <summary>Verifies Inspector Apply and Revert buttons control pending numeric edits.</summary>
+    [Fact]
+    public void Inspector_EditActions_ApplyAndRevertPendingNumericValues()
+    {
+        var node = new Node3D { Position = new Vector3(1f, 0f, 0f) };
+        var inspector = new SceneInspector(320f, 560f);
+        inspector.Bind(node);
+        var positionX = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "PositionX"));
+        var apply = Assert.IsType<Button>(FindByName<Button>(inspector, "InspectorApply"));
+        var revert = Assert.IsType<Button>(FindByName<Button>(inspector, "InspectorRevert"));
+        Assert.False(apply.IsEnabled);
+        Assert.False(revert.IsEnabled);
+
+        positionX.SetFocus(true);
+        positionX.InvokeKeyDown((int)InputKey.Backspace);
+        positionX.InvokeTextInput('2');
+        Assert.Equal(1f, node.Position.X);
+        Assert.True(apply.IsEnabled);
+        Assert.True(revert.IsEnabled);
+
+        revert.InvokeClick();
+        Assert.Equal("1", positionX.Text);
+        Assert.Equal(1f, node.Position.X);
+
+        positionX.SetFocus(true);
+        positionX.InvokeKeyDown((int)InputKey.Backspace);
+        positionX.InvokeTextInput('3');
+        apply.InvokeClick();
+
+        Assert.Equal(3f, node.Position.X);
+        Assert.False(apply.IsEnabled);
+        Assert.False(revert.IsEnabled);
     }
 
     /// <summary>Verifies dropping a scene-script source fills the Inspector attachment field.</summary>

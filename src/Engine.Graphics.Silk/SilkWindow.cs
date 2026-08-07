@@ -10,10 +10,14 @@ using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
+using GlfwApi = Silk.NET.GLFW.Glfw;
+using GlfwMonitor = Silk.NET.GLFW.Monitor;
 
 namespace Engine.Graphics;
 
-public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
+public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplayService,
+    IClipboardService, ITextLayoutService, IWindowCoordinateMapper, IUIRasterScaleService,
+    INavigationInputSource, INativeWindowHandleSource, IInteractiveFrameScheduler
 {
     private const uint MaxFramesInFlight = 2;
     private static int _nextRendererId;
@@ -26,6 +30,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private IInputContext? _input;
     private IMouse? _mouse;
     private IKeyboard? _keyboard;
+    private GlfwApi? _glfw;
+    private Vector2 _lastPointerPosition;
+    private PointerButtons _pressedPointerButtons;
+    private readonly HashSet<InputKey> _pressedInputKeys = new(64);
 
     private Instance _instance;
     private SurfaceKHR _surface;
@@ -56,10 +64,12 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private int _pendingInitialLogicalWidth;
     private int _pendingInitialLogicalHeight;
     private long _lastLiveResizeFrameTimestamp;
+    private long _lastInteractiveFrameTimestamp;
     private bool _renderingFrame;
     private bool _continuousRendering;
     private bool _eventDrivenIdle;
     private double _targetFrameRate;
+    private PresentationModePreference _presentationMode;
     private Timer? _continuousWakeTimer;
     private Timer? _deferredWakeTimer;
     private int _frameRequested;
@@ -126,6 +136,261 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     public bool IsRunning => _window != null && !_window.IsClosing;
 
+    /// <summary>Gets the logical client-window position in screen coordinates.</summary>
+    public Vector2 ClientPosition => _window is null
+        ? Vector2.Zero
+        : new Vector2(_window.Position.X / MathF.Max(float.Epsilon, _uiInputScale),
+            _window.Position.Y / MathF.Max(float.Epsilon, _uiInputScale));
+
+    /// <summary>Gets the logical client size.</summary>
+    public Vector2 ClientSize => _window is null
+        ? Vector2.Zero
+        : new Vector2(_window.Size.X / MathF.Max(float.Epsilon, _uiInputScale),
+            _window.Size.Y / MathF.Max(float.Epsilon, _uiInputScale));
+
+    /// <inheritdoc/>
+    public float RasterScale => MathF.Max(float.Epsilon, _uiFramebufferScale);
+
+    /// <inheritdoc/>
+    public NativeWindowHandle GetNativeWindowHandle()
+    {
+        var native = _window?.Native;
+        if (native?.Win32 is { } win32 && win32.Item1 != IntPtr.Zero)
+            return new NativeWindowHandle(NativeWindowKind.Win32, win32.Item1);
+        if (native?.Cocoa is { } cocoa && cocoa != IntPtr.Zero)
+            return new NativeWindowHandle(NativeWindowKind.Cocoa, cocoa);
+        if (native?.X11 is { } x11 && x11.Item2 != UIntPtr.Zero)
+            return new NativeWindowHandle(
+                NativeWindowKind.X11, unchecked((IntPtr)(long)x11.Item2.ToUInt64()), x11.Item1);
+        if (native?.Wayland is { } wayland && wayland.Item2 != IntPtr.Zero)
+            return new NativeWindowHandle(NativeWindowKind.Wayland, wayland.Item2, wayland.Item1);
+        return default;
+    }
+
+    /// <summary>Moves the native client window to a logical screen position.</summary>
+    /// <param name="position">Logical screen position.</param>
+    public void SetClientPosition(Vector2 position)
+    {
+        if (_window is null || !float.IsFinite(position.X) || !float.IsFinite(position.Y))
+            return;
+        var scale = MathF.Max(float.Epsilon, _uiInputScale);
+        _window.Position = new Vector2D<int>(
+            (int)MathF.Round(position.X * scale),
+            (int)MathF.Round(position.Y * scale));
+    }
+
+    /// <inheritdoc/>
+    public Vector2 ClientToScreen(Vector2 clientPosition)
+    {
+        if (_window is null)
+            return clientPosition;
+        var scale = MathF.Max(float.Epsilon, _uiInputScale);
+        return new Vector2(
+            _window.Position.X + clientPosition.X * scale,
+            _window.Position.Y + clientPosition.Y * scale);
+    }
+
+    /// <inheritdoc/>
+    public Vector2 ScreenToClient(Vector2 screenPosition)
+    {
+        if (_window is null)
+            return screenPosition;
+        var scale = MathF.Max(float.Epsilon, _uiInputScale);
+        return new Vector2(
+            (screenPosition.X - _window.Position.X) / scale,
+            (screenPosition.Y - _window.Position.Y) / scale);
+    }
+
+    /// <inheritdoc/>
+    public float MeasureWidth(ReadOnlySpan<char> text, float fontSize) =>
+        _fontRasterizer.MeasureWidth(text, fontSize);
+
+    /// <summary>Measures a line using an explicit bidirectional paragraph direction.</summary>
+    /// <param name="text">Text to measure.</param>
+    /// <param name="fontSize">Logical font height.</param>
+    /// <param name="direction">Paragraph base direction.</param>
+    /// <returns>Horizontal text advance.</returns>
+    public float MeasureWidth(
+        ReadOnlySpan<char> text,
+        float fontSize,
+        TextFlowDirection direction) =>
+        _fontRasterizer.MeasureWidth(text, fontSize, direction);
+
+    /// <inheritdoc/>
+    public int HitTestCaret(
+        ReadOnlySpan<char> text,
+        float fontSize,
+        float horizontalPosition) =>
+        _fontRasterizer.HitTestCaret(text, fontSize, horizontalPosition);
+
+    /// <summary>Maps a visual horizontal position to a bidi-resolved logical caret.</summary>
+    /// <param name="text">Text to hit test.</param>
+    /// <param name="fontSize">Logical font height.</param>
+    /// <param name="horizontalPosition">Position relative to the visual text origin.</param>
+    /// <param name="direction">Paragraph base direction.</param>
+    /// <returns>Nearest UTF-16 caret index.</returns>
+    public int HitTestCaret(
+        ReadOnlySpan<char> text,
+        float fontSize,
+        float horizontalPosition,
+        TextFlowDirection direction) =>
+        _fontRasterizer.HitTestCaret(text, fontSize, horizontalPosition, direction);
+
+    /// <summary>Maps a logical caret to a bidi-resolved visual horizontal position.</summary>
+    /// <param name="text">Text containing the caret.</param>
+    /// <param name="fontSize">Logical font height.</param>
+    /// <param name="caretIndex">UTF-16 caret index.</param>
+    /// <param name="direction">Paragraph base direction.</param>
+    /// <returns>Visual horizontal position.</returns>
+    public float GetCaretPosition(
+        ReadOnlySpan<char> text,
+        float fontSize,
+        int caretIndex,
+        TextFlowDirection direction) =>
+        _fontRasterizer.GetCaretPosition(text, fontSize, caretIndex, direction);
+
+    /// <summary>Resolves a logical selection into bidi-aware visual ranges.</summary>
+    /// <param name="text">Text containing the selection.</param>
+    /// <param name="fontSize">Logical font height.</param>
+    /// <param name="selectionStart">Logical UTF-16 selection start.</param>
+    /// <param name="selectionLength">Logical UTF-16 selection length.</param>
+    /// <param name="direction">Paragraph base direction.</param>
+    /// <returns>Visual selection ranges in left-to-right order.</returns>
+    public TextSelectionRange[] GetSelectionRanges(
+        ReadOnlySpan<char> text,
+        float fontSize,
+        int selectionStart,
+        int selectionLength,
+        TextFlowDirection direction) =>
+        _fontRasterizer.GetSelectionRanges(
+            text, fontSize, selectionStart, selectionLength, direction);
+
+    /// <inheritdoc/>
+    public string? GetText()
+    {
+        if (OperatingSystem.IsWindows())
+            return WindowsClipboard.GetText(GetWin32WindowHandle());
+        return _keyboard?.ClipboardText;
+    }
+
+    /// <inheritdoc/>
+    public void SetText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (OperatingSystem.IsWindows())
+        {
+            WindowsClipboard.SetText(GetWin32WindowHandle(), text);
+            return;
+        }
+        if (_keyboard is not null)
+            _keyboard.ClipboardText = text;
+    }
+
+    /// <summary>Gets the native Win32 window handle used for clipboard ownership.</summary>
+    /// <returns>Native HWND, or zero before native window creation.</returns>
+    private IntPtr GetWin32WindowHandle()
+    {
+        var win32 = _window?.Native?.Win32;
+        return win32?.Item1 ?? IntPtr.Zero;
+    }
+
+    /// <inheritdoc/>
+    public DisplayWorkArea GetWorkArea(Vector2 clientAnchor)
+    {
+        if (_window is null)
+            return default;
+        var scale = MathF.Max(float.Epsilon, _uiInputScale);
+        if (OperatingSystem.IsWindows())
+        {
+            var screenPoint = new NativePoint
+            {
+                X = (int)MathF.Round(_window.Position.X + clientAnchor.X * scale),
+                Y = (int)MathF.Round(_window.Position.Y + clientAnchor.Y * scale)
+            };
+            var monitor = MonitorFromPoint(screenPoint, 2u);
+            var info = new NativeMonitorInfo { Size = (uint)Marshal.SizeOf<NativeMonitorInfo>() };
+            if (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info))
+            {
+                return new DisplayWorkArea(
+                    (info.Work.Left - _window.Position.X) / scale,
+                    (info.Work.Top - _window.Position.Y) / scale,
+                    (info.Work.Right - _window.Position.X) / scale,
+                    (info.Work.Bottom - _window.Position.Y) / scale,
+                    scale);
+            }
+        }
+
+        if (TryGetGlfwWorkArea(clientAnchor, scale, out var workArea))
+            return workArea;
+
+        return new DisplayWorkArea(0f, 0f,
+            _window.Size.X / scale, _window.Size.Y / scale, scale);
+    }
+
+    /// <summary>Gets the containing monitor work area through GLFW on macOS and Linux.</summary>
+    /// <param name="clientAnchor">Anchor in window-client logical coordinates.</param>
+    /// <param name="inputScale">Native window-coordinate units per client logical unit.</param>
+    /// <param name="workArea">Resolved work area when GLFW exposes native monitor data.</param>
+    /// <returns>True when a containing or nearest monitor was resolved.</returns>
+    private bool TryGetGlfwWorkArea(
+        Vector2 clientAnchor,
+        float inputScale,
+        out DisplayWorkArea workArea)
+    {
+        workArea = default;
+        if (_window?.Native?.Glfw is not { } nativeHandle || nativeHandle == IntPtr.Zero)
+            return false;
+
+        _glfw ??= GlfwApi.GetApi();
+        var monitors = _glfw.GetMonitors(out var monitorCount);
+        if (monitors is null || monitorCount <= 0)
+            return false;
+
+        var screenX = _window.Position.X + clientAnchor.X * inputScale;
+        var screenY = _window.Position.Y + clientAnchor.Y * inputScale;
+        GlfwMonitor* selected = null;
+        var nearestDistanceSquared = float.PositiveInfinity;
+        for (var index = 0; index < monitorCount; index++)
+        {
+            var monitor = monitors[index];
+            _glfw.GetMonitorWorkarea(
+                monitor, out var left, out var top, out var width, out var height);
+            var right = left + width;
+            var bottom = top + height;
+            if (screenX >= left && screenX < right && screenY >= top && screenY < bottom)
+            {
+                selected = monitor;
+                break;
+            }
+
+            var nearestX = Math.Clamp(screenX, left, right);
+            var nearestY = Math.Clamp(screenY, top, bottom);
+            var deltaX = screenX - nearestX;
+            var deltaY = screenY - nearestY;
+            var distanceSquared = deltaX * deltaX + deltaY * deltaY;
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestDistanceSquared = distanceSquared;
+                selected = monitor;
+            }
+        }
+
+        if (selected is null)
+            return false;
+
+        _glfw.GetMonitorWorkarea(
+            selected, out var workLeft, out var workTop, out var workWidth, out var workHeight);
+        _glfw.GetMonitorContentScale(selected, out var scaleX, out var scaleY);
+        var coordinateScale = MathF.Max(float.Epsilon, inputScale);
+        workArea = new DisplayWorkArea(
+            (workLeft - _window.Position.X) / coordinateScale,
+            (workTop - _window.Position.Y) / coordinateScale,
+            (workLeft + workWidth - _window.Position.X) / coordinateScale,
+            (workTop + workHeight - _window.Position.Y) / coordinateScale,
+            MathF.Max(float.Epsilon, MathF.Max(scaleX, scaleY)));
+        return true;
+    }
+
     /// <inheritdoc/>
     public event Action<Vector2>? MouseMove;
 
@@ -149,6 +414,25 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     /// <inheritdoc/>
     public event Action<char>? TextInput;
+
+    /// <inheritdoc/>
+    public event Action<PointerMoveEvent>? PointerMoved;
+
+    /// <inheritdoc/>
+    public event Action<PointerButtonEvent>? PointerButtonChanged;
+
+    /// <inheritdoc/>
+    public event Action<PointerWheelEvent>? PointerWheelChanged;
+
+    /// <inheritdoc/>
+    public event Action<NavigationInputEvent>? NavigationChanged;
+
+    /// <inheritdoc/>
+    public event Action<KeyInputEvent>? KeyChanged;
+
+    /// <inheritdoc/>
+    public event Action<string>? TextEntered;
+
 
     /// <inheritdoc/>
     public event Action<double>? Update;
@@ -193,9 +477,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             throw new InvalidOperationException("The window has already been initialized.");
 
         _shutdown = false;
+        _pressedInputKeys.Clear();
         _customTitleBar = options.CustomTitleBar;
         _eventDrivenIdle = options.IsEventDriven;
         _targetFrameRate = options.TargetFrameRate;
+        _presentationMode = options.PresentationMode;
         if (_eventDrivenIdle)
         {
             _deferredWakeTimer = new Timer(
@@ -298,6 +584,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _keyboard.KeyUp += OnKeyUp;
             _keyboard.KeyChar += OnKeyChar;
             _logger.LogInformation("Keyboard input attached");
+        }
+
+        for (var index = 0; index < _input.Gamepads.Count; index++)
+        {
+            var gamepad = _input.Gamepads[index];
+            gamepad.ButtonDown += OnGamepadButtonDown;
+            gamepad.ButtonUp += OnGamepadButtonUp;
         }
 
         if (_sharedDeviceOwner is null)
@@ -504,38 +797,99 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
     private void OnMouseMove(IMouse mouse, Vector2 pos)
     {
-        MouseMove?.Invoke(new Vector2(pos.X / _uiInputScale, pos.Y / _uiInputScale));
+        var position = new Vector2(pos.X / _uiInputScale, pos.Y / _uiInputScale);
+        var delta = position - _lastPointerPosition;
+        _lastPointerPosition = position;
+        MouseMove?.Invoke(position);
+        PointerMoved?.Invoke(new PointerMoveEvent(
+            0, position, delta, PointerDeviceKind.Mouse, GetInputModifiers(),
+            _pressedPointerButtons));
     }
 
     private void OnMouseDown(IMouse mouse, MouseButton button)
     {
+        var mappedButton = ToInputPointerButton(button);
+        _pressedPointerButtons |= ToPointerButtons(mappedButton);
         MouseDown?.Invoke((int)button);
+        PointerButtonChanged?.Invoke(new PointerButtonEvent(
+            0, _lastPointerPosition, mappedButton, true, 1, PointerDeviceKind.Mouse,
+            GetInputModifiers(), _pressedPointerButtons));
     }
 
     private void OnMouseUp(IMouse mouse, MouseButton button)
     {
+        var mappedButton = ToInputPointerButton(button);
+        _pressedPointerButtons &= ~ToPointerButtons(mappedButton);
         MouseUp?.Invoke((int)button);
+        PointerButtonChanged?.Invoke(new PointerButtonEvent(
+            0, _lastPointerPosition, mappedButton, false, 1, PointerDeviceKind.Mouse,
+            GetInputModifiers(), _pressedPointerButtons));
     }
 
     private void OnMouseDoubleClick(IMouse mouse, MouseButton button, Vector2 pos)
     {
+        _lastPointerPosition = new Vector2(pos.X / _uiInputScale, pos.Y / _uiInputScale);
         MouseDoubleClick?.Invoke((int)button);
+        PointerButtonChanged?.Invoke(new PointerButtonEvent(
+            0, _lastPointerPosition, ToInputPointerButton(button), true, 2,
+            PointerDeviceKind.Mouse, GetInputModifiers(), _pressedPointerButtons));
     }
 
     private void OnMouseScroll(IMouse mouse, ScrollWheel scroll)
     {
         MouseScroll?.Invoke(scroll.Y);
+        PointerWheelChanged?.Invoke(new PointerWheelEvent(
+            0, _lastPointerPosition, new Vector2(scroll.X, scroll.Y), GetInputModifiers()));
     }
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int keyCode)
     {
-        KeyDown?.Invoke(ToInputKey(key));
+        var inputKey = ToInputKey(key);
+        var isRepeat = inputKey != InputKey.Unknown && !_pressedInputKeys.Add(inputKey);
+        KeyDown?.Invoke(inputKey);
+        KeyChanged?.Invoke(new KeyInputEvent(inputKey, true, isRepeat, GetInputModifiers()));
     }
 
     private void OnKeyUp(IKeyboard keyboard, Key key, int keyCode)
     {
-        KeyUp?.Invoke(ToInputKey(key));
+        var inputKey = ToInputKey(key);
+        _pressedInputKeys.Remove(inputKey);
+        KeyUp?.Invoke(inputKey);
+        KeyChanged?.Invoke(new KeyInputEvent(inputKey, false, false, GetInputModifiers()));
     }
+
+    /// <summary>Maps and forwards one gamepad button press as UI navigation.</summary>
+    /// <param name="gamepad">Gamepad producing the transition.</param>
+    /// <param name="button">Pressed gamepad button.</param>
+    private void OnGamepadButtonDown(IGamepad gamepad, Silk.NET.Input.Button button)
+    {
+        if (MapNavigationAction(button.Name) is { } action)
+            NavigationChanged?.Invoke(new NavigationInputEvent(action, true, DeviceId: gamepad.Index));
+    }
+
+    /// <summary>Maps and forwards one gamepad button release as UI navigation.</summary>
+    /// <param name="gamepad">Gamepad producing the transition.</param>
+    /// <param name="button">Released gamepad button.</param>
+    private void OnGamepadButtonUp(IGamepad gamepad, Silk.NET.Input.Button button)
+    {
+        if (MapNavigationAction(button.Name) is { } action)
+            NavigationChanged?.Invoke(new NavigationInputEvent(action, false, DeviceId: gamepad.Index));
+    }
+
+    /// <summary>Maps standard gamepad buttons to device-neutral UI actions.</summary>
+    /// <param name="button">Standard button name.</param>
+    /// <returns>Navigation action, or null for a gameplay-only button.</returns>
+    private static UINavigationAction? MapNavigationAction(ButtonName button) => button switch
+    {
+        ButtonName.DPadUp => UINavigationAction.Up,
+        ButtonName.DPadDown => UINavigationAction.Down,
+        ButtonName.DPadLeft => UINavigationAction.Left,
+        ButtonName.DPadRight => UINavigationAction.Right,
+        ButtonName.A => UINavigationAction.Submit,
+        ButtonName.B => UINavigationAction.Cancel,
+        ButtonName.Start => UINavigationAction.Menu,
+        _ => null
+    };
 
     /// <summary>Forwards one device text-input character.</summary>
     /// <param name="keyboard">Keyboard producing the character.</param>
@@ -543,6 +897,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     private void OnKeyChar(IKeyboard keyboard, char character)
     {
         TextInput?.Invoke(character);
+        TextEntered?.Invoke(character.ToString());
     }
 
     /// <inheritdoc/>
@@ -659,6 +1014,56 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             _window.IsClosing = true;
     }
 
+    /// <summary>Returns keyboard modifiers active at the current native input event.</summary>
+    /// <returns>Renderer-independent modifier flags.</returns>
+    private InputModifiers GetInputModifiers()
+    {
+        if (_keyboard is null)
+            return InputModifiers.None;
+        var modifiers = InputModifiers.None;
+        if (_keyboard.IsKeyPressed(Key.ShiftLeft) || _keyboard.IsKeyPressed(Key.ShiftRight))
+            modifiers |= InputModifiers.Shift;
+        if (_keyboard.IsKeyPressed(Key.ControlLeft) || _keyboard.IsKeyPressed(Key.ControlRight))
+            modifiers |= InputModifiers.Control;
+        if (_keyboard.IsKeyPressed(Key.AltLeft) || _keyboard.IsKeyPressed(Key.AltRight))
+            modifiers |= InputModifiers.Alt;
+        if (_keyboard.IsKeyPressed(Key.SuperLeft) || _keyboard.IsKeyPressed(Key.SuperRight))
+            modifiers |= InputModifiers.Super;
+        return modifiers;
+    }
+
+    /// <summary>Maps one Silk mouse button to the device-neutral input contract.</summary>
+    /// <param name="button">Silk mouse button.</param>
+    /// <returns>Device-neutral pointer button.</returns>
+    private static InputPointerButton ToInputPointerButton(MouseButton button)
+    {
+        return button switch
+        {
+            MouseButton.Left => InputPointerButton.Primary,
+            MouseButton.Right => InputPointerButton.Secondary,
+            MouseButton.Middle => InputPointerButton.Middle,
+            _ when (int)button == 3 => InputPointerButton.Auxiliary1,
+            _ when (int)button == 4 => InputPointerButton.Auxiliary2,
+            _ => InputPointerButton.Unknown
+        };
+    }
+
+    /// <summary>Returns the held-button flag corresponding to one pointer button.</summary>
+    /// <param name="button">Pointer button to map.</param>
+    /// <returns>Held-button flag, or none for an unknown button.</returns>
+    private static PointerButtons ToPointerButtons(InputPointerButton button)
+    {
+        return button switch
+        {
+            InputPointerButton.Primary => PointerButtons.Primary,
+            InputPointerButton.Secondary => PointerButtons.Secondary,
+            InputPointerButton.Middle => PointerButtons.Middle,
+            InputPointerButton.Auxiliary1 => PointerButtons.Auxiliary1,
+            InputPointerButton.Auxiliary2 => PointerButtons.Auxiliary2,
+            _ => PointerButtons.None
+        };
+    }
+
     /// <summary>
     /// Maps a Silk.NET key to the engine input abstraction.
     /// </summary>
@@ -669,17 +1074,40 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         return key switch
         {
             Key.A => InputKey.A,
+            Key.B => InputKey.B,
+            Key.C => InputKey.C,
             Key.D => InputKey.D,
+            Key.E => InputKey.E,
             Key.F => InputKey.F,
+            Key.G => InputKey.G,
+            Key.H => InputKey.H,
+            Key.I => InputKey.I,
+            Key.J => InputKey.J,
+            Key.K => InputKey.K,
+            Key.L => InputKey.L,
+            Key.M => InputKey.M,
+            Key.N => InputKey.N,
+            Key.O => InputKey.O,
+            Key.P => InputKey.P,
+            Key.Q => InputKey.Q,
+            Key.R => InputKey.R,
             Key.S => InputKey.S,
+            Key.T => InputKey.T,
+            Key.U => InputKey.U,
+            Key.V => InputKey.V,
             Key.W => InputKey.W,
+            Key.X => InputKey.X,
+            Key.Y => InputKey.Y,
+            Key.Z => InputKey.Z,
             Key.Space => InputKey.Space,
+            Key.Enter => InputKey.Enter,
             Key.ControlLeft => InputKey.LeftControl,
             Key.ControlRight => InputKey.RightControl,
             Key.SuperLeft => InputKey.LeftSuper,
             Key.SuperRight => InputKey.RightSuper,
             Key.ShiftLeft => InputKey.LeftShift,
             Key.ShiftRight => InputKey.RightShift,
+            Key.Tab => InputKey.Tab,
             Key.Backspace => InputKey.Backspace,
             Key.Delete => InputKey.Delete,
             Key.Left => InputKey.Left,
@@ -688,6 +1116,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Key.Down => InputKey.Down,
             Key.Home => InputKey.Home,
             Key.End => InputKey.End,
+            Key.PageUp => InputKey.PageUp,
+            Key.PageDown => InputKey.PageDown,
             Key.Escape => InputKey.Escape,
             _ => InputKey.Unknown
         };
@@ -935,7 +1365,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     {
         var framebufferSize = _window!.FramebufferSize;
         _swapchainManager = new SwapchainManager(_vk!, _device, _physicalDevice, _surface,
-            _khrSurface!, _graphicsQueueFamily, _presentQueueFamily, _logger);
+            _khrSurface!, _graphicsQueueFamily, _presentQueueFamily,
+            _presentationMode, _logger);
         _swapchainManager.Create(
             (uint)Math.Max(framebufferSize.X, 0),
             (uint)Math.Max(framebufferSize.Y, 0));
@@ -1069,7 +1500,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         var shaderStages = new[] { vertShaderStageInfo, fragShaderStageInfo };
 
-        // Vertex input: binding 0 (stride = 6 floats = vec3 pos + vec3 color)
+        // Vertex input: binding 0 (stride = 7 floats = vec3 position + vec4 color)
         var vertexInputBinding = new VertexInputBindingDescription
         {
             Binding = 0,
@@ -1077,7 +1508,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             InputRate = VertexInputRate.Vertex
         };
 
-        var vertexInputAttributes = new VertexInputAttributeDescription[2];
+        var vertexInputAttributes = new VertexInputAttributeDescription[3];
         vertexInputAttributes[0] = new VertexInputAttributeDescription
         {
             Binding = 0,
@@ -1092,6 +1523,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Format = Format.R32G32B32Sfloat, // vec3
             Offset = (uint)(sizeof(float) * 3)
         };
+        vertexInputAttributes[2] = new VertexInputAttributeDescription
+        {
+            Binding = 0,
+            Location = 2,
+            Format = Format.R32Sfloat,
+            Offset = (uint)(sizeof(float) * 6)
+        };
 
         fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
         {
@@ -1100,7 +1538,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &vertexInputBinding,
-                VertexAttributeDescriptionCount = 2,
+                VertexAttributeDescriptionCount = 3,
                 PVertexAttributeDescriptions = pAttributes
             };
 
@@ -1151,7 +1589,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 var colorBlendAttachment = new PipelineColorBlendAttachmentState
                 {
                     ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
-                    BlendEnable = new Bool32(false)
+                    BlendEnable = new Bool32(true),
+                    SrcColorBlendFactor = BlendFactor.SrcAlpha,
+                    DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                    ColorBlendOp = BlendOp.Add,
+                    SrcAlphaBlendFactor = BlendFactor.One,
+                    DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha,
+                    AlphaBlendOp = BlendOp.Add
                 };
 
                 var colorBlending = new PipelineColorBlendStateCreateInfo
@@ -1275,7 +1719,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             InputRate = VertexInputRate.Vertex
         };
 
-        var vertexInputAttributes = new VertexInputAttributeDescription[2];
+        var vertexInputAttributes = new VertexInputAttributeDescription[3];
         vertexInputAttributes[0] = new VertexInputAttributeDescription
         {
             Binding = 0, Location = 0,
@@ -1286,6 +1730,11 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Binding = 0, Location = 1,
             Format = Format.R32G32B32Sfloat, Offset = (uint)(sizeof(float) * 3)
         };
+        vertexInputAttributes[2] = new VertexInputAttributeDescription
+        {
+            Binding = 0, Location = 2,
+            Format = Format.R32Sfloat, Offset = (uint)(sizeof(float) * 6)
+        };
 
         fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
         {
@@ -1294,7 +1743,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &vertexInputBinding,
-                VertexAttributeDescriptionCount = 2,
+                VertexAttributeDescriptionCount = 3,
                 PVertexAttributeDescriptions = pAttributes
             };
 
@@ -1972,7 +2421,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
 
         var shaderStages = new[] { vertShaderStageInfo, fragShaderStageInfo };
 
-        // Vertex input: binding 0 (stride = 5 floats = vec3 pos + vec2 uv)
+        // Vertex input: binding 0 (stride = 6 floats = vec3 position + vec2 UV + opacity)
         var vertexInputBinding = new VertexInputBindingDescription
         {
             Binding = 0,
@@ -1980,7 +2429,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             InputRate = VertexInputRate.Vertex
         };
 
-        var vertexInputAttributes = new VertexInputAttributeDescription[2];
+        var vertexInputAttributes = new VertexInputAttributeDescription[3];
         vertexInputAttributes[0] = new VertexInputAttributeDescription
         {
             Binding = 0,
@@ -1995,6 +2444,13 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             Format = Format.R32G32Sfloat,
             Offset = (uint)(sizeof(float) * 3)
         };
+        vertexInputAttributes[2] = new VertexInputAttributeDescription
+        {
+            Binding = 0,
+            Location = 2,
+            Format = Format.R32Sfloat,
+            Offset = (uint)(sizeof(float) * 5)
+        };
 
         fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
         {
@@ -2003,7 +2459,7 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &vertexInputBinding,
-                VertexAttributeDescriptionCount = 2,
+                VertexAttributeDescriptionCount = 3,
                 PVertexAttributeDescriptions = pAttributes
             };
 
@@ -2417,26 +2873,49 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 var caretLeft = _fontRasterizer.AppendVertices(
                     _textVertices, command, framebufferScale);
                 AddUiBatch(UiGeometryKind.Text, command.Layer, firstVertex,
-                    (uint)_textVertices.Count - firstVertex);
+                    (uint)_textVertices.Count - firstVertex, command.Clip);
                 if (command.CaretIndex >= 0)
                 {
                     firstVertex = (uint)_vertices.Count;
                     AppendUICommandVertices(_vertices, new UIDrawCommand(
                         caretLeft, command.Top, caretLeft + 1f,
                         command.Top + command.FontPixelHeight, command.Color,
-                        Layer: command.Layer));
+                        Layer: command.Layer, Clip: command.Clip, Opacity: command.Opacity));
                     AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
-                        (uint)_vertices.Count - firstVertex);
+                        (uint)_vertices.Count - firstVertex, command.Clip);
                 }
+            }
+            else if (command.Type == UIDrawCommandType.Image)
+            {
+                ValidateOwner(command.Texture);
+                var firstVertex = (uint)_textVertices.Count;
+                AppendImageVertices(_textVertices, command);
+                AddUiBatch(UiGeometryKind.Image, command.Layer, firstVertex,
+                    (uint)_textVertices.Count - firstVertex, command.Clip, command.Texture);
             }
             else
             {
                 var firstVertex = (uint)_vertices.Count;
                 AppendUICommandVertices(_vertices, command);
                 AddUiBatch(UiGeometryKind.Color, command.Layer, firstVertex,
-                    (uint)_vertices.Count - firstVertex);
+                    (uint)_vertices.Count - firstVertex, command.Clip);
             }
         }
+    }
+
+    /// <summary>Appends one full-range textured quad for an image command.</summary>
+    /// <param name="vertices">Destination textured vertices.</param>
+    /// <param name="command">Image bounds and texture command.</param>
+    private static void AppendImageVertices(
+        NativeBuffer<VertexT> vertices,
+        UIDrawCommand command)
+    {
+        vertices.Add(new VertexT(new Vector3(command.Left, command.Top, 0f), new Vector2(0f, 0f), command.Opacity));
+        vertices.Add(new VertexT(new Vector3(command.Left, command.Bottom, 0f), new Vector2(0f, 1f), command.Opacity));
+        vertices.Add(new VertexT(new Vector3(command.Right, command.Bottom, 0f), new Vector2(1f, 1f), command.Opacity));
+        vertices.Add(new VertexT(new Vector3(command.Right, command.Bottom, 0f), new Vector2(1f, 1f), command.Opacity));
+        vertices.Add(new VertexT(new Vector3(command.Right, command.Top, 0f), new Vector2(1f, 0f), command.Opacity));
+        vertices.Add(new VertexT(new Vector3(command.Left, command.Top, 0f), new Vector2(0f, 0f), command.Opacity));
     }
 
     /// <summary>Translates one semantic UI command into triangle vertices.</summary>
@@ -2449,13 +2928,45 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             AppendEllipseVertices(vertices, command);
             return;
         }
+        if (command.Type == UIDrawCommandType.Line)
+        {
+            AppendLineVertices(vertices, command);
+            return;
+        }
 
-        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
-        vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), command.Color));
-        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
-        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), command.Color));
-        vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), command.Color));
-        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), command.Color));
+        var color = new Vector4(command.Color.Rgb, command.Opacity);
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), color));
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Bottom, 0f), color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Bottom, 0f), color));
+        vertices.Add(new Vertex(new Vector3(command.Right, command.Top, 0f), color));
+        vertices.Add(new Vertex(new Vector3(command.Left, command.Top, 0f), color));
+    }
+
+    /// <summary>Tessellates one stroked UI line into a quad.</summary>
+    /// <param name="vertices">Destination vertex collection.</param>
+    /// <param name="command">Line endpoints, thickness, and color.</param>
+    private static void AppendLineVertices(NativeBuffer<Vertex> vertices, UIDrawCommand command)
+    {
+        var direction = new Vector2(command.Right - command.Left, command.Bottom - command.Top);
+        var length = direction.Length();
+        if (length <= float.Epsilon)
+            return;
+        var halfWidth = command.StrokeWidth / 2f;
+        var normal = new Vector2(-direction.Y / length, direction.X / length) * halfWidth;
+        var start = new Vector2(command.Left, command.Top);
+        var end = new Vector2(command.Right, command.Bottom);
+        var first = start + normal;
+        var second = start - normal;
+        var third = end - normal;
+        var fourth = end + normal;
+        var color = new Vector4(command.Color.Rgb, command.Opacity);
+        vertices.Add(new Vertex(new Vector3(first, 0f), color));
+        vertices.Add(new Vertex(new Vector3(second, 0f), color));
+        vertices.Add(new Vertex(new Vector3(third, 0f), color));
+        vertices.Add(new Vertex(new Vector3(third, 0f), color));
+        vertices.Add(new Vertex(new Vector3(fourth, 0f), color));
+        vertices.Add(new Vertex(new Vector3(first, 0f), color));
     }
 
     /// <summary>Adds or extends one ordered UI geometry batch.</summary>
@@ -2463,25 +2974,30 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <param name="layer">UI composition layer.</param>
     /// <param name="firstVertex">First vertex in the kind-specific buffer.</param>
     /// <param name="vertexCount">Number of vertices added.</param>
+    /// <param name="clip">Logical clip shared by the batch.</param>
+    /// <param name="texture">Texture used by image batches.</param>
     private void AddUiBatch(
         UiGeometryKind kind,
         UIDrawLayer layer,
         uint firstVertex,
-        uint vertexCount)
+        uint vertexCount,
+        UIClipRect? clip,
+        TextureHandle texture = default)
     {
         if (vertexCount == 0)
             return;
         if (_uiBatches.Count > 0)
         {
             var previous = _uiBatches[^1];
-            if (previous.Kind == kind && previous.Layer == layer
+            if (previous.Kind == kind && previous.Layer == layer && previous.Clip == clip &&
+                previous.Texture == texture
                 && previous.FirstVertex + previous.VertexCount == firstVertex)
             {
                 _uiBatches[^1] = previous with { VertexCount = previous.VertexCount + vertexCount };
                 return;
             }
         }
-        _uiBatches.Add(new UiBatch(kind, layer, firstVertex, vertexCount));
+        _uiBatches.Add(new UiBatch(kind, layer, firstVertex, vertexCount, clip, texture));
     }
 
     /// <summary>Tessellates one filled UI ellipse into triangles.</summary>
@@ -2495,19 +3011,20 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         var radiusX = MathF.Max(0f, (command.Right - command.Left) / 2f);
         var radiusY = MathF.Max(0f, (command.Bottom - command.Top) / 2f);
         var center = new Vector3(centerX, centerY, 0f);
+        var color = new Vector4(command.Color.Rgb, command.Opacity);
         for (var index = 0; index < SegmentCount; index++)
         {
             var angleA = index * MathF.Tau / SegmentCount;
             var angleB = (index + 1) * MathF.Tau / SegmentCount;
-            vertices.Add(new Vertex(center, command.Color));
+            vertices.Add(new Vertex(center, color));
             vertices.Add(new Vertex(new Vector3(
                 centerX + MathF.Cos(angleB) * radiusX,
                 centerY + MathF.Sin(angleB) * radiusY,
-                0f), command.Color));
+                0f), color));
             vertices.Add(new Vertex(new Vector3(
                 centerX + MathF.Cos(angleA) * radiusX,
                 centerY + MathF.Sin(angleA) * radiusY,
-                0f), command.Color));
+                0f), color));
         }
     }
 
@@ -2545,6 +3062,46 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <returns>The DPI value for the window.</returns>
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr windowHandle);
+
+    /// <summary>Finds the nearest native monitor for a physical screen point.</summary>
+    /// <param name="point">Physical screen point.</param>
+    /// <param name="flags">Win32 fallback policy.</param>
+    /// <returns>Native monitor handle.</returns>
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(NativePoint point, uint flags);
+
+    /// <summary>Gets native monitor and work-area rectangles.</summary>
+    /// <param name="monitor">Native monitor handle.</param>
+    /// <param name="info">Initialized monitor information structure.</param>
+    /// <returns>True when monitor information was available.</returns>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref NativeMonitorInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NativeMonitorInfo
+    {
+        public uint Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public uint Flags;
+    }
 
     private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties)
     {
@@ -2632,9 +3189,18 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         // ── Acquire swapchain image ──
         uint imageIndex = 0;
         var imageAvailableSemaphore = _imageAvailableSemaphores![frameIndex];
-        var result = _swapchainManager!.Extension.AcquireNextImage(
-            _device, _swapchainManager.Handle, ulong.MaxValue,
-            imageAvailableSemaphore, default, &imageIndex);
+        CpuProfiler.EnterWait("Wait: acquire swapchain image");
+        Result result;
+        try
+        {
+            result = _swapchainManager!.Extension.AcquireNextImage(
+                _device, _swapchainManager.Handle, ulong.MaxValue,
+                imageAvailableSemaphore, default, &imageIndex);
+        }
+        finally
+        {
+            CpuProfiler.LeaveWait("Wait: acquire swapchain image");
+        }
 
         if (result == Result.ErrorOutOfDateKhr)
         {
@@ -2670,7 +3236,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             PImageIndices = &imageIndex
         };
 
-        result = _swapchainManager.Extension.QueuePresent(_presentQueue, &presentInfo);
+        CpuProfiler.EnterWait("Wait: present swapchain image");
+        try
+        {
+            result = _swapchainManager.Extension.QueuePresent(_presentQueue, &presentInfo);
+        }
+        finally
+        {
+            CpuProfiler.LeaveWait("Wait: present swapchain image");
+        }
 
         if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr)
         {
@@ -2878,6 +3452,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         var pushConstants = _pushConstants;
         DrawUiBatches(commandBuffer, UIDrawLayer.Content, uiFrameBuffer, textFrameBuffer, pushConstants);
 
+        _vk.CmdSetScissor(commandBuffer, 0, 1, &windowScissor);
+
         // Draw FBO textures for each viewport
         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.TexturePipeline);
 
@@ -2963,6 +3539,8 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             if (batch.Layer != layer)
                 continue;
 
+            SetUiScissor(commandBuffer, batch.Clip);
+
             ulong offset = 0;
             if (batch.Kind == UiGeometryKind.Color)
             {
@@ -2974,7 +3552,9 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             else
             {
                 _vk!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.TexturePipeline);
-                var descriptorSet = _fontAtlas!.DescriptorSet;
+                var descriptorSet = batch.Kind == UiGeometryKind.Text
+                    ? _fontAtlas!.DescriptorSet
+                    : _persistentTextures!.GetDescriptor(batch.Texture);
                 _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                     _pipelines.TextureLayout, 0, 1, &descriptorSet, 0, null);
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &textBuffer, &offset);
@@ -2983,6 +3563,36 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
             }
             _vk.CmdDraw(commandBuffer, batch.VertexCount, 1, batch.FirstVertex, 0);
         }
+    }
+
+    /// <summary>Applies a logical UI clip as a framebuffer-space Vulkan scissor.</summary>
+    /// <param name="commandBuffer">Recording command buffer.</param>
+    /// <param name="clip">Logical clip, or null for the complete framebuffer.</param>
+    private void SetUiScissor(CommandBuffer commandBuffer, UIClipRect? clip)
+    {
+        var extent = _swapchainManager!.Extent;
+        if (clip is null)
+        {
+            var full = new Rect2D
+            {
+                Offset = new Offset2D { X = 0, Y = 0 },
+                Extent = extent
+            };
+            _vk!.CmdSetScissor(commandBuffer, 0, 1, &full);
+            return;
+        }
+
+        var scale = GetFramebufferScale();
+        var left = Math.Clamp((int)MathF.Floor(clip.Value.Left * scale), 0, (int)extent.Width);
+        var top = Math.Clamp((int)MathF.Floor(clip.Value.Top * scale), 0, (int)extent.Height);
+        var right = Math.Clamp((int)MathF.Ceiling(clip.Value.Right * scale), left, (int)extent.Width);
+        var bottom = Math.Clamp((int)MathF.Ceiling(clip.Value.Bottom * scale), top, (int)extent.Height);
+        var scissor = new Rect2D
+        {
+            Offset = new Offset2D { X = left, Y = top },
+            Extent = new Extent2D { Width = (uint)(right - left), Height = (uint)(bottom - top) }
+        };
+        _vk!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
     }
 
     /// <summary>Copies only changed contiguous vertex ranges into a retained mapped buffer.</summary>
@@ -3085,7 +3695,10 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
         Color,
 
         /// <summary>Glyph-atlas textured geometry.</summary>
-        Text
+        Text,
+
+        /// <summary>Renderer-owned sampled image geometry.</summary>
+        Image
     }
 
     /// <summary>Describes one ordered UI draw range.</summary>
@@ -3093,11 +3706,15 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
     /// <param name="Layer">Composition layer.</param>
     /// <param name="FirstVertex">First vertex in the kind-specific buffer.</param>
     /// <param name="VertexCount">Number of vertices.</param>
+    /// <param name="Clip">Logical scissor shared by this range.</param>
+    /// <param name="Texture">Renderer-owned texture for image geometry.</param>
     private readonly record struct UiBatch(
         UiGeometryKind Kind,
         UIDrawLayer Layer,
         uint FirstVertex,
-        uint VertexCount);
+        uint VertexCount,
+        UIClipRect? Clip,
+        TextureHandle Texture);
 
     public void Run()
     {
@@ -3274,6 +3891,23 @@ public unsafe class SilkWindow : IWindow, IInputSource, IRenderer
                 enabled ? interval : Timeout.InfiniteTimeSpan);
         }
         RequestFrame();
+    }
+
+    /// <inheritdoc/>
+    public void PresentInteractiveFrame()
+    {
+        RequestFrame();
+        if (_window is null || _renderingFrame || _shutdown)
+            return;
+        var minimumInterval = TimeSpan.FromSeconds(1d /
+            (_targetFrameRate > 0d ? _targetFrameRate : 60d));
+        if (_lastInteractiveFrameTimestamp != 0 &&
+            System.Diagnostics.Stopwatch.GetElapsedTime(_lastInteractiveFrameTimestamp) <
+                minimumInterval)
+            return;
+        _lastInteractiveFrameTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        _window.DoUpdate();
+        _window.DoRender();
     }
 
     /// <summary>Renders complete initialized content before revealing a deferred Windows window.</summary>

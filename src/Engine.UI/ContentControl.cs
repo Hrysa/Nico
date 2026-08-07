@@ -36,6 +36,8 @@ public class ContentControl : Box
     /// <returns>Desired border-box size.</returns>
     protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
     {
+        if (TemplateRoot is not null)
+            return base.MeasureOverride(availableSize);
         if (_content is null)
             return new System.Numerics.Vector2(Padding.Horizontal, Padding.Vertical);
         var contentAvailable = new System.Numerics.Vector2(
@@ -50,6 +52,11 @@ public class ContentControl : Box
     /// <summary>Arranges the content child within the box's padding.</summary>
     protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
     {
+        if (TemplateRoot is not null)
+        {
+            base.ArrangeOverride(contentSize);
+            return;
+        }
         if (_content is null)
             return;
         _content.Measure(contentSize);

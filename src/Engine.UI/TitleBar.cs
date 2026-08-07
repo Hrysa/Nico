@@ -155,8 +155,11 @@ public sealed class TitleBar : Surface
         {
             var desiredWidth = 0f;
             var desiredHeight = 0f;
-            foreach (var child in Children.OfType<UIElement>())
+            var children = Children;
+            for (var index = 0; index < children.Count; index++)
             {
+                if (children[index] is not UIElement child)
+                    continue;
                 child.Measure(availableSize);
                 desiredWidth += child.DesiredSize.X;
                 desiredHeight = MathF.Max(desiredHeight, child.DesiredSize.Y);
@@ -167,16 +170,23 @@ public sealed class TitleBar : Surface
         /// <inheritdoc/>
         protected override void ArrangeOverride(System.Numerics.Vector2 contentSize)
         {
-            var children = Children.OfType<UIElement>().ToArray();
-            var groupWidth = children.Sum(child => child.DesiredSize.X);
+            var children = Children;
+            var groupWidth = 0f;
+            for (var index = 0; index < children.Count; index++)
+            {
+                if (children[index] is UIElement child)
+                    groupWidth += child.DesiredSize.X;
+            }
             var x = _contentAlignment switch
             {
                 HorizontalAlignment.Center => (contentSize.X - groupWidth) / 2f,
                 HorizontalAlignment.Right => contentSize.X - groupWidth,
                 _ => EdgeInset
             };
-            foreach (var child in children)
+            for (var index = 0; index < children.Count; index++)
             {
+                if (children[index] is not UIElement child)
+                    continue;
                 var childHeight = MathF.Min(contentSize.Y, child.DesiredSize.Y);
                 var y = (contentSize.Y - childHeight) / 2f;
                 child.Arrange(new System.Numerics.Vector2(x, y),

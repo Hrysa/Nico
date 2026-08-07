@@ -70,7 +70,15 @@ internal unsafe class FrameScheduler
     public uint BeginFrame()
     {
         var fence = _inFlightFences[_currentFrame];
-        _vk.WaitForFences(_device, 1, &fence, new Bool32(true), ulong.MaxValue);
+        CpuProfiler.EnterWait("Wait: Vulkan frame fence");
+        try
+        {
+            _vk.WaitForFences(_device, 1, &fence, new Bool32(true), ulong.MaxValue);
+        }
+        finally
+        {
+            CpuProfiler.LeaveWait("Wait: Vulkan frame fence");
+        }
         _vk.ResetCommandPool(_device, _commandPools[_currentFrame], 0);
         _passCount = 0;
         return _currentFrame;

@@ -7,6 +7,17 @@ namespace Editor.Tests;
 
 public class UIThemeTests
 {
+    /// <summary>Verifies the accessibility theme meets enhanced text contrast on its main surfaces.</summary>
+    [Fact]
+    public void HighContrastTheme_PrimaryTextAndAccentMeetEnhancedContrast()
+    {
+        var theme = UITheme.HighContrast;
+
+        Assert.True(ContrastRatio(theme.TextPrimary, theme.Surface) >= 7f);
+        Assert.True(ContrastRatio(theme.Accent, theme.Surface) >= 7f);
+        Assert.NotEqual(theme.Surface, theme.BorderStrong);
+    }
+
     /// <summary>Verifies idle subtle buttons emit readable text without a background rectangle.</summary>
     [Fact]
     public void Button_ThemedSubtle_EmitsOnlyTextWhenIdle()
@@ -17,6 +28,19 @@ public class UIThemeTests
 
         Assert.DoesNotContain(commands, command => command.Type == UIDrawCommandType.Rectangle);
         Assert.Contains(commands, command => command.Type == UIDrawCommandType.Text && command.Text == "Open");
+    }
+
+    /// <summary>Calculates WCAG contrast from the engine's linear color components.</summary>
+    /// <param name="first">First linear RGB color.</param>
+    /// <param name="second">Second linear RGB color.</param>
+    /// <returns>Contrast ratio from one through twenty-one.</returns>
+    private static float ContrastRatio(Color first, Color second)
+    {
+        var firstLuminance = first.R * 0.2126f + first.G * 0.7152f + first.B * 0.0722f;
+        var secondLuminance = second.R * 0.2126f + second.G * 0.7152f + second.B * 0.0722f;
+        var lighter = MathF.Max(firstLuminance, secondLuminance);
+        var darker = MathF.Min(firstLuminance, secondLuminance);
+        return (lighter + 0.05f) / (darker + 0.05f);
     }
 
     /// <summary>Verifies buttons compose and arrange a label instead of painting text themselves.</summary>
@@ -160,24 +184,16 @@ public class UIThemeTests
         Assert.Equal(UITheme.Dark.PanelTitleFontSize, header.TitleLabel.FontSize);
     }
 
-    /// <summary>Verifies every persistent editor dock uses the shared panel composition and tokens.</summary>
+    /// <summary>Verifies dock tabs are the sole persistent Editor panel chrome.</summary>
     [Fact]
     public void EditorView_ToolPanels_UseOneHeaderStandard()
     {
         var view = EditorUI.BuildView(1280f, 720f);
-        var panels = Descendants(view.Root).OfType<ToolPanel>()
-            .Where(panel => panel.IsVisible).ToArray();
+        var descendants = Descendants(view.Root).ToArray();
 
-        Assert.Equal(3, panels.Length);
-        Assert.All(panels, panel =>
-        {
-            Assert.Equal(UITheme.Dark.PanelHeaderHeight, panel.Header.Height);
-            Assert.Equal(UITheme.Dark.PanelTitleFontSize, panel.Header.TitleLabel.FontSize);
-            Assert.Equal(UITheme.Dark.PanelHeaderPadding, panel.Header.Padding.Left);
-            Assert.Equal(UITheme.Dark.PanelHeaderPadding, panel.Header.Padding.Right);
-            Assert.Equal(panel.Header.Height, panel.Content.Position.Y);
-            Assert.Equal(panel.Width, panel.Content.Width);
-        });
+        Assert.Empty(descendants.OfType<ToolPanel>());
+        Assert.Contains(descendants, element => element is TabControl);
+        Assert.DoesNotContain(descendants, element => element.Name == "GameHeader");
     }
 
     /// <summary>Verifies floating component subtrees are assigned to the overlay composition layer.</summary>
@@ -213,6 +229,56 @@ public class UIThemeTests
 
         Assert.Equal(1, list.SelectedIndex);
         Assert.Equal("Second", selected);
+    }
+
+    /// <summary>Verifies scrolling rebinds retained list containers instead of replacing them.</summary>
+    [Fact]
+    public void ListView_Scroll_ReusesVisibleContainers()
+    {
+        var list = new ListView(200f, 100f);
+        list.SetItems(Enumerable.Range(0, 100).Select(index => $"Item {index}"));
+        list.BuildDrawList();
+        var firstRow = Assert.IsType<ListViewItem>(list.Children[0]);
+
+        list.InvokeScroll(-1f);
+
+        Assert.Same(firstRow, list.Children[0]);
+        Assert.Equal("Item 3", firstRow.Text);
+    }
+
+    /// <summary>Verifies very large logical lists retain only viewport-sized visual rows.</summary>
+    [Fact]
+    public void ListView_LargeItems_BoundsVisualChildren()
+    {
+        var list = new ListView(200f, 100f);
+        list.SetItems(Enumerable.Range(0, 100_000).Select(index => index.ToString()));
+        list.BuildDrawList();
+
+        Assert.True(list.Children.Count <= (int)MathF.Ceiling(list.Height / list.RowHeight));
+    }
+
+    /// <summary>Verifies no-op scrolling is allocation-free and text rebinding remains tightly bounded.</summary>
+    [Fact]
+    public void ListView_RepeatedScroll_BoundsRebindingAllocation()
+    {
+        var items = Enumerable.Range(0, 100).Select(index => $"Item {index}").ToArray();
+        var list = new ListView(200f, 100f);
+        list.SetItems(items);
+        list.BuildDrawList();
+        list.InvokeScroll(-1f);
+        list.InvokeScroll(1f);
+        var noOpStart = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 100; index++)
+            list.InvokeScroll(0f);
+        var noOpAllocation = GC.GetAllocatedBytesForCurrentThread() - noOpStart;
+        Assert.Equal(0, noOpAllocation);
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 100; index++)
+            list.InvokeScroll((index & 1) == 0 ? -1f : 1f);
+
+        var rebindAllocation = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+        Assert.InRange(rebindAllocation, 0, 512 * 100);
     }
 
     /// <summary>Verifies hierarchy and filesystem rows share size and typography tokens.</summary>
@@ -282,9 +348,7 @@ public class UIThemeTests
             Text = "ExampleGame.MoveMainObject, example_game.Scripts"
         };
         var router = new UIEventRouter(field, () => { });
-        router.MovePointer(new(20f, 15f));
-        router.Press();
-        router.Release(invokeClick: true);
+        router.Focus(field);
 
         router.TextInput('X');
 
@@ -301,9 +365,7 @@ public class UIThemeTests
     {
         var field = new TextField(60f, 30f) { Text = "123456" };
         var router = new UIEventRouter(field, () => { });
-        router.MovePointer(new(20f, 15f));
-        router.Press();
-        router.Release(invokeClick: true);
+        router.Focus(field);
 
         var textCommand = Assert.Single(field.BuildDrawList().Commands,
             command => command.Type == UIDrawCommandType.Text);
@@ -311,6 +373,87 @@ public class UIThemeTests
         Assert.True(textCommand.Text.Length >= 5);
         Assert.Equal(textCommand.Text.Length, textCommand.CaretIndex);
         Assert.Equal(field.Left + 4f, textCommand.Left);
+    }
+
+    /// <summary>Verifies multiline text produces one retained text command per visible logical line.</summary>
+    [Fact]
+    public void TextBox_MultilinePaint_UsesSeparateLinesAndCaret()
+    {
+        var textBox = new TextBox(180f, 80f) { Text = "first\nsecond" };
+        var router = new UIEventRouter(textBox, () => { });
+        router.Focus(textBox);
+
+        var textCommands = textBox.BuildDrawList().Commands
+            .Where(command => command.Type == UIDrawCommandType.Text)
+            .ToArray();
+
+        Assert.Equal(2, textCommands.Length);
+        Assert.Equal("first", textCommands[0].Text);
+        Assert.Equal("second", textCommands[1].Text);
+        Assert.Equal(6, textCommands[1].CaretIndex);
+        Assert.True(textCommands[1].Top > textCommands[0].Top);
+    }
+
+    /// <summary>Verifies password fields mask retained draw text without changing the stored buffer.</summary>
+    [Fact]
+    public void PasswordField_RevealPolicy_ChangesDisplayOnly()
+    {
+        var field = new PasswordField(180f, 30f) { Text = "secret" };
+
+        var masked = Assert.Single(field.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+        Assert.Equal("••••••", masked.Text);
+        Assert.Equal("secret", field.Text);
+
+        field.PasswordRevealMode = PasswordRevealMode.Always;
+        var revealed = Assert.Single(field.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+        Assert.Equal("secret", revealed.Text);
+    }
+
+    /// <summary>Verifies text validation updates semantic state, events, and border styling.</summary>
+    [Fact]
+    public void TextField_Validator_UpdatesErrorStateAndVisual()
+    {
+        var field = new TextField(180f, 30f);
+        var changes = new List<string?>();
+        field.ValidationChanged += changes.Add;
+        field.Validator = text => text.Length < 3 ? "Too short" : null;
+
+        Assert.True(field.HasValidationError);
+        Assert.Equal("Too short", field.ValidationMessage);
+        field.BuildDrawList();
+        Assert.Equal(UITheme.Dark.Error, field.BorderColor);
+
+        field.Text = "valid";
+        field.BuildDrawList();
+        Assert.False(field.HasValidationError);
+        Assert.Equal(UITheme.Dark.BorderStrong, field.BorderColor);
+        Assert.Equal(new string?[] { "Too short", null }, changes);
+    }
+
+    /// <summary>Verifies text semantics expose validation while protecting password values.</summary>
+    [Fact]
+    public void TextEditors_Semantics_ExposeStateAndProtectPasswords()
+    {
+        var field = new TextField(180f, 30f)
+        {
+            Name = "Username",
+            Text = "ab",
+            Validator = text => text.Length < 3 ? "Too short" : null
+        };
+        var fieldInfo = field.GetSemanticInfo();
+
+        Assert.Equal(UISemanticRole.TextField, fieldInfo.Role);
+        Assert.Equal("Username", fieldInfo.Name);
+        Assert.Equal("ab", fieldInfo.Value);
+        Assert.True(fieldInfo.IsInvalid);
+        Assert.Equal("Too short", fieldInfo.ValidationMessage);
+
+        var password = new PasswordField(180f, 30f) { Text = "secret" };
+        var passwordInfo = password.GetSemanticInfo();
+        Assert.Equal(UISemanticRole.PasswordField, passwordInfo.Role);
+        Assert.Null(passwordInfo.Value);
     }
 
     /// <summary>Verifies the editor shell prioritizes Scene while retaining hierarchy, files, Game, and Inspector docks.</summary>
@@ -321,8 +464,8 @@ public class UIThemeTests
 
         Assert.True(view.SceneViewport.Height > view.GameViewport.Height * 2f);
         var descendants = Descendants(view.Root).ToArray();
-        Assert.Contains(descendants, child => child.Name == "FileSystem");
-        Assert.Contains(descendants, child => child.Name == "Inspector");
+        Assert.Contains(view.FileSystemTree, descendants);
+        Assert.Contains(view.Inspector, descendants);
         Assert.Contains(descendants, child => child.Name == "BottomDock");
         Assert.Contains(descendants, child => child.Name == "SceneToolbar");
         Assert.Equal(1f, view.TitleBar.Margin.Bottom);

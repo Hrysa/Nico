@@ -9,6 +9,7 @@
     <Project Path="src/Engine/Engine.csproj" />
     <Project Path="src/Editor/Editor.csproj" />
     <Project Path="src/Player/Player.csproj" />
+    <Project Path="src/UIShowcase/UIShowcase.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Engine.Assets.Tests/Engine.Assets.Tests.csproj" />
@@ -18,5 +19,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Engine.Profiler.Weaver/Engine.Profiler.Weaver.csproj" />
+    <Project Path="tools/Engine.UI.Benchmarks/Engine.UI.Benchmarks.csproj" />
   </Folder>
 </Solution>

@@ -57,4 +57,47 @@ public class FlyCameraControllerTests
         Assert.False(controller.IsActive);
         Assert.False(captured);
     }
+
+    /// <summary>Verifies duplicate UI keys remain unconsumed while fly mode is inactive.</summary>
+    [Fact]
+    public void KeyDown_RepeatedUiKeyWhileInactive_DoesNotConsumeRepeat()
+    {
+        var controller = new FlyCameraController(
+            new PerspectiveCamera(), _ => { }, () => { });
+
+        Assert.False(controller.KeyDown(InputKey.Right));
+        Assert.False(controller.KeyDown(InputKey.Right));
+    }
+
+    /// <summary>Verifies repeated fly-mode keys remain owned by the camera context.</summary>
+    [Fact]
+    public void KeyDown_RepeatedMovementKeyWhileActive_RemainsConsumed()
+    {
+        var controller = new FlyCameraController(
+            new PerspectiveCamera(), _ => { }, () => { });
+        controller.KeyDown(InputKey.F);
+
+        Assert.True(controller.KeyDown(InputKey.W));
+        Assert.True(controller.KeyDown(InputKey.W));
+    }
+
+    /// <summary>Verifies losing viewport focus clears movement and releases capture.</summary>
+    [Fact]
+    public void ReleaseFocus_WhileActive_ReleasesCaptureAndHeldMovement()
+    {
+        var camera = new PerspectiveCamera();
+        var captured = false;
+        var controller = new FlyCameraController(
+            camera, value => captured = value, () => { });
+        controller.KeyDown(InputKey.F);
+        controller.KeyDown(InputKey.W);
+        controller.ReleaseFocus();
+        var position = camera.Position;
+
+        controller.Update(1d);
+
+        Assert.False(controller.IsActive);
+        Assert.False(captured);
+        Assert.Equal(position, camera.Position);
+    }
 }

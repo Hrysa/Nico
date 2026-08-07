@@ -63,7 +63,7 @@ public sealed class FlyCameraController
     public bool KeyDown(InputKey key)
     {
         if (!_pressedKeys.Add(key))
-            return true;
+            return IsActive || key == InputKey.F;
 
         if (key == InputKey.F)
         {
@@ -89,6 +89,13 @@ public sealed class FlyCameraController
     {
         _pressedKeys.Remove(key);
         return IsActive || key == InputKey.F;
+    }
+
+    /// <summary>Releases all held keys and exits fly mode when its viewport loses input ownership.</summary>
+    public void ReleaseFocus()
+    {
+        _pressedKeys.Clear();
+        SetActive(false);
     }
 
     /// <summary>Applies held movement keys for one update.</summary>

@@ -17,6 +17,7 @@ internal unsafe sealed class SwapchainManager
     private readonly KhrSurface _surfaceExtension;
     private readonly uint _graphicsFamily;
     private readonly uint _presentFamily;
+    private readonly PresentationModePreference _presentationMode;
     private readonly ILogger _logger;
     private readonly KhrSwapchain _extension;
     private SwapchainKHR _swapchain;
@@ -48,6 +49,7 @@ internal unsafe sealed class SwapchainManager
     /// <param name="surfaceExtension">Surface extension API.</param>
     /// <param name="graphicsFamily">Graphics queue family.</param>
     /// <param name="presentFamily">Presentation queue family.</param>
+    /// <param name="presentationMode">Requested presentation latency policy.</param>
     /// <param name="logger">Backend logger.</param>
     internal SwapchainManager(
         Vk vk,
@@ -57,6 +59,7 @@ internal unsafe sealed class SwapchainManager
         KhrSurface surfaceExtension,
         uint graphicsFamily,
         uint presentFamily,
+        PresentationModePreference presentationMode,
         ILogger logger)
     {
         _vk = vk;
@@ -66,6 +69,7 @@ internal unsafe sealed class SwapchainManager
         _surfaceExtension = surfaceExtension;
         _graphicsFamily = graphicsFamily;
         _presentFamily = presentFamily;
+        _presentationMode = presentationMode;
         _logger = logger;
         _extension = new KhrSwapchain(vk.Context);
     }
@@ -77,7 +81,9 @@ internal unsafe sealed class SwapchainManager
     {
         var support = QuerySupport(_surfaceExtension, _physicalDevice, _surface);
         var surfaceFormat = SwapchainPolicy.ChooseSurfaceFormat(support.Formats);
-        var presentMode = SwapchainPolicy.ChoosePresentMode(support.PresentModes);
+        var presentMode = SwapchainPolicy.ChoosePresentMode(
+            support.PresentModes, _presentationMode);
+        _logger.LogInformation("Using swapchain presentation mode {PresentMode}", presentMode);
         var extent = SwapchainPolicy.ChooseExtent(support.Capabilities, requestedWidth, requestedHeight);
         var imageCount = support.Capabilities.MinImageCount + 1;
         if (support.Capabilities.MaxImageCount > 0 && imageCount > support.Capabilities.MaxImageCount)

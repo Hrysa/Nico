@@ -1,5 +1,15 @@
 namespace Engine.Graphics;
 
+/// <summary>Selects how completed window frames are queued for display.</summary>
+public enum PresentationModePreference
+{
+    /// <summary>Uses guaranteed FIFO presentation with no tearing.</summary>
+    Fifo,
+
+    /// <summary>Prefers tear-free mailbox presentation so stale queued frames are replaced.</summary>
+    LowLatency
+}
+
 /// <summary>Configures creation of an engine window.</summary>
 public struct WindowOptions
 {
@@ -20,6 +30,9 @@ public struct WindowOptions
 
     /// <summary>Gets or sets the maximum update and render rate, or zero for unlimited.</summary>
     public double TargetFrameRate { get; set; }
+
+    /// <summary>Gets or sets the desired swapchain presentation latency policy.</summary>
+    public PresentationModePreference PresentationMode { get; set; }
 
     /// <summary>
     /// Gets or sets the viewport render scale relative to physical framebuffer pixels.

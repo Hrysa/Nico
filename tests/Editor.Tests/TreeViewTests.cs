@@ -8,6 +8,45 @@ namespace Editor.Tests;
 
 public class TreeViewTests
 {
+    /// <summary>Verifies tree columns inherit renderer-backed measurement for fitting and alignment.</summary>
+    [Fact]
+    public void Columns_UseInheritedTextLayoutService()
+    {
+        var layout = new CountingTextLayoutService();
+        var tree = new TreeView(200f, 100f)
+        {
+            TextLayoutOverride = layout,
+            ShowColumnHeaders = true
+        };
+        tree.SetColumns([
+            new TreeViewColumn("Name", 100f, node => node.Name),
+            new TreeViewColumn("Type", 100f, _ => "Node", TreeViewColumnAlignment.Right)
+        ]);
+        tree.SetRoots([new Node { Name = "Root" }]);
+
+        tree.BuildDrawList();
+
+        Assert.True(layout.MeasureCallCount >= 4);
+    }
+
+    /// <summary>Verifies scrolling against a boundary preserves visible row containers.</summary>
+    [Fact]
+    public void BoundaryScroll_DoesNotRebuildRows()
+    {
+        var root = new Node { Name = "Root" };
+        var tree = new TreeView(200f, 100f);
+        tree.SetRoots([root]);
+        tree.BuildDrawList();
+        var row = Assert.IsType<TreeViewItem>(tree.Children[0]);
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 100; index++)
+            tree.InvokeScroll(1f);
+
+        Assert.Same(row, tree.Children[0]);
+        Assert.Equal(allocationStart, GC.GetAllocatedBytesForCurrentThread());
+    }
+
     /// <summary>Verifies that nested UI bounds are absolute for drawing and hit testing.</summary>
     [Fact]
     public void NestedElement_UsesAbsoluteBounds()
@@ -239,6 +278,61 @@ public class TreeViewTests
         Assert.NotSame(firstBefore, firstAfter);
     }
 
+    /// <summary>Verifies scrolling rebinds retained visible row containers.</summary>
+    [Fact]
+    public void Scroll_LongTree_ReusesVisibleRowControls()
+    {
+        var roots = Enumerable.Range(0, 10).Select(index => new Node { Name = $"Node {index}" }).ToArray();
+        var tree = new TreeView(200f, 48f);
+        tree.SetRoots(roots);
+        var firstRow = Assert.IsType<TreeViewItem>(tree.Children[0]);
+        var secondRow = Assert.IsType<TreeViewItem>(tree.Children[1]);
+
+        tree.InvokeScroll(-1f);
+
+        Assert.Same(firstRow, tree.Children[0]);
+        Assert.Same(secondRow, tree.Children[1]);
+        Assert.Same(roots[3], firstRow.Item);
+        Assert.Same(roots[4], secondRow.Item);
+    }
+
+    /// <summary>Verifies scrolling a large tree retains a viewport-bounded visual pool.</summary>
+    [Fact]
+    public void Scroll_VeryLargeTree_KeepsVisibleChildrenBounded()
+    {
+        var roots = new Node[100_000];
+        for (var index = 0; index < roots.Length; index++)
+            roots[index] = new Node { Name = $"Node {index}" };
+        var tree = new TreeView(200f, 240f);
+        tree.SetRoots(roots);
+        var childCount = tree.Children.Count;
+
+        for (var index = 0; index < 100; index++)
+            tree.InvokeScroll(-1f);
+
+        Assert.InRange(childCount, 1, 10);
+        Assert.Equal(childCount, tree.Children.Count);
+        Assert.Same(roots[300], Assert.IsType<TreeViewItem>(tree.Children[0]).Item);
+    }
+
+    /// <summary>Verifies navigation uses the retained logical index after a large scroll.</summary>
+    [Fact]
+    public void ArrowDown_VeryLargeTree_UsesRetainedLogicalIndex()
+    {
+        var roots = new Node[100_000];
+        for (var index = 0; index < roots.Length; index++)
+            roots[index] = new Node { Name = $"Node {index}" };
+        var tree = new TreeView(200f, 240f);
+        tree.SetRoots(roots);
+        tree.Select(roots[50_000]);
+
+        tree.InvokeKeyDown((int)InputKey.Down);
+
+        Assert.Same(roots[50_001], tree.SelectedItem);
+        Assert.Contains(tree.Children, child =>
+            ReferenceEquals(Assert.IsType<TreeViewItem>(child).Item, roots[50_001]));
+    }
+
     /// <summary>Verifies refreshing after insertion exposes a newly added child.</summary>
     [Fact]
     public void Refresh_AfterChildAdded_ShowsNewRow()
@@ -269,7 +363,7 @@ public class TreeViewTests
         Assert.True(invoked);
     }
 
-    /// <summary>Verifies hovering a submenu item requests its child menu.</summary>
+    /// <summary>Verifies hovering a submenu item requests its child menu after the configured delay.</summary>
     [Fact]
     public void ContextMenu_HoverSubmenuItem_RequestsChildMenu()
     {
@@ -280,8 +374,60 @@ public class TreeViewTests
 
         router.MovePointer(new(20f, 20f));
 
+        Assert.Null(hoveredItem);
+        menu.AdvanceTime(menu.SubmenuOpenDelay + 0.01d);
+
         Assert.NotNull(hoveredItem);
         Assert.Equal(2f, hoveredItem.Left);
         Assert.Equal(2f, hoveredItem.Top);
+    }
+
+    /// <summary>Verifies column ellipsis never cuts a supplementary grapheme in half.</summary>
+    [Fact]
+    public void TreeViewItem_ColumnEllipsis_PreservesSurrogatePairs()
+    {
+        var node = new Node { Name = "😀ABCDE" };
+        var columns = new[]
+        {
+            new TreeViewColumn("Name", 95f, item => item.Name)
+        };
+        var row = new TreeViewItem(95f, 24f, node, 0, false, columns: columns)
+        {
+            TextLayoutOverride = new CountingTextLayoutService()
+        };
+
+        var text = Assert.Single(row.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text).Text!;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (!char.IsSurrogate(text[index]))
+                continue;
+            Assert.True(index + 1 < text.Length && char.IsSurrogatePair(text, index));
+            index++;
+        }
+    }
+
+    /// <summary>Records calls while providing deterministic text metrics.</summary>
+    private sealed class CountingTextLayoutService : ITextLayoutService
+    {
+        /// <summary>Gets the number of measurement requests.</summary>
+        public int MeasureCallCount { get; private set; }
+
+        /// <inheritdoc/>
+        public float MeasureWidth(ReadOnlySpan<char> text, float fontSize)
+        {
+            MeasureCallCount++;
+            return text.Length * fontSize;
+        }
+
+        /// <inheritdoc/>
+        public int HitTestCaret(
+            ReadOnlySpan<char> text,
+            float fontSize,
+            float horizontalPosition)
+        {
+            return Math.Clamp((int)(horizontalPosition / fontSize), 0, text.Length);
+        }
     }
 }

@@ -7,6 +7,10 @@ namespace Engine.UI;
 /// </summary>
 public class Modal : UIElement
 {
+    /// <inheritdoc/>
+    public override UISemanticInfo GetSemanticInfo() => new(
+        UISemanticRole.Dialog, Name, null, IsEnabled, true, false, null);
+
     private readonly UITheme _theme;
 
     /// <summary>Gets the dialog surface hosted by the modal.</summary>

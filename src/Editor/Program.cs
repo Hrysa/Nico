@@ -82,7 +82,8 @@ var options = new WindowOptions
     Height = height,
     CustomTitleBar = true,
     IsEventDriven = true,
-    TargetFrameRate = 120d
+    TargetFrameRate = 120d,
+    PresentationMode = PresentationModePreference.LowLatency
 };
 
 logger.LogInformation("Initializing window...");
@@ -100,14 +101,29 @@ logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
 var uiRoot = editorView.Root;
 var overlay = editorView.Overlay;
-window.SubmitUI(uiRoot.BuildDrawList());
-window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
+var dockWorkspace = EditorDockWorkspace.Load(project.RootPath, out var dockRestoreError);
+if (dockRestoreError is not null)
+    logger.LogWarning(dockRestoreError, "Could not restore the Editor dock workspace; using defaults");
+var dockWindowFactory = new EditorDockFloatingWindowFactory(secondaryWindows);
+using var dockSession = new DockSession(
+    dockWorkspace,
+    EditorDockWorkspace.CreateRegistry(editorView, allowViewportFloating: true),
+    dockWindowFactory,
+    initializeFloatingWindows: false,
+    mainCoordinates: window);
+EditorDockWorkspace.Mount(editorView, dockSession);
+using var mainUIHost = new UIHost(
+    window, window, window, uiRoot, width, height,
+    overlay: overlay,
+    textLayout: window,
+    schedulingMode: UIHostSchedulingMode.ExternallyManaged);
 
 // ── Scene viewport: PerspectiveCamera for 3D scene ────────────
 var sceneViewport = editorView.SceneViewport;
 var sceneViewportId = window.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
 sceneViewport.RenderView = sceneViewportId;
-window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+var sceneViewportPresentation = new ViewportPresentationTracker(sceneViewport);
+sceneViewportPresentation.Synchronize(window);
 window.SetViewportClearColor(sceneViewportId, 0.0f, 0.0f, 0.0f);
 
 var sceneCamera = new PerspectiveCamera(
@@ -184,7 +200,8 @@ var gameViewport = editorView.GameViewport;
 var gameViewportId = window.CreateRenderView(gameViewport.Width, gameViewport.Height);
 gameViewport.RenderView = gameViewportId;
 gameViewport.Camera = gameCamera;
-window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+var gameViewportPresentation = new ViewportPresentationTracker(gameViewport);
+gameViewportPresentation.Synchronize(window);
 window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
 
 Vector2 lastMousePos = Vector2.Zero;
@@ -199,7 +216,10 @@ selection.SelectionChanged += item =>
     hierarchyTree.Select(item);
     synchronizingSelection = false;
 };
-var flyCamera = new FlyCameraController(sceneCamera, window.SetMouseCaptured, selection.CancelInteraction);
+var flyInputWindow = window;
+var flyCamera = new FlyCameraController(
+    sceneCamera, captured => flyInputWindow.SetMouseCaptured(captured), selection.CancelInteraction);
+using var sceneInputContext = new SceneViewportInputContext(sceneViewport, flyCamera);
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
 var renderScheduler = new EditorRenderScheduler();
@@ -209,11 +229,26 @@ DetachedToolWindow? detachedSceneWindow = null;
 DetachedToolWindow? detachedGameWindow = null;
 EditorViewportRenderer? detachedSceneRenderer = null;
 EditorViewportRenderer? detachedGameRenderer = null;
-DetachedToolWindow? detachedHierarchyWindow = null;
-DetachedToolWindow? detachedFileSystemWindow = null;
-DetachedToolWindow? detachedInspectorWindow = null;
 
-var uiEventRouter = new UIEventRouter(uiRoot, RefreshUI);
+/// <summary>Aligns main-window viewport textures with their latest retained layout bounds.</summary>
+void SynchronizeMainViewportPresentations()
+{
+    if (detachedSceneWindow is null)
+        sceneViewportPresentation.Synchronize(window);
+    if (detachedGameWindow is null)
+        gameViewportPresentation.Synchronize(window);
+}
+
+mainUIHost.LayoutUpdated += SynchronizeMainViewportPresentations;
+dockSession.MainHost.SplitResizeCompleted += ResizeViewportTargets;
+dockWindowFactory.RegisterLifecycle(
+    EditorDockWorkspace.SceneId, OpenFloatingSceneViewport, CloseFloatingSceneViewport);
+dockWindowFactory.RegisterLifecycle(
+    EditorDockWorkspace.GameId, OpenFloatingGameViewport, CloseFloatingGameViewport);
+dockSession.SynchronizeFloatingWindows();
+
+var uiEventRouter = mainUIHost.InputRouter;
+dockSession.AttachDragRouter(dockSession.MainHost, uiEventRouter, window, RefreshUI);
 ContextMenu? hierarchyContextMenu = null;
 ContextMenu? fileContextMenu = null;
 ContextMenu? fileSubmenu = null;
@@ -224,11 +259,12 @@ DragPreview? dragPreview = null;
 var fileSystemTree = editorView.FileSystemTree;
 var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
-var profilerVisible = false;
 var profilerRefreshPending = 0;
+CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
 window.FrameProfiled += sample =>
 {
-    if (profilerVisible && editorView.Profiler.AddSample(sample))
+    if (dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId) &&
+        editorView.Profiler.AddSample(sample))
         Interlocked.Exchange(ref profilerRefreshPending, 1);
 };
 AttachFileSystem(fileSystemTree);
@@ -236,6 +272,16 @@ AttachInspector(inspector);
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
+editorView.HierarchyButton.Click += () => OpenDockPanel(
+    EditorDockWorkspace.HierarchyId, EditorDockWorkspace.FileSystemId);
+editorView.FileSystemButton.Click += () => OpenDockPanel(
+    EditorDockWorkspace.FileSystemId, EditorDockWorkspace.HierarchyId);
+editorView.SceneButton.Click += () => OpenDockPanel(
+    EditorDockWorkspace.SceneId, EditorDockWorkspace.GameId);
+editorView.GameButton.Click += () => OpenDockPanel(
+    EditorDockWorkspace.GameId, EditorDockWorkspace.SceneId);
+editorView.InspectorButton.Click += () => OpenDockPanel(
+    EditorDockWorkspace.InspectorId, EditorDockWorkspace.SceneId);
 editorView.ProfilerButton.Click += ToggleProfiler;
 editorView.ProfilerPauseButton.Click += ToggleProfilerPause;
 editorView.Profiler.Click += () =>
@@ -246,103 +292,110 @@ editorView.Profiler.Click += () =>
         editorView.ProfilerPauseLabel.Text = "Record";
     }
 };
-editorView.SceneToolbar.DoubleClick += DetachSceneViewport;
-editorView.GameHeader.DoubleClick += DetachGameViewport;
-editorView.HierarchyPanel.Header.DoubleClick += DetachHierarchy;
-editorView.FileSystemPanel.Header.DoubleClick += DetachFileSystem;
-editorView.InspectorPanel.Header.DoubleClick += DetachInspector;
 RefreshVertices();
 
-/// <summary>Moves the Scene tool into an independent shared-device window.</summary>
-void DetachSceneViewport()
+/// <summary>Connects focused Scene viewport input to one native-window UI host.</summary>
+/// <param name="host">Host whose independent router owns focus for the viewport.</param>
+/// <param name="includePointerLook">Whether this host also needs standalone fly-camera pointer routing.</param>
+void ConfigureSceneViewportInput(UIHost host, bool includePointerLook)
 {
-    if (detachedSceneWindow is not null)
+    host.PreviewKey = keyEvent => sceneInputContext.RouteKey(host.InputRouter, keyEvent);
+    host.PreviewTextInput = _ => sceneInputContext.RoutesText(host.InputRouter);
+    host.PreviewTextComposition = _ => sceneInputContext.RoutesText(host.InputRouter);
+    if (!includePointerLook)
         return;
-    editorView.ViewportDock.Remove(editorView.SceneSlot);
-    editorView.ViewportDock.Rows[0] = GridLength.Pixels(0f);
-    editorView.ViewportDock.Rows[1] = GridLength.Pixels(0f);
-    uiRoot.InvalidateMeasure();
+    host.PreviewPointerMove = pointerEvent => flyCamera.MovePointer(pointerEvent.Position);
+    host.PreviewPointerWheel = _ => flyCamera.IsActive;
+    host.PreviewPointerButton = _ => flyCamera.IsActive
+        ? UIHostPointerRouting.Consume
+        : UIHostPointerRouting.Route;
+}
+
+/// <summary>Transfers Scene rendering into a newly opened dock window.</summary>
+/// <param name="toolWindow">Opened floating tool window.</param>
+void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
+{
+    detachedSceneWindow = toolWindow;
     window.DestroyRenderView(sceneViewportId);
-    detachedSceneWindow = new DetachedToolWindow(
-        secondaryWindows, "Scene", 900, 600, editorView.SceneSlot);
-    var detachedWindow = detachedSceneWindow.Window;
+    sceneViewportPresentation.Reset();
+    var detachedWindow = toolWindow.Window;
+    flyCamera.ReleaseFocus();
+    flyInputWindow = detachedWindow;
+    ConfigureSceneViewportInput(toolWindow.UIHost, includePointerLook: true);
     sceneViewportId = detachedWindow.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
     sceneViewport.RenderView = sceneViewportId;
     detachedWindow.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
-    detachedWindow.SetViewportQuadVertices(
-        sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
+    sceneViewportPresentation.Synchronize(detachedWindow);
+    toolWindow.UIHost.LayoutUpdated += () =>
+        sceneViewportPresentation.Synchronize(detachedWindow);
+    if (toolWindow.Content is DockHost sceneDockHost)
+    {
+        sceneDockHost.SplitResizeCompleted += () => detachedWindow.ResizeRenderView(
+            sceneViewportId, sceneViewport.Width, sceneViewport.Height);
+    }
     detachedSceneRenderer = new EditorViewportRenderer(
         detachedWindow, sceneViewportId, sceneViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
-    detachedWindow.Resized += (_, _) =>
-    {
-        detachedWindow.ResizeRenderView(sceneViewportId, sceneViewport.Width, sceneViewport.Height);
-        detachedWindow.SetViewportQuadVertices(
-            sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
-    };
+    detachedWindow.Resized += (_, _) => detachedWindow.ResizeRenderView(
+        sceneViewportId, sceneViewport.Width, sceneViewport.Height);
     detachedWindow.Update += _ =>
     {
         detachedSceneRenderer?.SetSceneObjects(GetActiveSceneObjects());
         detachedSceneRenderer?.RenderScene(
-            sceneViewport, detachedSceneWindow?.UIHost.PointerPosition ?? Vector2.Zero);
+            sceneViewport, toolWindow.UIHost.PointerPosition);
     };
     ResizeEditor(width, height);
 }
 
-/// <summary>Moves the detached Scene tool back into the main dock.</summary>
-void DockSceneViewport()
+/// <summary>Returns Scene rendering to the main window before a dock window closes.</summary>
+/// <param name="toolWindow">Closing floating tool window.</param>
+void CloseFloatingSceneViewport(DetachedToolWindow toolWindow)
 {
-    if (detachedSceneWindow is null)
+    if (!ReferenceEquals(detachedSceneWindow, toolWindow))
         return;
     detachedSceneRenderer?.Dispose();
     detachedSceneRenderer = null;
-    detachedSceneWindow.Window.DestroyRenderView(sceneViewportId);
-    detachedSceneWindow.ReleaseContent();
-    detachedSceneWindow.Dispose();
+    flyCamera.ReleaseFocus();
+    flyInputWindow = window;
+    toolWindow.Window.DestroyRenderView(sceneViewportId);
+    sceneViewportPresentation.Reset();
     detachedSceneWindow = null;
-    editorView.ViewportDock.Rows[0] = GridLength.Star(0.73f);
-    editorView.ViewportDock.Rows[1] = GridLength.Pixels(1f);
-    editorView.ViewportDock.Add(editorView.SceneSlot, 0, 0);
     sceneViewportId = window.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
     sceneViewport.RenderView = sceneViewportId;
     viewportRenderer.SetSceneRenderView(sceneViewportId);
     window.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
     uiRoot.InvalidateMeasure();
     ResizeEditor(width, height);
-    window.SetViewportQuadVertices(sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
 }
 
-/// <summary>Moves the Game tool into an independent shared-device window.</summary>
-void DetachGameViewport()
+/// <summary>Transfers Game rendering into a newly opened dock window.</summary>
+/// <param name="toolWindow">Opened floating tool window.</param>
+void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
 {
-    if (detachedGameWindow is not null)
-        return;
-    editorView.ViewportDock.Remove(editorView.GameSlot);
-    editorView.ViewportDock.Rows[2] = GridLength.Pixels(0f);
-    editorView.ViewportDock.Rows[1] = GridLength.Pixels(0f);
-    uiRoot.InvalidateMeasure();
+    detachedGameWindow = toolWindow;
     window.DestroyRenderView(gameViewportId);
-    detachedGameWindow = new DetachedToolWindow(
-        secondaryWindows, "Game", 900, 600, editorView.GameSlot);
-    var detachedWindow = detachedGameWindow.Window;
+    gameViewportPresentation.Reset();
+    var detachedWindow = toolWindow.Window;
     gameViewportId = detachedWindow.CreateRenderView(gameViewport.Width, gameViewport.Height);
     gameViewport.RenderView = gameViewportId;
     detachedWindow.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
-    detachedWindow.SetViewportQuadVertices(
-        gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
+    gameViewportPresentation.Synchronize(detachedWindow);
+    toolWindow.UIHost.LayoutUpdated += () =>
+        gameViewportPresentation.Synchronize(detachedWindow);
+    if (toolWindow.Content is DockHost gameDockHost)
+    {
+        gameDockHost.SplitResizeCompleted += () => detachedWindow.ResizeRenderView(
+            gameViewportId, gameViewport.Width, gameViewport.Height);
+    }
     detachedGameRenderer = new EditorViewportRenderer(
         detachedWindow, gameViewportId, gameViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
-    detachedWindow.Resized += (_, _) =>
-    {
-        detachedWindow.ResizeRenderView(gameViewportId, gameViewport.Width, gameViewport.Height);
-        detachedWindow.SetViewportQuadVertices(
-            gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
-    };
+    detachedWindow.Resized += (_, _) => detachedWindow.ResizeRenderView(
+        gameViewportId, gameViewport.Width, gameViewport.Height);
     detachedWindow.Update += _ =>
     {
         detachedGameRenderer?.SetGameScene(
@@ -352,126 +405,21 @@ void DetachGameViewport()
     ResizeEditor(width, height);
 }
 
-/// <summary>Moves the detached Game tool back into the main dock.</summary>
-void DockGameViewport()
+/// <summary>Returns Game rendering to the main window before a dock window closes.</summary>
+/// <param name="toolWindow">Closing floating tool window.</param>
+void CloseFloatingGameViewport(DetachedToolWindow toolWindow)
 {
-    if (detachedGameWindow is null)
+    if (!ReferenceEquals(detachedGameWindow, toolWindow))
         return;
     detachedGameRenderer?.Dispose();
     detachedGameRenderer = null;
-    detachedGameWindow.Window.DestroyRenderView(gameViewportId);
-    detachedGameWindow.ReleaseContent();
-    detachedGameWindow.Dispose();
+    toolWindow.Window.DestroyRenderView(gameViewportId);
+    gameViewportPresentation.Reset();
     detachedGameWindow = null;
-    editorView.ViewportDock.Rows[2] = GridLength.Star(0.27f);
-    editorView.ViewportDock.Rows[1] = GridLength.Pixels(1f);
-    editorView.ViewportDock.Add(editorView.GameSlot, 2, 0);
     gameViewportId = window.CreateRenderView(gameViewport.Width, gameViewport.Height);
     gameViewport.RenderView = gameViewportId;
     viewportRenderer.SetGameRenderView(gameViewportId);
     window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-    window.SetViewportQuadVertices(gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
-}
-
-/// <summary>Moves the Hierarchy tool into an independent native window.</summary>
-void DetachHierarchy()
-{
-    if (detachedHierarchyWindow is not null)
-        return;
-    editorView.LeftDock.Remove(editorView.HierarchyPanel);
-    editorView.LeftDock.Rows[0] = GridLength.Pixels(0f);
-    editorView.LeftDock.Rows[1] = GridLength.Pixels(0f);
-    detachedHierarchyWindow = new DetachedToolWindow(
-        secondaryWindows, "Hierarchy", 360, 620, editorView.HierarchyPanel);
-    UpdateLeftDockWorkspaceTracks();
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-}
-
-/// <summary>Returns the Hierarchy tool to the main left dock.</summary>
-void DockHierarchy()
-{
-    if (detachedHierarchyWindow is null)
-        return;
-    detachedHierarchyWindow.ReleaseContent();
-    detachedHierarchyWindow.Dispose();
-    detachedHierarchyWindow = null;
-    editorView.LeftDock.Rows[0] = GridLength.Star(0.58f);
-    editorView.LeftDock.Rows[1] = detachedFileSystemWindow is null
-        ? GridLength.Pixels(1f) : GridLength.Pixels(0f);
-    editorView.LeftDock.Add(editorView.HierarchyPanel, 0, 0);
-    UpdateLeftDockWorkspaceTracks();
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-}
-
-/// <summary>Moves the File System tool into an independent native window.</summary>
-void DetachFileSystem()
-{
-    if (detachedFileSystemWindow is not null)
-        return;
-    editorView.LeftDock.Remove(editorView.FileSystemPanel);
-    editorView.LeftDock.Rows[2] = GridLength.Pixels(0f);
-    editorView.LeftDock.Rows[1] = GridLength.Pixels(0f);
-    detachedFileSystemWindow = new DetachedToolWindow(
-        secondaryWindows, "File System", 440, 520, editorView.FileSystemPanel);
-    UpdateLeftDockWorkspaceTracks();
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-}
-
-/// <summary>Returns the File System tool to the main left dock.</summary>
-void DockFileSystem()
-{
-    if (detachedFileSystemWindow is null)
-        return;
-    detachedFileSystemWindow.ReleaseContent();
-    detachedFileSystemWindow.Dispose();
-    detachedFileSystemWindow = null;
-    editorView.LeftDock.Rows[2] = GridLength.Star(0.42f);
-    editorView.LeftDock.Rows[1] = detachedHierarchyWindow is null
-        ? GridLength.Pixels(1f) : GridLength.Pixels(0f);
-    editorView.LeftDock.Add(editorView.FileSystemPanel, 2, 0);
-    UpdateLeftDockWorkspaceTracks();
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-}
-
-/// <summary>Reclaims the main left-dock width only while both of its tools are detached.</summary>
-void UpdateLeftDockWorkspaceTracks()
-{
-    var hasDockedTool = detachedHierarchyWindow is null || detachedFileSystemWindow is null;
-    editorView.Workspace.Columns[0] = GridLength.Pixels(hasDockedTool ? 252f : 0f);
-    editorView.Workspace.Columns[1] = GridLength.Pixels(hasDockedTool ? 1f : 0f);
-}
-
-/// <summary>Moves the Inspector tool into an independent native window.</summary>
-void DetachInspector()
-{
-    if (detachedInspectorWindow is not null)
-        return;
-    editorView.Workspace.Remove(editorView.InspectorPanel);
-    editorView.Workspace.Columns[3] = GridLength.Pixels(0f);
-    editorView.Workspace.Columns[4] = GridLength.Pixels(0f);
-    detachedInspectorWindow = new DetachedToolWindow(
-        secondaryWindows, "Inspector", 420, 680, editorView.InspectorPanel);
-    uiRoot.InvalidateMeasure();
-    ResizeEditor(width, height);
-}
-
-/// <summary>Returns the Inspector tool to the main workspace.</summary>
-void DockInspector()
-{
-    if (detachedInspectorWindow is null)
-        return;
-    detachedInspectorWindow.ReleaseContent();
-    detachedInspectorWindow.Dispose();
-    detachedInspectorWindow = null;
-    editorView.Workspace.Columns[3] = GridLength.Pixels(1f);
-    editorView.Workspace.Columns[4] = GridLength.Pixels(300f);
-    editorView.Workspace.Add(editorView.InspectorPanel, 0, 4);
     uiRoot.InvalidateMeasure();
     ResizeEditor(width, height);
 }
@@ -641,20 +589,26 @@ void AttachPlayButton(Button playButton)
     };
 }
 
-/// <summary>Expands or collapses the live CPU and allocation Profiler.</summary>
+/// <summary>Activates the docked Profiler tab.</summary>
 void ToggleProfiler()
 {
-    const float expandedHeight = 460f;
-    profilerVisible = !profilerVisible;
-    CpuProfiler.Enabled = profilerVisible && !editorView.Profiler.IsPaused;
-    editorView.ProfilerPanel.IsVisible = profilerVisible;
-    if (uiRoot is Grid rootGrid)
-        rootGrid.Rows[2] = GridLength.Pixels(profilerVisible ? expandedHeight : 30f);
-    uiRoot.InvalidateMeasure();
+    if (!dockSession.OpenPanel(
+            EditorDockWorkspace.ProfilerId, EditorDockWorkspace.GameId))
+        return;
+    CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+    ResizeEditor(width, height);
+    window.RequestFrame();
+}
+
+/// <summary>Activates or restores one registered Editor panel.</summary>
+/// <param name="panelId">Stable panel identifier.</param>
+/// <param name="anchorId">Preferred sibling panel identifier.</param>
+void OpenDockPanel(string panelId, string anchorId)
+{
+    if (!dockSession.OpenPanel(panelId, anchorId))
+        return;
     ResizeEditor(width, height);
     ResizeViewportTargets();
-    renderScheduler.Invalidate(
-        RenderInvalidation.SceneViewport | RenderInvalidation.GameViewport);
     window.RequestFrame();
 }
 
@@ -662,7 +616,7 @@ void ToggleProfiler()
 void ToggleProfilerPause()
 {
     editorView.Profiler.SetPaused(!editorView.Profiler.IsPaused);
-    CpuProfiler.Enabled = profilerVisible && !editorView.Profiler.IsPaused;
+    CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
     editorView.ProfilerPauseLabel.Text = editorView.Profiler.IsPaused ? "Record" : "Pause";
 }
 
@@ -721,6 +675,13 @@ void SaveScene()
     }
     CloseFileContextMenu();
 }
+
+var saveSceneCommand = new UICommand("SaveScene");
+uiRoot.CommandBindings.Add(new UICommandBinding(saveSceneCommand, _ => SaveScene()));
+uiRoot.KeyBindings.Add(new UIKeyBinding(
+    new UIKeyGesture(InputKey.S, InputModifiers.Control), saveSceneCommand));
+uiRoot.KeyBindings.Add(new UIKeyBinding(
+    new UIKeyGesture(InputKey.S, InputModifiers.Super), saveSceneCommand));
 
 /// <summary>Loads a scene into the editor and optionally makes it the active save target.</summary>
 /// <param name="scenePath">Scene file to load.</param>
@@ -1637,17 +1598,7 @@ void ResizeEditor(int newWidth, int newHeight)
 
     width = newWidth;
     height = newHeight;
-    uiRoot.Measure(new Vector2(width, height));
-    uiRoot.Arrange(Vector2.Zero, new Vector2(width, height));
-
-    if (detachedSceneWindow is null)
-        window.SetViewportQuadVertices(
-            sceneViewportId, EditorUI.CreateViewportQuadVertices(sceneViewport));
-    if (detachedGameWindow is null)
-        window.SetViewportQuadVertices(
-            gameViewportId, EditorUI.CreateViewportQuadVertices(gameViewport));
-    window.SetPushConstants(EditorUI.CreatePushConstants(width, height));
-    window.SubmitUI(uiRoot.BuildDrawList());
+    mainUIHost.Resize(width, height);
 }
 
 /// <summary>Reallocates viewport FBOs once a live native resize has settled.</summary>
@@ -1679,14 +1630,10 @@ void RefreshVertices()
 void RefreshUI()
 {
     renderScheduler.Invalidate(RenderInvalidation.UI);
-    window.SubmitUI(uiRoot.BuildDrawList());
+    mainUIHost.Refresh();
     renderScheduler.Consume(RenderInvalidation.UI);
-    window.RequestFrame();
     detachedSceneWindow?.UIHost.Refresh();
     detachedGameWindow?.UIHost.Refresh();
-    detachedHierarchyWindow?.UIHost.Refresh();
-    detachedFileSystemWindow?.UIHost.Refresh();
-    detachedInspectorWindow?.UIHost.Refresh();
 }
 
 /// <summary>Marks both scene-derived viewport textures stale and wakes the event loop.</summary>
@@ -1826,19 +1773,24 @@ var pendingDragStart = Vector2.Zero;
 var primaryPointerDown = false;
 var dragActive = false;
 
-window.MouseMove += pos =>
+mainUIHost.PreviewPointerMove = pointerEvent =>
 {
-    lastMousePos = pos;
-    window.UpdateWindowDrag(pos);
-    Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})", pos.X, pos.Y);
+    lastMousePos = pointerEvent.Position;
+    window.UpdateWindowDrag(pointerEvent.Position);
+    Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})",
+        pointerEvent.Position.X, pointerEvent.Position.Y);
+    return flyCamera.MovePointer(pointerEvent.Position);
+};
 
-    if (flyCamera.MovePointer(pos))
+mainUIHost.PointerMoveProcessed = (pointerEvent, routed) =>
+{
+    if (!routed)
         return;
-
-    uiEventRouter.MovePointer(pos);
-
-    if (primaryPointerDown && pendingDragItem is not null
-        && Vector2.DistanceSquared(pos, pendingDragStart) >= 25f)
+    var pos = pointerEvent.Position;
+    if (dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId))
+        editorView.Profiler.MovePointer(pos);
+    if (primaryPointerDown && pendingDragItem is not null &&
+        Vector2.DistanceSquared(pos, pendingDragStart) >= 25f)
     {
         if (!dragActive)
         {
@@ -1858,173 +1810,124 @@ window.MouseMove += pos =>
         }
         RefreshVertices();
     }
-
-    selection.MovePointer(pos);
-    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
-    window.RequestFrame();
+    var scenePointerActive = selection.IsDragging ||
+        uiEventRouter.CapturedElement is null &&
+        (uiEventRouter.HoveredElement is ViewportPanel hoveredViewport &&
+            hoveredViewport.RenderView == sceneViewportId ||
+         uiEventRouter.HoveredElement is null && IsInSceneViewport(pos));
+    if (scenePointerActive)
+    {
+        selection.MovePointer(pos);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+    }
 };
 
-window.MouseDown += button =>
+mainUIHost.PreviewPointerButton = pointerEvent =>
 {
+    if (pointerEvent.ClickCount >= 2 && pointerEvent.IsPressed)
+        return flyCamera.IsActive ? UIHostPointerRouting.Consume : UIHostPointerRouting.Route;
+    if (!pointerEvent.IsPressed)
+    {
+        window.EndWindowDrag();
+        if (flyCamera.IsActive || pointerEvent.Button != InputPointerButton.Primary)
+            return UIHostPointerRouting.Consume;
+        primaryPointerDown = false;
+        if (dragActive && pendingDragItem is { } draggedItem)
+        {
+            var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
+            if (draggedItem is ImportedSubAssetNode importedSource &&
+                IsInside(inspector, lastMousePos) && TryAssignInspectorSubAsset(importedSource))
+                RefreshVertices();
+            else if (draggedItem is ImportedSubAssetNode hierarchySource &&
+                     IsInside(hierarchyTree, lastMousePos))
+                InstantiateImportedMesh(hierarchySource, targetRow?.Item);
+            else if (draggedItem is FileSystemNode fileSource)
+            {
+                if (IsInside(hierarchyTree, lastMousePos) &&
+                    Path.GetExtension(fileSource.FullPath).Equals(".glb",
+                        StringComparison.OrdinalIgnoreCase))
+                    InstantiateGlbPrimaryMesh(fileSource, targetRow?.Item);
+                else if (ScriptFileDrop.TryAttach(
+                             fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
+                {
+                    logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
+                        fileSource.FullPath, inspector.InspectedNode?.Name);
+                    RefreshVertices();
+                }
+                else if (IsInside(fileSystemTree, lastMousePos))
+                    MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
+            }
+            else if (draggedItem is not FileSystemNode && IsInside(hierarchyTree, lastMousePos))
+                MoveHierarchyNode(draggedItem, targetRow?.Item);
+        }
+        if (dragPreview is not null)
+        {
+            overlay.Remove(dragPreview);
+            dragPreview = null;
+        }
+        var consumedByGizmo = selection.PrimaryUp();
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        pendingDragItem = null;
+        var suppressClick = consumedByGizmo || dragActive;
+        dragActive = false;
+        return suppressClick
+            ? UIHostPointerRouting.RouteWithoutClick
+            : UIHostPointerRouting.Route;
+    }
     if (flyCamera.IsActive)
-        return;
-
-    Debug.Input(LogLevel.Debug, "MouseDown: button={Button}", button);
-    if (button == 1)
+        return UIHostPointerRouting.Consume;
+    if (pointerEvent.Button == InputPointerButton.Secondary)
     {
         if (!ShowFileSystemContextMenu())
             ShowHierarchyContextMenu();
-        return;
+        return UIHostPointerRouting.Consume;
     }
-
-    if (button != 0)
-        return;
-
+    if (pointerEvent.Button != InputPointerButton.Primary)
+        return UIHostPointerRouting.Consume;
     primaryPointerDown = true;
     pendingDragStart = lastMousePos;
     dragActive = false;
-    pendingDragItem = uiEventRouter.HoveredElement is TreeViewItem dragRow
-        && (IsInside(hierarchyTree, lastMousePos) || IsInside(fileSystemTree, lastMousePos))
+    pendingDragItem = uiEventRouter.HoveredElement is TreeViewItem dragRow &&
+        (IsInside(hierarchyTree, lastMousePos) || IsInside(fileSystemTree, lastMousePos))
         ? dragRow.Item : null;
-
-    if (hierarchyContextMenu is not null
-        && uiEventRouter.HoveredElement is not ContextMenuItem)
+    if (hierarchyContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)
         CloseHierarchyContextMenu();
-    if (fileContextMenu is not null
-        && uiEventRouter.HoveredElement is not ContextMenuItem)
+    if (fileContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)
         CloseFileContextMenu();
+    return UIHostPointerRouting.Route;
+};
 
-    uiEventRouter.Press();
-
-    // Must be in scene viewport area
-    bool inSceneViewport = (uiEventRouter.HoveredElement is ViewportPanel vp && vp.RenderView == sceneViewportId)
-                        || (uiEventRouter.HoveredElement == null && IsInSceneViewport(lastMousePos));
-    if (!inSceneViewport) return;
-
+mainUIHost.PointerButtonProcessed = (pointerEvent, routed) =>
+{
+    if (!routed || !pointerEvent.IsPressed || pointerEvent.ClickCount >= 2 ||
+        pointerEvent.Button != InputPointerButton.Primary)
+        return;
+    var inSceneViewport =
+        uiEventRouter.HoveredElement is ViewportPanel vp && vp.RenderView == sceneViewportId ||
+        uiEventRouter.HoveredElement is null && IsInSceneViewport(lastMousePos);
+    if (!inSceneViewport)
+        return;
     selection.PrimaryDown(lastMousePos, inSceneViewport);
     renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
     window.RequestFrame();
 };
 
-window.MouseUp += button =>
+mainUIHost.PreviewPointerWheel = pointerEvent =>
 {
-    window.EndWindowDrag();
-    if (flyCamera.IsActive)
-        return;
-
-    Debug.Input(LogLevel.Debug, "MouseUp: button={Button}", button);
-
-    if (button != 0)
-        return;
-
-    primaryPointerDown = false;
-
-    if (dragActive && pendingDragItem is { } draggedItem)
-    {
-        var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
-        if (draggedItem is ImportedSubAssetNode importedSource &&
-            IsInside(inspector, lastMousePos) &&
-            TryAssignInspectorSubAsset(importedSource))
-        {
-            RefreshVertices();
-        }
-        else if (draggedItem is ImportedSubAssetNode hierarchySource &&
-            IsInside(hierarchyTree, lastMousePos))
-        {
-            InstantiateImportedMesh(hierarchySource, targetRow?.Item);
-        }
-        else if (draggedItem is FileSystemNode fileSource)
-        {
-            if (IsInside(hierarchyTree, lastMousePos) &&
-                Path.GetExtension(fileSource.FullPath).Equals(".glb",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                InstantiateGlbPrimaryMesh(fileSource, targetRow?.Item);
-            }
-            else if (ScriptFileDrop.TryAttach(
-                    fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
-            {
-                logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
-                    fileSource.FullPath, inspector.InspectedNode?.Name);
-                RefreshVertices();
-            }
-            else if (IsInside(fileSystemTree, lastMousePos))
-            {
-                MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
-            }
-        }
-        else if (draggedItem is not FileSystemNode && IsInside(hierarchyTree, lastMousePos))
-            MoveHierarchyNode(draggedItem, targetRow?.Item);
-    }
-
-    if (dragPreview is not null)
-    {
-        overlay.Remove(dragPreview);
-        dragPreview = null;
-    }
-
-    var consumedByGizmo = selection.PrimaryUp();
-    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
-    window.RequestFrame();
-
-    uiEventRouter.Release(!consumedByGizmo && !dragActive);
-    pendingDragItem = null;
-    dragActive = false;
+    Debug.Input(LogLevel.Debug, "Scroll: offset={Offset:F1}", pointerEvent.Delta.Y);
+    return flyCamera.IsActive;
 };
 
-window.MouseDoubleClick += button =>
+mainUIHost.PreviewKey = keyEvent =>
 {
-    if (flyCamera.IsActive)
-        return;
-
-    Debug.Input(LogLevel.Debug, "DoubleClick: button={Button}", button);
-    if (button == 0)
-        uiEventRouter.DoubleClick();
+    Debug.Input(LogLevel.Debug, "Key: key={Key}, pressed={Pressed}, repeat={Repeat}",
+        keyEvent.Key, keyEvent.IsPressed, keyEvent.IsRepeat);
+    return sceneInputContext.RouteKey(uiEventRouter, keyEvent);
 };
-
-window.MouseScroll += offset =>
-{
-    if (flyCamera.IsActive)
-        return;
-
-    Debug.Input(LogLevel.Debug, "Scroll: offset={Offset:F1}", offset);
-    uiEventRouter.Scroll(offset);
-};
-
-var controlDown = false;
-var commandDown = false;
-window.KeyDown += keyCode =>
-{
-    Debug.Input(LogLevel.Debug, "KeyDown: key={Key}", keyCode);
-    if (keyCode is InputKey.LeftControl or InputKey.RightControl)
-        controlDown = true;
-    if (keyCode is InputKey.LeftSuper or InputKey.RightSuper)
-        commandDown = true;
-    if (keyCode == InputKey.S && (controlDown || commandDown))
-    {
-        SaveScene();
-        return;
-    }
-    if (!flyCamera.KeyDown(keyCode))
-        uiEventRouter.KeyDown((int)keyCode);
-};
-
-window.KeyUp += keyCode =>
-{
-    Debug.Input(LogLevel.Debug, "KeyUp: key={Key}", keyCode);
-    if (keyCode is InputKey.LeftControl or InputKey.RightControl)
-        controlDown = false;
-    if (keyCode is InputKey.LeftSuper or InputKey.RightSuper)
-        commandDown = false;
-    if (!flyCamera.KeyUp(keyCode))
-        uiEventRouter.KeyUp((int)keyCode);
-};
-
-window.TextInput += character =>
-{
-    if (!flyCamera.IsActive)
-        uiEventRouter.TextInput(character);
-};
+mainUIHost.PreviewTextInput = _ => sceneInputContext.RoutesText(uiEventRouter);
+mainUIHost.PreviewTextComposition = _ => sceneInputContext.RoutesText(uiEventRouter);
 
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
@@ -2085,29 +1988,25 @@ window.Update += delta =>
         && (gameContinuous || gameInvalid))
         viewportRenderer.RenderGame(gameViewport);
     secondaryWindows.PumpFrames();
-    if (detachedSceneWindow is { IsOpen: false })
-        DockSceneViewport();
-    if (detachedGameWindow is { IsOpen: false })
-        DockGameViewport();
-    if (detachedHierarchyWindow is { IsOpen: false })
-        DockHierarchy();
-    if (detachedFileSystemWindow is { IsOpen: false })
-        DockFileSystem();
-    if (detachedInspectorWindow is { IsOpen: false })
-        DockInspector();
+    dockSession.SynchronizeFloatingWindows();
     window.SetContinuousRendering(
         flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
             || pendingResizeTimestamp != 0
-            || profilerVisible && !editorView.Profiler.IsPaused);
+            || mainUIHost.RequiresContinuousUpdates
+            || dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId) &&
+               !editorView.Profiler.IsPaused);
 };
 
 logger.LogInformation("Running main loop...");
 window.Run();
-DockSceneViewport();
-DockGameViewport();
-DockHierarchy();
-DockFileSystem();
-DockInspector();
+try
+{
+    EditorDockWorkspace.Save(project.RootPath, dockSession.Workspace);
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+{
+    logger.LogWarning(exception, "Could not save the Editor dock workspace");
+}
 StopPlayMode();
 if (playBuildTask is not null)
 {

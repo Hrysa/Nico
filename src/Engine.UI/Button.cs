@@ -21,6 +21,26 @@ public class Button : ContentControl
     private Color _pressedColor;
     private bool _paintNormalBackground = true;
 
+    /// <inheritdoc/>
+    public override UISemanticInfo GetSemanticInfo() => new(
+        UISemanticRole.Button,
+        string.IsNullOrWhiteSpace(Name) ? (Content as Label)?.Text : Name,
+        null,
+        IsEnabled,
+        true,
+        false,
+        null,
+        Actions: UISemanticAction.Invoke);
+
+    /// <inheritdoc/>
+    public override bool PerformSemanticAction(UISemanticAction action, double? value = null)
+    {
+        if (action != UISemanticAction.Invoke || !IsEnabled)
+            return false;
+        InvokeClick();
+        return true;
+    }
+
     /// <summary>Gets or sets whether the idle state paints the button box.</summary>
     protected bool PaintNormalBackground
     {
@@ -106,6 +126,7 @@ public class Button : ContentControl
     public Button(float width, float height, Color normalColor)
         : base(width, height)
     {
+        IsTabStop = true;
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
         _normalColor = normalColor;
@@ -167,6 +188,7 @@ public class Button : ContentControl
         : base(width, height)
     {
         ArgumentNullException.ThrowIfNull(theme);
+        IsTabStop = true;
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
         _normalColor = style == ButtonStyle.Primary ? theme.SurfacePressed : theme.SurfaceRaised;

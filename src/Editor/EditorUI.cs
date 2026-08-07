@@ -73,22 +73,33 @@ public static class EditorUI
         bottomDock.Width = 0f;
         var bottomTabs = new Grid(theme.Surface);
         bottomTabs.Rows.Add(GridLength.Star());
-        bottomTabs.Columns.Add(GridLength.Pixels(270f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
+        bottomTabs.Columns.Add(GridLength.Pixels(90f));
         bottomTabs.Columns.Add(GridLength.Pixels(90f));
         bottomTabs.Columns.Add(GridLength.Star());
-        bottomTabs.Add(new Label("Output    Debugger    Audio    Animation",
-            270f, bottomDockHeight)
-        {
-            Name = "BottomDockTabs",
-            FontSize = theme.CaptionFontSize,
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f
-        }, 0, 0);
+        var hierarchyButton = new Button(90f, bottomDockHeight, "Hierarchy", theme)
+            { Name = "HierarchyButton" };
+        var fileSystemButton = new Button(90f, bottomDockHeight, "Files", theme)
+            { Name = "FileSystemButton" };
+        var sceneButton = new Button(90f, bottomDockHeight, "Scene", theme)
+            { Name = "SceneButton" };
+        var gameButton = new Button(90f, bottomDockHeight, "Game", theme)
+            { Name = "GameButton" };
+        var inspectorButton = new Button(90f, bottomDockHeight, "Inspector", theme)
+            { Name = "InspectorButton" };
         var profilerButton = new Button(90f, bottomDockHeight, "Profiler", theme)
         {
             Name = "ProfilerButton"
         };
-        bottomTabs.Add(profilerButton, 0, 1);
+        bottomTabs.Add(hierarchyButton, 0, 0);
+        bottomTabs.Add(fileSystemButton, 0, 1);
+        bottomTabs.Add(sceneButton, 0, 2);
+        bottomTabs.Add(gameButton, 0, 3);
+        bottomTabs.Add(inspectorButton, 0, 4);
+        bottomTabs.Add(profilerButton, 0, 5);
         bottomDock.AddChild(bottomTabs);
 
         var profilerPanel = new ToolPanel(width, 0f, "Profiler", theme)
@@ -126,6 +137,7 @@ public static class EditorUI
 
         var hierarchyPanel = new ToolPanel(hierarchyWidth, hierarchyHeight,
             "Hierarchy", theme) { Name = "Hierarchy" };
+        hierarchyPanel.Content.Name = "Hierarchy";
         hierarchyPanel.Height = 0f;
         hierarchyPanel.Header.Name = "HierarchyHeader";
         var hierarchyTree = new TreeView(hierarchyWidth,
@@ -139,6 +151,7 @@ public static class EditorUI
 
         var filesystemPanel = new ToolPanel(hierarchyWidth, filesystemHeight,
             "File System", theme) { Name = "FileSystem" };
+        filesystemPanel.Content.Name = "FileSystem";
         filesystemPanel.Height = 0f;
         filesystemPanel.Header.Name = "FileSystemHeader";
         var fileTree = new TreeView(hierarchyWidth,
@@ -149,6 +162,7 @@ public static class EditorUI
 
         var inspectorPanel = new ToolPanel(inspectorWidth,
             workspaceHeight, "Inspector", theme) { Name = "Inspector" };
+        inspectorPanel.Content.Name = "Inspector";
         inspectorPanel.Height = 0f;
         inspectorPanel.Header.Name = "InspectorHeader";
         var inspector = new SceneInspector(inspectorWidth,
@@ -159,12 +173,6 @@ public static class EditorUI
         inspector.Width = 0f;
         inspector.Height = 0f;
         inspectorPanel.Content.AddChild(inspector);
-
-        var separatorLeft = new Separator(separatorWidth, workspaceHeight, theme)
-            { Name = "SeparatorLeft" };
-        separatorLeft.Height = 0f;
-        var separatorRight = new Separator(separatorWidth, workspaceHeight, theme) { Name = "SeparatorRight" };
-        separatorRight.Height = 0f;
 
         var viewportWidth = MathF.Max(0f, width - hierarchyWidth - inspectorWidth - (separatorWidth * 2f));
         var sceneSlotHeight = MathF.Floor(workspaceHeight * 0.73f);
@@ -210,23 +218,11 @@ public static class EditorUI
             { Name = "SceneViewport" };
         sceneViewport.Width = 0f;
         sceneViewport.Height = 0f;
-        var gameHeader = new SectionHeader(viewportWidth,
-            "Game", theme) { Name = "GameHeader" };
-        gameHeader.Width = 0f;
         var gameViewport = new ViewportPanel(viewportWidth,
-            MathF.Max(0f, gameSlotHeight - panelHeaderHeight), theme.Viewport)
+            gameSlotHeight, theme.Viewport)
             { Name = "GameViewport" };
         gameViewport.Width = 0f;
         gameViewport.Height = 0f;
-
-        var leftDock = new Grid(theme.Canvas) { Name = "LeftDock" };
-        leftDock.Columns.Add(GridLength.Star());
-        leftDock.Rows.Add(GridLength.Star(0.58f));
-        leftDock.Rows.Add(GridLength.Pixels(separatorWidth));
-        leftDock.Rows.Add(GridLength.Star(0.42f));
-        leftDock.Add(hierarchyPanel, 0, 0);
-        leftDock.Add(new Separator(hierarchyWidth, separatorWidth, theme), 1, 0);
-        leftDock.Add(filesystemPanel, 2, 0);
 
         var sceneSlot = new Grid(theme.Viewport) { Name = "SceneSlot" };
         sceneSlot.Columns.Add(GridLength.Star());
@@ -237,35 +233,25 @@ public static class EditorUI
 
         var gameSlot = new Grid(theme.Viewport) { Name = "GameSlot" };
         gameSlot.Columns.Add(GridLength.Star());
-        gameSlot.Rows.Add(GridLength.Pixels(panelHeaderHeight));
         gameSlot.Rows.Add(GridLength.Star());
-        gameSlot.Add(gameHeader, 0, 0);
-        gameSlot.Add(gameViewport, 1, 0);
+        gameSlot.Add(gameViewport, 0, 0);
 
-        var viewportDock = new Grid(theme.Viewport) { Name = "ViewportDock" };
-        viewportDock.Columns.Add(GridLength.Star());
-        viewportDock.Rows.Add(GridLength.Star(0.73f));
-        viewportDock.Rows.Add(GridLength.Pixels(separatorWidth));
-        viewportDock.Rows.Add(GridLength.Star(0.27f));
-        viewportDock.Add(sceneSlot, 0, 0);
-        viewportDock.Add(new Separator(viewportWidth, separatorWidth, theme), 1, 0);
-        viewportDock.Add(gameSlot, 2, 0);
-
-        var workspace = new Grid(theme.Canvas) { Name = "Workspace" };
-        workspace.Rows.Add(GridLength.Star());
-        workspace.Columns.Add(GridLength.Pixels(hierarchyWidth));
-        workspace.Columns.Add(GridLength.Pixels(separatorWidth));
-        workspace.Columns.Add(GridLength.Star());
-        workspace.Columns.Add(GridLength.Pixels(separatorWidth));
-        workspace.Columns.Add(GridLength.Pixels(inspectorWidth));
-        workspace.Add(leftDock, 0, 0);
-        workspace.Add(separatorLeft, 0, 1);
-        workspace.Add(viewportDock, 0, 2);
-        workspace.Add(separatorRight, 0, 3);
-        workspace.Add(inspectorPanel, 0, 4);
+        var initialWorkspace = EditorDockWorkspace.CreateDefault();
+        var initialDockHost = new DockHost(initialWorkspace, id => id switch
+        {
+            EditorDockWorkspace.HierarchyId => hierarchyTree,
+            EditorDockWorkspace.FileSystemId => fileTree,
+            EditorDockWorkspace.SceneId => sceneSlot,
+            EditorDockWorkspace.GameId => gameSlot,
+            EditorDockWorkspace.InspectorId => inspector,
+            EditorDockWorkspace.ProfilerId => profilerLayout,
+            _ => null
+        }, theme)
+        {
+            Name = "InitialDockHost"
+        };
 
         var bottomShell = new Grid(theme.Canvas) { Name = "BottomShell" };
-        bottomShell.Rows.Add(GridLength.Pixels(bottomDockHeight));
         bottomShell.Rows.Add(GridLength.Star());
         bottomShell.Columns.Add(GridLength.Pixels(hierarchyWidth));
         bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
@@ -273,12 +259,11 @@ public static class EditorUI
         bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
         bottomShell.Columns.Add(GridLength.Pixels(inspectorWidth));
         bottomShell.Add(bottomDock, 0, 2);
-        bottomShell.Add(profilerPanel, 1, 0, columnSpan: 5);
 
         var overlay = new Canvas { Name = "Overlay" };
 
         background.Add(titleBar, 0, 0);
-        background.Add(workspace, 1, 0);
+        background.Add(initialDockHost, 1, 0);
         background.Add(bottomShell, 2, 0);
         background.Add(overlay, 0, 0, rowSpan: 3);
         background.Measure(new Vector2(width, height));
@@ -286,9 +271,10 @@ public static class EditorUI
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
             projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay,
-            viewportDock, sceneSlot, gameSlot, sceneTools, gameHeader,
-            workspace, leftDock, hierarchyPanel, filesystemPanel, inspectorPanel,
-            bottomShell, profilerPanel, profiler, profilerButton,
+            sceneSlot, gameSlot, sceneTools, initialDockHost,
+            hierarchyPanel, filesystemPanel, inspectorPanel, profilerPanel, profilerLayout,
+            profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
+            inspectorButton, profilerButton,
             profilerPauseButton, profilerPauseLabel);
     }
 
@@ -299,30 +285,6 @@ public static class EditorUI
     /// <param name="height">Window height.</param>
     /// <returns>The root UI panel.</returns>
     public static Panel BuildUI(float width, float height) => BuildView(width, height).Root;
-
-    /// <summary>
-    /// Creates textured quad vertices for a specific viewport panel.
-    /// </summary>
-    /// <param name="viewportPanel">The viewport panel to create vertices for.</param>
-    /// <returns>An array of VertexT for the viewport's display quad.</returns>
-    public static VertexT[] CreateViewportQuadVertices(ViewportPanel viewportPanel)
-    {
-        var left = viewportPanel.Left;
-        var top = viewportPanel.Top;
-        var right = viewportPanel.Right;
-        var bottom = viewportPanel.Bottom;
-
-        return new VertexT[]
-        {
-            new(new Vector3(left, top, 0), new Vector2(0, 0)),
-            new(new Vector3(left, bottom, 0), new Vector2(0, 1)),
-            new(new Vector3(right, bottom, 0), new Vector2(1, 1)),
-
-            new(new Vector3(right, bottom, 0), new Vector2(1, 1)),
-            new(new Vector3(right, top, 0), new Vector2(1, 0)),
-            new(new Vector3(left, top, 0), new Vector2(0, 0)),
-        };
-    }
 
     /// <summary>
     /// Creates the MVP push constants with an orthographic projection for 2D editor rendering.
@@ -367,15 +329,21 @@ public static class EditorUI
 /// <param name="SceneSlot">Detachable Scene tool content.</param>
 /// <param name="GameSlot">Detachable Game tool content.</param>
 /// <param name="SceneToolbar">Scene tool header used to detach its window.</param>
-/// <param name="GameHeader">Game tool header used to detach its window.</param>
-/// <param name="Workspace">Main editor workspace grid.</param>
-/// <param name="LeftDock">Hierarchy and File System docking grid.</param>
+/// <param name="SceneSlot">Retained Scene viewport content.</param>
+/// <param name="GameSlot">Retained Game viewport content.</param>
+/// <param name="SceneToolbar">Scene viewport toolbar.</param>
+/// <param name="InitialDockHost">Default host replaced by the restored live dock session.</param>
 /// <param name="HierarchyPanel">Detachable Hierarchy tool.</param>
 /// <param name="FileSystemPanel">Detachable File System tool.</param>
 /// <param name="InspectorPanel">Detachable Inspector tool.</param>
-/// <param name="BottomShell">Bottom editor tool docking grid.</param>
-/// <param name="ProfilerPanel">Expandable Profiler tool panel.</param>
+/// <param name="ProfilerPanel">Dockable Profiler tool panel.</param>
+/// <param name="ProfilerContent">Profiler toolbar and history layout.</param>
 /// <param name="Profiler">Live CPU and allocation history view.</param>
+/// <param name="HierarchyButton">Command that activates or restores Hierarchy.</param>
+/// <param name="FileSystemButton">Command that activates or restores Files.</param>
+/// <param name="SceneButton">Command that activates or restores Scene.</param>
+/// <param name="GameButton">Command that activates or restores Game.</param>
+/// <param name="InspectorButton">Command that activates or restores Inspector.</param>
 /// <param name="ProfilerButton">Bottom-dock button that toggles the Profiler.</param>
 /// <param name="ProfilerPauseButton">Profiler toolbar pause/record toggle.</param>
 /// <param name="ProfilerPauseLabel">Text showing the current pause/record action.</param>
@@ -391,19 +359,21 @@ public sealed record EditorView(
     SceneInspector Inspector,
     TitleBar TitleBar,
     Canvas Overlay,
-    Grid ViewportDock,
     Grid SceneSlot,
     Grid GameSlot,
     Surface SceneToolbar,
-    SectionHeader GameHeader,
-    Grid Workspace,
-    Grid LeftDock,
+    DockHost InitialDockHost,
     ToolPanel HierarchyPanel,
     ToolPanel FileSystemPanel,
     ToolPanel InspectorPanel,
-    Grid BottomShell,
     ToolPanel ProfilerPanel,
+    Grid ProfilerContent,
     ProfilerView Profiler,
+    Button HierarchyButton,
+    Button FileSystemButton,
+    Button SceneButton,
+    Button GameButton,
+    Button InspectorButton,
     Button ProfilerButton,
     Button ProfilerPauseButton,
     Label ProfilerPauseLabel);

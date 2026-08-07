@@ -6,7 +6,7 @@ using Engine.UI;
 
 namespace Editor;
 
-/// <summary>Displays a retained history of frame CPU duration and managed allocation.</summary>
+/// <summary>Displays a retained history of frame elapsed duration and managed allocation.</summary>
 public sealed class ProfilerView : Panel
 {
     /// <summary>Gets the number of frame samples retained by the charts.</summary>
@@ -23,6 +23,7 @@ public sealed class ProfilerView : Panel
     private static readonly Color GcColor = Color.FromSrgb(0xF2, 0xA6, 0x5A);
     private static readonly Color SampledFrameColor = Color.FromSrgb(0x86, 0xD9, 0x8B);
     private static readonly Color GuideColor = Color.FromSrgb(0x4A, 0x4A, 0x4A);
+    private static readonly Color HoverColor = Color.FromSrgb(0xD8, 0xE5, 0xFF);
     private readonly UITheme _theme;
     private readonly float[] _cpuHistory = new float[HistoryCapacity];
     private readonly long[] _gcHistory = new long[HistoryCapacity];
@@ -32,9 +33,11 @@ public sealed class ProfilerView : Panel
     private int _sampleCount;
     private int _samplesSinceRefresh;
     private string _summary = "Waiting for frame samples...";
-    private string _cpuCaption = "CPU";
+    private string _cpuCaption = "Frame Time";
     private string _gcCaption = "GC Alloc";
     private FrameProfileSample? _selectedFrame;
+    private int _hoveredHistoryIndex = -1;
+    private Vector2 _hoverPosition;
 
     /// <summary>Gets whether incoming frames are currently paused.</summary>
     public bool IsPaused { get; private set; }
@@ -44,6 +47,10 @@ public sealed class ProfilerView : Panel
 
     /// <summary>Gets the total number of samples currently retained.</summary>
     public int SampleCount => _sampleCount;
+
+    /// <summary>Gets the frame currently under the pointer, or zero when no bar is hovered.</summary>
+    public ulong HoveredFrameNumber => _hoveredHistoryIndex >= 0
+        ? _frames[_hoveredHistoryIndex].FrameNumber : 0;
 
     /// <summary>Gets the expandable tree displaying the selected frame's call paths.</summary>
     public TreeView CallTree => _callTree;
@@ -64,11 +71,12 @@ public sealed class ProfilerView : Panel
         _callTree.SetColumns(
         [
             new TreeViewColumn("Method", 0f, FormatMethodName),
-            new TreeViewColumn("Total", 78f, FormatTotalTime, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Self", 78f, FormatSelfTime, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Calls", 54f, FormatCallCount, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("GC", 114f, FormatGcAllocation, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Self GC", 76f, FormatSelfGcAllocation, TreeViewColumnAlignment.Right)
+            new TreeViewColumn("Elapsed", 75f, FormatTotalTime, TreeViewColumnAlignment.Right),
+            new TreeViewColumn("Self", 75f, FormatSelfTime, TreeViewColumnAlignment.Right),
+            new TreeViewColumn("Wait", 75f, FormatWaitTime, TreeViewColumnAlignment.Right),
+            new TreeViewColumn("Calls", 75f, FormatCallCount, TreeViewColumnAlignment.Right),
+            new TreeViewColumn("GC", 75f, FormatGcAllocation, TreeViewColumnAlignment.Right),
+            new TreeViewColumn("Self GC", 75f, FormatSelfGcAllocation, TreeViewColumnAlignment.Right)
         ]);
         AddChild(_callTree);
         Scroll += _callTree.InvokeScroll;
@@ -122,25 +130,42 @@ public sealed class ProfilerView : Panel
     /// <returns>True when a retained frame was selected.</returns>
     public bool SelectFrame(Vector2 position)
     {
-        var graphTop = Top + GraphInset + SummaryHeight + CaptionHeight;
-        var graphBottom = graphTop + GraphHeight * 2f + GraphGap + CaptionHeight;
-        if (_sampleCount == 0 || position.X < Left + 12f || position.X > Right - 12f
-            || position.Y < graphTop || position.Y > graphBottom)
+        if (!TryGetHistoryIndex(position, out var selectedIndex))
             return false;
-        var graphWidth = MathF.Max(0f, Width - GraphInset * 2f);
-        if (graphWidth <= 0f)
-            return false;
-        var barWidth = graphWidth / HistoryCapacity;
-        var firstX = Left + GraphInset + graphWidth - _sampleCount * barWidth;
-        if (position.X < firstX)
-            return false;
-        var offset = Math.Clamp((int)((position.X - firstX) / barWidth), 0, _sampleCount - 1);
-        var oldest = _sampleCount == HistoryCapacity ? _nextSample : 0;
-        var selected = _frames[(oldest + offset) % HistoryCapacity];
+        var selected = _frames[selectedIndex];
         _selectedFrame = selected;
         IsPaused = true;
         UpdateDisplay(selected, updateCallTree: true);
         return true;
+    }
+
+    /// <summary>Updates the history-bar hover from a screen-space pointer position.</summary>
+    /// <param name="position">Pointer position in screen coordinates.</param>
+    /// <returns>True when the hovered frame changed.</returns>
+    public bool MovePointer(Vector2 position)
+    {
+        var hoveredIndex = TryGetHistoryIndex(position, out var index) ? index : -1;
+        _hoverPosition = position;
+        if (_hoveredHistoryIndex == hoveredIndex)
+            return false;
+        _hoveredHistoryIndex = hoveredIndex;
+        InvalidateVisual();
+        return true;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnKeyDown(int keyCode)
+    {
+        switch ((InputKey)keyCode)
+        {
+            case InputKey.Left:
+                MoveSelectedFrame(-1);
+                break;
+            case InputKey.Right:
+                MoveSelectedFrame(1);
+                break;
+        }
+        base.OnKeyDown(keyCode);
     }
 
     /// <inheritdoc/>
@@ -169,6 +194,7 @@ public sealed class ProfilerView : Panel
             targetY + 1f, GuideColor);
         PaintHistory(drawList, Left + GraphInset, cpuTop, graphWidth, GraphHeight,
             cpuScale, Math.Max(1024L, GetMaximumGc()), gcTop);
+        PaintHoveredFrame(drawList, cpuTop, gcTop);
         PaintCallTreeHeader(drawList, gcTop + GraphHeight + GraphInset);
     }
 
@@ -241,7 +267,7 @@ public sealed class ProfilerView : Panel
         return node.Name;
     }
 
-    /// <summary>Formats the inclusive CPU-time column.</summary>
+    /// <summary>Formats the inclusive elapsed-time column.</summary>
     /// <param name="node">Call-tree node to format.</param>
     /// <returns>Inclusive milliseconds.</returns>
     private static string FormatTotalTime(Node node)
@@ -251,13 +277,23 @@ public sealed class ProfilerView : Panel
             : string.Empty;
     }
 
-    /// <summary>Formats the self CPU-time column.</summary>
+    /// <summary>Formats the self elapsed-time column.</summary>
     /// <param name="node">Call-tree node to format.</param>
     /// <returns>Self milliseconds.</returns>
     private static string FormatSelfTime(Node node)
     {
         return node is ProfilerCallTreeNode call
             ? string.Create(CultureInfo.InvariantCulture, $"{call.Marker.SelfMilliseconds:F2} ms")
+            : string.Empty;
+    }
+
+    /// <summary>Formats the inclusive explicit-wait column.</summary>
+    /// <param name="node">Call-tree node to format.</param>
+    /// <returns>Inclusive wait milliseconds.</returns>
+    private static string FormatWaitTime(Node node)
+    {
+        return node is ProfilerCallTreeNode call
+            ? string.Create(CultureInfo.InvariantCulture, $"{call.Marker.WaitMilliseconds:F2} ms")
             : string.Empty;
     }
 
@@ -298,9 +334,9 @@ public sealed class ProfilerView : Panel
     {
         var state = IsPaused ? "PAUSED    " : string.Empty;
         _summary = string.Create(CultureInfo.InvariantCulture,
-            $"{state}Frame {sample.FrameNumber}    CPU {sample.CpuMilliseconds:F2} ms    Update {sample.UpdateMilliseconds:F2} ms    Render {sample.RenderMilliseconds:F2} ms    GC Alloc {FormatBytes(sample.GcAllocatedBytes)}");
+            $"{state}Frame {sample.FrameNumber}    Time {sample.CpuMilliseconds:F2} ms    Update {sample.UpdateMilliseconds:F2} ms    Render {sample.RenderMilliseconds:F2} ms    GC Alloc {FormatBytes(sample.GcAllocatedBytes)}");
         _cpuCaption = string.Create(CultureInfo.InvariantCulture,
-            $"CPU Usage    scale {MathF.Max(33.33f, GetMaximumCpu()):F1} ms    green cap = call tree");
+            $"Frame Time    scale {MathF.Max(33.33f, GetMaximumCpu()):F1} ms    green cap = call tree");
         _gcCaption = $"GC Alloc    scale {FormatBytes(Math.Max(1024L, GetMaximumGc()))}";
         if (updateCallTree)
             UpdateCallTree(sample.CpuMarkers);
@@ -329,25 +365,104 @@ public sealed class ProfilerView : Panel
         if (_sampleCount == 0 || width <= 0f || height <= 0f)
             return;
 
-        var barWidth = width / HistoryCapacity;
-        var firstX = left + width - _sampleCount * barWidth;
+        var slotWidth = width / HistoryCapacity;
+        var barGap = slotWidth >= 2f ? 1f : slotWidth * 0.2f;
+        var barWidth = MathF.Max(0.5f, slotWidth - barGap);
+        var firstX = left + width - _sampleCount * slotWidth;
         var oldest = _sampleCount == HistoryCapacity ? _nextSample : 0;
         for (var offset = 0; offset < _sampleCount; offset++)
         {
             var index = (oldest + offset) % HistoryCapacity;
-            var x = firstX + offset * barWidth;
+            var x = firstX + offset * slotWidth + barGap * 0.5f;
             var cpuHeight = height * Math.Clamp(_cpuHistory[index] / cpuScale, 0f, 1f);
             var gcHeight = height * Math.Clamp(_gcHistory[index] / (float)gcScale, 0f, 1f);
             drawList.AddRectangle(x, cpuTop + height - cpuHeight,
-                x + MathF.Max(1f, barWidth), cpuTop + height, CpuColor);
+                x + barWidth, cpuTop + height,
+                index == _hoveredHistoryIndex ? HoverColor : CpuColor);
             if (_frames[index].CpuMarkers is { Length: > 0 })
             {
-                drawList.AddRectangle(x, cpuTop, x + MathF.Max(1f, barWidth),
-                    cpuTop + 2f, SampledFrameColor);
+                drawList.AddRectangle(x, cpuTop, x + barWidth,
+                    cpuTop + 2f, index == _hoveredHistoryIndex
+                        || _selectedFrame?.FrameNumber == _frames[index].FrameNumber
+                            ? Color.White : SampledFrameColor);
             }
             drawList.AddRectangle(x, gcTop + height - gcHeight,
-                x + MathF.Max(1f, barWidth), gcTop + height, GcColor);
+                x + barWidth, gcTop + height,
+                index == _hoveredHistoryIndex ? HoverColor : GcColor);
         }
+    }
+
+    /// <summary>Paints details for the frame currently under the pointer.</summary>
+    /// <param name="drawList">Draw list receiving the hover card.</param>
+    /// <param name="cpuTop">CPU chart top edge.</param>
+    /// <param name="gcTop">Allocation chart top edge.</param>
+    private void PaintHoveredFrame(UIDrawList drawList, float cpuTop, float gcTop)
+    {
+        if (_hoveredHistoryIndex < 0)
+            return;
+        var sample = _frames[_hoveredHistoryIndex];
+        const float tooltipWidth = 270f;
+        const float tooltipHeight = 24f;
+        var x = Math.Clamp(_hoverPosition.X + 10f, Left + GraphInset,
+            MathF.Max(Left + GraphInset, Right - GraphInset - tooltipWidth));
+        var y = _hoverPosition.Y <= cpuTop + GraphHeight
+            ? gcTop + GraphHeight - tooltipHeight
+            : cpuTop;
+        drawList.AddRectangle(x, y, x + tooltipWidth, y + tooltipHeight, _theme.SurfaceHover);
+        drawList.AddText(string.Create(CultureInfo.InvariantCulture,
+                $"Frame {sample.FrameNumber}  Time {sample.CpuMilliseconds:F2} ms  GC {FormatBytes(sample.GcAllocatedBytes)}"),
+            x + 6f, y + 4f, _theme.CaptionFontSize, _theme.TextPrimary, _theme.SurfaceHover);
+    }
+
+    /// <summary>Maps a chart position to its retained history slot.</summary>
+    /// <param name="position">Screen-space position to test.</param>
+    /// <param name="historyIndex">Receives the circular-buffer index.</param>
+    /// <returns>True when the position intersects a populated frame slot.</returns>
+    private bool TryGetHistoryIndex(Vector2 position, out int historyIndex)
+    {
+        historyIndex = -1;
+        var graphTop = Top + GraphInset + SummaryHeight + CaptionHeight;
+        var graphBottom = graphTop + GraphHeight * 2f + GraphGap + CaptionHeight;
+        var graphWidth = MathF.Max(0f, Width - GraphInset * 2f);
+        if (_sampleCount == 0 || graphWidth <= 0f || position.X < Left + GraphInset
+            || position.X > Right - GraphInset || position.Y < graphTop
+            || position.Y > graphBottom)
+            return false;
+        var slotWidth = graphWidth / HistoryCapacity;
+        var firstX = Left + GraphInset + graphWidth - _sampleCount * slotWidth;
+        if (position.X < firstX)
+            return false;
+        var offset = Math.Clamp((int)((position.X - firstX) / slotWidth), 0, _sampleCount - 1);
+        var oldest = _sampleCount == HistoryCapacity ? _nextSample : 0;
+        historyIndex = (oldest + offset) % HistoryCapacity;
+        return true;
+    }
+
+    /// <summary>Moves the selected history frame by a chronological offset.</summary>
+    /// <param name="direction">Negative for an older frame or positive for a newer frame.</param>
+    private void MoveSelectedFrame(int direction)
+    {
+        if (_sampleCount == 0)
+            return;
+        var oldest = _sampleCount == HistoryCapacity ? _nextSample : 0;
+        var currentOffset = _sampleCount - 1;
+        var activeFrameNumber = _selectedFrame?.FrameNumber
+            ?? (_hoveredHistoryIndex >= 0 ? _frames[_hoveredHistoryIndex].FrameNumber : 0UL);
+        if (activeFrameNumber != 0)
+        {
+            for (var offset = 0; offset < _sampleCount; offset++)
+            {
+                if (_frames[(oldest + offset) % HistoryCapacity].FrameNumber != activeFrameNumber)
+                    continue;
+                currentOffset = offset;
+                break;
+            }
+        }
+        var targetOffset = Math.Clamp(currentOffset + Math.Sign(direction), 0, _sampleCount - 1);
+        var target = _frames[(oldest + targetOffset) % HistoryCapacity];
+        _selectedFrame = target;
+        IsPaused = true;
+        UpdateDisplay(target, updateCallTree: true);
     }
 
     /// <summary>Returns the largest retained CPU duration.</summary>

@@ -2,27 +2,47 @@ using System.Numerics;
 
 namespace Engine.Graphics;
 
+/// <summary>Represents a linear RGB color.</summary>
 public readonly struct Color : IEquatable<Color>
 {
+    /// <summary>Gets the RGB components.</summary>
     public Vector3 Rgb { get; }
 
+    /// <summary>Gets the red component.</summary>
     public float R => Rgb.X;
+    /// <summary>Gets the green component.</summary>
     public float G => Rgb.Y;
+    /// <summary>Gets the blue component.</summary>
     public float B => Rgb.Z;
 
+    /// <summary>Creates a color from separate RGB components.</summary>
+    /// <param name="r">Red component.</param>
+    /// <param name="g">Green component.</param>
+    /// <param name="b">Blue component.</param>
     public Color(float r, float g, float b)
     {
         Rgb = new Vector3(r, g, b);
     }
 
+    /// <summary>Creates a color from an RGB vector.</summary>
+    /// <param name="rgb">RGB components.</param>
     public Color(Vector3 rgb)
     {
         Rgb = rgb;
     }
 
+    /// <summary>Converts a color to its RGB vector.</summary>
+    /// <param name="c">Color to convert.</param>
     public static implicit operator Vector3(Color c) => c.Rgb;
+    /// <summary>Converts an RGB vector to a color.</summary>
+    /// <param name="v">RGB vector to convert.</param>
     public static implicit operator Color(Vector3 v) => new(v);
 
+    /// <summary>Linearly interpolates between two colors.</summary>
+    /// <param name="a">Start color.</param>
+    /// <param name="b">End color.</param>
+    /// <param name="t">Interpolation amount.</param>
+    /// <returns>The interpolated color.</returns>
     public static Color Lerp(Color a, Color b, float t)
         => new(Vector3.Lerp(a.Rgb, b.Rgb, t));
 
@@ -75,18 +95,29 @@ public readonly struct Color : IEquatable<Color>
             : MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
     }
 
+    /// <summary>Returns a readable representation of this color.</summary>
+    /// <returns>The formatted color.</returns>
     public override string ToString() => $"Color({R:F2}, {G:F2}, {B:F2})";
 
     // ── Common colors ──────────────────────────────────────────
 
+    /// <summary>Black.</summary>
     public static readonly Color Black   = new(0.00f, 0.00f, 0.00f); // #000
+    /// <summary>White.</summary>
     public static readonly Color White   = new(1.00f, 1.00f, 1.00f); // #FFF
+    /// <summary>Red.</summary>
     public static readonly Color Red     = new(1.00f, 0.00f, 0.00f); // #F00
+    /// <summary>Green.</summary>
     public static readonly Color Green   = new(0.00f, 1.00f, 0.00f); // #0F0
+    /// <summary>Blue.</summary>
     public static readonly Color Blue    = new(0.00f, 0.00f, 1.00f); // #00F
+    /// <summary>Yellow.</summary>
     public static readonly Color Yellow  = new(1.00f, 1.00f, 0.00f); // #FF0
+    /// <summary>Cyan.</summary>
     public static readonly Color Cyan    = new(0.00f, 1.00f, 1.00f); // #0FF
+    /// <summary>Magenta.</summary>
     public static readonly Color Magenta = new(1.00f, 0.00f, 1.00f); // #F0F
+    /// <summary>Middle gray.</summary>
     public static readonly Color Gray    = new(0.50f, 0.50f, 0.50f); // #888
 
 }

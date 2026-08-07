@@ -50,8 +50,11 @@ public class StackPanel : Panel
     {
         var desiredWidth = 0f;
         var desiredHeight = PaddingTop;
-        foreach (var child in Children.OfType<UIElement>())
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
         {
+            if (children[index] is not UIElement child)
+                continue;
             child.Measure(new Vector2(availableSize.X, float.PositiveInfinity));
             desiredWidth = MathF.Max(desiredWidth, child.DesiredSize.X);
             desiredHeight += child.DesiredSize.Y + Spacing;
@@ -65,8 +68,11 @@ public class StackPanel : Panel
     protected override void ArrangeOverride(Vector2 contentSize)
     {
         var y = Padding.Top + PaddingTop;
-        foreach (var child in Children.OfType<UIElement>())
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
         {
+            if (children[index] is not UIElement child)
+                continue;
             child.Arrange(new Vector2(Padding.Left, y),
                 new Vector2(contentSize.X, child.DesiredSize.Y));
             y += child.Height + child.Margin.Vertical + Spacing;

@@ -49,7 +49,8 @@ public sealed class DetachedToolWindow : IDisposable
             Height = height,
             CustomTitleBar = false
         });
-        _uiHost = new UIHost(Window, Window, Window, _root, width, height);
+        _uiHost = new UIHost(
+            Window, Window, Window, _root, width, height, textLayout: Window);
     }
 
     /// <summary>Gets whether the native tool window remains open.</summary>

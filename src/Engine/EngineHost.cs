@@ -2,7 +2,9 @@ using Engine.Graphics;
 using Engine.Assets;
 using Engine.Core;
 using Engine.Scripting;
+using Engine.UI;
 using System.Numerics;
+using System.Globalization;
 
 namespace Engine;
 
@@ -42,6 +44,13 @@ public sealed class EngineApplication : IDisposable
     private CompiledScriptCatalog? _scriptCatalog;
     private SceneScriptRuntime? _scriptRuntime;
     private RuntimeResourceManager? _runtimeResources;
+    private UIHost? _uiHost;
+    private IUIViewportPolicy? _uiViewportPolicy;
+    private WorldSpaceUIHost? _worldSpaceUI;
+    private RuntimePauseMenu? _pauseMenu;
+    private UIInputContextMode _prePauseInputContext = UIInputContextMode.GameplayOnly;
+    private double _simulationTimeScale = 1d;
+    private double _runningSimulationTimeScale = 1d;
 
     /// <summary>
     /// Creates an application around an initialized window.
@@ -86,6 +95,150 @@ public sealed class EngineApplication : IDisposable
         _window.SetContinuousRendering(true);
     }
 
+    /// <summary>Mounts or replaces the retained screen-space game UI.</summary>
+    /// <param name="root">Root HUD or menu element.</param>
+    /// <param name="overlay">Optional host-local popup and drag overlay.</param>
+    /// <param name="viewportPolicy">Optional reference-resolution and safe-area policy.</param>
+    /// <param name="inputContext">Initial gameplay/UI input arbitration mode.</param>
+    /// <param name="schedulingMode">Recurring UI/window update ownership policy.</param>
+    public void SetUI(
+        UIElement root,
+        Canvas? overlay = null,
+        IUIViewportPolicy? viewportPolicy = null,
+        UIInputContextMode inputContext = UIInputContextMode.Shared,
+        UIHostSchedulingMode schedulingMode = UIHostSchedulingMode.ExternallyManaged)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        DetachPauseMenu();
+        _worldSpaceUI = null;
+        _uiHost?.Dispose();
+        _uiViewportPolicy = viewportPolicy;
+        if (_renderView.IsValid)
+            ConfigurePresentation(_width, _height);
+        _uiHost = new UIHost(
+            _window, _window, _window, root, _width, _height, overlay, _window,
+            viewportPolicy, inputContext, schedulingMode);
+        _uiHost.SimulationTimeScale = _simulationTimeScale;
+    }
+
+    /// <summary>Attaches a camera-projected layer hosted inside the current UI root.</summary>
+    /// <param name="worldSpaceUI">World-space layer to update from the loaded scene camera.</param>
+    public void AttachWorldSpaceUI(WorldSpaceUIHost worldSpaceUI)
+    {
+        ArgumentNullException.ThrowIfNull(worldSpaceUI);
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before attaching world-space UI.");
+        if (!IsDescendantOf(worldSpaceUI, _uiHost.Root))
+            throw new InvalidOperationException("The world-space layer must belong to the active UI root.");
+        _worldSpaceUI = worldSpaceUI;
+    }
+
+    /// <summary>Gets whether gameplay should receive input under the active UI context.</summary>
+    public bool AllowsGameplayInput => _uiHost?.AllowsGameplayInput ?? true;
+
+    /// <summary>Changes gameplay/UI input arbitration, for example when opening a pause menu.</summary>
+    /// <param name="inputContext">New input-sharing mode.</param>
+    public void SetUIInputContext(UIInputContextMode inputContext)
+    {
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before changing its input context.");
+        _uiHost.InputContext = inputContext;
+    }
+
+    /// <summary>Gets whether gameplay simulation is paused by the runtime UI.</summary>
+    public bool IsPaused => _simulationTimeScale == 0d;
+
+    /// <summary>Gets the current gameplay simulation time scale.</summary>
+    public double SimulationTimeScale => _simulationTimeScale;
+
+    /// <summary>Sets gameplay time scale while leaving the unscaled UI clock unaffected.</summary>
+    /// <param name="timeScale">Finite non-negative gameplay scale.</param>
+    public void SetSimulationTimeScale(double timeScale)
+    {
+        if (!double.IsFinite(timeScale) || timeScale < 0d)
+            throw new ArgumentOutOfRangeException(nameof(timeScale));
+        _simulationTimeScale = timeScale;
+        if (timeScale > 0d)
+            _runningSimulationTimeScale = timeScale;
+        if (_uiHost is not null)
+            _uiHost.SimulationTimeScale = timeScale;
+    }
+
+    /// <summary>Attaches a pause layer hosted inside the current UI root.</summary>
+    /// <param name="pauseMenu">Retained pause menu to coordinate.</param>
+    public void AttachPauseMenu(RuntimePauseMenu pauseMenu)
+    {
+        ArgumentNullException.ThrowIfNull(pauseMenu);
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before attaching a pause menu.");
+        if (!IsDescendantOf(pauseMenu, _uiHost.Root))
+            throw new InvalidOperationException("The pause menu must belong to the active UI root.");
+        DetachPauseMenu();
+        _pauseMenu = pauseMenu;
+        pauseMenu.ResumeRequested += ResumeFromPauseMenu;
+        pauseMenu.QuitRequested += QuitFromPauseMenu;
+        _uiHost.NavigationProcessed += HandlePauseNavigation;
+        _uiHost.KeyProcessed += HandlePauseKey;
+        pauseMenu.Close();
+    }
+
+    /// <summary>Pauses or resumes simulation and switches the associated UI input scope.</summary>
+    /// <param name="paused">True to open modal pause UI; false to resume gameplay.</param>
+    public void SetPaused(bool paused)
+    {
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before changing pause state.");
+        if (paused == IsPaused)
+            return;
+        if (paused)
+        {
+            _prePauseInputContext = _uiHost.InputContext;
+            SetSimulationTimeScale(0d);
+            _uiHost.InputContext = UIInputContextMode.UIExclusive;
+            _pauseMenu?.Open();
+            if (_pauseMenu is not null)
+                _uiHost.InputRouter.Focus(_pauseMenu.ResumeButton);
+        }
+        else
+        {
+            SetSimulationTimeScale(_runningSimulationTimeScale);
+            _pauseMenu?.Close();
+            _uiHost.InputContext = _prePauseInputContext;
+            _uiHost.InputRouter.Focus(null);
+        }
+        _uiHost.Refresh();
+    }
+
+    /// <summary>Reapplies the active runtime UI policy after scale or safe-area changes.</summary>
+    public void RefreshUILayout()
+    {
+        if (_uiHost is null)
+            return;
+        if (_renderView.IsValid)
+            ConfigurePresentation(_width, _height);
+        _uiHost.RefreshViewportPolicy();
+    }
+
+    /// <summary>Applies runtime UI culture and derives left-to-right or right-to-left flow.</summary>
+    /// <param name="culture">Culture used by the active UI tree.</param>
+    public void SetUICulture(CultureInfo culture)
+    {
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before changing UI culture.");
+        _uiHost.SetCulture(culture);
+    }
+
+    /// <summary>Enables or suppresses non-essential runtime UI motion.</summary>
+    /// <param name="reducedMotion">True to replace motion with stable visual state.</param>
+    public void SetReducedMotion(bool reducedMotion)
+    {
+        if (_uiHost is null)
+            throw new InvalidOperationException("SetUI must be called before changing UI motion.");
+        _uiHost.SetMotionPreference(reducedMotion
+            ? UIMotionPreference.Reduced
+            : UIMotionPreference.Full);
+    }
+
     /// <summary>
     /// Runs the application until its window closes.
     /// </summary>
@@ -99,6 +252,10 @@ public sealed class EngineApplication : IDisposable
     /// </summary>
     public void Dispose()
     {
+        DetachPauseMenu();
+        _uiHost?.Dispose();
+        _uiHost = null;
+        _worldSpaceUI = null;
         _scriptRuntime?.Dispose();
         _scriptRuntime = null;
         _scriptCatalog?.Dispose();
@@ -275,11 +432,19 @@ public sealed class EngineApplication : IDisposable
     /// <param name="delta">Elapsed frame time.</param>
     private void RenderScene(double delta)
     {
-        _scriptRuntime?.Update(delta);
+        _scriptRuntime?.Update(delta * _simulationTimeScale);
         if (_camera is null)
             return;
         _renderQueue.Clear();
         _camera.UpdateViewport(_width, _height);
+        if (_worldSpaceUI is not null && _uiHost is not null)
+        {
+            var logicalSize = _uiViewportPolicy?.Resolve(
+                new Vector2(_width, _height), _window.RasterScale).LogicalSize
+                ?? new Vector2(_width, _height);
+            if (_worldSpaceUI.UpdateProjection(_camera, logicalSize))
+                _uiHost.Refresh();
+        }
         foreach (var renderable in _renderables)
             _renderQueue.Add(renderable.Mesh,
                 _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
@@ -302,20 +467,25 @@ public sealed class EngineApplication : IDisposable
     /// <param name="height">Client height.</param>
     private void ConfigurePresentation(float width, float height)
     {
+        var logicalSize = _uiViewportPolicy?.Resolve(
+            new Vector2(width, height), _window.RasterScale).LogicalSize ?? new Vector2(width, height);
+        var logicalWidth = logicalSize.X;
+        var logicalHeight = logicalSize.Y;
         _window.SetViewportQuadVertices(_renderView,
         [
             new(new Vector3(0, 0, 0), new Vector2(0, 0)),
-            new(new Vector3(0, height, 0), new Vector2(0, 1)),
-            new(new Vector3(width, height, 0), new Vector2(1, 1)),
-            new(new Vector3(width, height, 0), new Vector2(1, 1)),
-            new(new Vector3(width, 0, 0), new Vector2(1, 0)),
+            new(new Vector3(0, logicalHeight, 0), new Vector2(0, 1)),
+            new(new Vector3(logicalWidth, logicalHeight, 0), new Vector2(1, 1)),
+            new(new Vector3(logicalWidth, logicalHeight, 0), new Vector2(1, 1)),
+            new(new Vector3(logicalWidth, 0, 0), new Vector2(1, 0)),
             new(new Vector3(0, 0, 0), new Vector2(0, 0))
         ]);
         _window.SetPushConstants(new PushConstants
         {
             Model = Matrix4x4.Identity,
             View = Matrix4x4.Identity,
-            Projection = Matrix4x4.CreateOrthographicOffCenter(0, width, 0, height, -1, 1)
+            Projection = Matrix4x4.CreateOrthographicOffCenter(
+                0, logicalWidth, 0, logicalHeight, -1, 1)
         });
     }
 
@@ -367,6 +537,65 @@ public sealed class EngineApplication : IDisposable
             _scriptCatalog = null;
             throw;
         }
+    }
+
+    /// <summary>Resumes gameplay after the retained pause-menu action.</summary>
+    private void ResumeFromPauseMenu() => SetPaused(false);
+
+    /// <summary>Requests native application closure from the pause menu.</summary>
+    private void QuitFromPauseMenu() => _window.Close();
+
+    /// <summary>Handles controller menu/cancel actions not consumed by a focused control.</summary>
+    /// <param name="navigationEvent">Controller navigation transition.</param>
+    /// <param name="handled">Whether the UI router consumed the action.</param>
+    private void HandlePauseNavigation(NavigationInputEvent navigationEvent, bool handled)
+    {
+        if (!navigationEvent.IsPressed || navigationEvent.IsRepeat)
+            return;
+        if (navigationEvent.Action == UINavigationAction.Menu)
+            SetPaused(!IsPaused);
+        else if (navigationEvent.Action == UINavigationAction.Cancel && IsPaused && !handled)
+            SetPaused(false);
+    }
+
+    /// <summary>Toggles pause from the standard keyboard cancel gesture.</summary>
+    /// <param name="keyEvent">Routed keyboard transition.</param>
+    private void HandlePauseKey(KeyInputEvent keyEvent)
+    {
+        if (keyEvent.IsPressed && !keyEvent.IsRepeat && keyEvent.Key == InputKey.Escape)
+            SetPaused(!IsPaused);
+    }
+
+    /// <summary>Disconnects pause-menu and navigation callbacks from the current UI host.</summary>
+    private void DetachPauseMenu()
+    {
+        if (_pauseMenu is not null)
+        {
+            _pauseMenu.ResumeRequested -= ResumeFromPauseMenu;
+            _pauseMenu.QuitRequested -= QuitFromPauseMenu;
+        }
+        if (_uiHost is not null)
+        {
+            _uiHost.NavigationProcessed -= HandlePauseNavigation;
+            _uiHost.KeyProcessed -= HandlePauseKey;
+        }
+        _pauseMenu = null;
+    }
+
+    /// <summary>Checks retained ancestry without allocating an enumeration.</summary>
+    /// <param name="element">Candidate descendant.</param>
+    /// <param name="root">Required root.</param>
+    /// <returns>True when the element is the root or belongs to its subtree.</returns>
+    private static bool IsDescendantOf(UIElement element, UIElement root)
+    {
+        UIElement? current = element;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, root))
+                return true;
+            current = current.Parent as UIElement;
+        }
+        return false;
     }
 
     /// <summary>Finds indexed C# script assets for legacy loose-project catalog recovery.</summary>

@@ -7,6 +7,13 @@ readonly SHADER_DIRECTORY="$PROJECT_ROOT/src/Shaders"
 
 SLANG_COMPILER="${SLANGC:-}"
 if [[ -z "$SLANG_COMPILER" ]]; then
+    if [[ -x "$PROJECT_ROOT/tools/slang-$REQUIRED_SLANG_VERSION/bin/slangc.exe" ]]; then
+        SLANG_COMPILER="$PROJECT_ROOT/tools/slang-$REQUIRED_SLANG_VERSION/bin/slangc.exe"
+    elif [[ -x "$PROJECT_ROOT/tools/slang-$REQUIRED_SLANG_VERSION/bin/slangc" ]]; then
+        SLANG_COMPILER="$PROJECT_ROOT/tools/slang-$REQUIRED_SLANG_VERSION/bin/slangc"
+    fi
+fi
+if [[ -z "$SLANG_COMPILER" ]]; then
     SLANG_COMPILER="$(command -v slangc || true)"
 fi
 

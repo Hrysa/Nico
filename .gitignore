@@ -6,3 +6,5 @@ obj/
 *.DotSettings.user
 .DS_Store
 .nico/
+tools/slang-*/
+tools/slang-*.zip

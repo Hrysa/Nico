@@ -6,6 +6,165 @@ namespace Editor.Tests;
 
 public class UIDrawListTests
 {
+    /// <summary>Verifies opacity multiplies through retained parent and child subtrees.</summary>
+    [Fact]
+    public void BuildDrawList_MultipliesInheritedOpacity()
+    {
+        var root = new Panel(Color.Black, 100f, 100f) { Opacity = 0.5f };
+        root.AddChild(new Panel(Color.White, 50f, 50f) { Opacity = 0.4f });
+
+        var drawList = root.BuildDrawList();
+
+        Assert.Equal(0.5f, drawList.Commands[0].Opacity);
+        Assert.Equal(0.2f, drawList.Commands[1].Opacity, 5);
+    }
+
+    /// <summary>Verifies opacity rejects values outside the compositing range.</summary>
+    [Fact]
+    public void Opacity_OutsideUnitRange_Throws()
+    {
+        var panel = new Panel(Color.Black, 10f, 10f);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.Opacity = -0.1f);
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.Opacity = 1.1f);
+    }
+
+    /// <summary>Verifies sampled images retain texture identity, bounds, layer, and clipping.</summary>
+    [Fact]
+    public void AddImage_StoresSemanticTextureCommand()
+    {
+        var drawList = new UIDrawList
+        {
+            CurrentLayer = UIDrawLayer.Overlay,
+            CurrentClip = new UIClipRect(0f, 0f, 50f, 50f)
+        };
+        var texture = new TextureHandle(42);
+
+        drawList.AddImage(texture, 1f, 2f, 31f, 42f);
+
+        var command = Assert.Single(drawList.Commands);
+        Assert.Equal(UIDrawCommandType.Image, command.Type);
+        Assert.Equal(texture, command.Texture);
+        Assert.Equal(UIDrawLayer.Overlay, command.Layer);
+        Assert.Equal(new UIClipRect(0f, 0f, 50f, 50f), command.Clip);
+    }
+
+    /// <summary>Verifies image controls fill their padded content rectangle.</summary>
+    [Fact]
+    public void Image_PaintsTextureInsidePadding()
+    {
+        var image = new Engine.UI.Image(new TextureHandle(7), 100f, 60f)
+        {
+            Padding = new Thickness(5f, 6f, 7f, 8f)
+        };
+
+        var command = Assert.Single(image.BuildDrawList().Commands);
+
+        Assert.Equal(5f, command.Left);
+        Assert.Equal(6f, command.Top);
+        Assert.Equal(93f, command.Right);
+        Assert.Equal(52f, command.Bottom);
+    }
+
+    /// <summary>Verifies uniform image stretch letterboxes while preserving aspect ratio.</summary>
+    [Fact]
+    public void Image_UniformStretch_CentersAspectFit()
+    {
+        var image = new Engine.UI.Image(new TextureHandle(7), 100f, 100f)
+        {
+            SourceSize = new System.Numerics.Vector2(200f, 100f),
+            Stretch = ImageStretch.Uniform
+        };
+
+        var command = Assert.Single(image.BuildDrawList().Commands);
+
+        Assert.Equal(0f, command.Left);
+        Assert.Equal(25f, command.Top);
+        Assert.Equal(100f, command.Right);
+        Assert.Equal(75f, command.Bottom);
+    }
+
+    /// <summary>Verifies uniform-to-fill image stretch centers overflow for clipping.</summary>
+    [Fact]
+    public void Image_UniformToFill_CentersAspectCrop()
+    {
+        var image = new Engine.UI.Image(new TextureHandle(7), 100f, 100f)
+        {
+            SourceSize = new System.Numerics.Vector2(200f, 100f),
+            Stretch = ImageStretch.UniformToFill
+        };
+
+        var command = Assert.Single(image.BuildDrawList().Commands);
+
+        Assert.Equal(-50f, command.Left);
+        Assert.Equal(0f, command.Top);
+        Assert.Equal(150f, command.Right);
+        Assert.Equal(100f, command.Bottom);
+        Assert.Equal(new UIClipRect(0f, 0f, 100f, 100f), command.Clip);
+    }
+
+    /// <summary>Verifies stroked lines retain semantic endpoints, thickness, and clipping.</summary>
+    [Fact]
+    public void AddLine_StoresSemanticStrokeCommand()
+    {
+        var drawList = new UIDrawList
+        {
+            CurrentClip = new UIClipRect(0f, 0f, 50f, 50f)
+        };
+
+        drawList.AddLine(1f, 2f, 30f, 40f, 3f, Color.Red);
+
+        var command = Assert.Single(drawList.Commands);
+        Assert.Equal(UIDrawCommandType.Line, command.Type);
+        Assert.Equal(3f, command.StrokeWidth);
+        Assert.Equal(new UIClipRect(0f, 0f, 50f, 50f), command.Clip);
+    }
+
+    /// <summary>Verifies clipping ancestors attach intersected clips to descendant commands.</summary>
+    [Fact]
+    public void BuildDrawList_ClippingAncestors_IntersectDescendantClip()
+    {
+        var root = new Canvas { Width = 100f, Height = 100f, ClipToBounds = true };
+        var parent = new Canvas
+        {
+            Width = 60f,
+            Height = 60f,
+            ClipToBounds = true,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var child = new Panel(Color.Red, 50f, 50f)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        root.Add(parent, new(50f, 20f));
+        parent.Add(child, new(30f, 20f));
+
+        var command = Assert.Single(root.BuildDrawList().Commands);
+
+        Assert.Equal(new UIClipRect(50f, 20f, 100f, 80f), command.Clip);
+        Assert.Equal(80f, command.Left);
+        Assert.Equal(130f, command.Right);
+    }
+
+    /// <summary>Verifies changing only inherited clipping rebuilds composition without repainting children.</summary>
+    [Fact]
+    public void BuildDrawList_ClipChange_ReusesChildPaintCache()
+    {
+        var root = new Panel(Color.Black, 100f, 100f);
+        var child = new CountingElement();
+        root.AddChild(child);
+        root.BuildDrawList();
+
+        root.ClipToBounds = true;
+        var clipped = root.BuildDrawList();
+
+        Assert.Equal(1, child.PaintCount);
+        Assert.All(clipped.Commands, command => Assert.Equal(
+            new UIClipRect(0f, 0f, 100f, 100f), command.Clip));
+    }
+
     /// <summary>Verifies unchanged retained UI reuses its paint snapshot.</summary>
     [Fact]
     public void BuildDrawList_UnchangedTree_ReusesSnapshotUntilVisualChanges()
@@ -64,6 +223,22 @@ public class UIDrawListTests
 
         var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
         Assert.Equal(allocationStart, allocationEnd);
+    }
+
+    /// <summary>Verifies unchanged retained composition returns its cached snapshot without allocation.</summary>
+    [Fact]
+    public void BuildDrawList_UnchangedCachedSnapshot_DoesNotAllocate()
+    {
+        var root = new Panel(Color.Black, 500f, 500f);
+        for (var index = 0; index < 100; index++)
+            root.AddChild(new Panel(Color.Gray, 10f, 10f));
+        root.BuildDrawList();
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 1_000; index++)
+            root.BuildDrawList();
+
+        Assert.Equal(allocationStart, GC.GetAllocatedBytesForCurrentThread());
     }
 
     /// <summary>Verifies parent-before-child paint ordering.</summary>

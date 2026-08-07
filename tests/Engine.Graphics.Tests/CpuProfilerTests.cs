@@ -89,4 +89,32 @@ public sealed class CpuProfilerTests
             CpuProfiler.Enabled = false;
         }
     }
+
+    /// <summary>Verifies a blocked method reports elapsed time without charging it as CPU work.</summary>
+    [Fact]
+    public void Hooks_BlockingWait_SeparatesElapsedAndCpuTime()
+    {
+        CpuProfiler.Enabled = true;
+        try
+        {
+            CpuProfiler.BeginFrame();
+            CpuProfiler.Enter("Root.Run()");
+            CpuProfiler.EnterWait("Wait: test sleep");
+            Thread.Sleep(30);
+            CpuProfiler.LeaveWait("Wait: test sleep");
+            CpuProfiler.Leave("Root.Run()");
+
+            var tree = CpuProfiler.EndFrame();
+            var root = Assert.Single(tree, candidate => candidate.Name == "Root.Run()");
+            var wait = Assert.Single(tree, candidate => candidate.Name == "Wait: test sleep");
+
+            Assert.True(wait.TotalMilliseconds >= 20d);
+            Assert.True(wait.WaitMilliseconds >= 20d);
+            Assert.True(root.WaitMilliseconds >= wait.WaitMilliseconds);
+        }
+        finally
+        {
+            CpuProfiler.Enabled = false;
+        }
+    }
 }

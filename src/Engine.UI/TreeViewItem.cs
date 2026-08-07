@@ -1,4 +1,5 @@
 using Engine.Core;
+using System.Globalization;
 
 namespace Engine.UI;
 
@@ -11,14 +12,48 @@ public sealed class TreeViewItem : Button
     private readonly string[] _columnTexts;
     private bool _isSelected;
 
+    /// <inheritdoc/>
+    public override UISemanticInfo GetSemanticInfo() => base.GetSemanticInfo() with
+    {
+        Role = UISemanticRole.TreeItem,
+        Name = string.IsNullOrWhiteSpace(Item.Name) ? Item.GetType().Name : Item.Name,
+        Value = string.IsNullOrWhiteSpace(Item.Name) ? Item.GetType().Name : Item.Name,
+        Actions = UISemanticAction.Invoke | UISemanticAction.Select
+            | (Item.CanHaveChildren ? UISemanticAction.ExpandCollapse : UISemanticAction.None),
+        IsSelected = IsSelected,
+        IsExpanded = Item.CanHaveChildren ? IsExpanded : null
+    };
+
+    /// <inheritdoc/>
+    public override bool PerformSemanticAction(UISemanticAction action, double? value = null)
+    {
+        if (!IsEnabled)
+            return false;
+        if (action == UISemanticAction.Select)
+            OnSelect();
+        else if (action is UISemanticAction.Invoke or UISemanticAction.ExpandCollapse)
+        {
+            if (action == UISemanticAction.ExpandCollapse && !Item.CanHaveChildren)
+                return false;
+            OnActivate();
+        }
+        else
+            return false;
+        return true;
+    }
+
     /// <summary>Gets the node represented by this row.</summary>
-    public Node Item { get; }
+    public Node Item { get; private set; }
 
     /// <summary>Gets the hierarchy depth.</summary>
-    public int Depth { get; }
+    public int Depth { get; private set; }
 
     /// <summary>Gets whether the represented node is expanded.</summary>
-    public bool IsExpanded { get; }
+    public bool IsExpanded { get; private set; }
+
+    private Action<Node, Engine.Graphics.InputModifiers>? _selectItem;
+    private Action<Node>? _activateItem;
+    private Engine.Graphics.InputModifiers _selectionModifiers;
 
     /// <summary>Gets or sets whether this row is selected.</summary>
     public bool IsSelected
@@ -54,7 +89,9 @@ public sealed class TreeViewItem : Button
         IsExpanded = isExpanded;
         _theme = theme ?? UITheme.Dark;
         _columns = columns ?? [];
-        _columnTexts = _columns.Select(column => column.Value(item)).ToArray();
+        _columnTexts = new string[_columns.Count];
+        for (var index = 0; index < _columns.Count; index++)
+            _columnTexts[index] = _columns[index].Value(item);
         ForegroundColor = _theme.TextPrimary;
         if (_columns.Count == 0)
         {
@@ -78,7 +115,82 @@ public sealed class TreeViewItem : Button
         PressedColor = _theme.SurfacePressed;
         PaintNormalBackground = false;
         CornerRadius = 0f;
+        Click += OnSelect;
+        DoubleClick += OnActivate;
+        Pointer += CaptureSelectionModifiers;
     }
+
+    /// <summary>Assigns stable owner callbacks once when the row container is created.</summary>
+    /// <param name="selectItem">Selection callback.</param>
+    /// <param name="activateItem">Activation callback.</param>
+    /// <param name="handleKeyDown">Keyboard callback.</param>
+    /// <param name="scrollRows">Wheel callback.</param>
+    internal void BindOwner(
+        Action<Node, Engine.Graphics.InputModifiers> selectItem,
+        Action<Node> activateItem,
+        Action<int> handleKeyDown,
+        Action<float> scrollRows)
+    {
+        _selectItem = selectItem;
+        _activateItem = activateItem;
+        KeyDown += handleKeyDown;
+        Scroll += scrollRows;
+    }
+
+    /// <summary>Rebinds this retained row container to a logical tree node.</summary>
+    /// <param name="item">Represented node.</param>
+    /// <param name="depth">Hierarchy depth.</param>
+    /// <param name="isExpanded">Whether the node is expanded.</param>
+    /// <param name="displayText">Optional display text.</param>
+    /// <param name="isSelected">Whether the node is selected.</param>
+    /// <param name="width">Current row width.</param>
+    /// <param name="height">Current row height.</param>
+    internal void Bind(
+        Node item,
+        int depth,
+        bool isExpanded,
+        string? displayText,
+        bool isSelected,
+        float width,
+        float height)
+    {
+        Item = item;
+        Depth = depth;
+        IsExpanded = isExpanded;
+        if (Width != width)
+            Width = width;
+        if (Height != height)
+            Height = height;
+        if (_label is not null)
+        {
+            _label.Text = BuildLabel(item, isExpanded, displayText);
+            PaddingLeft = _theme.ItemRowPadding + depth * _theme.TreeIndent;
+        }
+        for (var index = 0; index < _columns.Count; index++)
+            _columnTexts[index] = _columns[index].Value(item);
+        IsSelected = isSelected;
+        InvalidateVisual();
+    }
+
+    /// <summary>Selects the node currently bound to this container.</summary>
+    private void OnSelect()
+    {
+        _selectItem?.Invoke(Item, _selectionModifiers);
+        _selectionModifiers = Engine.Graphics.InputModifiers.None;
+    }
+
+    /// <summary>Captures modifiers from the release that invokes this row.</summary>
+    /// <param name="sender">Current routed receiver.</param>
+    /// <param name="pointerEvent">Routed pointer transition.</param>
+    private void CaptureSelectionModifiers(UIElement sender, UIPointerEventArgs pointerEvent)
+    {
+        if (pointerEvent.RoutePhase == UIRoutePhase.Target
+            && pointerEvent.Kind == UIPointerEventKind.Release)
+            _selectionModifiers = pointerEvent.Modifiers;
+    }
+
+    /// <summary>Activates the node currently bound to this container.</summary>
+    private void OnActivate() => _activateItem?.Invoke(Item);
 
     /// <inheritdoc/>
     protected override void Paint(Engine.Graphics.UIDrawList drawList)
@@ -101,13 +213,14 @@ public sealed class TreeViewItem : Button
                 : string.Empty;
             var availableTextWidth = MathF.Max(0f, width - leadingInset - trailingInset);
             var text = FitText(marker + _columnTexts[index], availableTextWidth, _theme.FontSize);
-            var measuredWidth = Label.MeasureTextWidth(text, _theme.FontSize);
+            var measuredWidth = MeasureTextWidth(text.AsSpan(), _theme.FontSize);
             var textX = column.Alignment == TreeViewColumnAlignment.Right
                 ? x + MathF.Max(leadingInset, width - measuredWidth - trailingInset)
                 : x + leadingInset;
             drawList.AddText(text, textX,
                 Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f),
-                _theme.FontSize, _theme.TextPrimary, BackgroundColor);
+                _theme.FontSize, _theme.TextPrimary, BackgroundColor,
+                FlowDirection.ToTextFlowDirection());
             x += width;
             if (index + 1 < _columns.Count)
                 drawList.AddRectangle(x - 1f, Top, x, Bottom, _theme.Border);
@@ -119,26 +232,38 @@ public sealed class TreeViewItem : Button
     /// <param name="availableWidth">Available horizontal space.</param>
     /// <param name="fontSize">Text font size.</param>
     /// <returns>Original or truncated text.</returns>
-    private static string FitText(string text, float availableWidth, float fontSize)
+    private string FitText(string text, float availableWidth, float fontSize)
     {
-        if (Label.MeasureTextWidth(text, fontSize) <= availableWidth)
+        if (MeasureTextWidth(text.AsSpan(), fontSize) <= availableWidth)
             return text;
         const string ellipsis = "...";
-        var ellipsisWidth = Label.MeasureTextWidth(ellipsis, fontSize);
+        var ellipsisWidth = MeasureTextWidth(ellipsis.AsSpan(), fontSize);
         if (ellipsisWidth >= availableWidth)
             return string.Empty;
+        var boundaries = StringInfo.ParseCombiningCharacters(text);
         var low = 0;
-        var high = text.Length;
+        var high = boundaries.Length;
         while (low < high)
         {
-            var length = (low + high + 1) / 2;
-            if (Label.MeasureTextWidth(text[..length], fontSize) + ellipsisWidth <= availableWidth)
-                low = length;
+            var boundaryCount = (low + high + 1) / 2;
+            var length = boundaryCount < boundaries.Length
+                ? boundaries[boundaryCount]
+                : text.Length;
+            if (MeasureTextWidth(text.AsSpan(0, length), fontSize) + ellipsisWidth <= availableWidth)
+                low = boundaryCount;
             else
-                high = length - 1;
+                high = boundaryCount - 1;
         }
-        return text[..low] + ellipsis;
+        var fit = low < boundaries.Length ? boundaries[low] : text.Length;
+        return text[..fit] + ellipsis;
     }
+
+    /// <summary>Measures text using the inherited paragraph direction.</summary>
+    /// <param name="text">Text to measure.</param>
+    /// <param name="fontSize">Font height.</param>
+    /// <returns>Horizontal advance.</returns>
+    private float MeasureTextWidth(ReadOnlySpan<char> text, float fontSize) =>
+        TextLayout.MeasureWidth(text, fontSize, FlowDirection.ToTextFlowDirection());
 
     /// <summary>Builds row text with a fixed plus/minus disclosure column.</summary>
     /// <param name="item">Represented node.</param>

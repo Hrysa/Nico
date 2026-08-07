@@ -95,7 +95,7 @@ public class Node
     /// Adds a child node to this node.
     /// </summary>
     /// <param name="child">The node to add as a child.</param>
-    public void AddChild(Node child)
+    public virtual void AddChild(Node child)
     {
         ArgumentNullException.ThrowIfNull(child);
         if (ReferenceEquals(child, this))
@@ -122,7 +122,7 @@ public class Node
     /// </summary>
     /// <param name="child">The node to remove.</param>
     /// <returns>True if the child was found and removed; otherwise, false.</returns>
-    public bool RemoveChild(Node child)
+    public virtual bool RemoveChild(Node child)
     {
         if (child._parent != this)
             return false;
@@ -134,7 +134,7 @@ public class Node
     /// <summary>
     /// Removes all children from this node.
     /// </summary>
-    public void ClearChildren()
+    public virtual void ClearChildren()
     {
         foreach (var child in _children)
             child._parent = null;

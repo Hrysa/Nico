@@ -22,7 +22,9 @@ internal static class Program
         }
 
         var runtimePath = Path.GetFullPath(args[0]);
-        using var runtime = AssemblyDefinition.ReadAssembly(runtimePath);
+        using var runtime = AssemblyDefinition.ReadAssembly(
+            runtimePath,
+            new ReaderParameters { InMemory = true });
         var profilerType = runtime.MainModule.GetType(ProfilerTypeName)
             ?? throw new InvalidOperationException($"Could not find {ProfilerTypeName} in {runtimePath}.");
         var enter = profilerType.Methods.Single(method => method.Name == "Enter" && method.Parameters.Count == 1);

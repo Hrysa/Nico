@@ -10,6 +10,27 @@ public sealed record UITheme
     /// <summary>Gets the default modern dark editor theme.</summary>
     public static UITheme Dark { get; } = new();
 
+    /// <summary>Gets a maximum-contrast dark theme for low-vision accessibility.</summary>
+    public static UITheme HighContrast { get; } = new()
+    {
+        Canvas = Color.Black,
+        Surface = Color.Black,
+        SurfaceRaised = Color.Black,
+        Field = Color.Black,
+        SurfaceHover = Color.FromSrgb(0x1A, 0x1A, 0x1A),
+        SurfacePressed = Color.FromSrgb(0x33, 0x33, 0x33),
+        Viewport = Color.Black,
+        Border = Color.White,
+        BorderStrong = Color.White,
+        TextPrimary = Color.White,
+        TextSecondary = Color.White,
+        TextMuted = Color.FromSrgb(0xD0, 0xD0, 0xD0),
+        Accent = Color.Yellow,
+        AccentHover = Color.Cyan,
+        AccentPressed = Color.Yellow,
+        Error = Color.FromSrgb(0xFF, 0x66, 0x66)
+    };
+
     /// <summary>Gets the application background color.</summary>
     public Color Canvas { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
 
@@ -54,6 +75,9 @@ public sealed record UITheme
 
     /// <summary>Gets the pressed accent color.</summary>
     public Color AccentPressed { get; init; } = Color.FromSrgb(0x4C, 0x75, 0xC7);
+
+    /// <summary>Gets the semantic color used for invalid controls and error text.</summary>
+    public Color Error { get; init; } = Color.FromSrgb(0xE5, 0x73, 0x73);
 
     /// <summary>Gets the standard body font size.</summary>
     public float FontSize { get; init; } = 15.5f;

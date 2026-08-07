@@ -60,6 +60,75 @@ public sealed class ProfilerViewTests
         Assert.False(profiler.AddSample(sample with { FrameNumber = 2 }));
     }
 
+    /// <summary>Verifies adjacent frame bars retain a visible horizontal gap.</summary>
+    [Fact]
+    public void BuildDrawList_HistoryBars_HaveHorizontalPadding()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 260f };
+        profiler.AddSample(new FrameProfileSample(1, 5d, 2d, 3d, 0L));
+        profiler.AddSample(new FrameProfileSample(2, 6d, 3d, 3d, 0L));
+
+        var cpuBars = profiler.BuildDrawList().Commands
+            .Where(command => command.Type == UIDrawCommandType.Rectangle
+                && command.Color == Color.FromSrgb(0x68, 0x9C, 0xF8))
+            .OrderBy(command => command.Left)
+            .ToArray();
+
+        Assert.Equal(2, cpuBars.Length);
+        Assert.True(cpuBars[0].Right < cpuBars[1].Left);
+    }
+
+    /// <summary>Verifies hovering a history slot identifies and describes its frame.</summary>
+    [Fact]
+    public void MovePointer_HistoryBar_PaintsFrameHoverCard()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 260f };
+        profiler.AddSample(new FrameProfileSample(7, 5d, 2d, 3d, 512L));
+        profiler.BuildDrawList();
+
+        Assert.True(profiler.MovePointer(new System.Numerics.Vector2(
+            profiler.Right - 13f, profiler.Top + 70f)));
+
+        Assert.Equal(7UL, profiler.HoveredFrameNumber);
+        Assert.Contains(profiler.BuildDrawList().Commands,
+            command => command.Text?.Contains("Frame 7  Time 5.00 ms  GC 512 B") == true);
+    }
+
+    /// <summary>Verifies the sampled-frame cap becomes white while its bar is active.</summary>
+    [Fact]
+    public void MovePointer_SampledHistoryBar_PaintsWhiteActiveCap()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 260f };
+        profiler.AddSample(new FrameProfileSample(7, 0.01d, 0.01d, 0d, 0L,
+        [
+            new CpuProfileMarker("Update", -1, 0, 0.01d, 0.01d, 0L, 0L)
+        ]));
+        profiler.BuildDrawList();
+        profiler.MovePointer(new System.Numerics.Vector2(
+            profiler.Right - 13f, profiler.Top + 70f));
+
+        Assert.Contains(profiler.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Rectangle
+                && command.Color == Color.White
+                && MathF.Abs((command.Bottom - command.Top) - 2f) < 0.01f);
+    }
+
+    /// <summary>Verifies horizontal arrows navigate older and newer history frames.</summary>
+    [Fact]
+    public void InvokeKeyDown_LeftRight_NavigatesHistoryFrames()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 260f };
+        for (ulong frame = 1; frame <= 3; frame++)
+            profiler.AddSample(new FrameProfileSample(frame, 5d, 2d, 3d, 0L));
+        profiler.SetPaused(true);
+
+        profiler.InvokeKeyDown((int)InputKey.Left);
+        Assert.Equal(2UL, profiler.SelectedFrameNumber);
+
+        profiler.InvokeKeyDown((int)InputKey.Right);
+        Assert.Equal(3UL, profiler.SelectedFrameNumber);
+    }
+
     /// <summary>Verifies selecting a graph frame pauses capture and exposes its frame number.</summary>
     [Fact]
     public void SelectFrame_GraphPosition_PausesOnCapturedFrame()
@@ -96,7 +165,8 @@ public sealed class ProfilerViewTests
 
         Assert.Contains(commands, command => command.Text == "Instrumented Call Tree");
         Assert.Contains(commands, command => command.Text == "Method");
-        Assert.Contains(commands, command => command.Text == "Total");
+        Assert.Contains(commands, command => command.Text == "Elapsed");
+        Assert.Contains(commands, command => command.Text == "Wait");
         Assert.Contains(commands, command => command.Text == "Self GC");
         Assert.Contains(commands, command => command.Text?.Contains("SilkWindow.OnRender") == true);
         Assert.Contains(commands, command => command.Text?.Contains("SilkWindow.DrawFrame") == true);

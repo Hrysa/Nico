@@ -7,6 +7,8 @@ namespace Engine.UI;
 public sealed class Grid : Panel
 {
     private readonly Dictionary<UIElement, (int Row, int Column, int RowSpan, int ColumnSpan)> _cells = new();
+    private float[] _resolvedColumns = [];
+    private float[] _resolvedRows = [];
 
     /// <summary>Gets the column definitions.</summary>
     public IList<GridLength> Columns { get; } = new List<GridLength>();
@@ -51,18 +53,25 @@ public sealed class Grid : Panel
         var inner = new Vector2(
             MathF.Max(0f, availableSize.X - Padding.Horizontal),
             MathF.Max(0f, availableSize.Y - Padding.Vertical));
-        foreach (var child in Children.OfType<UIElement>())
-            child.Measure(inner);
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (children[index] is UIElement child)
+                child.Measure(inner);
+        }
         return availableSize;
     }
 
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
-        var columns = ResolveTracks(Columns, contentSize.X);
-        var rows = ResolveTracks(Rows, contentSize.Y);
-        foreach (var child in Children.OfType<UIElement>())
+        var columns = ResolveTracks(Columns, contentSize.X, ref _resolvedColumns);
+        var rows = ResolveTracks(Rows, contentSize.Y, ref _resolvedRows);
+        var children = Children;
+        for (var index = 0; index < children.Count; index++)
         {
+            if (children[index] is not UIElement child)
+                continue;
             if (!_cells.TryGetValue(child, out var cell))
                 throw new InvalidOperationException(
                     $"Grid child '{child.Name}' must be added through Grid.Add().");
@@ -80,19 +89,43 @@ public sealed class Grid : Panel
     /// <summary>Resolves track policies against one available axis.</summary>
     /// <param name="definitions">Track definitions.</param>
     /// <param name="available">Available axis size.</param>
+    /// <param name="tracks">Reusable resolved-size storage.</param>
     /// <returns>Resolved track sizes.</returns>
-    private static float[] ResolveTracks(IList<GridLength> definitions, float available)
+    private static float[] ResolveTracks(
+        IList<GridLength> definitions,
+        float available,
+        ref float[] tracks)
     {
         if (definitions.Count == 0)
-            return [MathF.Max(0f, available)];
-        var fixedSize = definitions.Where(x => x.UnitType == GridUnitType.Pixel)
-            .Sum(x => MathF.Max(0f, x.Value));
-        var totalWeight = definitions.Where(x => x.UnitType == GridUnitType.Star)
-            .Sum(x => MathF.Max(0f, x.Value));
+        {
+            if (tracks.Length != 1)
+                tracks = new float[1];
+            tracks[0] = MathF.Max(0f, available);
+            return tracks;
+        }
+        var fixedSize = 0f;
+        var totalWeight = 0f;
+        for (var index = 0; index < definitions.Count; index++)
+        {
+            var definition = definitions[index];
+            if (definition.UnitType == GridUnitType.Pixel)
+                fixedSize += MathF.Max(0f, definition.Value);
+            else
+                totalWeight += MathF.Max(0f, definition.Value);
+        }
         var remaining = MathF.Max(0f, available - fixedSize);
-        return definitions.Select(x => x.UnitType == GridUnitType.Pixel
-            ? MathF.Max(0f, x.Value)
-            : totalWeight > 0f ? remaining * MathF.Max(0f, x.Value) / totalWeight : 0f).ToArray();
+        if (tracks.Length != definitions.Count)
+            tracks = new float[definitions.Count];
+        for (var index = 0; index < definitions.Count; index++)
+        {
+            var definition = definitions[index];
+            tracks[index] = definition.UnitType == GridUnitType.Pixel
+                ? MathF.Max(0f, definition.Value)
+                : totalWeight > 0f
+                    ? remaining * MathF.Max(0f, definition.Value) / totalWeight
+                    : 0f;
+        }
+        return tracks;
     }
 
     /// <summary>Sums all track sizes preceding an index.</summary>
