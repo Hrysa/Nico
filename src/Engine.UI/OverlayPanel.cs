@@ -3,28 +3,20 @@ using Engine.Graphics;
 
 namespace Engine.UI;
 
-/// <summary>
-/// A rectangular panel container. Can hold child UI elements.
-/// </summary>
-public class Panel : Box
+/// <summary>Layers every child into the same content rectangle.</summary>
+public sealed class OverlayPanel : Panel
 {
-    /// <summary>
-    /// Creates a new Panel at the specified position and size.
-    /// </summary>
-    /// <param name="width">The panel width.</param>
-    /// <param name="height">The panel height.</param>
-    /// <param name="backgroundColor">The panel background color.</param>
-    /// <param name="theme">Theme supplying the panel's default corner radius.</param>
-    public Panel(Color backgroundColor, float width = 0f, float height = 0f, UITheme? theme = null)
-        : base(width, height)
+    /// <summary>Creates an overlay panel.</summary>
+    /// <param name="backgroundColor">Optional painted background; null creates a layout-only panel.</param>
+    public OverlayPanel(Color? backgroundColor = null)
+        : base(backgroundColor ?? Color.Black)
     {
-        BackgroundColor = backgroundColor;
-        CornerRadius = (theme ?? UITheme.Dark).PanelCornerRadius;
+        PaintBackground = backgroundColor.HasValue;
     }
 
-    /// <summary>Measures children as layered content and derives an intrinsic auto size.</summary>
+    /// <summary>Measures all layers and returns the largest intrinsic extent.</summary>
     /// <param name="availableSize">Space offered by the parent.</param>
-    /// <returns>The largest desired child extent including padding.</returns>
+    /// <returns>Largest desired child size including padding.</returns>
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
         var inner = new Vector2(
@@ -42,7 +34,7 @@ public class Panel : Box
         return desired + new Vector2(Padding.Horizontal, Padding.Vertical);
     }
 
-    /// <summary>Arranges layered panel children within the complete content box.</summary>
+    /// <summary>Arranges every layer over the complete content rectangle.</summary>
     /// <param name="contentSize">Size inside this panel's padding.</param>
     protected override void ArrangeOverride(Vector2 contentSize)
     {

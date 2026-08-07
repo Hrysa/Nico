@@ -8,24 +8,17 @@ namespace Editor.Tests;
 /// <summary>Exercises the renderer-independent measure and arrange system.</summary>
 public sealed class UILayoutTests
 {
-    /// <summary>Verifies fixed tracks are allocated before proportional tracks.</summary>
+    /// <summary>Verifies fixed items are allocated before flexible growth.</summary>
     [Fact]
-    public void Grid_FixedAndStarColumns_AllocateExpectedBounds()
+    public void FlexRow_FixedAndGrowingItems_AllocateExpectedBounds()
     {
-        var grid = new Grid(Color.Black);
-        grid.Columns.Add(GridLength.Pixels(100f));
-        grid.Columns.Add(GridLength.Star());
-        grid.Columns.Add(GridLength.Pixels(50f));
-        grid.Rows.Add(GridLength.Star());
-        var left = new Panel(Color.Red);
-        var center = new Panel(Color.Green);
-        var right = new Panel(Color.Blue);
-        grid.Add(left, 0, 0);
-        grid.Add(center, 0, 1);
-        grid.Add(right, 0, 2);
+        var left = new Panel(Color.Red, 100f);
+        var center = new Panel(Color.Green) { FlexGrow = 1f };
+        var right = new Panel(Color.Blue, 50f);
+        var row = UI.Row(Color.Black, left, center, right);
 
-        grid.Measure(new Vector2(400f, 200f));
-        grid.Arrange(Vector2.Zero, new Vector2(400f, 200f));
+        row.Measure(new Vector2(400f, 200f));
+        row.Arrange(Vector2.Zero, new Vector2(400f, 200f));
 
         Assert.Equal(100f, left.Width);
         Assert.Equal(250f, center.Width);
@@ -34,22 +27,19 @@ public sealed class UILayoutTests
         Assert.Equal(350f, right.Left);
     }
 
-    /// <summary>Verifies a fixed child can align within a larger grid cell.</summary>
+    /// <summary>Verifies justify-content positions fixed children inside a flex row.</summary>
     [Fact]
-    public void Grid_Alignment_PositionsFixedChildInsideCell()
+    public void FlexRow_JustifyEnd_PacksChildAtTrailingEdge()
     {
-        var grid = new Grid(Color.Black);
-        grid.Columns.Add(GridLength.Star());
-        grid.Rows.Add(GridLength.Star());
         var child = new Panel(Color.Red, 80f, 20f)
         {
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center
+            AlignSelf = FlexAlignment.Center
         };
-        grid.Add(child, 0, 0);
+        var row = UI.Row(Color.Black, child);
+        row.JustifyContent = FlexJustify.End;
 
-        grid.Measure(new Vector2(300f, 100f));
-        grid.Arrange(Vector2.Zero, new Vector2(300f, 100f));
+        row.Measure(new Vector2(300f, 100f));
+        row.Arrange(Vector2.Zero, new Vector2(300f, 100f));
 
         Assert.Equal(220f, child.Left);
         Assert.Equal(40f, child.Top);
@@ -290,26 +280,177 @@ public sealed class UILayoutTests
         Assert.Equal(allocationStart, GC.GetAllocatedBytesForCurrentThread());
     }
 
-    /// <summary>Verifies dock content can leave and return to the same grid instance.</summary>
+    /// <summary>Verifies dock content can leave and return to the same flex instance.</summary>
     [Fact]
-    public void Grid_RemoveAndAdd_ReparentsDockContentCleanly()
+    public void Flex_RemoveAndAdd_ReparentsDockContentCleanly()
     {
-        var grid = new Grid(Color.Black);
-        grid.Rows.Add(GridLength.Star());
-        grid.Columns.Add(GridLength.Star());
         var content = new Panel(Color.Red);
-        grid.Add(content, 0, 0);
+        var flex = UI.Column(Color.Black, content.Grow());
 
-        Assert.True(grid.Remove(content));
+        Assert.True(flex.RemoveChild(content));
         Assert.Null(content.Parent);
-        Assert.Empty(grid.Children);
+        Assert.Empty(flex.Children);
 
-        grid.Add(content, 0, 0);
-        grid.Measure(new Vector2(320f, 200f));
-        grid.Arrange(Vector2.Zero, new Vector2(320f, 200f));
-        Assert.Same(grid, content.Parent);
+        flex.AddChild(content);
+        flex.Measure(new Vector2(320f, 200f));
+        flex.Arrange(Vector2.Zero, new Vector2(320f, 200f));
+        Assert.Same(flex, content.Parent);
         Assert.Equal(320f, content.Width);
         Assert.Equal(200f, content.Height);
+    }
+
+    /// <summary>Verifies auto-sized flex containers derive dimensions from their content.</summary>
+    [Fact]
+    public void FlexRow_AutoSize_MatchesContentAndGap()
+    {
+        var row = UI.Row(null,
+            new Panel(Color.Red, 30f, 10f),
+            new Panel(Color.Blue, 50f, 20f));
+        row.Gap = 6f;
+        row.HorizontalAlignment = HorizontalAlignment.Left;
+        row.VerticalAlignment = VerticalAlignment.Top;
+
+        row.Measure(new Vector2(500f, 500f));
+        row.Arrange(Vector2.Zero, row.DesiredSize);
+
+        Assert.Equal(new Vector2(86f, 20f), row.DesiredSize);
+        Assert.Equal(86f, row.Width);
+        Assert.Equal(20f, row.Height);
+    }
+
+    /// <summary>Verifies wrapped flex lines move overflowing items onto the next line.</summary>
+    [Fact]
+    public void FlexRow_Wrap_CreatesAdditionalLine()
+    {
+        var first = new Panel(Color.Red, 60f, 10f);
+        var second = new Panel(Color.Green, 60f, 10f);
+        var third = new Panel(Color.Blue, 60f, 10f);
+        var row = UI.Row(null, first, second, third);
+        row.Wrap = FlexWrap.Wrap;
+        row.Gap = 4f;
+
+        row.Measure(new Vector2(130f, 100f));
+        row.Arrange(Vector2.Zero, new Vector2(130f, 100f));
+
+        Assert.Equal(0f, first.Top);
+        Assert.Equal(0f, second.Top);
+        Assert.Equal(14f, third.Top);
+    }
+
+    /// <summary>Verifies a requested width acts as the basis before flex growth.</summary>
+    [Fact]
+    public void FlexRow_ExplicitBasisAndGrow_ExpandsActualItemBox()
+    {
+        var growing = new Panel(Color.Red, 100f, 20f) { FlexGrow = 1f };
+        var fixedItem = new Panel(Color.Blue, 50f, 20f);
+        var row = UI.Row(null, growing, fixedItem);
+
+        row.Measure(new Vector2(300f, 20f));
+        row.Arrange(Vector2.Zero, new Vector2(300f, 20f));
+
+        Assert.Equal(250f, growing.Width);
+        Assert.Equal(250f, fixedItem.Left);
+    }
+
+    /// <summary>Verifies maximum size freezes one item and redistributes remaining growth.</summary>
+    [Fact]
+    public void FlexRow_MaxWidth_RedistributesGrowth()
+    {
+        var capped = new Panel(Color.Red, 50f, 20f) { FlexGrow = 1f, MaxWidth = 80f };
+        var growing = new Panel(Color.Blue, 50f, 20f) { FlexGrow = 1f };
+        var row = UI.Row(null, capped, growing);
+
+        row.Measure(new Vector2(300f, 20f));
+        row.Arrange(Vector2.Zero, new Vector2(300f, 20f));
+
+        Assert.Equal(80f, capped.Width);
+        Assert.Equal(220f, growing.Width);
+    }
+
+    /// <summary>Verifies space-between distributes free space between fixed items.</summary>
+    [Fact]
+    public void FlexRow_SpaceBetween_DistributesFreeSpace()
+    {
+        var first = new Panel(Color.Red, 20f, 10f);
+        var second = new Panel(Color.Green, 20f, 10f);
+        var third = new Panel(Color.Blue, 20f, 10f);
+        var row = UI.Row(null, first, second, third);
+        row.JustifyContent = FlexJustify.SpaceBetween;
+
+        row.Measure(new Vector2(160f, 20f));
+        row.Arrange(Vector2.Zero, new Vector2(160f, 20f));
+
+        Assert.Equal(0f, first.Left);
+        Assert.Equal(70f, second.Left);
+        Assert.Equal(140f, third.Left);
+    }
+
+    /// <summary>Verifies a vertical flex container allocates remaining height to a growing child.</summary>
+    [Fact]
+    public void FlexColumn_Grow_AllocatesRemainingHeight()
+    {
+        var header = new Panel(Color.Red, 100f, 30f) { FlexShrink = 0f };
+        var content = new Panel(Color.Blue) { FlexGrow = 1f };
+        var column = UI.Column(null, header, content);
+
+        column.Measure(new Vector2(100f, 200f));
+        column.Arrange(Vector2.Zero, new Vector2(100f, 200f));
+
+        Assert.Equal(30f, header.Height);
+        Assert.Equal(30f, content.Top);
+        Assert.Equal(170f, content.Height);
+    }
+
+    /// <summary>Verifies declarative overlay composition retains layer order and shared bounds.</summary>
+    [Fact]
+    public void DeclarativeOverlay_AttachesAndLayersChildren()
+    {
+        var back = new Panel(Color.Red);
+        var front = new Panel(Color.Blue);
+        var overlay = UI.Overlay(
+        [
+            UI.Ref(back, out var capturedBack),
+            front.Named("FrontLayer")
+        ]).Named("RootOverlay");
+
+        overlay.Measure(new Vector2(120f, 80f));
+        overlay.Arrange(Vector2.Zero, new Vector2(120f, 80f));
+
+        Assert.Same(overlay, back.Parent);
+        Assert.Same(overlay, front.Parent);
+        Assert.Same(back, capturedBack);
+        Assert.Equal("RootOverlay", overlay.Name);
+        Assert.Equal("FrontLayer", front.Name);
+        Assert.Same(back, overlay.Children[0]);
+        Assert.Same(front, overlay.Children[1]);
+        Assert.Equal(120f, back.Width);
+        Assert.Equal(80f, front.Height);
+    }
+
+    /// <summary>Verifies repeated invalid flex layout is allocation-free after buffer warmup.</summary>
+    [Fact]
+    public void FlexRow_RepeatedLayout_DoesNotAllocate()
+    {
+        var row = UI.Row(null,
+            new Panel(Color.Red, 20f, 10f),
+            new Panel(Color.Green, 20f, 10f) { FlexGrow = 1f },
+            new Panel(Color.Blue, 20f, 10f));
+        var available = new Vector2(200f, 40f);
+        row.Measure(available);
+        row.Arrange(Vector2.Zero, available);
+        row.InvalidateMeasure();
+        row.Measure(available);
+        row.Arrange(Vector2.Zero, available);
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 100; index++)
+        {
+            row.InvalidateMeasure();
+            row.Measure(available);
+            row.Arrange(Vector2.Zero, available);
+        }
+
+        Assert.Equal(allocationStart, GC.GetAllocatedBytesForCurrentThread());
     }
 
     /// <summary>Enumerates all UI descendants beneath one root.</summary>

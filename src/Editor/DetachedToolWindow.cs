@@ -7,7 +7,7 @@ namespace Editor;
 public sealed class DetachedToolWindow : IDisposable
 {
     private readonly SilkWindowGroup _windowGroup;
-    private readonly Grid _root;
+    private readonly FlexPanel _root;
     private readonly UIHost _uiHost;
     private bool _disposed;
 
@@ -43,13 +43,10 @@ public sealed class DetachedToolWindow : IDisposable
         Content = content;
         var theme = UITheme.Dark;
         var titleBarHeight = OperatingSystem.IsWindows() ? 36f : 48f;
-        _root = new Grid(theme.Canvas);
-        _root.Rows.Add(GridLength.Pixels(titleBarHeight));
-        _root.Rows.Add(GridLength.Star());
-        _root.Columns.Add(GridLength.Star());
         TitleBar = new TitleBar(width, titleBarHeight, theme)
         {
             Width = 0f,
+            FlexShrink = 0f,
             Margin = new Thickness(0f, 0f, 0f, 1f)
         };
         TitleBar.CenterZone.AddChild(new Label(title)
@@ -59,8 +56,8 @@ public sealed class DetachedToolWindow : IDisposable
             PaddingLeft = 0f,
             IsHitTestVisible = false
         });
-        _root.Add(TitleBar, 0, 0);
-        _root.Add(content, 1, 0);
+        content.FlexGrow = 1f;
+        _root = UI.Column(theme.Canvas, TitleBar, content);
         Window = windowGroup.CreateWindow(new WindowOptions
         {
             Title = title,
@@ -92,7 +89,7 @@ public sealed class DetachedToolWindow : IDisposable
     public UIElement ReleaseContent()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _root.Remove(Content);
+        _root.RemoveChild(Content);
         return Content;
     }
 
@@ -102,7 +99,7 @@ public sealed class DetachedToolWindow : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        _root.Remove(Content);
+        _root.RemoveChild(Content);
         _uiHost.Dispose();
         _windowGroup.DestroyWindow(Window);
         GC.SuppressFinalize(this);

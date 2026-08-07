@@ -149,15 +149,11 @@ public class UIThemeTests
     [Fact]
     public void Button_ContentConstructor_AllowsCustomLayout()
     {
-        var content = new Grid(UITheme.Dark.Surface);
-        content.Rows.Add(GridLength.Star());
-        content.Columns.Add(GridLength.Pixels(12f));
-        content.Columns.Add(GridLength.Pixels(4f));
-        content.Columns.Add(GridLength.Star());
         var icon = new Box(12f, 12f) { BackgroundColor = Color.White };
         var label = new Label("Import") { PaddingLeft = 0f };
-        content.Add(icon, 0, 0);
-        content.Add(label, 0, 2);
+        var content = UI.Row(UITheme.Dark.Surface, icon, label.Grow());
+        content.Gap = 4f;
+        content.AlignItems = FlexAlignment.Center;
         var button = new Button(100f, 30f, UITheme.Dark) { Content = content };
 
         button.Measure(new Vector2(100f, 30f));
@@ -166,6 +162,19 @@ public class UIThemeTests
         Assert.Same(content, button.Content);
         Assert.Contains(button.BuildDrawList().Commands,
             command => command.Type == UIDrawCommandType.Text && command.Text == "Import");
+    }
+
+    /// <summary>Verifies fixed button content cannot paint across neighboring controls.</summary>
+    [Fact]
+    public void Button_Content_IsClippedToButtonBounds()
+    {
+        var button = new Button(40f, 24f, "A label wider than its button", UITheme.Dark);
+
+        var text = Assert.Single(button.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+
+        Assert.True(button.ClipToBounds);
+        Assert.Equal(new UIClipRect(button.Left, button.Top, button.Right, button.Bottom), text.Clip);
     }
 
     /// <summary>Verifies a surface paints one fill and four inset border edges.</summary>

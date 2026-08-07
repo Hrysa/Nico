@@ -350,15 +350,16 @@ public static class UIShowcase
     private static ShowcaseSection CreateLayoutSection(UITheme theme)
     {
         var section = new ShowcaseSection("Layout and specialized surfaces", theme);
-        var grid = new Grid(theme.SurfaceRaised) { Width = 520f, Height = 84f };
-        grid.Columns.Add(GridLength.Star(1f));
-        grid.Columns.Add(GridLength.Star(2f));
-        grid.Rows.Add(GridLength.Pixels(42f));
-        grid.Rows.Add(GridLength.Pixels(42f));
-        grid.Add(CreateCell("1×", theme), 0, 0);
-        grid.Add(CreateCell("2× flexible", theme), 0, 1);
-        grid.Add(CreateCell("Grid row 2", theme), 1, 0, columnSpan: 2);
-        section.AddRow(new ShowcaseRow(RowWidth, 88f, "Grid tracks", theme, grid));
+        var firstCell = CreateCell("1×", theme).Grow();
+        var secondCell = CreateCell("2× flexible", theme).Grow(2f);
+        var firstLine = UI.Row(null, firstCell, secondCell);
+        firstLine.Height = 42f;
+        var secondLine = CreateCell("Flex row 2", theme);
+        secondLine.Height = 42f;
+        var flex = UI.Column(theme.SurfaceRaised, firstLine, secondLine);
+        flex.Width = 520f;
+        flex.Height = 84f;
+        section.AddRow(new ShowcaseRow(RowWidth, 88f, "Flex layout", theme, flex));
 
         var viewport = new ViewportPanel(300f, 84f, theme.SurfaceRaised)
         {

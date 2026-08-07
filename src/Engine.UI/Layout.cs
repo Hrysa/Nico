@@ -1,5 +1,3 @@
-using System.Numerics;
-
 namespace Engine.UI;
 
 /// <summary>Controls horizontal placement inside an allocated layout slot.</summary>
@@ -28,27 +26,56 @@ public enum VerticalAlignment
     Bottom
 }
 
-/// <summary>Identifies how a grid track obtains its size.</summary>
-public enum GridUnitType
+/// <summary>Controls the main axis used by a flex container.</summary>
+public enum FlexDirection
 {
-    /// <summary>Uses an exact logical-pixel size.</summary>
-    Pixel,
-    /// <summary>Shares space remaining after fixed tracks are allocated.</summary>
-    Star
+    /// <summary>Places children from left to right.</summary>
+    Row,
+    /// <summary>Places children from right to left.</summary>
+    RowReverse,
+    /// <summary>Places children from top to bottom.</summary>
+    Column,
+    /// <summary>Places children from bottom to top.</summary>
+    ColumnReverse
 }
 
-/// <summary>Describes the size policy of one grid row or column.</summary>
-/// <param name="Value">Pixel size or proportional star weight.</param>
-/// <param name="UnitType">Sizing policy.</param>
-public readonly record struct GridLength(float Value, GridUnitType UnitType)
+/// <summary>Controls distribution of unused space along a flex axis.</summary>
+public enum FlexJustify
 {
-    /// <summary>Creates an exact-size track.</summary>
-    /// <param name="pixels">Track size in logical pixels.</param>
-    /// <returns>The fixed grid length.</returns>
-    public static GridLength Pixels(float pixels) => new(pixels, GridUnitType.Pixel);
+    /// <summary>Packs items against the leading edge.</summary>
+    Start,
+    /// <summary>Packs items at the center.</summary>
+    Center,
+    /// <summary>Packs items against the trailing edge.</summary>
+    End,
+    /// <summary>Places equal space between adjacent items.</summary>
+    SpaceBetween,
+    /// <summary>Places equal space around every item.</summary>
+    SpaceAround,
+    /// <summary>Places equal space between items and container edges.</summary>
+    SpaceEvenly
+}
 
-    /// <summary>Creates a proportional track.</summary>
-    /// <param name="weight">Share of the remaining space.</param>
-    /// <returns>The proportional grid length.</returns>
-    public static GridLength Star(float weight = 1f) => new(weight, GridUnitType.Star);
+/// <summary>Controls placement along the cross axis of a flex line.</summary>
+public enum FlexAlignment
+{
+    /// <summary>Uses the container's alignment when applied to a child.</summary>
+    Auto,
+    /// <summary>Places items against the cross-axis leading edge.</summary>
+    Start,
+    /// <summary>Places items at the cross-axis center.</summary>
+    Center,
+    /// <summary>Places items against the cross-axis trailing edge.</summary>
+    End,
+    /// <summary>Expands auto-sized items across the line's cross axis.</summary>
+    Stretch
+}
+
+/// <summary>Controls whether flex items form additional lines.</summary>
+public enum FlexWrap
+{
+    /// <summary>Keeps every item on one line.</summary>
+    NoWrap,
+    /// <summary>Moves overflowing items onto additional lines.</summary>
+    Wrap
 }

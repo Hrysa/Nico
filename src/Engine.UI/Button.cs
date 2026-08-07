@@ -130,6 +130,7 @@ public class Button : ContentControl
         : base(width, height)
     {
         IsTabStop = true;
+        ClipToBounds = true;
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
         _normalColor = normalColor;
@@ -192,6 +193,7 @@ public class Button : ContentControl
     {
         ArgumentNullException.ThrowIfNull(theme);
         IsTabStop = true;
+        ClipToBounds = true;
         Padding = new Thickness(DefaultHorizontalPadding, 0f);
         CornerRadius = 5f;
         _normalColor = style switch

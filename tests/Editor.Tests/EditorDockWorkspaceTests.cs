@@ -116,7 +116,7 @@ public sealed class EditorDockWorkspaceTests
         view.Root.BuildDrawList();
 
         Assert.Null(view.InitialDockHost.Parent);
-        Assert.Same(view.Root, session.MainHost.Parent);
+        Assert.Same(view.WorkspaceHost, session.MainHost.Parent);
         Assert.True(IsDescendant(session.MainHost, view.HierarchyTree));
         Assert.True(IsDescendant(session.MainHost, view.FileSystemTree));
         Assert.True(IsDescendant(session.MainHost, view.SceneSlot));

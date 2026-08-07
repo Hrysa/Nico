@@ -19,7 +19,7 @@ game HUDs. Runtime scheduling is a host policy; controls must never branch on an
 The repository already has a useful retained-mode foundation:
 
 - `UIElement` owns measure/arrange, retained painting, visibility, hit testing, and basic state.
-- `Canvas`, `StackPanel`, and `Grid` provide initial layout containers.
+- `Canvas`, `StackPanel`, `FlexPanel`, and `OverlayPanel` provide layout containers.
 - `Button`, `Label`, `TextField`, `ListView`, `TreeView`, dialogs, menus, and tool panels provide
   initial controls.
 - `UIDrawList` is a renderer-independent semantic command stream.
@@ -315,10 +315,10 @@ Containers to add or complete:
 - `WrapPanel` for tag/icon collections;
 - `ScrollViewer` with reusable scroll state and clipping;
 - `VirtualizingStackPanel` for large lists and trees;
-- `Splitter`/`GridSplitter` with pointer capture and minimum constraints;
+- `Splitter` with pointer capture and minimum constraints;
 - `ViewBox` only if scale-to-fit content is required by Player UI.
 
-`Grid` gains span support, min/max tracks, shared-size groups, and deterministic star sizing.
+`FlexPanel` gains independent row/column gaps and wrapped-line alignment refinements.
 
 ### Rendering contract
 

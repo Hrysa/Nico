@@ -117,20 +117,18 @@ public static class EditorDockWorkspace
         return registry;
     }
 
-    /// <summary>Replaces the legacy Editor workspace grid with a retained dock-session host.</summary>
+    /// <summary>Replaces the declarative Editor workspace content with a retained dock-session host.</summary>
     /// <param name="view">Built Editor view.</param>
     /// <param name="session">Dock session owning the replacement host.</param>
     public static void Mount(EditorView view, DockSession session)
     {
         ArgumentNullException.ThrowIfNull(view);
         ArgumentNullException.ThrowIfNull(session);
-        if (view.Root is not Grid root)
-            throw new InvalidOperationException("The Editor root must remain a Grid during dock migration.");
-        if (ReferenceEquals(session.MainHost.Parent, root))
+        var workspaceHost = view.WorkspaceHost;
+        if (ReferenceEquals(session.MainHost.Parent, workspaceHost))
             return;
-        root.Remove(view.InitialDockHost);
-        root.Add(session.MainHost, 1, 0);
-        root.InvalidateMeasure();
+        workspaceHost.Content = session.MainHost;
+        workspaceHost.InvalidateMeasure();
     }
 
     /// <summary>Creates one selected single-tab group.</summary>

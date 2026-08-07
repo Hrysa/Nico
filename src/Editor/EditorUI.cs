@@ -31,19 +31,6 @@ public static class EditorUI
         var hierarchyHeight = MathF.Floor(workspaceHeight * 0.58f);
         var filesystemHeight = MathF.Max(0f, workspaceHeight - hierarchyHeight - separatorWidth);
 
-        var background = new Grid(theme.Canvas)
-        {
-            Name = "Background",
-            ForegroundColor = theme.TextPrimary
-        };
-        background.Rows.Add(GridLength.Pixels(titleBarHeight));
-        background.Rows.Add(GridLength.Star());
-        background.Rows.Add(GridLength.Pixels(bottomDockHeight));
-        background.Columns.Add(GridLength.Star());
-
-        var titleBar = new TitleBar(width, titleBarHeight, theme);
-        titleBar.Width = 0f;
-        titleBar.Margin = new Thickness(0f, 0f, 0f, 1f);
         var projectLabel = new Label("scene.node", 180f, titleBarHeight)
         {
             Name = "ProjectLabel",
@@ -63,52 +50,35 @@ public static class EditorUI
             Name = "Play",
             Content = playButtonLabel
         };
-
-        titleBar.LeftZone.AddChild(projectLabel);
-        titleBar.CenterZone.AddChild(playButton);
-
-        var bottomDock = new Surface(theme.Surface, theme.Border,
-            MathF.Max(0f, width - hierarchyWidth - inspectorWidth - separatorWidth * 2f),
-            bottomDockHeight) { Name = "BottomDock" };
-        bottomDock.Width = 0f;
-        var bottomTabs = new Grid(theme.Surface);
-        bottomTabs.Rows.Add(GridLength.Star());
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Pixels(90f));
-        bottomTabs.Columns.Add(GridLength.Star());
-        var hierarchyButton = new Button(90f, bottomDockHeight, "Hierarchy", theme)
-            { Name = "HierarchyButton" };
-        var fileSystemButton = new Button(90f, bottomDockHeight, "Files", theme)
-            { Name = "FileSystemButton" };
-        var sceneButton = new Button(90f, bottomDockHeight, "Scene", theme)
-            { Name = "SceneButton" };
-        var gameButton = new Button(90f, bottomDockHeight, "Game", theme)
-            { Name = "GameButton" };
-        var inspectorButton = new Button(90f, bottomDockHeight, "Inspector", theme)
-            { Name = "InspectorButton" };
-        var profilerButton = new Button(90f, bottomDockHeight, "Profiler", theme)
+        var titleBar = new TitleBar(width, titleBarHeight, theme)
         {
-            Name = "ProfilerButton"
-        };
-        bottomTabs.Add(hierarchyButton, 0, 0);
-        bottomTabs.Add(fileSystemButton, 0, 1);
-        bottomTabs.Add(sceneButton, 0, 2);
-        bottomTabs.Add(gameButton, 0, 3);
-        bottomTabs.Add(inspectorButton, 0, 4);
-        bottomTabs.Add(profilerButton, 0, 5);
-        bottomDock.AddChild(bottomTabs);
-
-        var profilerPanel = new ToolPanel(width, 0f, "Profiler", theme)
+            Width = 0f,
+            FlexShrink = 0f,
+            Margin = new Thickness(0f, 0f, 0f, 1f)
+        }.Configure(bar =>
         {
-            Name = "Profiler",
-            IsVisible = false
-        };
-        profilerPanel.Width = 0f;
-        profilerPanel.Height = 0f;
+            bar.LeftZone.WithChildren(projectLabel);
+            bar.CenterZone.WithChildren(playButton);
+        });
+
+        var bottomTabs = UI.Row(
+        [
+            UI.Ref(new Button(90f, bottomDockHeight, "Hierarchy", theme)
+                { Name = "HierarchyButton" }, out var hierarchyButton),
+            UI.Ref(new Button(90f, bottomDockHeight, "Files", theme)
+                { Name = "FileSystemButton" }, out var fileSystemButton),
+            UI.Ref(new Button(90f, bottomDockHeight, "Scene", theme)
+                { Name = "SceneButton" }, out var sceneButton),
+            UI.Ref(new Button(90f, bottomDockHeight, "Game", theme)
+                { Name = "GameButton" }, out var gameButton),
+            UI.Ref(new Button(90f, bottomDockHeight, "Inspector", theme)
+                { Name = "InspectorButton" }, out var inspectorButton),
+            UI.Ref(new Button(90f, bottomDockHeight, "Profiler", theme)
+                { Name = "ProfilerButton" }, out var profilerButton)
+        ],
+        backgroundColor: theme.Surface,
+        justifyContent: FlexJustify.Center).Named("BottomDock");
+
         var profilerPauseLabel = new Label("Pause")
         {
             FontSize = theme.CaptionFontSize,
@@ -116,125 +86,118 @@ public static class EditorUI
             PaddingLeft = 0f,
             IsHitTestVisible = false
         };
-        var profilerPauseButton = new Button(80f, theme.ControlHeight, theme)
-        {
-            Name = "ProfilerPause",
-            Content = profilerPauseLabel
-        };
-        var profiler = new ProfilerView(theme) { Name = "ProfilerView" };
-        var profilerLayout = new Grid(theme.Surface);
-        profilerLayout.Rows.Add(GridLength.Pixels(theme.ControlHeight));
-        profilerLayout.Rows.Add(GridLength.Star());
-        profilerLayout.Columns.Add(GridLength.Star());
-        var profilerToolbar = new Grid(theme.SurfaceRaised);
-        profilerToolbar.Rows.Add(GridLength.Star());
-        profilerToolbar.Columns.Add(GridLength.Pixels(88f));
-        profilerToolbar.Columns.Add(GridLength.Star());
-        profilerToolbar.Add(profilerPauseButton, 0, 0);
-        profilerLayout.Add(profilerToolbar, 0, 0);
-        profilerLayout.Add(profiler, 1, 0);
-        profilerPanel.Content.AddChild(profilerLayout);
+        var profilerLayout = UI.Column(
+        [
+            UI.Row(
+            [
+                UI.Ref(new Button(80f, theme.ControlHeight, theme)
+                {
+                    Name = "ProfilerPause",
+                    Content = profilerPauseLabel
+                }, out var profilerPauseButton)
+            ], backgroundColor: theme.SurfaceRaised).Configure(toolbar =>
+            {
+                toolbar.Padding = new Thickness(4f, 0f);
+                toolbar.Height = theme.ControlHeight;
+                toolbar.FlexShrink = 0f;
+            }),
+            UI.Ref(new ProfilerView(theme) { Name = "ProfilerView" }, out var profiler).Grow()
+        ], backgroundColor: theme.Surface);
+        var profilerPanel = CreateToolPanel(width, 0f, "Profiler", "Profiler",
+            profilerLayout, theme, isVisible: false, autoWidth: true);
 
-        var hierarchyPanel = new ToolPanel(hierarchyWidth, hierarchyHeight,
-            "Hierarchy", theme) { Name = "Hierarchy" };
-        hierarchyPanel.Content.Name = "Hierarchy";
-        hierarchyPanel.Height = 0f;
-        hierarchyPanel.Header.Name = "HierarchyHeader";
-        var hierarchyTree = new TreeView(hierarchyWidth,
-            MathF.Max(0f, hierarchyHeight - panelHeaderHeight), theme)
-        {
-            Name = "HierarchyTree"
-        };
-        hierarchyTree.Width = 0f;
-        hierarchyTree.Height = 0f;
-        hierarchyPanel.Content.AddChild(hierarchyTree);
+        var hierarchyPanel = CreateToolPanel(
+            hierarchyWidth,
+            hierarchyHeight,
+            "Hierarchy",
+            "Hierarchy",
+            UI.Ref(new TreeView(hierarchyWidth,
+                MathF.Max(0f, hierarchyHeight - panelHeaderHeight), theme)
+            {
+                Name = "HierarchyTree",
+                Width = 0f,
+                Height = 0f
+            }, out var hierarchyTree),
+            theme);
 
-        var filesystemPanel = new ToolPanel(hierarchyWidth, filesystemHeight,
-            "File System", theme) { Name = "FileSystem" };
-        filesystemPanel.Content.Name = "FileSystem";
-        filesystemPanel.Height = 0f;
-        filesystemPanel.Header.Name = "FileSystemHeader";
-        var fileTree = new TreeView(hierarchyWidth,
-            MathF.Max(0f, filesystemHeight - panelHeaderHeight), theme) { Name = "ProjectFiles" };
-        fileTree.Width = 0f;
-        fileTree.Height = 0f;
-        filesystemPanel.Content.AddChild(fileTree);
+        var filesystemPanel = CreateToolPanel(
+            hierarchyWidth,
+            filesystemHeight,
+            "File System",
+            "FileSystem",
+            UI.Ref(new TreeView(hierarchyWidth,
+                MathF.Max(0f, filesystemHeight - panelHeaderHeight), theme)
+            {
+                Name = "ProjectFiles",
+                Width = 0f,
+                Height = 0f
+            }, out var fileTree),
+            theme);
 
-        var inspectorPanel = new ToolPanel(inspectorWidth,
-            workspaceHeight, "Inspector", theme) { Name = "Inspector" };
-        inspectorPanel.Content.Name = "Inspector";
-        inspectorPanel.Height = 0f;
-        inspectorPanel.Header.Name = "InspectorHeader";
-        var inspector = new SceneInspector(inspectorWidth,
-            MathF.Max(0f, workspaceHeight - panelHeaderHeight), theme)
-        {
-            Name = "SceneInspector"
-        };
-        inspector.Width = 0f;
-        inspector.Height = 0f;
-        inspectorPanel.Content.AddChild(inspector);
+        var inspectorPanel = CreateToolPanel(
+            inspectorWidth,
+            workspaceHeight,
+            "Inspector",
+            "Inspector",
+            UI.Ref(new SceneInspector(inspectorWidth,
+                MathF.Max(0f, workspaceHeight - panelHeaderHeight), theme)
+            {
+                Name = "SceneInspector",
+                Width = 0f,
+                Height = 0f
+            }, out var inspector),
+            theme);
 
         var viewportWidth = MathF.Max(0f, width - hierarchyWidth - inspectorWidth - (separatorWidth * 2f));
         var sceneSlotHeight = MathF.Floor(workspaceHeight * 0.73f);
         var gameSlotHeight = MathF.Max(0f, workspaceHeight - sceneSlotHeight - separatorWidth);
         var sceneTools = new Surface(theme.SurfaceRaised, theme.Border,
-            viewportWidth, viewportToolbarHeight) { Name = "SceneToolbar" };
-        sceneTools.Width = 0f;
-        var selectTool = new Button(28f, "Select", theme, ButtonStyle.Primary);
-        var moveTool = new Button(28f, "Move", theme);
-        var rotateTool = new Button(28f, "Rotate", theme);
-        var scaleTool = new Button(28f, "Scale", theme);
-        var toolbarButtonSpace = new Vector2(float.PositiveInfinity, viewportToolbarHeight);
-        selectTool.Measure(toolbarButtonSpace);
-        moveTool.Measure(toolbarButtonSpace);
-        rotateTool.Measure(toolbarButtonSpace);
-        scaleTool.Measure(toolbarButtonSpace);
-        var toolbarLayout = new Grid(theme.SurfaceRaised) { Name = "SceneToolbarLayout" };
-        toolbarLayout.Rows.Add(GridLength.Star());
-        toolbarLayout.Columns.Add(GridLength.Pixels(8f));
-        toolbarLayout.Columns.Add(GridLength.Pixels(selectTool.DesiredSize.X));
-        toolbarLayout.Columns.Add(GridLength.Pixels(4f));
-        toolbarLayout.Columns.Add(GridLength.Pixels(moveTool.DesiredSize.X));
-        toolbarLayout.Columns.Add(GridLength.Pixels(4f));
-        toolbarLayout.Columns.Add(GridLength.Pixels(rotateTool.DesiredSize.X));
-        toolbarLayout.Columns.Add(GridLength.Pixels(4f));
-        toolbarLayout.Columns.Add(GridLength.Pixels(scaleTool.DesiredSize.X));
-        toolbarLayout.Columns.Add(GridLength.Star());
-        toolbarLayout.Columns.Add(GridLength.Pixels(96f));
-        toolbarLayout.Columns.Add(GridLength.Pixels(8f));
-        toolbarLayout.Add(selectTool, 0, 1);
-        toolbarLayout.Add(moveTool, 0, 3);
-        toolbarLayout.Add(rotateTool, 0, 5);
-        toolbarLayout.Add(scaleTool, 0, 7);
-        toolbarLayout.Add(new Label("Perspective", 96f, viewportToolbarHeight)
+            viewportWidth, viewportToolbarHeight)
         {
-            ForegroundColor = theme.TextSecondary,
-            FontSize = theme.CaptionFontSize,
-            PaddingLeft = 0f
-        }, 0, 9);
-        sceneTools.AddChild(toolbarLayout);
-        var sceneViewport = new ViewportPanel(viewportWidth,
-            MathF.Max(0f, sceneSlotHeight - viewportToolbarHeight), theme.Viewport)
-            { Name = "SceneViewport" };
-        sceneViewport.Width = 0f;
-        sceneViewport.Height = 0f;
-        var gameViewport = new ViewportPanel(viewportWidth,
-            gameSlotHeight, theme.Viewport)
-            { Name = "GameViewport" };
-        gameViewport.Width = 0f;
-        gameViewport.Height = 0f;
+            Name = "SceneToolbar",
+            Width = 0f,
+            FlexShrink = 0f
+        }.WithChildren(
+            UI.Row(
+            [
+                new Button(28f, "Select", theme, ButtonStyle.Primary),
+                new Button(28f, "Move", theme),
+                new Button(28f, "Rotate", theme),
+                new Button(28f, "Scale", theme),
+                new FlexPanel().Grow(),
+                new Label("Perspective", 96f, viewportToolbarHeight)
+                {
+                    ForegroundColor = theme.TextSecondary,
+                    FontSize = theme.CaptionFontSize,
+                    PaddingLeft = 0f
+                }
+            ],
+            backgroundColor: theme.SurfaceRaised,
+            alignItems: FlexAlignment.Center,
+            gap: 4f).Named("SceneToolbarLayout").Configure(toolbar =>
+                toolbar.Padding = new Thickness(8f, 0f)));
 
-        var sceneSlot = new Grid(theme.Viewport) { Name = "SceneSlot" };
-        sceneSlot.Columns.Add(GridLength.Star());
-        sceneSlot.Rows.Add(GridLength.Pixels(viewportToolbarHeight));
-        sceneSlot.Rows.Add(GridLength.Star());
-        sceneSlot.Add(sceneTools, 0, 0);
-        sceneSlot.Add(sceneViewport, 1, 0);
+        var sceneSlot = UI.Column(
+        [
+            sceneTools,
+            UI.Ref(new ViewportPanel(viewportWidth,
+                MathF.Max(0f, sceneSlotHeight - viewportToolbarHeight), theme.Viewport)
+            {
+                Name = "SceneViewport",
+                Width = 0f,
+                Height = 0f
+            }, out var sceneViewport).Grow()
+        ], backgroundColor: theme.Viewport).Named("SceneSlot");
 
-        var gameSlot = new Grid(theme.Viewport) { Name = "GameSlot" };
-        gameSlot.Columns.Add(GridLength.Star());
-        gameSlot.Rows.Add(GridLength.Star());
-        gameSlot.Add(gameViewport, 0, 0);
+        var gameSlot = UI.Column(
+        [
+            UI.Ref(new ViewportPanel(viewportWidth, gameSlotHeight, theme.Viewport)
+            {
+                Name = "GameViewport",
+                Width = 0f,
+                Height = 0f
+            }, out var gameViewport).Grow()
+        ], backgroundColor: theme.Viewport).Named("GameSlot");
 
         var initialWorkspace = EditorDockWorkspace.CreateDefault();
         var initialDockHost = new DockHost(initialWorkspace, id => id switch
@@ -251,31 +214,84 @@ public static class EditorUI
             Name = "InitialDockHost"
         };
 
-        var bottomShell = new Grid(theme.Canvas) { Name = "BottomShell" };
-        bottomShell.Rows.Add(GridLength.Star());
-        bottomShell.Columns.Add(GridLength.Pixels(hierarchyWidth));
-        bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
-        bottomShell.Columns.Add(GridLength.Star());
-        bottomShell.Columns.Add(GridLength.Pixels(separatorWidth));
-        bottomShell.Columns.Add(GridLength.Pixels(inspectorWidth));
-        bottomShell.Add(bottomDock, 0, 2);
-
-        var overlay = new Canvas { Name = "Overlay" };
-
-        background.Add(titleBar, 0, 0);
-        background.Add(initialDockHost, 1, 0);
-        background.Add(bottomShell, 2, 0);
-        background.Add(overlay, 0, 0, rowSpan: 3);
+        var background = UI.Overlay(
+        [
+            UI.Column(
+            [
+                titleBar,
+                UI.Ref(new ContentControl
+                {
+                    Name = "WorkspaceHost",
+                    Content = initialDockHost,
+                    PaintBackground = false,
+                    FlexGrow = 1f
+                }, out var workspaceHost),
+                UI.Row(
+                [
+                    new FlexPanel
+                    {
+                        Width = hierarchyWidth + separatorWidth,
+                        FlexShrink = 0f
+                    },
+                    bottomTabs.Grow(),
+                    new FlexPanel
+                    {
+                        Width = inspectorWidth + separatorWidth,
+                        FlexShrink = 0f
+                    }
+                ], backgroundColor: theme.Canvas).Named("BottomShell").Configure(shell =>
+                {
+                    shell.Height = bottomDockHeight;
+                    shell.FlexShrink = 0f;
+                })
+            ]).Named("MainLayout"),
+            UI.Ref(new Canvas { Name = "Overlay" }, out var overlay)
+        ], backgroundColor: theme.Canvas).Named("Background").Configure(root =>
+            root.ForegroundColor = theme.TextPrimary);
         background.Measure(new Vector2(width, height));
         background.Arrange(Vector2.Zero, new Vector2(width, height));
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
             projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay,
-            sceneSlot, gameSlot, sceneTools, initialDockHost,
+            sceneSlot, gameSlot, sceneTools, initialDockHost, workspaceHost,
             hierarchyPanel, filesystemPanel, inspectorPanel, profilerPanel, profilerLayout,
             profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
             inspectorButton, profilerButton,
             profilerPauseButton, profilerPauseLabel);
+    }
+
+    /// <summary>Composes a standard tool panel around one declarative content subtree.</summary>
+    /// <param name="width">Initial panel width.</param>
+    /// <param name="height">Initial panel height.</param>
+    /// <param name="title">Header title.</param>
+    /// <param name="name">Stable panel name.</param>
+    /// <param name="content">Content subtree.</param>
+    /// <param name="theme">Editor theme.</param>
+    /// <param name="isVisible">Initial visibility.</param>
+    /// <param name="autoWidth">Whether the panel width is owned by its parent.</param>
+    /// <returns>The composed retained tool panel.</returns>
+    private static ToolPanel CreateToolPanel(
+        float width,
+        float height,
+        string title,
+        string name,
+        UIElement content,
+        UITheme theme,
+        bool isVisible = true,
+        bool autoWidth = false)
+    {
+        var panel = new ToolPanel(width, height, title, theme)
+        {
+            Name = name,
+            IsVisible = isVisible,
+            Height = 0f
+        };
+        if (autoWidth)
+            panel.Width = 0f;
+        panel.Content.Name = name;
+        panel.Header.Name = $"{name}Header";
+        panel.Content.WithChildren(content);
+        return panel;
     }
 
     /// <summary>
@@ -333,6 +349,7 @@ public static class EditorUI
 /// <param name="GameSlot">Retained Game viewport content.</param>
 /// <param name="SceneToolbar">Scene viewport toolbar.</param>
 /// <param name="InitialDockHost">Default host replaced by the restored live dock session.</param>
+/// <param name="WorkspaceHost">Stable content slot receiving the active main dock host.</param>
 /// <param name="HierarchyPanel">Detachable Hierarchy tool.</param>
 /// <param name="FileSystemPanel">Detachable File System tool.</param>
 /// <param name="InspectorPanel">Detachable Inspector tool.</param>
@@ -359,15 +376,16 @@ public sealed record EditorView(
     SceneInspector Inspector,
     TitleBar TitleBar,
     Canvas Overlay,
-    Grid SceneSlot,
-    Grid GameSlot,
+    FlexPanel SceneSlot,
+    FlexPanel GameSlot,
     Surface SceneToolbar,
     DockHost InitialDockHost,
+    ContentControl WorkspaceHost,
     ToolPanel HierarchyPanel,
     ToolPanel FileSystemPanel,
     ToolPanel InspectorPanel,
     ToolPanel ProfilerPanel,
-    Grid ProfilerContent,
+    FlexPanel ProfilerContent,
     ProfilerView Profiler,
     Button HierarchyButton,
     Button FileSystemButton,

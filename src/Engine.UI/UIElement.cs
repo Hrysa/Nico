@@ -75,6 +75,10 @@ public class UIElement : Node
     private float _minHeight;
     private float _maxWidth = float.PositiveInfinity;
     private float _maxHeight = float.PositiveInfinity;
+    private float _flexGrow;
+    private float _flexShrink = 1f;
+    private float? _flexBasis;
+    private FlexAlignment _alignSelf;
     private Color _backgroundColor = Color.Black;
     private Color _foregroundColor = Color.White;
     private bool _isVisible = true;
@@ -530,6 +534,49 @@ public class UIElement : Node
         set { if (_maxHeight != value) { _maxHeight = value; InvalidateMeasure(); } }
     }
 
+    /// <summary>Gets or sets the share of positive main-axis free space assigned by a flex parent.</summary>
+    public float FlexGrow
+    {
+        get => _flexGrow;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (_flexGrow != value) { _flexGrow = value; InvalidateMeasure(); }
+        }
+    }
+
+    /// <summary>Gets or sets the share of main-axis overflow removed by a flex parent.</summary>
+    public float FlexShrink
+    {
+        get => _flexShrink;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (_flexShrink != value) { _flexShrink = value; InvalidateMeasure(); }
+        }
+    }
+
+    /// <summary>Gets or sets the preferred main-axis outer size used by a flex parent, or null for intrinsic size.</summary>
+    public float? FlexBasis
+    {
+        get => _flexBasis;
+        set
+        {
+            if (value is < 0f || value is { } finite && !float.IsFinite(finite))
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (_flexBasis != value) { _flexBasis = value; InvalidateMeasure(); }
+        }
+    }
+
+    /// <summary>Gets or sets an optional cross-axis alignment override used by a flex parent.</summary>
+    public FlexAlignment AlignSelf
+    {
+        get => _alignSelf;
+        set { if (_alignSelf != value) { _alignSelf = value; InvalidateMeasure(); } }
+    }
+
     /// <summary>Gets or sets the element width in pixels.</summary>
     public float Width
     {
@@ -794,6 +841,29 @@ public class UIElement : Node
     /// <param name="slotSize">Size of the allocated slot.</param>
     public void Arrange(Vector2 slotPosition, Vector2 slotSize)
     {
+        ArrangeCore(slotPosition, slotSize, false, false);
+    }
+
+    /// <summary>Arranges an element while allowing a flex parent to own its main-axis border-box size.</summary>
+    /// <param name="slotPosition">Top-left position of the allocated flex item slot.</param>
+    /// <param name="slotSize">Size of the allocated flex item slot.</param>
+    /// <param name="horizontalMainAxis">Whether the flex main axis is horizontal.</param>
+    internal void ArrangeFlex(Vector2 slotPosition, Vector2 slotSize, bool horizontalMainAxis)
+    {
+        ArrangeCore(slotPosition, slotSize, horizontalMainAxis, !horizontalMainAxis);
+    }
+
+    /// <summary>Performs normal or flex-owned arrangement without changing requested dimensions.</summary>
+    /// <param name="slotPosition">Top-left position of the allocated slot.</param>
+    /// <param name="slotSize">Size of the allocated slot.</param>
+    /// <param name="forceWidth">Whether the parent owns the resulting border-box width.</param>
+    /// <param name="forceHeight">Whether the parent owns the resulting border-box height.</param>
+    private void ArrangeCore(
+        Vector2 slotPosition,
+        Vector2 slotSize,
+        bool forceWidth,
+        bool forceHeight)
+    {
         if (_arrangeValid && _lastArrangePosition == slotPosition && _lastArrangeSize == slotSize)
             return;
         if (!IsVisible)
@@ -802,9 +872,9 @@ public class UIElement : Node
         var availableHeight = MathF.Max(0f, slotSize.Y - Margin.Vertical);
         var desiredWidth = MathF.Max(0f, _desiredSize.X - Margin.Horizontal);
         var desiredHeight = MathF.Max(0f, _desiredSize.Y - Margin.Vertical);
-        var width = HorizontalAlignment == HorizontalAlignment.Stretch && _requestedWidth is null
+        var width = forceWidth || HorizontalAlignment == HorizontalAlignment.Stretch && _requestedWidth is null
             ? availableWidth : MathF.Min(availableWidth, desiredWidth);
-        var height = VerticalAlignment == VerticalAlignment.Stretch && _requestedHeight is null
+        var height = forceHeight || VerticalAlignment == VerticalAlignment.Stretch && _requestedHeight is null
             ? availableHeight : MathF.Min(availableHeight, desiredHeight);
         width = Math.Clamp(width, MinWidth, MaxWidth);
         height = Math.Clamp(height, MinHeight, MaxHeight);
@@ -1222,14 +1292,35 @@ public class UIElement : Node
     /// <summary>Calculates alignment offset on one axis.</summary>
     /// <param name="available">Available axis size.</param>
     /// <param name="actual">Actual element size.</param>
-    /// <param name="alignment">Axis alignment value.</param>
+    /// <param name="alignment">Horizontal alignment value.</param>
     /// <returns>Offset within the available size.</returns>
-    private static float AlignOffset(float available, float actual, object alignment)
+    private static float AlignOffset(
+        float available,
+        float actual,
+        HorizontalAlignment alignment)
     {
         return alignment switch
         {
-            HorizontalAlignment.Center or VerticalAlignment.Center => (available - actual) / 2f,
-            HorizontalAlignment.Right or VerticalAlignment.Bottom => available - actual,
+            HorizontalAlignment.Center => (available - actual) / 2f,
+            HorizontalAlignment.Right => available - actual,
+            _ => 0f
+        };
+    }
+
+    /// <summary>Calculates vertical alignment offset without boxing the enum.</summary>
+    /// <param name="available">Available axis size.</param>
+    /// <param name="actual">Actual element size.</param>
+    /// <param name="alignment">Vertical alignment value.</param>
+    /// <returns>Offset within the available size.</returns>
+    private static float AlignOffset(
+        float available,
+        float actual,
+        VerticalAlignment alignment)
+    {
+        return alignment switch
+        {
+            VerticalAlignment.Center => (available - actual) / 2f,
+            VerticalAlignment.Bottom => available - actual,
             _ => 0f
         };
     }
