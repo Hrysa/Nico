@@ -543,13 +543,14 @@ void UpdatePlayModeStart(double deltaTime)
     pendingPlayScene = null;
     CloseCompilationProgress();
     GameScriptHost? candidateHost = null;
+    PhysicsWorld? candidatePhysicsWorld = null;
     try
     {
         candidateHost = build.GetAwaiter().GetResult();
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
         candidateHost.LoadScene(candidateScene.Root, window);
-        var candidatePhysicsWorld = new PhysicsWorld();
+        candidatePhysicsWorld = new PhysicsWorld();
         candidatePhysicsWorld.EnableInterpolation = true;
         candidatePhysicsWorld.Attach(candidateScene.Root);
         editSelectionBeforePlay = selection.SelectedNode;
@@ -577,6 +578,7 @@ void UpdatePlayModeStart(double deltaTime)
     }
     catch (Exception exception)
     {
+        candidatePhysicsWorld?.Dispose();
         try
         {
             candidateHost?.Dispose();
@@ -635,6 +637,7 @@ void StopPlayMode()
         logger.LogError(exception, "A script failed while leaving play mode");
     }
     scriptHost = null;
+    physicsWorld?.Dispose();
     physicsWorld = null;
     playScene = null;
     isPlaying = false;
@@ -1613,12 +1616,23 @@ void AddSceneNode(Node parent, AssetReference? mesh, string displayName)
 /// <param name="mesh">Built-in primitive mesh.</param>
 void AddPrimitivePhysics(Node3D node, AssetReference mesh)
 {
+    var collider = CreatePrimitiveCollider(mesh);
+    node.AddComponent(collider);
+    if (mesh == BuiltInAssets.PlaneMesh)
+        return;
+    node.AddComponent(new RigidBodyComponent());
+}
+
+/// <summary>Creates collision geometry matching a built-in mesh when possible.</summary>
+/// <param name="mesh">Optional mesh used to infer the primitive shape.</param>
+/// <returns>A collider configured for the inferred shape.</returns>
+ColliderComponent CreatePrimitiveCollider(AssetReference? mesh)
+{
     var collider = new ColliderComponent();
     if (mesh == BuiltInAssets.PlaneMesh)
     {
         collider.Shape = ColliderShape.Plane;
-        node.AddComponent(collider);
-        return;
+        return collider;
     }
     if (mesh == BuiltInAssets.SphereMesh)
     {
@@ -1637,10 +1651,37 @@ void AddPrimitivePhysics(Node3D node, AssetReference mesh)
     {
         collider.Shape = ColliderShape.Box;
     }
-    node.AddComponent(collider);
-    node.AddComponent(new RigidBodyComponent());
+    return collider;
 }
 
+/// <summary>Adds an inferred collider to one selected scene node.</summary>
+/// <param name="target">Selected hierarchy node.</param>
+void AddColliderComponent(Node target)
+{
+    if (target is not Node3D node || node.GetComponent<ColliderComponent>() is not null)
+        return;
+    var mesh = node is MeshInstance3D meshInstance ? meshInstance.Mesh : (AssetReference?)null;
+    node.AddComponent(CreatePrimitiveCollider(mesh));
+    if (physicsWorld is not null)
+        physicsWorld.Attach(GetActiveSceneRoot());
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
+/// <summary>Adds a dynamic rigid body to one selected scene node.</summary>
+/// <param name="target">Selected hierarchy node.</param>
+void AddRigidBodyComponent(Node target)
+{
+    if (target is not Node3D node || node.GetComponent<RigidBodyComponent>() is not null)
+        return;
+    node.AddComponent(new RigidBodyComponent());
+    if (physicsWorld is not null)
+        physicsWorld.Attach(GetActiveSceneRoot());
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
+/// <summary>Shows nested object and component actions for the hierarchy target.</summary>
 void ShowHierarchyContextMenu()
 {
     if (lastMousePos.X < hierarchyTree.Left || lastMousePos.X > hierarchyTree.Right
@@ -1652,17 +1693,27 @@ void ShowHierarchyContextMenu()
     var target = uiEventRouter.HoveredElement is TreeViewItem row ? row.Item : activeRoot;
     hierarchyTree.Select(ReferenceEquals(target, activeRoot) ? null : target);
 
-    const float menuWidth = 160f;
-    const float menuHeight = 184f;
+    const float menuWidth = 180f;
+    const float menuHeight = 56f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
     var menu = new ContextMenu(menuWidth) { Name = "HierarchyContextMenu" };
-    menu.AddItem("Add Empty Object", () => AddSceneNode(target, null, "Object"));
-    menu.AddItem("Add Cube", () => AddSceneNode(target, BuiltInAssets.CubeMesh, "Cube"));
-    menu.AddItem("Add Plane", () => AddSceneNode(target, BuiltInAssets.PlaneMesh, "Plane"));
-    menu.AddItem("Add Sphere", () => AddSceneNode(target, BuiltInAssets.SphereMesh, "Sphere"));
-    menu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
-    menu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
+    var objectMenu = new ContextMenu(menuWidth) { Name = "HierarchyAdd3DObjectMenu" };
+    objectMenu.AddItem("Add Empty Object", () => AddSceneNode(target, null, "Object"));
+    objectMenu.AddItem("Add Cube", () => AddSceneNode(target, BuiltInAssets.CubeMesh, "Cube"));
+    objectMenu.AddItem("Add Plane", () => AddSceneNode(target, BuiltInAssets.PlaneMesh, "Plane"));
+    objectMenu.AddItem("Add Sphere", () => AddSceneNode(target, BuiltInAssets.SphereMesh, "Sphere"));
+    objectMenu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
+    objectMenu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
+    menu.AddSubmenu("Add 3D Object", objectMenu);
+
+    var componentMenu = new ContextMenu(menuWidth) { Name = "HierarchyAddComponentMenu" };
+    var canAddToTarget = !ReferenceEquals(target, activeRoot) && target is Node3D;
+    componentMenu.AddItem("Add Collider", () => AddColliderComponent(target),
+        canAddToTarget && target.GetComponent<ColliderComponent>() is null);
+    componentMenu.AddItem("Add Rigid Body", () => AddRigidBodyComponent(target),
+        canAddToTarget && target.GetComponent<RigidBodyComponent>() is null);
+    menu.AddSubmenu("Add Component", componentMenu);
     hierarchyContextMenu = menu;
     overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);

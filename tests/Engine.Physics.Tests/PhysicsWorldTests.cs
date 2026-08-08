@@ -104,6 +104,7 @@ public sealed class PhysicsWorldTests
         var (world, _, _) = CreateFallingBody();
         world.EnableInterpolation = true;
         world.Update(1d / 60d);
+        world.Update(1d / 60d);
         var before = GC.GetAllocatedBytesForCurrentThread();
 
         for (var frame = 0; frame < 1_000; frame++)

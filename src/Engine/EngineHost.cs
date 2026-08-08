@@ -263,6 +263,7 @@ public sealed class EngineApplication : IDisposable
         _worldSpaceUI = null;
         _scriptRuntime?.Dispose();
         _scriptRuntime = null;
+        _physicsWorld?.Dispose();
         _physicsWorld = null;
         _scriptCatalog?.Dispose();
         _scriptCatalog = null;

@@ -1,4 +1,10 @@
 using System.Numerics;
+using BepuPhysics;
+using BepuPhysics.Collidables;
+using BepuPhysics.CollisionDetection;
+using BepuPhysics.Constraints;
+using BepuUtilities;
+using BepuUtilities.Memory;
 using Engine.Core;
 using Engine.Graphics;
 
@@ -17,13 +23,28 @@ public readonly record struct PhysicsContact(
     float Penetration,
     bool IsTrigger);
 
-/// <summary>Runs deterministic fixed-step linear 3D rigid-body simulation.</summary>
-public sealed class PhysicsWorld
+/// <summary>Adapts engine scene components to a BepuPhysics fixed-step simulation.</summary>
+public sealed class PhysicsWorld : IDisposable
 {
-    private readonly List<PhysicsBody> _bodies = new();
+    private const float PlaneThickness = 0.02f;
+    private const float PlaneExtent = 100_000f;
+    private readonly BufferPool _bufferPool = new();
+    private readonly List<PhysicsBody?> _bodyHandles = [];
+    private readonly List<PhysicsBody?> _staticHandles = [];
+    private readonly ContactBridge _contactBridge;
+    private readonly List<PhysicsBody> _bodies = [];
+    private Simulation _simulation;
     private double _accumulator;
     private double _fixedTimeStep = 1d / 60d;
     private int _maxSubsteps = 8;
+    private bool _disposed;
+
+    /// <summary>Creates an empty Bepu-backed physics world.</summary>
+    public PhysicsWorld()
+    {
+        _contactBridge = new ContactBridge(this);
+        _simulation = CreateSimulation();
+    }
 
     /// <summary>Gets or sets world gravity in units per second squared.</summary>
     public Vector3 Gravity { get; set; } = new(0f, -9.81f, 0f);
@@ -64,27 +85,27 @@ public sealed class PhysicsWorld
     /// <summary>Occurs for each overlapping collider pair during a fixed step.</summary>
     public event Action<PhysicsContact>? Contact;
 
-    /// <summary>Discovers enabled collider components in one scene hierarchy.</summary>
+    /// <summary>Rebuilds the Bepu simulation from enabled colliders in one hierarchy.</summary>
     /// <param name="root">Synthetic scene root.</param>
     public void Attach(Node root)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(root);
-        _bodies.Clear();
-        _accumulator = 0d;
+        ResetSimulation();
         AttachNode(root);
     }
 
-    /// <summary>Advances the accumulator and performs bounded fixed simulation steps.</summary>
+    /// <summary>Advances the accumulator and performs bounded Bepu simulation steps.</summary>
     /// <param name="deltaTime">Scaled elapsed gameplay time in seconds.</param>
     public void Update(double deltaTime)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (!double.IsFinite(deltaTime) || deltaTime < 0d)
             throw new ArgumentOutOfRangeException(nameof(deltaTime));
         if (deltaTime == 0d || _bodies.Count == 0)
             return;
         SynchronizeExternalTransforms();
-        _accumulator = Math.Min(
-            _accumulator + deltaTime, FixedTimeStep * MaxSubsteps);
+        _accumulator = Math.Min(_accumulator + deltaTime, FixedTimeStep * MaxSubsteps);
         var substeps = 0;
         while (_accumulator >= FixedTimeStep && substeps < MaxSubsteps)
         {
@@ -94,6 +115,42 @@ public sealed class PhysicsWorld
         }
         if (EnableInterpolation)
             PublishInterpolatedTransforms((float)(_accumulator / FixedTimeStep));
+    }
+
+    /// <summary>Releases Bepu simulation and pooled buffers.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        _simulation.Dispose();
+        _bufferPool.Clear();
+        _bodies.Clear();
+        _bodyHandles.Clear();
+        _staticHandles.Clear();
+    }
+
+    /// <summary>Creates a Bepu simulation using engine-owned contact and integration callbacks.</summary>
+    /// <returns>A new empty simulation.</returns>
+    private Simulation CreateSimulation()
+    {
+        return Simulation.Create(
+            _bufferPool,
+            new NarrowPhaseCallbacks(_contactBridge),
+            new PoseIntegratorCallbacks(),
+            new SolveDescription(8, 1));
+    }
+
+    /// <summary>Discards all retained bodies and creates a fresh simulation.</summary>
+    private void ResetSimulation()
+    {
+        _simulation.Dispose();
+        _bufferPool.Clear();
+        _bodies.Clear();
+        _bodyHandles.Clear();
+        _staticHandles.Clear();
+        _accumulator = 0d;
+        _simulation = CreateSimulation();
     }
 
     /// <summary>Discovers physics bodies recursively without iterator allocation.</summary>
@@ -115,28 +172,99 @@ public sealed class PhysicsWorld
                     rigidBody ??= foundRigidBody;
             }
             if (collider is not null)
-                _bodies.Add(new PhysicsBody(node3D, rigidBody, collider));
+                AddBody(node3D, rigidBody, collider);
         }
         var children = node.Children;
         for (var index = 0; index < children.Count; index++)
             AttachNode(children[index]);
     }
 
-    /// <summary>Integrates bodies and resolves primitive overlaps once.</summary>
-    /// <param name="deltaTime">Fixed step duration.</param>
-    private void Step(float deltaTime)
+    /// <summary>Creates one scaled Bepu primitive and registers its engine mapping.</summary>
+    /// <param name="node">Scene transform represented by the body.</param>
+    /// <param name="rigidBody">Optional motion settings.</param>
+    /// <param name="collider">Collision geometry and material.</param>
+    private void AddBody(Node3D node, RigidBodyComponent? rigidBody, ColliderComponent collider)
     {
-        for (var index = 0; index < _bodies.Count; index++)
-            _bodies[index].PreviousPosition = _bodies[index].SimulationPosition;
-        for (var index = 0; index < _bodies.Count; index++)
-            Integrate(_bodies[index], deltaTime);
-        for (var first = 0; first < _bodies.Count; first++)
+        GetColliderPose(node, collider, out var pose, out var scale, out var origin);
+        var body = new PhysicsBody(node, rigidBody, collider, pose.Position - origin);
+        _bodies.Add(body);
+        switch (collider.Shape)
         {
-            for (var second = first + 1; second < _bodies.Count; second++)
-                ResolvePair(_bodies[first], _bodies[second]);
+            case ColliderShape.Sphere:
+                var sphereRadius = collider.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+                AddBepuBody(body, pose, new Sphere(sphereRadius));
+                break;
+            case ColliderShape.Capsule:
+                var capsuleRadius = collider.Radius * MathF.Max(scale.X, scale.Z);
+                var capsuleHeight = collider.Height * scale.Y;
+                AddBepuBody(body, pose,
+                    new Capsule(capsuleRadius, MathF.Max(0.001f, capsuleHeight - capsuleRadius * 2f)));
+                break;
+            case ColliderShape.Cylinder:
+                AddBepuBody(body, pose,
+                    new Cylinder(collider.Radius * MathF.Max(scale.X, scale.Z), collider.Height * scale.Y));
+                break;
+            case ColliderShape.Plane:
+                pose.Position += Vector3.Transform(new Vector3(0f, -PlaneThickness * 0.5f, 0f),
+                    pose.Orientation);
+                body.CenterOffset = pose.Position - origin;
+                AddBepuBody(body, pose, new Box(PlaneExtent, PlaneThickness, PlaneExtent));
+                break;
+            default:
+                var size = collider.Size * scale;
+                AddBepuBody(body, pose, new Box(size.X, size.Y, size.Z));
+                break;
         }
-        for (var index = 0; index < _bodies.Count; index++)
-            _bodies[index].SimulationPosition = _bodies[index].Node.GetWorldPosition();
+    }
+
+    /// <summary>Adds one convex shape as a dynamic, kinematic, or static Bepu collidable.</summary>
+    /// <typeparam name="TShape">Unmanaged Bepu convex shape type.</typeparam>
+    /// <param name="body">Engine mapping receiving the Bepu handle.</param>
+    /// <param name="pose">Initial collider-center pose.</param>
+    /// <param name="shape">Scaled collision shape.</param>
+    private void AddBepuBody<TShape>(PhysicsBody body, RigidPose pose, TShape shape)
+        where TShape : unmanaged, IConvexShape
+    {
+        var shapeIndex = _simulation.Shapes.Add(shape);
+        var rigidBody = body.RigidBody;
+        if (rigidBody is null || rigidBody.MotionType == RigidBodyMotionType.Static)
+        {
+            var staticDescription = new StaticDescription(pose, shapeIndex);
+            var handle = _simulation.Statics.Add(staticDescription);
+            body.StaticHandle = handle;
+            RegisterHandle(_staticHandles, handle.Value, body);
+            return;
+        }
+
+        var collidable = new CollidableDescription(shapeIndex, 0.1f);
+        var activity = new BodyActivityDescription(0.01f);
+        BodyDescription description;
+        if (rigidBody.MotionType == RigidBodyMotionType.Kinematic)
+        {
+            description = BodyDescription.CreateKinematic(
+                pose, new BodyVelocity(rigidBody.LinearVelocity), collidable, activity);
+        }
+        else
+        {
+            var inertia = shape.ComputeInertia(rigidBody.Mass);
+            inertia.InverseInertiaTensor = default;
+            description = BodyDescription.CreateDynamic(
+                pose, new BodyVelocity(rigidBody.LinearVelocity), inertia, collidable, activity);
+        }
+        var bodyHandle = _simulation.Bodies.Add(description);
+        body.BodyHandle = bodyHandle;
+        RegisterHandle(_bodyHandles, bodyHandle.Value, body);
+    }
+
+    /// <summary>Stores one handle-indexed mapping without dictionary lookup in callbacks.</summary>
+    /// <param name="mappings">Handle mapping list to grow.</param>
+    /// <param name="handle">Nonnegative Bepu handle value.</param>
+    /// <param name="body">Mapped engine body.</param>
+    private static void RegisterHandle(List<PhysicsBody?> mappings, int handle, PhysicsBody body)
+    {
+        while (mappings.Count <= handle)
+            mappings.Add(null);
+        mappings[handle] = body;
     }
 
     /// <summary>Restores authoritative poses or recognizes transforms changed by game code.</summary>
@@ -146,26 +274,88 @@ public sealed class PhysicsWorld
         {
             var body = _bodies[index];
             var worldPosition = body.Node.GetWorldPosition();
-            if (!EnableInterpolation)
+            if (body.BodyHandle is { } handle)
             {
-                body.PreviousPosition = worldPosition;
-                body.SimulationPosition = worldPosition;
+                var reference = _simulation.Bodies[handle];
+                var externallyMoved = EnableInterpolation
+                    ? !body.HasPresentationPosition ||
+                      Vector3.DistanceSquared(worldPosition, body.PresentationPosition) > 0.0000001f
+                    : Vector3.DistanceSquared(worldPosition, body.SimulationPosition) > 0.0000001f;
+                if (body.RigidBody?.MotionType == RigidBodyMotionType.Kinematic || externallyMoved)
+                {
+                    GetColliderPose(body.Node, body.Collider, out var pose, out _, out var origin);
+                    body.CenterOffset = pose.Position - origin;
+                    reference.Pose = pose;
+                    _simulation.Bodies.UpdateBounds(handle);
+                    if (externallyMoved || body.RigidBody?.LinearVelocity.LengthSquared() > 0f)
+                        reference.Awake = true;
+                    body.PreviousPosition = worldPosition;
+                    body.SimulationPosition = worldPosition;
+                }
+                else if (EnableInterpolation)
+                {
+                    SetWorldPosition(body.Node, body.SimulationPosition);
+                }
                 continue;
             }
-            if (body.HasPresentationPosition &&
-                Vector3.DistanceSquared(worldPosition, body.PresentationPosition) <= 0.0000001f)
-            {
-                SetWorldPosition(body.Node, body.SimulationPosition);
+            if (body.StaticHandle is not { } staticHandle)
                 continue;
-            }
-            body.PreviousPosition = worldPosition;
-            body.SimulationPosition = worldPosition;
-            body.PresentationPosition = worldPosition;
-            body.HasPresentationPosition = true;
+            GetColliderPose(body.Node, body.Collider, out var staticPose, out _, out var staticOrigin);
+            if (body.Collider.Shape == ColliderShape.Plane)
+                staticPose.Position += Vector3.Transform(
+                    new Vector3(0f, -PlaneThickness * 0.5f, 0f), staticPose.Orientation);
+            body.CenterOffset = staticPose.Position - staticOrigin;
+            _simulation.Statics[staticHandle].Pose = staticPose;
+            _simulation.Statics.UpdateBounds(staticHandle);
         }
     }
 
-    /// <summary>Publishes smooth render poses without changing authoritative simulation state.</summary>
+    /// <summary>Advances one fixed Bepu step and copies authoritative state back to components.</summary>
+    /// <param name="deltaTime">Fixed step duration.</param>
+    private void Step(float deltaTime)
+    {
+        for (var index = 0; index < _bodies.Count; index++)
+        {
+            var body = _bodies[index];
+            body.PreviousPosition = body.SimulationPosition;
+            if (body.BodyHandle is not { } handle || body.RigidBody is not { } rigidBody)
+                continue;
+            var reference = _simulation.Bodies[handle];
+            var velocity = rigidBody.LinearVelocity;
+            var authoredVelocityChanged =
+                Vector3.DistanceSquared(velocity, reference.Velocity.Linear) > 0.0000001f;
+            if (!reference.Awake && !authoredVelocityChanged)
+            {
+                rigidBody.LinearVelocity = Vector3.Zero;
+                continue;
+            }
+            if (authoredVelocityChanged && velocity.LengthSquared() > 0f)
+                reference.Awake = true;
+            if (rigidBody.MotionType == RigidBodyMotionType.Dynamic && rigidBody.UseGravity)
+                velocity += Gravity * rigidBody.GravityScale * deltaTime;
+            if (rigidBody.MotionType == RigidBodyMotionType.Dynamic)
+                velocity *= MathF.Max(0f, 1f - rigidBody.LinearDamping * deltaTime);
+            reference.Velocity.Linear = velocity;
+            reference.Velocity.Angular = Vector3.Zero;
+        }
+
+        _simulation.Timestep(deltaTime);
+
+        for (var index = 0; index < _bodies.Count; index++)
+        {
+            var body = _bodies[index];
+            if (body.BodyHandle is not { } handle)
+                continue;
+            var reference = _simulation.Bodies[handle];
+            body.SimulationPosition = reference.Pose.Position - body.CenterOffset;
+            if (body.RigidBody is { } rigidBody)
+                rigidBody.LinearVelocity = reference.Velocity.Linear;
+            if (!EnableInterpolation)
+                SetWorldPosition(body.Node, body.SimulationPosition);
+        }
+    }
+
+    /// <summary>Publishes smooth render poses without changing authoritative Bepu state.</summary>
     /// <param name="alpha">Remaining fixed-step fraction from zero through one.</param>
     private void PublishInterpolatedTransforms(float alpha)
     {
@@ -173,234 +363,37 @@ public sealed class PhysicsWorld
         for (var index = 0; index < _bodies.Count; index++)
         {
             var body = _bodies[index];
-            var position = Vector3.Lerp(
-                body.PreviousPosition, body.SimulationPosition, alpha);
+            if (body.BodyHandle is null)
+                continue;
+            var position = Vector3.Lerp(body.PreviousPosition, body.SimulationPosition, alpha);
             SetWorldPosition(body.Node, position);
             body.PresentationPosition = position;
             body.HasPresentationPosition = true;
         }
     }
 
-    /// <summary>Integrates one enabled dynamic rigid body.</summary>
-    /// <param name="body">Body to integrate.</param>
-    /// <param name="deltaTime">Fixed step duration.</param>
-    private void Integrate(PhysicsBody body, float deltaTime)
+    /// <summary>Computes a collider-center pose and positive world scale.</summary>
+    /// <param name="node">Transformed scene node.</param>
+    /// <param name="collider">Collider supplying its local center.</param>
+    /// <param name="pose">Resulting world pose.</param>
+    /// <param name="scale">Absolute world scale.</param>
+    /// <param name="origin">World-space node origin.</param>
+    private static void GetColliderPose(
+        Node3D node,
+        ColliderComponent collider,
+        out RigidPose pose,
+        out Vector3 scale,
+        out Vector3 origin)
     {
-        var rigidBody = body.RigidBody;
-        if (rigidBody is not { Enabled: true, MotionType: RigidBodyMotionType.Dynamic })
-            return;
-        var velocity = rigidBody.LinearVelocity;
-        if (rigidBody.UseGravity)
-            velocity += Gravity * rigidBody.GravityScale * deltaTime;
-        velocity *= MathF.Max(0f, 1f - rigidBody.LinearDamping * deltaTime);
-        rigidBody.LinearVelocity = velocity;
-        SetWorldPosition(body.Node, body.Node.GetWorldPosition() + velocity * deltaTime);
-    }
-
-    /// <summary>Detects and resolves one collider pair.</summary>
-    /// <param name="a">First body.</param>
-    /// <param name="b">Second body.</param>
-    private void ResolvePair(PhysicsBody a, PhysicsBody b)
-    {
-        var inverseMassA = GetInverseMass(a.RigidBody);
-        var inverseMassB = GetInverseMass(b.RigidBody);
-        if (!a.Collider.Enabled || !b.Collider.Enabled)
-            return;
-        Vector3 normal;
-        float penetration;
-        if (a.Collider.Shape == ColliderShape.Plane)
+        var matrix = node.GetModelMatrix();
+        origin = Vector3.Transform(Vector3.Zero, matrix);
+        if (!Matrix4x4.Decompose(matrix, out scale, out var orientation, out _))
         {
-            if (!TryPlaneContact(a, b, out normal, out penetration))
-                return;
+            scale = Vector3.One;
+            orientation = Quaternion.Identity;
         }
-        else if (b.Collider.Shape == ColliderShape.Plane)
-        {
-            if (!TryPlaneContact(b, a, out normal, out penetration))
-                return;
-            normal = -normal;
-        }
-        else if (!TryBoundsContact(GetBounds(a), GetBounds(b), out normal, out penetration))
-        {
-            return;
-        }
-        var trigger = a.Collider.IsTrigger || b.Collider.IsTrigger;
-        Contact?.Invoke(new PhysicsContact(a.Node, b.Node, normal, penetration, trigger));
-        if (trigger)
-            return;
-        ApplyResponse(a, b, normal, penetration, inverseMassA, inverseMassB);
-    }
-
-    /// <summary>Tests an infinite plane against one finite primitive.</summary>
-    /// <param name="plane">Plane body.</param>
-    /// <param name="other">Finite body.</param>
-    /// <param name="normal">Plane-to-body contact normal.</param>
-    /// <param name="penetration">Overlap depth.</param>
-    /// <returns>True when the finite bounds cross the plane.</returns>
-    private static bool TryPlaneContact(
-        PhysicsBody plane,
-        PhysicsBody other,
-        out Vector3 normal,
-        out float penetration)
-    {
-        var matrix = plane.Node.GetModelMatrix();
-        normal = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitY, matrix));
-        var point = Vector3.Transform(plane.Collider.Center, matrix);
-        var bounds = GetBounds(other);
-        var radius = Vector3.Dot(Vector3.Abs(normal), bounds.Extents);
-        var distance = Vector3.Dot(bounds.Center - point, normal);
-        penetration = radius - distance;
-        return penetration > 0f;
-    }
-
-    /// <summary>Tests two world axis-aligned bounds and selects minimum penetration.</summary>
-    /// <param name="a">First bounds.</param>
-    /// <param name="b">Second bounds.</param>
-    /// <param name="normal">A-to-B contact normal.</param>
-    /// <param name="penetration">Minimum overlap depth.</param>
-    /// <returns>True when all axes overlap.</returns>
-    private static bool TryBoundsContact(
-        PhysicsBounds a,
-        PhysicsBounds b,
-        out Vector3 normal,
-        out float penetration)
-    {
-        var delta = b.Center - a.Center;
-        var overlap = a.Extents + b.Extents - Vector3.Abs(delta);
-        if (overlap.X <= 0f || overlap.Y <= 0f || overlap.Z <= 0f)
-        {
-            normal = default;
-            penetration = 0f;
-            return false;
-        }
-        if (overlap.X <= overlap.Y && overlap.X <= overlap.Z)
-        {
-            normal = new Vector3(delta.X < 0f ? -1f : 1f, 0f, 0f);
-            penetration = overlap.X;
-        }
-        else if (overlap.Y <= overlap.Z)
-        {
-            normal = new Vector3(0f, delta.Y < 0f ? -1f : 1f, 0f);
-            penetration = overlap.Y;
-        }
-        else
-        {
-            normal = new Vector3(0f, 0f, delta.Z < 0f ? -1f : 1f);
-            penetration = overlap.Z;
-        }
-        return true;
-    }
-
-    /// <summary>Applies positional correction, normal impulse, and Coulomb friction.</summary>
-    /// <param name="a">First body.</param>
-    /// <param name="b">Second body.</param>
-    /// <param name="normal">A-to-B contact normal.</param>
-    /// <param name="penetration">Overlap depth.</param>
-    /// <param name="inverseMassA">First inverse mass.</param>
-    /// <param name="inverseMassB">Second inverse mass.</param>
-    private static void ApplyResponse(
-        PhysicsBody a,
-        PhysicsBody b,
-        Vector3 normal,
-        float penetration,
-        float inverseMassA,
-        float inverseMassB)
-    {
-        var inverseMassSum = inverseMassA + inverseMassB;
-        if (inverseMassSum <= 0f)
-            return;
-        const float Slop = 0.0001f;
-        var correction = normal * (MathF.Max(0f, penetration - Slop) / inverseMassSum);
-        if (inverseMassA > 0f)
-            SetWorldPosition(a.Node, a.Node.GetWorldPosition() - correction * inverseMassA);
-        if (inverseMassB > 0f)
-            SetWorldPosition(b.Node, b.Node.GetWorldPosition() + correction * inverseMassB);
-
-        var velocityA = a.RigidBody?.LinearVelocity ?? Vector3.Zero;
-        var velocityB = b.RigidBody?.LinearVelocity ?? Vector3.Zero;
-        var relativeVelocity = velocityB - velocityA;
-        var normalVelocity = Vector3.Dot(relativeVelocity, normal);
-        if (normalVelocity > 0f)
-            return;
-        var restitution = MathF.Max(a.Collider.Restitution, b.Collider.Restitution);
-        var impulseMagnitude = -(1f + restitution) * normalVelocity / inverseMassSum;
-        var impulse = normal * impulseMagnitude;
-        ApplyImpulse(a.RigidBody, -impulse * inverseMassA);
-        ApplyImpulse(b.RigidBody, impulse * inverseMassB);
-
-        relativeVelocity = (b.RigidBody?.LinearVelocity ?? Vector3.Zero) -
-            (a.RigidBody?.LinearVelocity ?? Vector3.Zero);
-        var tangent = relativeVelocity - normal * Vector3.Dot(relativeVelocity, normal);
-        if (tangent.LengthSquared() <= float.Epsilon)
-            return;
-        tangent = Vector3.Normalize(tangent);
-        var frictionImpulse = -Vector3.Dot(relativeVelocity, tangent) / inverseMassSum;
-        var friction = MathF.Sqrt(a.Collider.Friction * b.Collider.Friction);
-        frictionImpulse = Math.Clamp(frictionImpulse,
-            -impulseMagnitude * friction, impulseMagnitude * friction);
-        ApplyImpulse(a.RigidBody, -tangent * frictionImpulse * inverseMassA);
-        ApplyImpulse(b.RigidBody, tangent * frictionImpulse * inverseMassB);
-    }
-
-    /// <summary>Adds a velocity delta to one dynamic body.</summary>
-    /// <param name="rigidBody">Target rigid body.</param>
-    /// <param name="velocityDelta">World velocity delta.</param>
-    private static void ApplyImpulse(RigidBodyComponent? rigidBody, Vector3 velocityDelta)
-    {
-        if (rigidBody is { Enabled: true, MotionType: RigidBodyMotionType.Dynamic })
-            rigidBody.LinearVelocity += velocityDelta;
-    }
-
-    /// <summary>Computes inverse mass for collision response.</summary>
-    /// <param name="rigidBody">Optional rigid body.</param>
-    /// <returns>Positive inverse mass only for enabled dynamic bodies.</returns>
-    private static float GetInverseMass(RigidBodyComponent? rigidBody) =>
-        rigidBody is { Enabled: true, MotionType: RigidBodyMotionType.Dynamic }
-            ? 1f / rigidBody.Mass : 0f;
-
-    /// <summary>Computes conservative world bounds for one finite primitive.</summary>
-    /// <param name="body">Physics body.</param>
-    /// <returns>World center and half extents.</returns>
-    private static PhysicsBounds GetBounds(PhysicsBody body)
-    {
-        var matrix = body.Node.GetModelMatrix();
-        var center = Vector3.Transform(body.Collider.Center, matrix);
-        if (!Matrix4x4.Decompose(matrix, out var scale, out var orientation, out _))
-            return new PhysicsBounds(center, Vector3.Zero);
         scale = Vector3.Abs(scale);
-        Vector3 localExtents;
-        switch (body.Collider.Shape)
-        {
-            case ColliderShape.Sphere:
-                var radius = body.Collider.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
-                return new PhysicsBounds(center, new Vector3(radius));
-            case ColliderShape.Capsule:
-                localExtents = new Vector3(
-                    body.Collider.Radius * scale.X,
-                    body.Collider.Height * 0.5f * scale.Y,
-                    body.Collider.Radius * scale.Z);
-                break;
-            case ColliderShape.Cylinder:
-                localExtents = new Vector3(
-                    body.Collider.Radius * scale.X,
-                    body.Collider.Height * 0.5f * scale.Y,
-                    body.Collider.Radius * scale.Z);
-                break;
-            default:
-                localExtents = body.Collider.Size * scale * 0.5f;
-                break;
-        }
-        var rotation = Matrix4x4.CreateFromQuaternion(orientation);
-        var extents = new Vector3(
-            MathF.Abs(rotation.M11) * localExtents.X +
-            MathF.Abs(rotation.M21) * localExtents.Y +
-            MathF.Abs(rotation.M31) * localExtents.Z,
-            MathF.Abs(rotation.M12) * localExtents.X +
-            MathF.Abs(rotation.M22) * localExtents.Y +
-            MathF.Abs(rotation.M32) * localExtents.Z,
-            MathF.Abs(rotation.M13) * localExtents.X +
-            MathF.Abs(rotation.M23) * localExtents.Y +
-            MathF.Abs(rotation.M33) * localExtents.Z);
-        return new PhysicsBounds(center, extents);
+        pose = new RigidPose(Vector3.Transform(collider.Center, matrix), orientation);
     }
 
     /// <summary>Assigns a world position while preserving parent-relative storage.</summary>
@@ -417,7 +410,166 @@ public sealed class PhysicsWorld
             node.Position = Vector3.Transform(worldPosition, inverseParent);
     }
 
-    /// <summary>Stores references participating in one simulation body.</summary>
+    /// <summary>Resolves an engine body from a Bepu collidable reference.</summary>
+    /// <param name="reference">Bepu collidable reference.</param>
+    /// <returns>The mapped body, or null for an unknown handle.</returns>
+    private PhysicsBody? GetBody(CollidableReference reference)
+    {
+        var mappings = reference.Mobility == CollidableMobility.Static
+            ? _staticHandles : _bodyHandles;
+        var handle = reference.RawHandleValue;
+        return (uint)handle < (uint)mappings.Count ? mappings[handle] : null;
+    }
+
+    /// <summary>Reports a generated manifold and supplies pair material properties.</summary>
+    /// <typeparam name="TManifold">Bepu manifold type.</typeparam>
+    /// <param name="pair">Collidable pair owning the manifold.</param>
+    /// <param name="manifold">Generated contact manifold.</param>
+    /// <param name="material">Material properties used for response.</param>
+    /// <returns>True when Bepu should create a response constraint.</returns>
+    private bool ConfigureContact<TManifold>(
+        CollidablePair pair,
+        ref TManifold manifold,
+        out PairMaterialProperties material)
+        where TManifold : unmanaged, IContactManifold<TManifold>
+    {
+        var a = GetBody(pair.A);
+        var b = GetBody(pair.B);
+        if (a is null || b is null)
+        {
+            material = new PairMaterialProperties(0.5f, 2f, new SpringSettings(30f, 1f));
+            return true;
+        }
+        material = new PairMaterialProperties(
+            MathF.Sqrt(a.Collider.Friction * b.Collider.Friction),
+            2f + MathF.Max(a.Collider.Restitution, b.Collider.Restitution) * 8f,
+            new SpringSettings(30f, 1f));
+        var trigger = a.Collider.IsTrigger || b.Collider.IsTrigger;
+        if (manifold.Count > 0)
+        {
+            manifold.GetContact(0, out _, out var normal, out var depth, out _);
+            if (depth > 0f)
+                Contact?.Invoke(new PhysicsContact(a.Node, b.Node, -normal, depth, trigger));
+        }
+        return !trigger;
+    }
+
+    /// <summary>Checks whether a broad-phase pair needs narrow-phase contact generation.</summary>
+    /// <param name="a">First collidable.</param>
+    /// <param name="b">Second collidable.</param>
+    /// <returns>True for dynamic pairs and trigger-only static/kinematic pairs.</returns>
+    private bool AllowContact(CollidableReference a, CollidableReference b)
+    {
+        if (a.Mobility == CollidableMobility.Dynamic || b.Mobility == CollidableMobility.Dynamic)
+            return true;
+        return GetBody(a)?.Collider.IsTrigger == true || GetBody(b)?.Collider.IsTrigger == true;
+    }
+
+    /// <summary>Bridges Bepu's copied callback structs back to their owning world.</summary>
+    private sealed class ContactBridge
+    {
+        /// <summary>Gets the callback target.</summary>
+        internal PhysicsWorld World { get; }
+
+        /// <summary>Creates a bridge for one world.</summary>
+        /// <param name="world">Owning world.</param>
+        internal ContactBridge(PhysicsWorld world)
+        {
+            World = world;
+        }
+    }
+
+    /// <summary>Configures Bepu contact filtering, materials, triggers, and notifications.</summary>
+    private struct NarrowPhaseCallbacks : INarrowPhaseCallbacks
+    {
+        private readonly ContactBridge _bridge;
+
+        /// <summary>Creates callbacks targeting one retained bridge.</summary>
+        /// <param name="bridge">Owning-world bridge.</param>
+        internal NarrowPhaseCallbacks(ContactBridge bridge)
+        {
+            _bridge = bridge;
+        }
+
+        /// <inheritdoc/>
+        public void Initialize(Simulation simulation)
+        {
+        }
+
+        /// <inheritdoc/>
+        public bool AllowContactGeneration(
+            int workerIndex,
+            CollidableReference a,
+            CollidableReference b,
+            ref float speculativeMargin) => _bridge.World.AllowContact(a, b);
+
+        /// <inheritdoc/>
+        public bool ConfigureContactManifold<TManifold>(
+            int workerIndex,
+            CollidablePair pair,
+            ref TManifold manifold,
+            out PairMaterialProperties pairMaterial)
+            where TManifold : unmanaged, IContactManifold<TManifold> =>
+            _bridge.World.ConfigureContact(pair, ref manifold, out pairMaterial);
+
+        /// <inheritdoc/>
+        public bool AllowContactGeneration(
+            int workerIndex,
+            CollidablePair pair,
+            int childIndexA,
+            int childIndexB) => true;
+
+        /// <inheritdoc/>
+        public bool ConfigureContactManifold(
+            int workerIndex,
+            CollidablePair pair,
+            int childIndexA,
+            int childIndexB,
+            ref ConvexContactManifold manifold) => true;
+
+        /// <inheritdoc/>
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>Leaves velocity integration to the engine's per-component pre-step update.</summary>
+    private struct PoseIntegratorCallbacks : IPoseIntegratorCallbacks
+    {
+        /// <inheritdoc/>
+        public AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
+
+        /// <inheritdoc/>
+        public bool AllowSubstepsForUnconstrainedBodies => false;
+
+        /// <inheritdoc/>
+        public bool IntegrateVelocityForKinematics => false;
+
+        /// <inheritdoc/>
+        public void Initialize(Simulation simulation)
+        {
+        }
+
+        /// <inheritdoc/>
+        public void PrepareForIntegration(float dt)
+        {
+        }
+
+        /// <inheritdoc/>
+        public void IntegrateVelocity(
+            Vector<int> bodyIndices,
+            Vector3Wide position,
+            QuaternionWide orientation,
+            BodyInertiaWide localInertia,
+            Vector<int> integrationMask,
+            int workerIndex,
+            Vector<float> dt,
+            ref BodyVelocityWide velocity)
+        {
+        }
+    }
+
+    /// <summary>Stores engine state and handles participating in one Bepu body.</summary>
     private sealed class PhysicsBody
     {
         /// <summary>Gets the transformed node.</summary>
@@ -428,6 +580,15 @@ public sealed class PhysicsWorld
 
         /// <summary>Gets the required collision component.</summary>
         internal ColliderComponent Collider { get; }
+
+        /// <summary>Gets or sets the Bepu body handle.</summary>
+        internal BodyHandle? BodyHandle { get; set; }
+
+        /// <summary>Gets or sets the Bepu static handle.</summary>
+        internal StaticHandle? StaticHandle { get; set; }
+
+        /// <summary>Gets or sets the world offset from node origin to collider center.</summary>
+        internal Vector3 CenterOffset { get; set; }
 
         /// <summary>Gets or sets the preceding completed-step position.</summary>
         internal Vector3 PreviousPosition { get; set; }
@@ -441,27 +602,25 @@ public sealed class PhysicsWorld
         /// <summary>Gets or sets whether a presentation pose has been published.</summary>
         internal bool HasPresentationPosition { get; set; }
 
-        /// <summary>Creates retained simulation state for one attached collider.</summary>
+        /// <summary>Creates retained state for one Bepu collidable.</summary>
         /// <param name="node">Transformed scene node.</param>
         /// <param name="rigidBody">Optional motion component.</param>
         /// <param name="collider">Required collision component.</param>
+        /// <param name="centerOffset">World offset from node origin to collider center.</param>
         internal PhysicsBody(
             Node3D node,
             RigidBodyComponent? rigidBody,
-            ColliderComponent collider)
+            ColliderComponent collider,
+            Vector3 centerOffset)
         {
             Node = node;
             RigidBody = rigidBody;
             Collider = collider;
+            CenterOffset = centerOffset;
             var position = node.GetWorldPosition();
             PreviousPosition = position;
             SimulationPosition = position;
             PresentationPosition = position;
         }
     }
-
-    /// <summary>Stores one conservative world axis-aligned bounding box.</summary>
-    /// <param name="Center">World center.</param>
-    /// <param name="Extents">Positive world half extents.</param>
-    private readonly record struct PhysicsBounds(Vector3 Center, Vector3 Extents);
 }

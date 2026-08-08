@@ -8,4 +8,7 @@
     <ProjectReference Include="../Engine.Core/Engine.Core.csproj" />
     <ProjectReference Include="../Engine.Graphics/Engine.Graphics.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="BepuPhysics" Version="2.4.0" />
+  </ItemGroup>
 </Project>

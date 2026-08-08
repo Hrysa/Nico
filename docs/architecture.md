@@ -23,7 +23,7 @@ Player ── packaged/loose game runtime
 - `Engine.Core` owns nodes, components, asset IDs, and renderer-independent state.
 - `Engine.Graphics` owns transforms, cameras, meshes, materials, render queues, input contracts, and scene persistence.
 - `Engine.Graphics.Silk` is the only project that references Silk.NET or Vulkan.
-- `Engine.Physics` owns fixed-step simulation and depends on `Node3D` through `Engine.Graphics`.
+- `Engine.Physics` adapts engine components and `Node3D` transforms to the BepuPhysics fixed-step backend.
 - `Engine.Scripting` owns script lifecycle, observed-property contracts, scene queries, and gameplay input state.
 - `Engine.UI` owns the retained UI tree, layout, routed input, controls, docking, accessibility, and UI scheduling.
 - `Engine.Assets` owns asset metadata, importers, artifacts, and cache management.

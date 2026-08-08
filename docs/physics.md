@@ -1,6 +1,6 @@
 # Physics
 
-`Engine.Physics` provides a renderer-independent fixed-step 3D simulation. Physics data lives in components from `Engine.Core`, so scenes and game scripts do not depend on a native backend.
+`Engine.Physics` provides a renderer-independent fixed-step 3D simulation backed by BepuPhysics v2. Physics data lives in components from `Engine.Core`, so scenes and game scripts do not depend directly on Bepu types.
 
 ## Components
 
@@ -41,9 +41,9 @@ Do not assign a dynamic body's position every frame. Change `LinearVelocity`, or
 
 ## Runtime behavior
 
-`PhysicsWorld` defaults to a 60 Hz fixed step with bounded catch-up. It applies gravity, linear damping, positional correction, restitution, and friction. Trigger pairs raise `Contact` without physical response.
+`PhysicsWorld` defaults to a 60 Hz fixed step with bounded catch-up. Bepu owns broad-phase and narrow-phase collision detection, sleeping, contact constraints, and friction response. The engine adapter applies per-component gravity and linear damping before each Bepu step. Trigger pairs raise `Contact` without physical response.
 
-Finite non-plane shapes currently use conservative world-space bounds for collision detection. Angular velocity, torque, sleeping, continuous collision detection, and exact capsule/cylinder contact solving are not implemented.
+Boxes, spheres, capsules, and cylinders use Bepu's exact primitive collision shapes. The engine's infinite plane component is represented by a very large thin static Bepu box. Angular motion remains locked until angular velocity and torque are exposed by the engine component API.
 
 Client runtimes enable transform interpolation between completed steps. Headless and authoritative simulations should leave interpolation disabled so node transforms expose the latest completed simulation state.
 
@@ -69,7 +69,7 @@ The local player may predict inputs and later reconcile with an authoritative sn
 4. restore the returned authoritative state;
 5. replay inputs newer than the server's acknowledged sequence.
 
-The current floating-point solver is not guaranteed to be bit-identical across architectures. Networking should use authoritative snapshots and reconciliation rather than deterministic lockstep.
+Bepu's floating-point simulation is not guaranteed to be bit-identical across architectures. Networking should use authoritative snapshots and reconciliation rather than deterministic lockstep.
 
 Still required for networked physics:
 

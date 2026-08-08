@@ -32,9 +32,9 @@ public  sealed partial class MoveMainObject : SceneScript
     /// <inheritdoc />
     public override void OnUpdate(double deltaTime)
     {
-        _elapsedTime += deltaTime;
-        var offset = MathF.Sin((float)_elapsedTime) * 2f * Speed;
-        Owner.Position += Vector3.UnitX * (offset - _previousOffset);
-        _previousOffset = offset;
+        // _elapsedTime += deltaTime;
+        // var offset = MathF.Sin((float)_elapsedTime) * 2f * Speed;
+        // Owner.Position += Vector3.UnitX * (offset - _previousOffset);
+        // _previousOffset = offset;
     }
 }
