@@ -17,7 +17,7 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 2;
+    public int Version => 3;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
@@ -34,8 +34,60 @@ public sealed class GlbModelImporter : IAssetImporter
             var artifacts = ImportMeshes(context, document.RootElement, binary, model).ToList();
             artifacts.AddRange(ImportMaterials(context, document.RootElement));
             artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
-            return new AssetImportResult(artifacts, [], []);
+            var objects = ImportObjects(document.RootElement);
+            return new AssetImportResult(artifacts, [], [], objects);
         }
+    }
+
+    /// <summary>Describes browsable nodes, skeletons, and animations contained in a GLB.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <returns>Stable source-object descriptions for editor browsing.</returns>
+    private static IReadOnlyList<AssetImportObject> ImportObjects(JsonElement root)
+    {
+        var objects = new List<AssetImportObject>();
+        if (root.TryGetProperty("nodes", out var nodes))
+        {
+            var parents = BuildNodeParents(nodes);
+            for (var nodeIndex = 0; nodeIndex < nodes.GetArrayLength(); nodeIndex++)
+            {
+                var node = nodes[nodeIndex];
+                var name = node.TryGetProperty("name", out var nameElement)
+                    ? nameElement.GetString() : null;
+                objects.Add(new AssetImportObject(
+                    $"node/{nodeIndex}",
+                    string.IsNullOrWhiteSpace(name) ? $"Node {nodeIndex}" : name,
+                    "node",
+                    parents[nodeIndex] < 0 ? null : $"node/{parents[nodeIndex]}"));
+            }
+        }
+        if (root.TryGetProperty("skins", out var skins))
+        {
+            for (var skinIndex = 0; skinIndex < skins.GetArrayLength(); skinIndex++)
+            {
+                var skin = skins[skinIndex];
+                var name = skin.TryGetProperty("name", out var nameElement)
+                    ? nameElement.GetString() : null;
+                objects.Add(new AssetImportObject(
+                    $"skeleton/{skinIndex}",
+                    string.IsNullOrWhiteSpace(name) ? $"Skeleton {skinIndex}" : name,
+                    "skeleton"));
+            }
+        }
+        if (root.TryGetProperty("animations", out var animations))
+        {
+            for (var animationIndex = 0;
+                 animationIndex < animations.GetArrayLength(); animationIndex++)
+            {
+                var animation = animations[animationIndex];
+                var name = animation.TryGetProperty("name", out var nameElement)
+                    ? nameElement.GetString() : null;
+                objects.Add(new AssetImportObject(
+                    $"animation/{animationIndex}",
+                    string.IsNullOrWhiteSpace(name) ? $"Animation {animationIndex}" : name,
+                    "animation"));
+            }
+        }
+        return objects;
     }
 
     /// <summary>Reads and validates the GLB header and required chunks.</summary>
@@ -330,7 +382,7 @@ public sealed class GlbModelImporter : IAssetImporter
             orderedNodeIndices[orderedIndex] = nodeIndex;
         }
         return new ImportedSkeleton(
-            joints, orderedNodeIndices, sourceToOrdered, meshNodeIndex);
+            joints, orderedNodeIndices, sourceToOrdered, meshNodeIndex, meshWorld);
     }
 
     /// <summary>Imports animation curves targeting joints in one skeleton.</summary>
@@ -1043,10 +1095,11 @@ public sealed class GlbModelImporter : IAssetImporter
     {
         using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
         writer.Write("NSKIN001"u8);
-        writer.Write(1u);
+        writer.Write(2u);
         writer.Write(checked((uint)positions.Length));
         writer.Write(checked((uint)indices.Length));
         writer.Write(materialSlot);
+        Write(writer, skeleton.MeshNodeTransform);
         for (var index = 0; index < positions.Length; index++)
         {
             Write(writer, positions[index]);
@@ -1214,7 +1267,8 @@ public sealed class GlbModelImporter : IAssetImporter
         ImportedJoint[] Joints,
         int[] SourceNodeIndices,
         int[] SourceJointToSkeletonJoint,
-        int MeshNodeIndex);
+        int MeshNodeIndex,
+        Matrix4x4 MeshNodeTransform);
 
     /// <summary>Imported vector animation curve.</summary>
     private sealed record ImportedVectorTrack(

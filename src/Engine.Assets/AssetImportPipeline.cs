@@ -15,6 +15,7 @@ namespace Engine.Assets;
 /// <param name="Artifacts">Published artifact descriptions.</param>
 /// <param name="Dependencies">Declared persistent dependencies.</param>
 /// <param name="Diagnostics">Structured import diagnostics.</param>
+/// <param name="Objects">Browsable objects discovered inside the source asset.</param>
 public sealed record AssetImportOutcome(
     AssetId Asset,
     string Fingerprint,
@@ -23,7 +24,8 @@ public sealed record AssetImportOutcome(
     bool Succeeded,
     IReadOnlyList<AssetArtifact> Artifacts,
     IReadOnlyList<AssetReference> Dependencies,
-    IReadOnlyList<AssetImportDiagnostic> Diagnostics);
+    IReadOnlyList<AssetImportDiagnostic> Diagnostics,
+    IReadOnlyList<AssetImportObject>? Objects = null);
 
 /// <summary>Resolves references through the latest published loose import generation.</summary>
 public sealed class PublishedArtifactResolver : IAssetResolver
@@ -145,7 +147,8 @@ public sealed class AssetImportPipeline
                 !string.Equals(manifest.Target, target, StringComparison.Ordinal))
                 continue;
             return new AssetImportOutcome(manifest.Asset, manifest.Fingerprint, generationPath,
-                true, true, manifest.Artifacts, manifest.Dependencies, manifest.Diagnostics);
+                true, true, manifest.Artifacts, manifest.Dependencies, manifest.Diagnostics,
+                manifest.Objects);
         }
         return null;
     }
@@ -233,18 +236,19 @@ public sealed class AssetImportPipeline
                 return new AssetImportOutcome(metadata.Id, fingerprint, null, false, false,
                     [], [],
                     [new AssetImportDiagnostic(AssetDiagnosticSeverity.Error,
-                        "IMPORT_EXCEPTION", exception.Message)]);
+                        "IMPORT_EXCEPTION", exception.Message)], []);
             }
 
             if (result.Diagnostics.Any(diagnostic =>
                     diagnostic.Severity == AssetDiagnosticSeverity.Error))
             {
                 return new AssetImportOutcome(metadata.Id, fingerprint, null, false, false,
-                    [], result.Dependencies, result.Diagnostics);
+                    [], result.Dependencies, result.Diagnostics, result.Objects);
             }
 
             var manifest = new AssetArtifactManifest(metadata.Id, fingerprint, importer.Id,
-                importer.Version, target, result.Artifacts, result.Dependencies, result.Diagnostics);
+                importer.Version, target, result.Artifacts, result.Dependencies, result.Diagnostics,
+                result.Objects);
             WriteManifest(Path.Combine(stagingPath, ManifestFileName), manifest);
             if (Directory.Exists(generationPath))
             {
@@ -256,7 +260,7 @@ public sealed class AssetImportPipeline
             Directory.Move(stagingPath, generationPath);
             _dependencyGraph.Update(metadata.Id, result.Dependencies);
             return new AssetImportOutcome(metadata.Id, fingerprint, generationPath, false, true,
-                result.Artifacts, result.Dependencies, result.Diagnostics);
+                result.Artifacts, result.Dependencies, result.Diagnostics, result.Objects);
         }
         finally
         {
@@ -326,6 +330,31 @@ public sealed class AssetImportPipeline
                     $"Importer did not create contained artifact '{artifact.RelativePath}'.");
             }
         }
+        var objects = result.Objects;
+        if (objects is null)
+            return;
+        var objectKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in objects)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.Key);
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.Name);
+            ArgumentException.ThrowIfNullOrWhiteSpace(item.Kind);
+            if (!objectKeys.Add(item.Key))
+                throw new InvalidDataException($"Duplicate imported object key '{item.Key}'.");
+        }
+        foreach (var item in objects)
+        {
+            if (item.ParentKey is not null && !objectKeys.Contains(item.ParentKey))
+            {
+                throw new InvalidDataException(
+                    $"Imported object '{item.Key}' references missing parent '{item.ParentKey}'.");
+            }
+            if (item.ArtifactKey is not null && !keys.Contains(item.ArtifactKey))
+            {
+                throw new InvalidDataException(
+                    $"Imported object '{item.Key}' references missing artifact '{item.ArtifactKey}'.");
+            }
+        }
     }
 
     /// <summary>Writes and flushes one generation manifest.</summary>
@@ -353,7 +382,8 @@ public sealed class AssetImportPipeline
         var manifest = JsonSerializer.Deserialize<AssetArtifactManifest>(stream, _jsonOptions)
             ?? throw new InvalidDataException($"Artifact manifest is empty: {manifestPath}");
         return new AssetImportOutcome(manifest.Asset, manifest.Fingerprint, generationPath,
-            cacheHit, true, manifest.Artifacts, manifest.Dependencies, manifest.Diagnostics);
+            cacheHit, true, manifest.Artifacts, manifest.Dependencies, manifest.Diagnostics,
+            manifest.Objects);
     }
 
     /// <summary>Stores one published artifact generation.</summary>
@@ -365,6 +395,7 @@ public sealed class AssetImportPipeline
     /// <param name="Artifacts">Published artifact descriptions.</param>
     /// <param name="Dependencies">Declared persistent dependencies.</param>
     /// <param name="Diagnostics">Non-error import diagnostics.</param>
+    /// <param name="Objects">Browsable objects discovered inside the source asset.</param>
     private sealed record AssetArtifactManifest(
         AssetId Asset,
         string Fingerprint,
@@ -373,5 +404,6 @@ public sealed class AssetImportPipeline
         string Target,
         IReadOnlyList<AssetArtifact> Artifacts,
         IReadOnlyList<AssetReference> Dependencies,
-        IReadOnlyList<AssetImportDiagnostic> Diagnostics);
+        IReadOnlyList<AssetImportDiagnostic> Diagnostics,
+        IReadOnlyList<AssetImportObject>? Objects = null);
 }

@@ -564,6 +564,7 @@ public class AssetMetadataStoreTests
         var failed = pipeline.Import(record, "test-x64");
 
         Assert.True(successful.Succeeded);
+        Assert.Equal("Root", Assert.Single(successful.Objects!).Name);
         Assert.False(failed.Succeeded);
         Assert.Null(failed.ArtifactDirectory);
         Assert.True(Directory.Exists(successful.ArtifactDirectory));
@@ -571,6 +572,8 @@ public class AssetMetadataStoreTests
             diagnostic => diagnostic.Code == "IMPORT_EXCEPTION");
         Assert.Empty(Directory.EnumerateDirectories(
             Path.GetDirectoryName(successful.ArtifactDirectory)!, ".staging-*"));
+        Assert.Equal(successful.Objects,
+            pipeline.TryGetLatestPublished(record, "test-x64")!.Objects);
     }
 
     /// <summary>Verifies artifact writers cannot escape their isolated staging directory.</summary>
@@ -641,7 +644,8 @@ public class AssetMetadataStoreTests
             using (var artifact = context.CreateArtifact("content.bin"))
                 artifact.WriteByte(42);
             return new AssetImportResult(
-                [new AssetArtifact("main", "test/content", "content.bin")], [], []);
+                [new AssetArtifact("main", "test/content", "content.bin")], [], [],
+                [new AssetImportObject("node/0", "Root", "node")]);
         }
     }
 

@@ -530,7 +530,8 @@ public sealed class EngineApplication : IDisposable
                     }
                 }
                 _renderQueue.AddSkinned(renderable.Mesh, renderable.Palette,
-                    _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
+                    _camera.GetPushConstants(renderable.Animation.Resource.ComposeModelTransform(
+                        renderable.Instance.GetModelMatrix())));
             }
             else
             {

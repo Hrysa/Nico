@@ -898,6 +898,7 @@ void AddImportedSubAssets(FileSystemNode node)
     var outcome = assetImportPipeline.TryGetLatestPublished(record, "editor");
     if (outcome is null)
         return;
+    ImportedAssetTreeBuilder.AddObjects(node, outcome.Objects);
     foreach (var artifact in outcome.Artifacts
                  .Where(artifact => IsVisibleImportedArtifact(artifact.ContentType))
                  .OrderBy(artifact => artifact.ContentType, StringComparer.Ordinal)

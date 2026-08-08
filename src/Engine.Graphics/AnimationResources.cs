@@ -350,6 +350,9 @@ public sealed class SkinnedMeshResource
     /// <summary>Gets imported animation clips.</summary>
     public IReadOnlyList<AnimationClipResource> Animations => _animations;
 
+    /// <summary>Gets the source mesh-node transform applied after skin deformation.</summary>
+    public Matrix4x4 MeshNodeTransform { get; }
+
     /// <summary>Creates validated skinned geometry and animation data.</summary>
     /// <param name="mesh">Base indexed mesh.</param>
     /// <param name="influences">One influence per vertex.</param>
@@ -360,11 +363,29 @@ public sealed class SkinnedMeshResource
         SkinInfluence[] influences,
         SkeletonResource skeleton,
         AnimationClipResource[] animations)
+        : this(mesh, influences, skeleton, animations, Matrix4x4.Identity)
+    {
+    }
+
+    /// <summary>Creates validated skinned geometry with its source mesh-node transform.</summary>
+    /// <param name="mesh">Base indexed mesh.</param>
+    /// <param name="influences">One influence per vertex.</param>
+    /// <param name="skeleton">Bound skeleton.</param>
+    /// <param name="animations">Clips aligned to the skeleton.</param>
+    /// <param name="meshNodeTransform">Source mesh-node world transform.</param>
+    public SkinnedMeshResource(
+        StaticMeshResource mesh,
+        SkinInfluence[] influences,
+        SkeletonResource skeleton,
+        AnimationClipResource[] animations,
+        Matrix4x4 meshNodeTransform)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(influences);
         ArgumentNullException.ThrowIfNull(skeleton);
         ArgumentNullException.ThrowIfNull(animations);
+        if (!IsFinite(meshNodeTransform))
+            throw new ArgumentOutOfRangeException(nameof(meshNodeTransform));
         if (influences.Length != mesh.Vertices.Length)
             throw new ArgumentException("Every skinned vertex requires one influence.", nameof(influences));
         for (var index = 0; index < influences.Length; index++)
@@ -389,6 +410,7 @@ public sealed class SkinnedMeshResource
         Influences = influences.ToArray();
         Skeleton = skeleton;
         _animations = animations.ToArray();
+        MeshNodeTransform = meshNodeTransform;
     }
 
     /// <summary>Finds an imported animation by exact name.</summary>
@@ -406,6 +428,12 @@ public sealed class SkinnedMeshResource
         return null;
     }
 
+    /// <summary>Composes the source mesh-node transform with one scene-instance transform.</summary>
+    /// <param name="instanceTransform">Scene-instance model transform.</param>
+    /// <returns>Model transform applied after skin deformation.</returns>
+    public Matrix4x4 ComposeModelTransform(Matrix4x4 instanceTransform) =>
+        MeshNodeTransform * instanceTransform;
+
     /// <summary>Writes one versioned Nico skinned-mesh artifact.</summary>
     /// <param name="stream">Writable artifact stream.</param>
     public void Save(Stream stream)
@@ -413,7 +441,7 @@ public sealed class SkinnedMeshResource
         ArgumentNullException.ThrowIfNull(stream);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write("NSKIN001"u8);
-        writer.Write(1u);
+        writer.Write(2u);
         WriteMesh(writer);
         WriteSkeleton(writer);
         writer.Write(checked((uint)_animations.Length));
@@ -430,11 +458,13 @@ public sealed class SkinnedMeshResource
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
         if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
             throw new InvalidDataException("Skinned mesh artifact has an invalid signature.");
-        if (reader.ReadUInt32() != 1u)
+        var version = reader.ReadUInt32();
+        if (version is not 1u and not 2u)
             throw new InvalidDataException("Skinned mesh artifact version is unsupported.");
         var vertexCount = checked((int)reader.ReadUInt32());
         var indexCount = checked((int)reader.ReadUInt32());
         var materialSlot = reader.ReadInt32();
+        var meshNodeTransform = version >= 2u ? ReadMatrix(reader) : Matrix4x4.Identity;
         var vertices = new ModelVertex[vertexCount];
         var influences = new SkinInfluence[vertexCount];
         for (var index = 0; index < vertexCount; index++)
@@ -464,7 +494,8 @@ public sealed class SkinnedMeshResource
             animations[index] = ReadAnimation(reader, jointCount);
         if (stream.CanSeek && stream.Position != stream.Length)
             throw new InvalidDataException("Skinned mesh artifact contains trailing data.");
-        return new SkinnedMeshResource(mesh, influences, skeleton, animations);
+        return new SkinnedMeshResource(mesh, influences, skeleton, animations,
+            meshNodeTransform);
     }
 
     /// <summary>Writes base mesh and influence payloads.</summary>
@@ -474,6 +505,7 @@ public sealed class SkinnedMeshResource
         writer.Write(checked((uint)Mesh.Vertices.Length));
         writer.Write(checked((uint)Mesh.Indices.Length));
         writer.Write(Mesh.Submeshes.Count > 0 ? Mesh.Submeshes[0].MaterialSlot : -1);
+        Write(writer, MeshNodeTransform);
         for (var index = 0; index < Mesh.Vertices.Length; index++)
         {
             var vertex = Mesh.Vertices[index];
@@ -670,6 +702,19 @@ public sealed class SkinnedMeshResource
         writer.Write(value.M31); writer.Write(value.M32); writer.Write(value.M33); writer.Write(value.M34);
         writer.Write(value.M41); writer.Write(value.M42); writer.Write(value.M43); writer.Write(value.M44);
     }
+
+    /// <summary>Returns whether every matrix component is finite.</summary>
+    /// <param name="value">Matrix to validate.</param>
+    /// <returns>True when all components are finite.</returns>
+    private static bool IsFinite(Matrix4x4 value) =>
+        float.IsFinite(value.M11) && float.IsFinite(value.M12) &&
+        float.IsFinite(value.M13) && float.IsFinite(value.M14) &&
+        float.IsFinite(value.M21) && float.IsFinite(value.M22) &&
+        float.IsFinite(value.M23) && float.IsFinite(value.M24) &&
+        float.IsFinite(value.M31) && float.IsFinite(value.M32) &&
+        float.IsFinite(value.M33) && float.IsFinite(value.M34) &&
+        float.IsFinite(value.M41) && float.IsFinite(value.M42) &&
+        float.IsFinite(value.M43) && float.IsFinite(value.M44);
 
     /// <summary>Reads a vector.</summary>
     /// <param name="reader">Artifact reader.</param>

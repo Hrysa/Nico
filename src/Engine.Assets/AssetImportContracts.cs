@@ -30,14 +30,29 @@ public sealed record AssetImportDiagnostic(
 /// <param name="RelativePath">Artifact path relative to its generation directory.</param>
 public sealed record AssetArtifact(string Key, string ContentType, string RelativePath);
 
+/// <summary>Describes one browsable object contained inside a source asset.</summary>
+/// <param name="Key">Stable object key within the source asset.</param>
+/// <param name="Name">Human-readable object name.</param>
+/// <param name="Kind">Stable object category such as node, skeleton, or animation.</param>
+/// <param name="ParentKey">Optional parent object key within the same category.</param>
+/// <param name="ArtifactKey">Optional runtime artifact represented by this object.</param>
+public sealed record AssetImportObject(
+    string Key,
+    string Name,
+    string Kind,
+    string? ParentKey = null,
+    string? ArtifactKey = null);
+
 /// <summary>Contains the declared outputs of one importer execution.</summary>
 /// <param name="Artifacts">Generated artifact descriptions.</param>
 /// <param name="Dependencies">Persistent assets required by the generated artifacts.</param>
 /// <param name="Diagnostics">Structured importer diagnostics.</param>
+/// <param name="Objects">Browsable objects discovered inside the source asset.</param>
 public sealed record AssetImportResult(
     IReadOnlyList<AssetArtifact> Artifacts,
     IReadOnlyList<AssetReference> Dependencies,
-    IReadOnlyList<AssetImportDiagnostic> Diagnostics);
+    IReadOnlyList<AssetImportDiagnostic> Diagnostics,
+    IReadOnlyList<AssetImportObject>? Objects = null);
 
 /// <summary>Provides one importer with controlled source and staging access.</summary>
 public sealed class AssetImportContext

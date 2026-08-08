@@ -1,4 +1,5 @@
 using Editor;
+using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
@@ -174,6 +175,31 @@ public class TreeViewTests
         Assert.Equal(2, tree.Children.Count);
         Assert.Same(mesh, Assert.IsType<TreeViewItem>(tree.Children[1]).Item);
         Assert.Equal(reference, mesh.Reference);
+    }
+
+    /// <summary>Builds categorized GLB nodes, skeletons, and animations with source parentage.</summary>
+    [Fact]
+    public void ImportedAssetTreeBuilder_GlbObjects_ReconstructsArmatureHierarchy()
+    {
+        var source = new FileSystemNode(Path.Combine(Path.GetTempPath(), "Character.glb"), false);
+        AssetImportObject[] objects =
+        [
+            new("node/0", "Armature", "node"),
+            new("node/1", "Hips", "node", "node/0"),
+            new("skeleton/0", "Armature", "skeleton"),
+            new("animation/0", "Walk", "animation")
+        ];
+
+        ImportedAssetTreeBuilder.AddObjects(source, objects);
+
+        Assert.Equal(new[] { "Nodes", "Skeletons", "Animations" },
+            source.Children.Select(child => child.Name));
+        var armature = Assert.IsType<ImportedAssetObjectNode>(
+            source.Children[0].Children[0]);
+        Assert.Equal("Armature", armature.Name);
+        Assert.Equal("Hips", Assert.Single(armature.Children).Name);
+        Assert.Equal("Armature", Assert.Single(source.Children[1].Children).Name);
+        Assert.Equal("Walk", Assert.Single(source.Children[2].Children).Name);
     }
 
     /// <summary>Verifies clicking a row updates tree selection.</summary>

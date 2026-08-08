@@ -55,9 +55,22 @@ public sealed class AnimationResourceTests
         Assert.Equal(2, actual.Skeleton.JointCount);
         Assert.Equal("Child", actual.Skeleton.Joints[1].Name);
         Assert.Equal(new Vector4(0.75f, 0.25f, 0f, 0f), actual.Influences[0].Weights);
+        Assert.Equal(expected.MeshNodeTransform, actual.MeshNodeTransform);
         var clip = Assert.Single(actual.Animations);
         Assert.Equal("Move", clip.Name);
         Assert.Equal(2f, clip.Tracks[1]!.Translation!.Values[1].X);
+    }
+
+    /// <summary>Applies the source mesh-node transform after skinning and before the instance.</summary>
+    [Fact]
+    public void ComposeModelTransform_PreservesGltfTransformOrder()
+    {
+        var resource = CreateResource();
+        var instance = Matrix4x4.CreateTranslation(3f, 4f, 5f);
+
+        var actual = resource.ComposeModelTransform(instance);
+
+        Assert.Equal(resource.MeshNodeTransform * instance, actual);
     }
 
     /// <summary>Ensures warmed animation playback remains allocation-free per frame.</summary>
@@ -101,11 +114,13 @@ public sealed class AnimationResourceTests
                 null,
                 null)
         ]);
+        var meshNodeTransform = Matrix4x4.CreateScale(0.01f) *
+            Matrix4x4.CreateRotationX(MathF.PI / 2f);
         return new SkinnedMeshResource(mesh,
         [
             new SkinInfluence(0, 1, 0, 0, new Vector4(0.75f, 0.25f, 0f, 0f)),
             new SkinInfluence(1, 0, 0, 0, Vector4.UnitX),
             new SkinInfluence(1, 0, 0, 0, Vector4.UnitX)
-        ], skeleton, [clip]);
+        ], skeleton, [clip], meshNodeTransform);
     }
 }

@@ -362,7 +362,11 @@ public sealed class EditorViewportRenderer : IDisposable
         PushConstants pushConstants)
     {
         if (resource.Palette.IsValid)
+        {
+            pushConstants.Model = resource.Animation!.Resource.ComposeModelTransform(
+                pushConstants.Model);
             queue.AddSkinned(resource.Mesh, resource.Palette, pushConstants);
+        }
         else
             queue.Add(resource.Mesh, pushConstants);
     }

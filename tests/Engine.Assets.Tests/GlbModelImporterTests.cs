@@ -80,6 +80,15 @@ public sealed class GlbModelImporterTests : IDisposable
 
         var artifact = Assert.Single(result.Artifacts);
         Assert.Equal("nico/skinned-mesh", artifact.ContentType);
+        Assert.NotNull(result.Objects);
+        var armatureNodes = result.Objects!.Where(item => item.Kind == "node").ToArray();
+        Assert.Equal(4, armatureNodes.Length);
+        Assert.Equal("node/0", Assert.Single(armatureNodes,
+            item => item.Name == "Helper").ParentKey);
+        Assert.Equal("Rig", Assert.Single(result.Objects,
+            item => item.Kind == "skeleton").Name);
+        Assert.Equal("Move", Assert.Single(result.Objects,
+            item => item.Kind == "animation").Name);
         using var stream = File.OpenRead(Path.Combine(staging, artifact.RelativePath));
         var resource = SkinnedMeshResource.Load(stream);
         Assert.Equal(2, resource.Skeleton.JointCount);
@@ -90,6 +99,29 @@ public sealed class GlbModelImporterTests : IDisposable
         player.Play();
         player.Update(0.5d);
         Assert.Equal(0.5f, player.Pose.SkinMatrices[1].M41, 5);
+    }
+
+    /// <summary>Preserves the source mesh transform that cancels inverse-bind coordinates.</summary>
+    [Fact]
+    public void Import_TransformedArmature_ComposesToIdentityAtBindPose()
+    {
+        var sourcePath = Path.Combine(_directory, "transformed-armature.glb");
+        WriteTransformedArmatureGlb(sourcePath);
+        var staging = Path.Combine(_directory, "transformed-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var context = new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None);
+
+        var result = new GlbModelImporter().Import(context);
+        var artifact = Assert.Single(result.Artifacts);
+        using var stream = File.OpenRead(Path.Combine(staging, artifact.RelativePath));
+        var resource = SkinnedMeshResource.Load(stream);
+        var pose = new SkeletonPose(resource.Skeleton);
+
+        Assert.Equal(0.01f, resource.MeshNodeTransform.M11, 5);
+        AssertMatrixNearlyIdentity(
+            pose.SkinMatrices[0] * resource.MeshNodeTransform);
     }
 
     /// <summary>Removes temporary test data.</summary>
@@ -211,6 +243,78 @@ public sealed class GlbModelImporterTests : IDisposable
                "target":{"node":1,"path":"translation"}}]}]}
             """;
         WriteGlb(path, json, binaryStream.ToArray());
+    }
+
+    /// <summary>Writes a GLB whose armature supplies unit conversion and axis correction.</summary>
+    /// <param name="path">Destination path.</param>
+    private static void WriteTransformedArmatureGlb(string path)
+    {
+        var armature = Matrix4x4.CreateScale(0.01f) *
+            Matrix4x4.CreateRotationX(MathF.PI / 2f);
+        Assert.True(Matrix4x4.Invert(armature, out var inverseArmature));
+        using var binaryStream = new MemoryStream();
+        using (var binary = new BinaryWriter(binaryStream, Encoding.UTF8, leaveOpen: true))
+        {
+            foreach (var value in new[] { 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f })
+                binary.Write(value);
+            binary.Write(new byte[12]);
+            for (var index = 0; index < 3; index++)
+            {
+                binary.Write(1f);
+                binary.Write(0f);
+                binary.Write(0f);
+                binary.Write(0f);
+            }
+            binary.Write((ushort)0);
+            binary.Write((ushort)1);
+            binary.Write((ushort)2);
+            binary.Write((ushort)0);
+            WriteMatrix(binary, inverseArmature);
+        }
+        var json = """
+            {"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[2]}],
+             "buffers":[{"byteLength":168}],
+             "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},
+                            {"buffer":0,"byteOffset":36,"byteLength":12},
+                            {"buffer":0,"byteOffset":48,"byteLength":48},
+                            {"buffer":0,"byteOffset":96,"byteLength":6},
+                            {"buffer":0,"byteOffset":104,"byteLength":64}],
+             "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
+                          {"bufferView":1,"componentType":5121,"count":3,"type":"VEC4"},
+                          {"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},
+                          {"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"},
+                          {"bufferView":4,"componentType":5126,"count":1,"type":"MAT4"}],
+             "nodes":[{"name":"Root"},{"name":"Character","mesh":0,"skin":0},
+                      {"name":"Armature","rotation":[0.70710678,0,0,0.70710678],
+                       "scale":[0.01,0.01,0.01],"children":[0,1]}],
+             "skins":[{"name":"Armature","joints":[0],"inverseBindMatrices":4,"skeleton":0}],
+             "meshes":[{"name":"Character","primitives":[{"attributes":{"POSITION":0,
+               "JOINTS_0":1,"WEIGHTS_0":2},"indices":3}]}]}
+            """;
+        WriteGlb(path, json, binaryStream.ToArray());
+    }
+
+    /// <summary>Asserts a matrix is identity within import precision.</summary>
+    /// <param name="matrix">Matrix to verify.</param>
+    private static void AssertMatrixNearlyIdentity(Matrix4x4 matrix)
+    {
+        var expected = Matrix4x4.Identity;
+        var actualValues = new[]
+        {
+            matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+            matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44
+        };
+        var expectedValues = new[]
+        {
+            expected.M11, expected.M12, expected.M13, expected.M14,
+            expected.M21, expected.M22, expected.M23, expected.M24,
+            expected.M31, expected.M32, expected.M33, expected.M34,
+            expected.M41, expected.M42, expected.M43, expected.M44
+        };
+        for (var index = 0; index < actualValues.Length; index++)
+            Assert.Equal(expectedValues[index], actualValues[index], 4);
     }
 
     /// <summary>Writes one row-vector matrix using glTF's equivalent column-major sequence.</summary>
