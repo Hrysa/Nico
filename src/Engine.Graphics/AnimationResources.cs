@@ -325,6 +325,13 @@ public struct SkinInfluence
     }
 }
 
+/// <summary>Groups renderer handles created for one skinned mesh instance.</summary>
+/// <param name="Mesh">Immutable skinned geometry handle.</param>
+/// <param name="Palette">Mutable joint-palette handle.</param>
+public readonly record struct SkinnedMeshHandles(
+    MeshHandle Mesh,
+    SkinPaletteHandle Palette);
+
 /// <summary>Contains indexed geometry, skin weights, skeleton, and imported clips.</summary>
 public sealed class SkinnedMeshResource
 {
@@ -763,6 +770,8 @@ public sealed class SkeletonPose
 /// <summary>Owns playback time and an allocation-free evaluated skeleton pose.</summary>
 public sealed class AnimationPlayer
 {
+    private float _speed = 1f;
+
     /// <summary>Gets the skinned resource being animated.</summary>
     public SkinnedMeshResource Resource { get; }
 
@@ -776,7 +785,16 @@ public sealed class AnimationPlayer
     public float Time { get; private set; }
 
     /// <summary>Gets or sets the signed playback-rate multiplier.</summary>
-    public float Speed { get; set; } = 1f;
+    public float Speed
+    {
+        get => _speed;
+        set
+        {
+            if (!float.IsFinite(value))
+                throw new ArgumentOutOfRangeException(nameof(value));
+            _speed = value;
+        }
+    }
 
     /// <summary>Gets or sets whether playback wraps at the clip boundary.</summary>
     public bool Loop { get; set; } = true;
@@ -801,11 +819,17 @@ public sealed class AnimationPlayer
     {
         var clip = Resource.FindAnimation(name);
         if (clip is null)
+        {
+            Clip = null;
+            Time = 0f;
+            IsPlaying = false;
+            Pose.Evaluate(Resource.Skeleton, null, 0f);
             return false;
+        }
         Clip = clip;
-        Time = 0f;
+        Time = Speed < 0f ? clip.Duration : 0f;
         IsPlaying = play;
-        Pose.Evaluate(Resource.Skeleton, clip, 0f);
+        Pose.Evaluate(Resource.Skeleton, clip, Time);
         return true;
     }
 

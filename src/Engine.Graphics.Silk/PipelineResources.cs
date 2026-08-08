@@ -26,6 +26,12 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal PipelineLayout ModelLayout;
     internal DescriptorSetLayout ModelTextureDescriptorSetLayout;
     internal DescriptorPool ModelTextureDescriptorPool;
+    internal ShaderModule SkinnedModelVertexShader;
+    internal ShaderModule SkinnedModelFragmentShader;
+    internal Pipeline SkinnedModelPipeline;
+    internal PipelineLayout SkinnedModelLayout;
+    internal DescriptorSetLayout SkinPaletteDescriptorSetLayout;
+    internal DescriptorPool SkinPaletteDescriptorPool;
     internal ShaderModule GridVertexShader;
     internal ShaderModule GridFragmentShader;
     internal PipelineLayout GridLayout;
@@ -60,12 +66,14 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(TexturePipeline);
         DestroyPipeline(GridPipeline);
         DestroyPipeline(ModelPipeline);
+        DestroyPipeline(SkinnedModelPipeline);
         DestroyPipeline(ViewportPipeline);
         DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);
         DestroyPipelineLayout(TextureLayout);
         DestroyPipelineLayout(GridLayout);
         DestroyPipelineLayout(ModelLayout);
+        DestroyPipelineLayout(SkinnedModelLayout);
         DestroyPipelineLayout(ViewportLayout);
         DestroyPipelineLayout(UiLayout);
 
@@ -73,10 +81,14 @@ internal unsafe sealed class PipelineResources : IDisposable
             _vk.DestroyDescriptorPool(_device, TextureDescriptorPool, null);
         if (ModelTextureDescriptorPool.Handle != 0)
             _vk.DestroyDescriptorPool(_device, ModelTextureDescriptorPool, null);
+        if (SkinPaletteDescriptorPool.Handle != 0)
+            _vk.DestroyDescriptorPool(_device, SkinPaletteDescriptorPool, null);
         if (TextureDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, TextureDescriptorSetLayout, null);
         if (ModelTextureDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, ModelTextureDescriptorSetLayout, null);
+        if (SkinPaletteDescriptorSetLayout.Handle != 0)
+            _vk.DestroyDescriptorSetLayout(_device, SkinPaletteDescriptorSetLayout, null);
 
         DestroyShaderModule(TextureVertexShader);
         DestroyShaderModule(TextureFragmentShader);
@@ -84,6 +96,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyShaderModule(GridFragmentShader);
         DestroyShaderModule(ModelVertexShader);
         DestroyShaderModule(ModelFragmentShader);
+        DestroyShaderModule(SkinnedModelVertexShader);
+        DestroyShaderModule(SkinnedModelFragmentShader);
         DestroyShaderModule(UiVertexShader);
         DestroyShaderModule(UiFragmentShader);
         DestroyShaderModule(UiShapeVertexShader);

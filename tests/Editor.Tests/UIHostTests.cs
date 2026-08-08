@@ -1424,6 +1424,19 @@ public class UIHostTests
             StandardMaterialResource material) => default;
 
         /// <inheritdoc/>
+        public SkinnedMeshHandles CreateSkinnedMesh(
+            SkinnedMeshResource mesh,
+            StandardMaterialResource material) => default;
+
+        /// <inheritdoc/>
+        public void UpdateSkinPalette(
+            SkinPaletteHandle palette,
+            ReadOnlySpan<Matrix4x4> matrices) { }
+
+        /// <inheritdoc/>
+        public void DestroySkinPalette(SkinPaletteHandle palette) { }
+
+        /// <inheritdoc/>
         public TextureHandle CreateTexture(TextureResource texture) => default;
 
         /// <inheritdoc/>

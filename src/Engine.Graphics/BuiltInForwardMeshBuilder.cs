@@ -53,4 +53,31 @@ public static class BuiltInForwardMeshBuilder
         }
         return vertices;
     }
+
+    /// <summary>Builds packed geometry for the GPU skinning path.</summary>
+    /// <param name="mesh">Skinned source geometry.</param>
+    /// <param name="material">Standard material values.</param>
+    /// <returns>Packed vertices preserving source index addressing.</returns>
+    public static SkinnedForwardModelVertex[] BuildSkinnedVertices(
+        SkinnedMeshResource mesh,
+        StandardMaterialResource material)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(material);
+        var vertices = new SkinnedForwardModelVertex[mesh.Mesh.Vertices.Length];
+        for (var index = 0; index < vertices.Length; index++)
+        {
+            var source = mesh.Mesh.Vertices[index];
+            var influence = mesh.Influences[index];
+            vertices[index] = new SkinnedForwardModelVertex(
+                source.Position,
+                source.Normal,
+                source.TexCoord,
+                material.BaseColor,
+                new UIntVector4(influence.Joint0, influence.Joint1,
+                    influence.Joint2, influence.Joint3),
+                influence.Weights);
+        }
+        return vertices;
+    }
 }

@@ -40,8 +40,7 @@ public sealed class EngineApplication : IDisposable
     private RenderViewHandle _renderView;
     private PerspectiveCamera? _camera;
     private readonly RenderQueue _renderQueue = new();
-    private readonly List<(MeshInstance3D Instance, MeshHandle Mesh, TextureHandle Texture)>
-        _renderables = [];
+    private readonly List<RuntimeRenderable> _renderables = [];
     private CompiledScriptCatalog? _scriptCatalog;
     private SceneScriptRuntime? _scriptRuntime;
     private PhysicsWorld? _physicsWorld;
@@ -271,6 +270,8 @@ public sealed class EngineApplication : IDisposable
         _runtimeResources = null;
         foreach (var renderable in _renderables)
         {
+            if (renderable.Palette.IsValid)
+                _window.DestroySkinPalette(renderable.Palette);
             _window.DestroyMesh(renderable.Mesh);
             if (renderable.Texture.IsValid)
                 _window.DestroyTexture(renderable.Texture);
@@ -291,6 +292,7 @@ public sealed class EngineApplication : IDisposable
         var meshReference = instance.Mesh;
         AssetImportOutcome? outcome = null;
         StaticMeshResource mesh;
+        SkinnedMeshResource? skin = null;
         if (BuiltInAssets.IsBuiltInMesh(meshReference))
         {
             mesh = BuiltInAssets.LoadMesh(meshReference);
@@ -300,11 +302,22 @@ public sealed class EngineApplication : IDisposable
             var record = database.Find(meshReference.Asset)
                 ?? throw new FileNotFoundException($"Mesh asset '{meshReference.Asset}' is missing.");
             outcome = pipeline.Import(record, "player");
-            if (!outcome.Succeeded || outcome.ArtifactDirectory is null ||
-                !outcome.Artifacts.Any(artifact => artifact.Key == meshReference.SubAsset &&
-                    artifact.ContentType == "nico/static-mesh"))
+            var meshArtifact = outcome.Artifacts.FirstOrDefault(artifact =>
+                artifact.Key == meshReference.SubAsset &&
+                artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
+            if (!outcome.Succeeded || outcome.ArtifactDirectory is null || meshArtifact is null)
                 throw new InvalidDataException($"Mesh sub-asset '{meshReference}' is missing.");
-            mesh = LoadRuntimeResource(meshReference, new StaticMeshResource([], [], []));
+            if (meshArtifact.ContentType == "nico/skinned-mesh")
+            {
+                skin = LoadRuntimeResource(meshReference,
+                    new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
+                        new SkeletonResource([]), []));
+                mesh = skin.Mesh;
+            }
+            else
+            {
+                mesh = LoadRuntimeResource(meshReference, new StaticMeshResource([], [], []));
+            }
         }
         var defaultMaterial = MaterialProperties.Default;
         var material = new StandardMaterialResource
@@ -357,8 +370,20 @@ public sealed class EngineApplication : IDisposable
         }
         try
         {
-            var meshHandle = _window.CreateStaticMesh(mesh, material);
-            _renderables.Add((instance, meshHandle, textureHandle));
+            if (skin is null)
+            {
+                var meshHandle = _window.CreateStaticMesh(mesh, material);
+                _renderables.Add(new RuntimeRenderable(
+                    instance, meshHandle, textureHandle, default, null));
+            }
+            else
+            {
+                var handles = _window.CreateSkinnedMesh(skin, material);
+                var player = CreateAnimationPlayer(instance, skin);
+                _window.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
+                _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
+                    textureHandle, handles.Palette, player));
+            }
         }
         catch
         {
@@ -382,6 +407,8 @@ public sealed class EngineApplication : IDisposable
             unusedCapacity: 128);
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
             "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
+            "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
             "nico/standard-material", (stream, _, _) =>
             {
@@ -435,6 +462,24 @@ public sealed class EngineApplication : IDisposable
         };
     }
 
+    /// <summary>Creates and configures playback for one runtime skinned instance.</summary>
+    /// <param name="instance">Scene instance owning authored animator settings.</param>
+    /// <param name="mesh">Skinned resource.</param>
+    /// <returns>Configured animation player in bind pose or selected clip.</returns>
+    private static AnimationPlayer CreateAnimationPlayer(
+        MeshInstance3D instance,
+        SkinnedMeshResource mesh)
+    {
+        var player = new AnimationPlayer(mesh);
+        var animator = instance.GetComponent<AnimatorComponent>();
+        if (animator is not { Enabled: true })
+            return player;
+        player.Speed = animator.Speed;
+        player.Loop = animator.Loop;
+        player.Play(animator.Clip, animator.PlayAutomatically);
+        return player;
+    }
+
     /// <summary>Submits the loaded scene through its game camera.</summary>
     /// <param name="delta">Elapsed frame time.</param>
     private void RenderScene(double delta)
@@ -456,8 +501,43 @@ public sealed class EngineApplication : IDisposable
                 _uiHost.Refresh();
         }
         foreach (var renderable in _renderables)
-            _renderQueue.Add(renderable.Mesh,
-                _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
+        {
+            if (renderable.Animation is not null && renderable.Palette.IsValid)
+            {
+                var animator = renderable.Instance.GetComponent<AnimatorComponent>();
+                if (animator is { Enabled: true })
+                {
+                    renderable.Animation.Speed = animator.Speed;
+                    renderable.Animation.Loop = animator.Loop;
+                    var desiredClip = renderable.Animation.Resource.FindAnimation(animator.Clip);
+                    var poseChanged = false;
+                    if (!ReferenceEquals(renderable.Animation.Clip, desiredClip))
+                    {
+                        renderable.Animation.Play(
+                            animator.Clip, animator.PlayAutomatically);
+                        poseChanged = true;
+                    }
+                    if (renderable.Animation.IsPlaying && renderable.Animation.Speed != 0f &&
+                        simulationDelta > 0d)
+                    {
+                        renderable.Animation.Update(simulationDelta);
+                        poseChanged = true;
+                    }
+                    if (poseChanged)
+                    {
+                        _window.UpdateSkinPalette(renderable.Palette,
+                            renderable.Animation.Pose.SkinMatrices);
+                    }
+                }
+                _renderQueue.AddSkinned(renderable.Mesh, renderable.Palette,
+                    _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
+            }
+            else
+            {
+                _renderQueue.Add(renderable.Mesh,
+                    _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
+            }
+        }
         _window.Submit(_renderView, _renderQueue);
     }
 
@@ -498,6 +578,19 @@ public sealed class EngineApplication : IDisposable
                 0, logicalWidth, 0, logicalHeight, -1, 1)
         });
     }
+
+    /// <summary>Groups one runtime scene instance with renderer resources and playback state.</summary>
+    /// <param name="Instance">Scene mesh instance.</param>
+    /// <param name="Mesh">Static or skinned mesh handle.</param>
+    /// <param name="Texture">Optional texture handle.</param>
+    /// <param name="Palette">Optional joint palette.</param>
+    /// <param name="Animation">Optional animation player.</param>
+    private readonly record struct RuntimeRenderable(
+        MeshInstance3D Instance,
+        MeshHandle Mesh,
+        TextureHandle Texture,
+        SkinPaletteHandle Palette,
+        AnimationPlayer? Animation);
 
     /// <summary>Selects importers needed by loose Player scene loading.</summary>
     /// <param name="path">Project-relative source path.</param>

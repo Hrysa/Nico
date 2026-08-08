@@ -1,4 +1,5 @@
 using System.Numerics;
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 
@@ -142,13 +143,87 @@ public sealed class EditorViewportRenderer : IDisposable
         {
             material.BaseColorTexture = textureHandle;
             var meshHandle = _renderer.CreateStaticMesh(mesh, material);
-            _assetMeshes.Add(instance, new AssetMeshGpuResource(meshHandle, textureHandle));
+            _assetMeshes.Add(instance, new AssetMeshGpuResource(
+                meshHandle, textureHandle, default, null));
         }
         catch
         {
             if (textureHandle.IsValid)
                 _renderer.DestroyTexture(textureHandle);
             throw;
+        }
+    }
+
+    /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>
+    /// <param name="instance">Persistent scene instance.</param>
+    /// <param name="mesh">Imported skinned mesh.</param>
+    /// <param name="material">Imported standard material.</param>
+    /// <param name="texture">Optional imported base-color texture.</param>
+    public void SetAssetMeshResource(
+        MeshInstance3D instance,
+        SkinnedMeshResource mesh,
+        StandardMaterialResource material,
+        TextureResource? texture = null)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(material);
+        if (_assetMeshes.Remove(instance, out var previous))
+            DestroyAssetMeshResource(previous);
+        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        try
+        {
+            material.BaseColorTexture = textureHandle;
+            var handles = _renderer.CreateSkinnedMesh(mesh, material);
+            var player = new AnimationPlayer(mesh);
+            ConfigureAnimationPlayer(instance, player);
+            _renderer.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
+            _assetMeshes.Add(instance, new AssetMeshGpuResource(
+                handles.Mesh, textureHandle, handles.Palette, player));
+        }
+        catch
+        {
+            if (textureHandle.IsValid)
+                _renderer.DestroyTexture(textureHandle);
+            throw;
+        }
+    }
+
+    /// <summary>Advances runtime skeletal animations and uploads changed palettes.</summary>
+    /// <param name="deltaTime">Elapsed simulation seconds.</param>
+    public void UpdateAnimations(double deltaTime)
+    {
+        for (var index = 0; index < _gameObjects.Count; index++)
+        {
+            var instance = _gameObjects[index];
+            if (!_assetMeshes.TryGetValue(instance, out var resource) ||
+                resource.Animation is null || !resource.Palette.IsValid)
+            {
+                continue;
+            }
+            var animator = instance.GetComponent<AnimatorComponent>();
+            if (animator is null || !animator.Enabled)
+                continue;
+            resource.Animation.Speed = animator.Speed;
+            resource.Animation.Loop = animator.Loop;
+            var desiredClip = resource.Animation.Resource.FindAnimation(animator.Clip);
+            var poseChanged = false;
+            if (!ReferenceEquals(resource.Animation.Clip, desiredClip))
+            {
+                resource.Animation.Play(animator.Clip, animator.PlayAutomatically);
+                poseChanged = true;
+            }
+            if (resource.Animation.IsPlaying && resource.Animation.Speed != 0f &&
+                deltaTime > 0d)
+            {
+                resource.Animation.Update(deltaTime);
+                poseChanged = true;
+            }
+            if (poseChanged)
+            {
+                _renderer.UpdateSkinPalette(resource.Palette,
+                    resource.Animation.Pose.SkinMatrices);
+            }
         }
     }
 
@@ -193,7 +268,7 @@ public sealed class EditorViewportRenderer : IDisposable
             var instance = _sceneObjects[index];
             if (_assetMeshes.TryGetValue(instance, out var resource))
             {
-                _sceneQueue.Add(resource.Mesh,
+                AddAssetMesh(_sceneQueue, resource,
                     _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
             }
         }
@@ -212,7 +287,7 @@ public sealed class EditorViewportRenderer : IDisposable
             var instance = _gameObjects[index];
             if (_assetMeshes.TryGetValue(instance, out var resource))
             {
-                _gameQueue.Add(resource.Mesh,
+                AddAssetMesh(_gameQueue, resource,
                     _gameCamera.GetPushConstants(instance.GetModelMatrix()));
             }
         }
@@ -255,15 +330,51 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="resource">Imported GPU resource pair.</param>
     private void DestroyAssetMeshResource(AssetMeshGpuResource resource)
     {
+        if (resource.Palette.IsValid)
+            _renderer.DestroySkinPalette(resource.Palette);
         _renderer.DestroyMesh(resource.Mesh);
         if (resource.Texture.IsValid)
             _renderer.DestroyTexture(resource.Texture);
     }
 
+    /// <summary>Configures initial playback from the instance animator component.</summary>
+    /// <param name="instance">Scene instance owning the animator.</param>
+    /// <param name="player">New animation player.</param>
+    private static void ConfigureAnimationPlayer(
+        MeshInstance3D instance,
+        AnimationPlayer player)
+    {
+        var animator = instance.GetComponent<AnimatorComponent>();
+        if (animator is null || !animator.Enabled)
+            return;
+        player.Speed = animator.Speed;
+        player.Loop = animator.Loop;
+        player.Play(animator.Clip, animator.PlayAutomatically);
+    }
+
+    /// <summary>Adds static or skinned imported geometry to one queue.</summary>
+    /// <param name="queue">Destination queue.</param>
+    /// <param name="resource">Imported renderer resource.</param>
+    /// <param name="pushConstants">Object and camera transforms.</param>
+    private static void AddAssetMesh(
+        RenderQueue queue,
+        AssetMeshGpuResource resource,
+        PushConstants pushConstants)
+    {
+        if (resource.Palette.IsValid)
+            queue.AddSkinned(resource.Mesh, resource.Palette, pushConstants);
+        else
+            queue.Add(resource.Mesh, pushConstants);
+    }
+
     /// <summary>Groups renderer handles owned for one imported scene instance.</summary>
     /// <param name="Mesh">Indexed mesh handle.</param>
     /// <param name="Texture">Optional sampled texture handle.</param>
+    /// <param name="Palette">Optional joint-palette handle.</param>
+    /// <param name="Animation">Optional runtime animation player.</param>
     private readonly record struct AssetMeshGpuResource(
         MeshHandle Mesh,
-        TextureHandle Texture);
+        TextureHandle Texture,
+        SkinPaletteHandle Palette,
+        AnimationPlayer? Animation);
 }

@@ -7,7 +7,11 @@ namespace Engine.Graphics;
 /// </summary>
 /// <param name="Mesh">Registered geometry to render.</param>
 /// <param name="PushConstants">Object and camera transforms.</param>
-public readonly record struct RenderCommand(MeshHandle Mesh, PushConstants PushConstants);
+/// <param name="SkinPalette">Optional joint palette for a skinned mesh.</param>
+public readonly record struct RenderCommand(
+    MeshHandle Mesh,
+    PushConstants PushConstants,
+    SkinPaletteHandle SkinPalette = default);
 
 /// <summary>
 /// Collects ordered render commands for one viewport and one frame.
@@ -30,6 +34,22 @@ public sealed class RenderQueue
         if (!mesh.IsValid)
             throw new ArgumentException("A valid mesh handle is required.", nameof(mesh));
         _commands.Add(new RenderCommand(mesh, pushConstants));
+    }
+
+    /// <summary>Adds skinned geometry to the queue.</summary>
+    /// <param name="mesh">Registered skinned geometry.</param>
+    /// <param name="palette">Current joint palette for the mesh instance.</param>
+    /// <param name="pushConstants">Object and camera transforms.</param>
+    public void AddSkinned(
+        MeshHandle mesh,
+        SkinPaletteHandle palette,
+        PushConstants pushConstants)
+    {
+        if (!mesh.IsValid)
+            throw new ArgumentException("A valid mesh handle is required.", nameof(mesh));
+        if (!palette.IsValid)
+            throw new ArgumentException("A valid skin palette is required.", nameof(palette));
+        _commands.Add(new RenderCommand(mesh, pushConstants, palette));
     }
 
     /// <summary>Removes all commands so the queue can be reused.</summary>

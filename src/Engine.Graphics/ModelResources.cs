@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Engine.Graphics;
@@ -70,6 +71,57 @@ public struct ForwardModelVertex
         BaseColor = baseColor;
     }
 }
+
+/// <summary>Contains the packed vertex consumed by the GPU skinning pipeline.</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct SkinnedForwardModelVertex
+{
+    /// <summary>Gets or sets bind-pose position.</summary>
+    public Vector3 Position;
+    /// <summary>Gets or sets bind-pose normal.</summary>
+    public Vector3 Normal;
+    /// <summary>Gets or sets primary texture coordinates.</summary>
+    public Vector2 TexCoord;
+    /// <summary>Gets or sets the linear base-color multiplier.</summary>
+    public Vector4 BaseColor;
+    /// <summary>Gets or sets four joint indices as unsigned integer components.</summary>
+    public UIntVector4 Joints;
+    /// <summary>Gets or sets normalized joint weights.</summary>
+    public Vector4 Weights;
+
+    /// <summary>Gets the packed byte stride.</summary>
+    public static uint Stride => sizeof(float) * 16u + sizeof(uint) * 4u;
+
+    /// <summary>Creates one packed skinned forward vertex.</summary>
+    /// <param name="position">Bind-pose position.</param>
+    /// <param name="normal">Bind-pose normal.</param>
+    /// <param name="texCoord">Primary texture coordinates.</param>
+    /// <param name="baseColor">Linear base-color multiplier.</param>
+    /// <param name="joints">Four joint indices.</param>
+    /// <param name="weights">Four normalized joint weights.</param>
+    public SkinnedForwardModelVertex(
+        Vector3 position,
+        Vector3 normal,
+        Vector2 texCoord,
+        Vector4 baseColor,
+        UIntVector4 joints,
+        Vector4 weights)
+    {
+        Position = position;
+        Normal = normal;
+        TexCoord = texCoord;
+        BaseColor = baseColor;
+        Joints = joints;
+        Weights = weights;
+    }
+}
+
+/// <summary>Stores four unsigned integer components without graphics-backend dependencies.</summary>
+/// <param name="X">First component.</param>
+/// <param name="Y">Second component.</param>
+/// <param name="Z">Third component.</param>
+/// <param name="W">Fourth component.</param>
+public readonly record struct UIntVector4(uint X, uint Y, uint Z, uint W);
 
 /// <summary>Describes one indexed primitive range and its material slot.</summary>
 /// <param name="FirstIndex">First index in the shared index buffer.</param>

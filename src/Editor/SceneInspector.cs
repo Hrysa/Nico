@@ -132,11 +132,93 @@ public sealed class SceneInspector : Panel
         {
             AddMaterialSection(meshInstance, 236f);
             scriptY = 464f;
+            if (meshInstance.GetComponent<AnimatorComponent>() is { } animator)
+                scriptY = AddAnimatorSection(animator, scriptY);
         }
 
         AddScriptSections(node, scriptY);
         CacheCurrentView(node);
         SubscribeToNode(node);
+    }
+
+    /// <summary>Adds editable playback settings for one animator component.</summary>
+    /// <param name="animator">Animator component to edit.</param>
+    /// <param name="y">Section top.</param>
+    /// <returns>Top position available for the following section.</returns>
+    private float AddAnimatorSection(AnimatorComponent animator, float y)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+            "Animator", _theme.TextPrimary));
+        AddChild(CreateLabel(12f, y + 30f, 66f, 30f,
+            "Clip", _theme.TextSecondary));
+        var clip = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = "AnimatorClip",
+            Text = animator.Clip ?? string.Empty,
+            Placeholder = "First imported clip",
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Margin = new Thickness(78f, y + 30f, 0f, 0f)
+        };
+        clip.ValueUpdateRequested += value =>
+        {
+            animator.Clip = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        RegisterRefresh(clip, () => animator.Clip ?? string.Empty);
+        _editForm.Register(clip);
+        AddChild(clip);
+        AddChild(CreateLabel(12f, y + 68f, 66f, 30f,
+            "Speed", _theme.TextSecondary));
+        var speed = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = "AnimatorSpeed",
+            Text = Format(animator.Speed),
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = ValidateFloat,
+            Margin = new Thickness(78f, y + 68f, 0f, 0f)
+        };
+        speed.ValueUpdateRequested += value =>
+        {
+            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                    out var parsed))
+                return;
+            animator.Speed = parsed;
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        RegisterRefresh(speed, () => Format(animator.Speed));
+        _editForm.Register(speed);
+        AddChild(speed);
+        var play = new ToggleButton((Width - 28f) * 0.5f, 30f,
+            "Play Automatically", _theme)
+        {
+            Name = "AnimatorPlayAutomatically",
+            IsChecked = animator.PlayAutomatically,
+            Margin = new Thickness(12f, y + 106f, 0f, 0f)
+        };
+        play.CheckedChanged += value =>
+        {
+            animator.PlayAutomatically = value;
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        AddChild(play);
+        var loop = new ToggleButton((Width - 28f) * 0.5f, 30f,
+            "Loop", _theme)
+        {
+            Name = "AnimatorLoop",
+            IsChecked = animator.Loop,
+            Margin = new Thickness(16f + (Width - 28f) * 0.5f, y + 106f, 0f, 0f)
+        };
+        loop.CheckedChanged += value =>
+        {
+            animator.Loop = value;
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        AddChild(loop);
+        return y + 148f;
     }
 
     /// <summary>Resolves material values associated with the currently bound node.</summary>

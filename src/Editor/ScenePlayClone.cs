@@ -123,6 +123,15 @@ public static class ScenePlayClone
                     Friction = sourceCollider.Friction,
                     Restitution = sourceCollider.Restitution
                 };
+            case AnimatorComponent sourceAnimator:
+                return new AnimatorComponent
+                {
+                    Enabled = sourceAnimator.Enabled,
+                    Clip = sourceAnimator.Clip,
+                    PlayAutomatically = sourceAnimator.PlayAutomatically,
+                    Loop = sourceAnimator.Loop,
+                    Speed = sourceAnimator.Speed
+                };
             default:
                 throw new NotSupportedException(
                     $"Component type '{source.GetType().Name}' cannot enter play mode.");

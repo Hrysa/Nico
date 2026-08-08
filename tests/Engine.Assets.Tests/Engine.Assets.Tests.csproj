@@ -15,6 +15,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <ProjectReference Include="../../src/Engine.Assets/Engine.Assets.csproj" />
+    <ProjectReference Include="../../src/Engine.Graphics/Engine.Graphics.csproj" />
   </ItemGroup>
 
 </Project>

@@ -31,6 +31,21 @@ public sealed class RenderQueueTests
         Assert.Throws<ArgumentException>(() => queue.Add(default, default));
     }
 
+    /// <summary>Stores the palette identity required by a skinned draw.</summary>
+    [Fact]
+    public void AddSkinned_ValidHandles_StoresPalette()
+    {
+        var queue = new RenderQueue();
+        var mesh = new MeshHandle(42);
+        var palette = new SkinPaletteHandle(7);
+
+        queue.AddSkinned(mesh, palette, default);
+
+        var command = Assert.Single(queue.Commands);
+        Assert.Equal(mesh, command.Mesh);
+        Assert.Equal(palette, command.SkinPalette);
+    }
+
     /// <summary>Verifies repeated command enumeration through the hot-path span does not allocate.</summary>
     [Fact]
     public void CommandSpan_RepeatedEnumerationDoesNotAllocate()

@@ -56,5 +56,7 @@ compile_shader texture.slang vertexMain vertex texture.vert.spv
 compile_shader texture.slang fragmentMain fragment texture.frag.spv
 compile_shader model.slang vertexMain vertex model.vert.spv
 compile_shader model.slang fragmentMain fragment model.frag.spv
+compile_shader skinned_model.slang vertexMain vertex skinned_model.vert.spv
+compile_shader skinned_model.slang fragmentMain fragment skinned_model.frag.spv
 
 echo "Compiled shaders with $SLANG_COMPILER"

@@ -58,6 +58,13 @@ public class SceneFileStoreTests
                 GravityScale = 0.5f,
                 LinearDamping = 0.1f
             });
+            cube.AddComponent(new AnimatorComponent
+            {
+                Clip = "Run",
+                PlayAutomatically = false,
+                Loop = false,
+                Speed = 1.5f
+            });
             var camera = new PerspectiveCamera(0.9f, near: 0.25f, far: 500f)
             {
                 Name = "GameCamera",
@@ -88,7 +95,7 @@ public class SceneFileStoreTests
             var loadedCube = Assert.IsType<MeshInstance3D>(loadedGroup.Children[0]);
             Assert.Equal(BuiltInAssets.CubeMesh, loadedCube.Mesh);
             Assert.Equal(cube.ScriptId, loadedCube.ScriptId);
-            Assert.Equal(4, loadedCube.Components.Count);
+            Assert.Equal(5, loadedCube.Components.Count);
             var loadedFirstScript = Assert.IsType<ScriptComponent>(loadedCube.Components[0]);
             Assert.True(loadedFirstScript.TryGetPropertyOverride(101, out var loadedNumber));
             Assert.True(loadedNumber.TryGetNumber(out var number));
@@ -111,6 +118,11 @@ public class SceneFileStoreTests
             Assert.Equal(new Vector3(1f, 2f, 3f), loadedBody.LinearVelocity);
             Assert.Equal(0.5f, loadedBody.GravityScale);
             Assert.Equal(0.1f, loadedBody.LinearDamping);
+            var loadedAnimator = Assert.IsType<AnimatorComponent>(loadedCube.Components[4]);
+            Assert.Equal("Run", loadedAnimator.Clip);
+            Assert.False(loadedAnimator.PlayAutomatically);
+            Assert.False(loadedAnimator.Loop);
+            Assert.Equal(1.5f, loadedAnimator.Speed);
             Assert.Equal(cube.MaterialOverride.BaseColor, loadedCube.MaterialOverride?.BaseColor);
             Assert.Equal(cube.MaterialOverride.Metallic, loadedCube.MaterialOverride?.Metallic);
             Assert.Equal(2, loaded.MeshInstances.Count);

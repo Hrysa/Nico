@@ -11,8 +11,8 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 4;
-    private const int LegacyFormatVersion = 3;
+    private const int CurrentFormatVersion = 5;
+    private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -66,10 +66,11 @@ public static class SceneFileStore
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var document = JsonSerializer.Deserialize<SceneDocument>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("The scene file is empty.");
-        if (document.FormatVersion is not CurrentFormatVersion and not LegacyFormatVersion)
+        if (document.FormatVersion < MinimumFormatVersion ||
+            document.FormatVersion > CurrentFormatVersion)
             throw new InvalidDataException(
                 $"Unsupported scene format version {document.FormatVersion}; expected " +
-                $"{LegacyFormatVersion} or {CurrentFormatVersion}.");
+                $"{MinimumFormatVersion} through {CurrentFormatVersion}.");
 
         if (string.IsNullOrWhiteSpace(document.GameCameraId))
             throw new InvalidDataException("The scene does not identify an active game camera.");
@@ -214,6 +215,16 @@ public static class SceneFileStore
                             collider.Friction,
                             collider.Restitution)));
                     break;
+                case AnimatorComponent animator:
+                    result.Add(new SceneComponentData(
+                        SceneComponentType.Animator,
+                        animator.Enabled,
+                        Animator: new AnimatorData(
+                            animator.Clip,
+                            animator.PlayAutomatically,
+                            animator.Loop,
+                            animator.Speed)));
+                    break;
                 default:
                     throw new NotSupportedException(
                         $"Component type '{components[index].GetType().Name}' cannot be saved.");
@@ -279,9 +290,18 @@ public static class SceneFileStore
                         Restitution = collider.Restitution
                     };
                     break;
+                case SceneComponentType.Animator when componentData.Animator is { } animator:
+                    component = new AnimatorComponent
+                    {
+                        Clip = animator.Clip,
+                        PlayAutomatically = animator.PlayAutomatically,
+                        Loop = animator.Loop,
+                        Speed = animator.Speed
+                    };
+                    break;
                 default:
                     throw new InvalidDataException(
-                        $"Scene component {index} has incomplete or unsupported physics data.");
+                        $"Scene component {index} has incomplete or unsupported data.");
             }
             component.Enabled = componentData.Enabled;
             node.AddComponent(component);
@@ -338,7 +358,8 @@ public static class SceneFileStore
         AssetId? ScriptId = null,
         List<PropertyOverrideData>? Properties = null,
         RigidBodyData? RigidBody = null,
-        ColliderData? Collider = null);
+        ColliderData? Collider = null,
+        AnimatorData? Animator = null);
 
     private sealed record RigidBodyData(
         RigidBodyMotionType MotionType,
@@ -357,6 +378,12 @@ public static class SceneFileStore
         bool IsTrigger,
         float Friction,
         float Restitution);
+
+    private sealed record AnimatorData(
+        string? Clip,
+        bool PlayAutomatically,
+        bool Loop,
+        float Speed);
 
     private sealed record PropertyOverrideData(
         int PropertyId,
@@ -515,7 +542,8 @@ public static class SceneFileStore
     {
         Script,
         RigidBody,
-        Collider
+        Collider,
+        Animator
     }
 }
 

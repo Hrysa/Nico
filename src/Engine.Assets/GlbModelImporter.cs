@@ -1,11 +1,12 @@
 using System.Numerics;
 using System.Text;
 using System.Text.Json;
+using SharpGLTF.Schema2;
 using StbImageSharp;
 
 namespace Engine.Assets;
 
-/// <summary>Imports static triangle primitives from a GLB 2.0 source into Nico mesh artifacts.</summary>
+/// <summary>Imports static or skinned triangle primitives from a GLB 2.0 source.</summary>
 public sealed class GlbModelImporter : IAssetImporter
 {
     private const uint GlbMagic = 0x46546C67;
@@ -16,18 +17,21 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 1;
+    public int Version => 2;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        ModelRoot model;
+        using (var validationSource = context.OpenSource())
+            model = ModelRoot.ReadGLB(validationSource);
         using var source = context.OpenSource();
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
         var (document, binary) = ReadContainer(reader);
         using (document)
         {
-            var artifacts = ImportMeshes(context, document.RootElement, binary).ToList();
+            var artifacts = ImportMeshes(context, document.RootElement, binary, model).ToList();
             artifacts.AddRange(ImportMaterials(context, document.RootElement));
             artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
             return new AssetImportResult(artifacts, [], []);
@@ -63,15 +67,17 @@ public sealed class GlbModelImporter : IAssetImporter
         return (document ?? throw new InvalidDataException("GLB has no JSON chunk."), binary);
     }
 
-    /// <summary>Imports every static triangle primitive as an independently addressable mesh.</summary>
+    /// <summary>Imports every triangle primitive as an independently addressable mesh.</summary>
     /// <param name="context">Artifact output context.</param>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="model">Validated SharpGLTF model used to evaluate animation.</param>
     /// <returns>Published mesh artifacts.</returns>
     private static IReadOnlyList<AssetArtifact> ImportMeshes(
         AssetImportContext context,
         JsonElement root,
-        byte[] binary)
+        byte[] binary,
+        ModelRoot model)
     {
         if (!root.TryGetProperty("asset", out var asset) ||
             !asset.TryGetProperty("version", out var version) ||
@@ -88,6 +94,12 @@ public sealed class GlbModelImporter : IAssetImporter
             context.CancellationToken.ThrowIfCancellationRequested();
             var meshName = mesh.TryGetProperty("name", out var name)
                 ? Sanitize(name.GetString(), $"mesh-{meshIndex}") : $"mesh-{meshIndex}";
+            var skin = FindSkinForMesh(root, meshIndex);
+            ImportedSkeleton? skeleton = skin is null
+                ? null : ImportSkeleton(root, binary, skin.Value.Skin,
+                    skin.Value.MeshNodeIndex);
+            var animations = skeleton is null
+                ? [] : ImportAnimations(model, skeleton.Value);
             var primitiveIndex = 0;
             foreach (var primitive in mesh.GetProperty("primitives").EnumerateArray())
             {
@@ -121,12 +133,38 @@ public sealed class GlbModelImporter : IAssetImporter
                     GenerateNormals(positions, indices, normals);
                 var materialSlot = primitive.TryGetProperty("material", out var materialElement)
                     ? materialElement.GetInt32() : -1;
-                var relativePath = $"meshes/{meshName}-{primitiveIndex}.nmesh";
+                var relativePath = skeleton is null
+                    ? $"meshes/{meshName}-{primitiveIndex}.nmesh"
+                    : $"meshes/{meshName}-{primitiveIndex}.nskin";
                 using (var output = context.CreateArtifact(relativePath))
-                    WriteMesh(output, positions, normals, texCoords, tangents, indices,
-                        materialSlot);
+                {
+                    if (skeleton is null)
+                    {
+                        WriteMesh(output, positions, normals, texCoords, tangents, indices,
+                            materialSlot);
+                    }
+                    else
+                    {
+                        if (!attributes.TryGetProperty("JOINTS_0", out var jointsAccessor) ||
+                            !attributes.TryGetProperty("WEIGHTS_0", out var weightsAccessor))
+                        {
+                            throw new InvalidDataException(
+                                "A GLB mesh referenced by a skin requires JOINTS_0 and WEIGHTS_0.");
+                        }
+                        var joints = ReadJointIndices(root, binary, jointsAccessor.GetInt32(),
+                            skeleton.Value.SourceJointToSkeletonJoint);
+                        var weights = ReadWeights(root, binary, weightsAccessor.GetInt32());
+                        if (joints.Length != positions.Length || weights.Length != positions.Length)
+                            throw new InvalidDataException(
+                                "GLB skin attribute counts do not match POSITION.");
+                        WriteSkinnedMesh(output, positions, normals, texCoords, tangents,
+                            joints, weights, indices, materialSlot, skeleton.Value, animations);
+                    }
+                }
                 artifacts.Add(new AssetArtifact(
-                    $"mesh/{meshName}/{primitiveIndex}", "nico/static-mesh", relativePath));
+                    $"mesh/{meshName}/{primitiveIndex}",
+                    skeleton is null ? "nico/static-mesh" : "nico/skinned-mesh",
+                    relativePath));
                 primitiveIndex++;
             }
             meshIndex++;
@@ -134,6 +172,294 @@ public sealed class GlbModelImporter : IAssetImporter
         if (artifacts.Count == 0)
             throw new InvalidDataException("GLB contains no mesh primitives.");
         return artifacts;
+    }
+
+    /// <summary>Finds the single skin used by nodes instantiating one mesh.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="meshIndex">Logical mesh index.</param>
+    /// <returns>The skin and instantiating node, or null for a static mesh.</returns>
+    private static SkinBinding? FindSkinForMesh(JsonElement root, int meshIndex)
+    {
+        if (!root.TryGetProperty("nodes", out var nodes) ||
+            !root.TryGetProperty("skins", out var skins))
+        {
+            return null;
+        }
+        int? selectedSkin = null;
+        var selectedNode = -1;
+        var nodeIndex = 0;
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!node.TryGetProperty("mesh", out var mesh) || mesh.GetInt32() != meshIndex ||
+                !node.TryGetProperty("skin", out var skin))
+            {
+                nodeIndex++;
+                continue;
+            }
+            var skinIndex = skin.GetInt32();
+            if ((uint)skinIndex >= skins.GetArrayLength())
+                throw new InvalidDataException("GLB node skin index is out of range.");
+            if (selectedSkin is not null && selectedSkin != skinIndex)
+            {
+                throw new InvalidDataException(
+                    "One GLB mesh cannot be imported with multiple different skins.");
+            }
+            if (selectedNode >= 0)
+                throw new InvalidDataException(
+                    "One skinned GLB mesh cannot be instantiated by multiple nodes.");
+            selectedSkin = skinIndex;
+            selectedNode = nodeIndex;
+            nodeIndex++;
+        }
+        return selectedSkin is null
+            ? null : new SkinBinding(skins[selectedSkin.Value], selectedNode);
+    }
+
+    /// <summary>Imports and topologically orders joints for one glTF skin.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="skin">Skin JSON.</param>
+    /// <param name="meshNodeIndex">Node that instantiates the skinned mesh.</param>
+    /// <returns>Imported skeleton and source-index mappings.</returns>
+    private static ImportedSkeleton ImportSkeleton(
+        JsonElement root,
+        byte[] binary,
+        JsonElement skin,
+        int meshNodeIndex)
+    {
+        if (!root.TryGetProperty("nodes", out var nodes) ||
+            !skin.TryGetProperty("joints", out var jointElements) ||
+            jointElements.GetArrayLength() == 0)
+        {
+            throw new InvalidDataException("GLB skin has no joints.");
+        }
+        var nodeCount = nodes.GetArrayLength();
+        var parentByNode = BuildNodeParents(nodes);
+        var sourceNodes = jointElements.EnumerateArray().Select(value => value.GetInt32()).ToArray();
+        var sourceIndexByNode = Enumerable.Repeat(-1, nodeCount).ToArray();
+        for (var index = 0; index < sourceNodes.Length; index++)
+        {
+            var nodeIndex = sourceNodes[index];
+            if ((uint)nodeIndex >= nodeCount || sourceIndexByNode[nodeIndex] >= 0)
+                throw new InvalidDataException("GLB skin contains an invalid or duplicate joint.");
+            sourceIndexByNode[nodeIndex] = index;
+        }
+        var parentSourceIndices = new int[sourceNodes.Length];
+        for (var index = 0; index < sourceNodes.Length; index++)
+        {
+            var parentNode = parentByNode[sourceNodes[index]];
+            while (parentNode >= 0 && sourceIndexByNode[parentNode] < 0)
+                parentNode = parentByNode[parentNode];
+            parentSourceIndices[index] = parentNode < 0 ? -1 : sourceIndexByNode[parentNode];
+        }
+        var sourceToOrdered = Enumerable.Repeat(-1, sourceNodes.Length).ToArray();
+        var orderedSources = new int[sourceNodes.Length];
+        var orderedCount = 0;
+        while (orderedCount < orderedSources.Length)
+        {
+            var progressed = false;
+            for (var sourceIndex = 0; sourceIndex < sourceNodes.Length; sourceIndex++)
+            {
+                if (sourceToOrdered[sourceIndex] >= 0)
+                    continue;
+                var parent = parentSourceIndices[sourceIndex];
+                if (parent >= 0 && sourceToOrdered[parent] < 0)
+                    continue;
+                sourceToOrdered[sourceIndex] = orderedCount;
+                orderedSources[orderedCount++] = sourceIndex;
+                progressed = true;
+            }
+            if (!progressed)
+                throw new InvalidDataException("GLB skin joint hierarchy contains a cycle.");
+        }
+        Matrix4x4[] inverseBindBySource;
+        if (skin.TryGetProperty("inverseBindMatrices", out var inverseBindAccessor))
+        {
+            inverseBindBySource = ReadMatrices(root, binary, inverseBindAccessor.GetInt32());
+            if (inverseBindBySource.Length != sourceNodes.Length)
+                throw new InvalidDataException("GLB inverse bind matrix count does not match joints.");
+        }
+        else
+        {
+            inverseBindBySource = new Matrix4x4[sourceNodes.Length];
+            for (var sourceIndex = 0; sourceIndex < sourceNodes.Length; sourceIndex++)
+                inverseBindBySource[sourceIndex] = Matrix4x4.Identity;
+        }
+        var worldCache = new Matrix4x4[nodeCount];
+        var worldStates = new byte[nodeCount];
+        var meshWorld = ComputeNodeWorldMatrix(nodes, parentByNode, meshNodeIndex,
+            worldCache, worldStates);
+        if (!Matrix4x4.Invert(meshWorld, out var inverseMeshWorld))
+            throw new InvalidDataException("GLB mesh bind transform is not invertible.");
+        var globalBindBySource = new Matrix4x4[sourceNodes.Length];
+        for (var sourceIndex = 0; sourceIndex < sourceNodes.Length; sourceIndex++)
+        {
+            globalBindBySource[sourceIndex] = ComputeNodeWorldMatrix(
+                nodes, parentByNode, sourceNodes[sourceIndex], worldCache, worldStates) *
+                inverseMeshWorld;
+        }
+        var joints = new ImportedJoint[sourceNodes.Length];
+        var orderedNodeIndices = new int[sourceNodes.Length];
+        for (var orderedIndex = 0; orderedIndex < orderedSources.Length; orderedIndex++)
+        {
+            var sourceIndex = orderedSources[orderedIndex];
+            var parentSource = parentSourceIndices[sourceIndex];
+            var local = globalBindBySource[sourceIndex];
+            if (parentSource >= 0)
+            {
+                if (!Matrix4x4.Invert(globalBindBySource[parentSource], out var inverseParent))
+                    throw new InvalidDataException("GLB parent bind transform is not invertible.");
+                local *= inverseParent;
+            }
+            if (!Matrix4x4.Decompose(local, out var scale, out var rotation,
+                out var translation))
+            {
+                throw new InvalidDataException("GLB joint bind transform cannot be decomposed.");
+            }
+            var nodeIndex = sourceNodes[sourceIndex];
+            var node = nodes[nodeIndex];
+            var name = node.TryGetProperty("name", out var nameElement)
+                ? nameElement.GetString() : null;
+            joints[orderedIndex] = new ImportedJoint(
+                string.IsNullOrWhiteSpace(name) ? $"joint-{nodeIndex}" : name,
+                parentSource < 0 ? -1 : sourceToOrdered[parentSource],
+                translation,
+                Quaternion.Normalize(rotation),
+                scale,
+                inverseBindBySource[sourceIndex]);
+            orderedNodeIndices[orderedIndex] = nodeIndex;
+        }
+        return new ImportedSkeleton(
+            joints, orderedNodeIndices, sourceToOrdered, meshNodeIndex);
+    }
+
+    /// <summary>Imports animation curves targeting joints in one skeleton.</summary>
+    /// <param name="model">Validated SharpGLTF model.</param>
+    /// <param name="skeleton">Imported skeleton mapping.</param>
+    /// <returns>Imported clips.</returns>
+    private static ImportedAnimation[] ImportAnimations(
+        ModelRoot model,
+        ImportedSkeleton skeleton)
+    {
+        var animations = model.LogicalAnimations;
+        if (animations.Count == 0)
+            return [];
+        var result = new ImportedAnimation[animations.Count];
+        for (var animationIndex = 0; animationIndex < animations.Count; animationIndex++)
+        {
+            var animation = animations[animationIndex];
+            var duration = Math.Max(0f, animation.Duration);
+            const float samplesPerSecond = 60f;
+            var sampleCount = duration <= 0f
+                ? 1 : checked((int)MathF.Ceiling(duration * samplesPerSecond) + 1);
+            var times = new float[sampleCount];
+            for (var sample = 0; sample < sampleCount; sample++)
+                times[sample] = sample == sampleCount - 1
+                    ? duration : sample / samplesPerSecond;
+            var tracks = new ImportedJointTrack?[skeleton.Joints.Length];
+            var meshNode = model.LogicalNodes[skeleton.MeshNodeIndex];
+            var worldMatrices = new Matrix4x4[skeleton.Joints.Length];
+            var translations = new Vector3[skeleton.Joints.Length][];
+            var rotations = new Vector4[skeleton.Joints.Length][];
+            var scales = new Vector3[skeleton.Joints.Length][];
+            for (var jointIndex = 0; jointIndex < skeleton.Joints.Length; jointIndex++)
+            {
+                translations[jointIndex] = new Vector3[sampleCount];
+                rotations[jointIndex] = new Vector4[sampleCount];
+                scales[jointIndex] = new Vector3[sampleCount];
+            }
+            for (var sample = 0; sample < sampleCount; sample++)
+            {
+                var time = times[sample];
+                var meshWorld = meshNode.GetWorldMatrix(animation, time);
+                if (!Matrix4x4.Invert(meshWorld, out var inverseMeshWorld))
+                    throw new InvalidDataException("Animated GLB mesh transform is not invertible.");
+                for (var jointIndex = 0; jointIndex < skeleton.Joints.Length; jointIndex++)
+                {
+                    var node = model.LogicalNodes[skeleton.SourceNodeIndices[jointIndex]];
+                    var world = node.GetWorldMatrix(animation, time) * inverseMeshWorld;
+                    worldMatrices[jointIndex] = world;
+                    var parentIndex = skeleton.Joints[jointIndex].ParentIndex;
+                    var local = world;
+                    if (parentIndex >= 0)
+                    {
+                        if (!Matrix4x4.Invert(worldMatrices[parentIndex], out var inverseParent))
+                        {
+                            throw new InvalidDataException(
+                                "Animated GLB parent transform is not invertible.");
+                        }
+                        local *= inverseParent;
+                    }
+                    if (!Matrix4x4.Decompose(local, out var scale, out var rotation,
+                        out var translation))
+                    {
+                        throw new InvalidDataException(
+                            "Animated GLB joint transform cannot be decomposed.");
+                    }
+                    rotation = Quaternion.Normalize(rotation);
+                    translations[jointIndex][sample] = translation;
+                    rotations[jointIndex][sample] = new Vector4(
+                        rotation.X, rotation.Y, rotation.Z, rotation.W);
+                    scales[jointIndex][sample] = scale;
+                }
+            }
+            for (var jointIndex = 0; jointIndex < skeleton.Joints.Length; jointIndex++)
+            {
+                tracks[jointIndex] = new ImportedJointTrack(
+                    CreateVectorTrack(times, translations[jointIndex]),
+                    CreateQuaternionTrack(times, rotations[jointIndex]),
+                    CreateVectorTrack(times, scales[jointIndex]));
+            }
+            result[animationIndex] = new ImportedAnimation(
+                string.IsNullOrWhiteSpace(animation.Name)
+                    ? $"animation-{animationIndex}" : animation.Name,
+                duration,
+                tracks);
+        }
+        return result;
+    }
+
+    /// <summary>Collapses a constant baked vector curve to one key.</summary>
+    /// <param name="times">Baked sample times.</param>
+    /// <param name="values">Baked vector values.</param>
+    /// <returns>Compact imported track.</returns>
+    private static ImportedVectorTrack CreateVectorTrack(float[] times, Vector3[] values)
+    {
+        var constant = true;
+        for (var index = 1; index < values.Length; index++)
+        {
+            if (Vector3.DistanceSquared(values[0], values[index]) <= 1e-12f)
+                continue;
+            constant = false;
+            break;
+        }
+        return constant
+            ? new ImportedVectorTrack([0f], [values[0]], 1)
+            : new ImportedVectorTrack(times, values, 1);
+    }
+
+    /// <summary>Collapses a constant baked quaternion curve to one key.</summary>
+    /// <param name="times">Baked sample times.</param>
+    /// <param name="values">Baked XYZW values.</param>
+    /// <returns>Compact imported track.</returns>
+    private static ImportedQuaternionTrack CreateQuaternionTrack(
+        float[] times,
+        Vector4[] values)
+    {
+        var first = new Quaternion(values[0].X, values[0].Y, values[0].Z, values[0].W);
+        var constant = true;
+        for (var index = 1; index < values.Length; index++)
+        {
+            var value = new Quaternion(values[index].X, values[index].Y,
+                values[index].Z, values[index].W);
+            if (MathF.Abs(Quaternion.Dot(first, value)) >= 1f - 1e-6f)
+                continue;
+            constant = false;
+            break;
+        }
+        return constant
+            ? new ImportedQuaternionTrack([0f], [values[0]], 1)
+            : new ImportedQuaternionTrack(times, values, 1);
     }
 
     /// <summary>Imports glTF standard material factors as independently addressable artifacts.</summary>
@@ -283,6 +609,233 @@ public sealed class GlbModelImporter : IAssetImporter
         return binary.AsSpan(offset, length).ToArray();
     }
 
+    /// <summary>Builds direct visual-parent indices from node child arrays.</summary>
+    /// <param name="nodes">glTF nodes array.</param>
+    /// <returns>Parent index per node, or -1 for roots.</returns>
+    private static int[] BuildNodeParents(JsonElement nodes)
+    {
+        var parents = Enumerable.Repeat(-1, nodes.GetArrayLength()).ToArray();
+        for (var parentIndex = 0; parentIndex < nodes.GetArrayLength(); parentIndex++)
+        {
+            var parent = nodes[parentIndex];
+            if (!parent.TryGetProperty("children", out var children))
+                continue;
+            foreach (var childElement in children.EnumerateArray())
+            {
+                var child = childElement.GetInt32();
+                if ((uint)child >= parents.Length || parents[child] >= 0)
+                    throw new InvalidDataException("GLB node hierarchy is invalid.");
+                parents[child] = parentIndex;
+            }
+        }
+        return parents;
+    }
+
+    /// <summary>Computes one node world matrix with cycle detection and caching.</summary>
+    /// <param name="nodes">glTF nodes array.</param>
+    /// <param name="parents">Parent indices.</param>
+    /// <param name="nodeIndex">Node to evaluate.</param>
+    /// <param name="cache">World-matrix cache.</param>
+    /// <param name="states">Zero/unvisited, one/visiting, or two/complete states.</param>
+    /// <returns>Row-vector world matrix.</returns>
+    private static Matrix4x4 ComputeNodeWorldMatrix(
+        JsonElement nodes,
+        int[] parents,
+        int nodeIndex,
+        Matrix4x4[] cache,
+        byte[] states)
+    {
+        if (states[nodeIndex] == 2)
+            return cache[nodeIndex];
+        if (states[nodeIndex] == 1)
+            throw new InvalidDataException("GLB node hierarchy contains a cycle.");
+        states[nodeIndex] = 1;
+        var world = ReadNodeLocalMatrix(nodes[nodeIndex]);
+        if (parents[nodeIndex] >= 0)
+        {
+            world *= ComputeNodeWorldMatrix(nodes, parents, parents[nodeIndex], cache, states);
+        }
+        cache[nodeIndex] = world;
+        states[nodeIndex] = 2;
+        return world;
+    }
+
+    /// <summary>Reads a glTF node transform into the engine's row-vector convention.</summary>
+    /// <param name="node">Node JSON.</param>
+    /// <returns>Local transform matrix.</returns>
+    private static Matrix4x4 ReadNodeLocalMatrix(JsonElement node)
+    {
+        if (node.TryGetProperty("matrix", out var matrix))
+        {
+            if (matrix.GetArrayLength() != 16)
+                throw new InvalidDataException("GLB node matrix must contain 16 values.");
+            return new Matrix4x4(
+                matrix[0].GetSingle(), matrix[1].GetSingle(), matrix[2].GetSingle(),
+                matrix[3].GetSingle(), matrix[4].GetSingle(), matrix[5].GetSingle(),
+                matrix[6].GetSingle(), matrix[7].GetSingle(), matrix[8].GetSingle(),
+                matrix[9].GetSingle(), matrix[10].GetSingle(), matrix[11].GetSingle(),
+                matrix[12].GetSingle(), matrix[13].GetSingle(), matrix[14].GetSingle(),
+                matrix[15].GetSingle());
+        }
+        var translation = node.TryGetProperty("translation", out var translationElement)
+            ? ReadJsonVector3(translationElement) : Vector3.Zero;
+        var scale = node.TryGetProperty("scale", out var scaleElement)
+            ? ReadJsonVector3(scaleElement) : Vector3.One;
+        var rotation = Quaternion.Identity;
+        if (node.TryGetProperty("rotation", out var rotationElement))
+        {
+            rotation = Quaternion.Normalize(new Quaternion(
+                rotationElement[0].GetSingle(), rotationElement[1].GetSingle(),
+                rotationElement[2].GetSingle(), rotationElement[3].GetSingle()));
+        }
+        return Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rotation) *
+            Matrix4x4.CreateTranslation(translation);
+    }
+
+    /// <summary>Reads a three-component JSON vector.</summary>
+    /// <param name="element">JSON array.</param>
+    /// <returns>Decoded vector.</returns>
+    private static Vector3 ReadJsonVector3(JsonElement element)
+    {
+        if (element.GetArrayLength() != 3)
+            throw new InvalidDataException("GLB transform vector must contain three values.");
+        return new Vector3(element[0].GetSingle(), element[1].GetSingle(),
+            element[2].GetSingle());
+    }
+
+    /// <summary>Reads one floating-point MAT4 accessor in row-vector representation.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="accessorIndex">Accessor index.</param>
+    /// <returns>Decoded matrices.</returns>
+    private static Matrix4x4[] ReadMatrices(
+        JsonElement root,
+        byte[] binary,
+        int accessorIndex)
+    {
+        var view = ResolveAccessor(root, binary, accessorIndex, "MAT4", 5126,
+            "inverse bind matrices");
+        var result = new Matrix4x4[view.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            var offset = view.Offset + index * view.Stride;
+            result[index] = new Matrix4x4(
+                ReadSingle(binary, offset), ReadSingle(binary, offset + 4),
+                ReadSingle(binary, offset + 8), ReadSingle(binary, offset + 12),
+                ReadSingle(binary, offset + 16), ReadSingle(binary, offset + 20),
+                ReadSingle(binary, offset + 24), ReadSingle(binary, offset + 28),
+                ReadSingle(binary, offset + 32), ReadSingle(binary, offset + 36),
+                ReadSingle(binary, offset + 40), ReadSingle(binary, offset + 44),
+                ReadSingle(binary, offset + 48), ReadSingle(binary, offset + 52),
+                ReadSingle(binary, offset + 56), ReadSingle(binary, offset + 60));
+        }
+        return result;
+    }
+
+    /// <summary>Reads and remaps an unsigned JOINTS_0 accessor.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="accessorIndex">Accessor index.</param>
+    /// <param name="sourceToOrdered">Source-skin to ordered-skeleton mapping.</param>
+    /// <returns>Four ordered joint indices per vertex.</returns>
+    private static JointIndices[] ReadJointIndices(
+        JsonElement root,
+        byte[] binary,
+        int accessorIndex,
+        int[] sourceToOrdered)
+    {
+        var accessor = root.GetProperty("accessors")[accessorIndex];
+        var componentType = accessor.GetProperty("componentType").GetInt32();
+        if (componentType is not 5121 and not 5123)
+            throw new InvalidDataException("GLB JOINTS_0 must use unsigned bytes or shorts.");
+        var view = ResolveAccessor(root, binary, accessorIndex, "VEC4", componentType,
+            "JOINTS_0");
+        var componentSize = componentType == 5121 ? 1 : 2;
+        var result = new JointIndices[view.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            var offset = view.Offset + index * view.Stride;
+            result[index] = new JointIndices(
+                RemapJoint(ReadUnsigned(binary, offset, componentSize), sourceToOrdered),
+                RemapJoint(ReadUnsigned(binary, offset + componentSize, componentSize),
+                    sourceToOrdered),
+                RemapJoint(ReadUnsigned(binary, offset + componentSize * 2, componentSize),
+                    sourceToOrdered),
+                RemapJoint(ReadUnsigned(binary, offset + componentSize * 3, componentSize),
+                    sourceToOrdered));
+        }
+        return result;
+    }
+
+    /// <summary>Reads a WEIGHTS_0 accessor and normalizes every influence set.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="accessorIndex">Accessor index.</param>
+    /// <returns>Normalized four-component weights.</returns>
+    private static Vector4[] ReadWeights(JsonElement root, byte[] binary, int accessorIndex)
+    {
+        var accessor = root.GetProperty("accessors")[accessorIndex];
+        var componentType = accessor.GetProperty("componentType").GetInt32();
+        if (componentType is not 5121 and not 5123 and not 5126)
+            throw new InvalidDataException("GLB WEIGHTS_0 component type is unsupported.");
+        if (componentType != 5126 &&
+            (!accessor.TryGetProperty("normalized", out var normalized) ||
+             !normalized.GetBoolean()))
+        {
+            throw new InvalidDataException("Integer GLB WEIGHTS_0 values must be normalized.");
+        }
+        var view = ResolveAccessor(root, binary, accessorIndex, "VEC4", componentType,
+            "WEIGHTS_0");
+        var componentSize = componentType switch { 5121 => 1, 5123 => 2, _ => 4 };
+        var denominator = componentType switch { 5121 => 255f, 5123 => 65535f, _ => 1f };
+        var result = new Vector4[view.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            var offset = view.Offset + index * view.Stride;
+            float ReadComponent(int componentOffset) => componentType == 5126
+                ? ReadSingle(binary, componentOffset)
+                : ReadUnsigned(binary, componentOffset, componentSize) / denominator;
+            var value = new Vector4(ReadComponent(offset),
+                ReadComponent(offset + componentSize),
+                ReadComponent(offset + componentSize * 2),
+                ReadComponent(offset + componentSize * 3));
+            if (!IsFiniteNonNegative(value))
+                throw new InvalidDataException("GLB skin weights must be finite and non-negative.");
+            var sum = value.X + value.Y + value.Z + value.W;
+            result[index] = sum > float.Epsilon
+                ? value / sum : new Vector4(1f, 0f, 0f, 0f);
+        }
+        return result;
+    }
+
+    /// <summary>Reads one unsigned integer component.</summary>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="offset">Byte offset.</param>
+    /// <param name="componentSize">One or two bytes.</param>
+    /// <returns>Decoded unsigned value.</returns>
+    private static uint ReadUnsigned(byte[] binary, int offset, int componentSize) =>
+        componentSize == 1 ? binary[offset] : BitConverter.ToUInt16(binary, offset);
+
+    /// <summary>Maps a source skin joint index to ordered skeleton space.</summary>
+    /// <param name="sourceIndex">Index stored by JOINTS_0.</param>
+    /// <param name="sourceToOrdered">Source-to-ordered mapping.</param>
+    /// <returns>Ordered skeleton joint index.</returns>
+    private static uint RemapJoint(uint sourceIndex, int[] sourceToOrdered)
+    {
+        if (sourceIndex >= sourceToOrdered.Length)
+            throw new InvalidDataException("GLB vertex references a missing skin joint.");
+        return checked((uint)sourceToOrdered[sourceIndex]);
+    }
+
+    /// <summary>Checks that skin weights are finite and non-negative.</summary>
+    /// <param name="value">Weights to validate.</param>
+    /// <returns>True for valid weights.</returns>
+    private static bool IsFiniteNonNegative(Vector4 value) =>
+        float.IsFinite(value.X) && value.X >= 0f &&
+        float.IsFinite(value.Y) && value.Y >= 0f &&
+        float.IsFinite(value.Z) && value.Z >= 0f &&
+        float.IsFinite(value.W) && value.W >= 0f;
+
     /// <summary>Reads one tightly or strided floating-point VEC2 accessor.</summary>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
@@ -391,6 +944,7 @@ public sealed class GlbModelImporter : IAssetImporter
         var componentSize = componentType switch { 5121 => 1, 5123 => 2, 5125 or 5126 => 4,
             _ => throw new InvalidDataException($"GLB {semantic} component type is unsupported.") };
         var components = type switch { "SCALAR" => 1, "VEC2" => 2, "VEC3" => 3, "VEC4" => 4,
+            "MAT4" => 16,
             _ => throw new InvalidDataException($"GLB {semantic} type is unsupported.") };
         var elementSize = componentSize * components;
         var bufferViews = root.GetProperty("bufferViews");
@@ -462,6 +1016,133 @@ public sealed class GlbModelImporter : IAssetImporter
             writer.Write(value);
     }
 
+    /// <summary>Writes a versioned skinned-mesh artifact.</summary>
+    /// <param name="output">Artifact output stream.</param>
+    /// <param name="positions">Bind-pose positions.</param>
+    /// <param name="normals">Bind-pose normals.</param>
+    /// <param name="texCoords">Primary texture coordinates.</param>
+    /// <param name="tangents">Tangent vectors.</param>
+    /// <param name="joints">Four joint indices per vertex.</param>
+    /// <param name="weights">Four normalized weights per vertex.</param>
+    /// <param name="indices">Triangle-list indices.</param>
+    /// <param name="materialSlot">Source material slot.</param>
+    /// <param name="skeleton">Imported skeleton.</param>
+    /// <param name="animations">Imported clips.</param>
+    private static void WriteSkinnedMesh(
+        Stream output,
+        Vector3[] positions,
+        Vector3[] normals,
+        Vector2[] texCoords,
+        Vector4[] tangents,
+        JointIndices[] joints,
+        Vector4[] weights,
+        uint[] indices,
+        int materialSlot,
+        ImportedSkeleton skeleton,
+        ImportedAnimation[] animations)
+    {
+        using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
+        writer.Write("NSKIN001"u8);
+        writer.Write(1u);
+        writer.Write(checked((uint)positions.Length));
+        writer.Write(checked((uint)indices.Length));
+        writer.Write(materialSlot);
+        for (var index = 0; index < positions.Length; index++)
+        {
+            Write(writer, positions[index]);
+            Write(writer, normals[index]);
+            Write(writer, texCoords[index]);
+            Write(writer, tangents[index]);
+            writer.Write(joints[index].X);
+            writer.Write(joints[index].Y);
+            writer.Write(joints[index].Z);
+            writer.Write(joints[index].W);
+            Write(writer, weights[index]);
+        }
+        for (var index = 0; index < indices.Length; index++)
+            writer.Write(indices[index]);
+        writer.Write(checked((uint)skeleton.Joints.Length));
+        for (var index = 0; index < skeleton.Joints.Length; index++)
+        {
+            var joint = skeleton.Joints[index];
+            writer.Write(joint.Name);
+            writer.Write(joint.ParentIndex);
+            Write(writer, joint.Translation);
+            Write(writer, new Vector4(joint.Rotation.X, joint.Rotation.Y,
+                joint.Rotation.Z, joint.Rotation.W));
+            Write(writer, joint.Scale);
+            Write(writer, joint.InverseBindMatrix);
+        }
+        writer.Write(checked((uint)animations.Length));
+        for (var index = 0; index < animations.Length; index++)
+            WriteAnimation(writer, animations[index], skeleton.Joints.Length);
+    }
+
+    /// <summary>Writes one imported animation clip.</summary>
+    /// <param name="writer">Artifact writer.</param>
+    /// <param name="animation">Animation to write.</param>
+    /// <param name="jointCount">Expected joint-track count.</param>
+    private static void WriteAnimation(
+        BinaryWriter writer,
+        ImportedAnimation animation,
+        int jointCount)
+    {
+        if (animation.Tracks.Length != jointCount)
+            throw new InvalidDataException("Imported animation does not match its skeleton.");
+        writer.Write(animation.Name);
+        writer.Write(animation.Duration);
+        for (var index = 0; index < animation.Tracks.Length; index++)
+        {
+            var track = animation.Tracks[index];
+            writer.Write(track is not null);
+            if (track is null)
+                continue;
+            WriteTrack(writer, track.Translation);
+            WriteTrack(writer, track.Rotation);
+            WriteTrack(writer, track.Scale);
+        }
+    }
+
+    /// <summary>Writes one optional vector animation track.</summary>
+    /// <param name="writer">Artifact writer.</param>
+    /// <param name="track">Optional vector track.</param>
+    private static void WriteTrack(BinaryWriter writer, ImportedVectorTrack? track)
+    {
+        writer.Write(track is not null);
+        if (track is null)
+            return;
+        if (track.Times.Length != track.Values.Length)
+            throw new InvalidDataException("GLB animation key counts do not match.");
+        writer.Write(track.Interpolation);
+        writer.Write(checked((uint)track.Times.Length));
+        for (var index = 0; index < track.Times.Length; index++)
+        {
+            writer.Write(track.Times[index]);
+            Write(writer, track.Values[index]);
+        }
+    }
+
+    /// <summary>Writes one optional quaternion animation track.</summary>
+    /// <param name="writer">Artifact writer.</param>
+    /// <param name="track">Optional quaternion track.</param>
+    private static void WriteTrack(BinaryWriter writer, ImportedQuaternionTrack? track)
+    {
+        writer.Write(track is not null);
+        if (track is null)
+            return;
+        if (track.Times.Length != track.Values.Length)
+            throw new InvalidDataException("GLB animation key counts do not match.");
+        writer.Write(track.Interpolation);
+        writer.Write(checked((uint)track.Times.Length));
+        for (var index = 0; index < track.Times.Length; index++)
+        {
+            writer.Write(track.Times[index]);
+            var value = track.Values[index];
+            var rotation = Quaternion.Normalize(new Quaternion(value.X, value.Y, value.Z, value.W));
+            Write(writer, new Vector4(rotation.X, rotation.Y, rotation.Z, rotation.W));
+        }
+    }
+
     /// <summary>Writes a vector.</summary>
     /// <param name="writer">Artifact writer.</param>
     /// <param name="value">Vector value.</param>
@@ -476,6 +1157,17 @@ public sealed class GlbModelImporter : IAssetImporter
     /// <param name="writer">Artifact writer.</param>
     /// <param name="value">Vector value.</param>
     private static void Write(BinaryWriter writer, Vector4 value) { writer.Write(value.X); writer.Write(value.Y); writer.Write(value.Z); writer.Write(value.W); }
+
+    /// <summary>Writes a row-major matrix.</summary>
+    /// <param name="writer">Artifact writer.</param>
+    /// <param name="value">Matrix value.</param>
+    private static void Write(BinaryWriter writer, Matrix4x4 value)
+    {
+        writer.Write(value.M11); writer.Write(value.M12); writer.Write(value.M13); writer.Write(value.M14);
+        writer.Write(value.M21); writer.Write(value.M22); writer.Write(value.M23); writer.Write(value.M24);
+        writer.Write(value.M31); writer.Write(value.M32); writer.Write(value.M33); writer.Write(value.M34);
+        writer.Write(value.M41); writer.Write(value.M42); writer.Write(value.M43); writer.Write(value.M44);
+    }
 
     /// <summary>Reads one little-endian single.</summary>
     /// <param name="bytes">Source bytes.</param>
@@ -501,4 +1193,50 @@ public sealed class GlbModelImporter : IAssetImporter
 
     /// <summary>Resolved binary accessor range.</summary>
     private readonly record struct AccessorView(int Offset, int Count, int Stride);
+
+    /// <summary>Four remapped joint indices.</summary>
+    private readonly record struct JointIndices(uint X, uint Y, uint Z, uint W);
+
+    /// <summary>Associates a skin declaration with the node instantiating its mesh.</summary>
+    private readonly record struct SkinBinding(JsonElement Skin, int MeshNodeIndex);
+
+    /// <summary>Imported skeleton joint.</summary>
+    private readonly record struct ImportedJoint(
+        string Name,
+        int ParentIndex,
+        Vector3 Translation,
+        Quaternion Rotation,
+        Vector3 Scale,
+        Matrix4x4 InverseBindMatrix);
+
+    /// <summary>Imported skeleton plus source mappings.</summary>
+    private readonly record struct ImportedSkeleton(
+        ImportedJoint[] Joints,
+        int[] SourceNodeIndices,
+        int[] SourceJointToSkeletonJoint,
+        int MeshNodeIndex);
+
+    /// <summary>Imported vector animation curve.</summary>
+    private sealed record ImportedVectorTrack(
+        float[] Times,
+        Vector3[] Values,
+        byte Interpolation);
+
+    /// <summary>Imported quaternion animation curve stored in glTF XYZW order.</summary>
+    private sealed record ImportedQuaternionTrack(
+        float[] Times,
+        Vector4[] Values,
+        byte Interpolation);
+
+    /// <summary>Optional transform curves for one joint.</summary>
+    private sealed record ImportedJointTrack(
+        ImportedVectorTrack? Translation,
+        ImportedQuaternionTrack? Rotation,
+        ImportedVectorTrack? Scale);
+
+    /// <summary>Imported animation clip.</summary>
+    private sealed record ImportedAnimation(
+        string Name,
+        float Duration,
+        ImportedJointTrack?[] Tracks);
 }

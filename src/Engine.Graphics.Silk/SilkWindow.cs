@@ -121,14 +121,17 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     private readonly Dictionary<uint, FrameVertexBuffers> _viewportQuadBuffers = new();
     private PersistentVertexArena? _persistentVertices;
     private PersistentIndexedMeshStore? _persistentIndexedMeshes;
+    private PersistentSkinnedMeshStore? _persistentSkinnedMeshes;
     private PersistentTextureStore? _persistentTextures;
     private FrameTransientArena? _transientArena;
     private readonly List<MeshHandle>[] _retiredMeshes = [[], []];
     private readonly List<TextureHandle>[] _retiredTextures = [[], []];
     private readonly HashSet<MeshHandle> _pendingMeshRetirements = [];
     private readonly HashSet<TextureHandle> _pendingTextureRetirements = [];
+    private readonly HashSet<SkinPaletteHandle> _pendingPaletteRetirements = [];
     private uint _nextMeshHandle = 1;
     private uint _nextTextureHandle = 1;
+    private uint _nextPaletteHandle = 1;
     private TextureHandle _defaultModelTexture;
     private readonly Dictionary<uint, VertexT[]> _viewportQuadVertices = new();
     private readonly Dictionary<uint, ulong> _viewportQuadGenerations = new();
@@ -637,9 +640,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         CreateUiShapePipeline();
         CreateFboGraphicsPipeline();
         CreateModelPipeline();
+        CreateSkinnedModelPipeline();
         _persistentTextures = new PersistentTextureStore(_vk!, _device, FindMemoryType,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorPool);
+        _persistentSkinnedMeshes = new PersistentSkinnedMeshStore(
+            _vk!, _device, FindMemoryType,
+            _pipelines.SkinPaletteDescriptorSetLayout,
+            _pipelines.SkinPaletteDescriptorPool,
+            _logger);
         _defaultModelTexture = CreateTexture(new TextureResource(1, 1,
             [255, 255, 255, 255], TextureColorSpace.Srgb));
         CreateGridPipeline();
@@ -2292,6 +2301,199 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _logger.LogInformation("Indexed model pipeline created");
     }
 
+    /// <summary>Creates the built-in GPU skinning pipeline and palette descriptors.</summary>
+    private void CreateSkinnedModelPipeline()
+    {
+        _logger.LogDebug("Creating skinned model pipeline");
+        var paletteBinding = new DescriptorSetLayoutBinding
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.StorageBuffer,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.VertexBit
+        };
+        var paletteLayoutInfo = new DescriptorSetLayoutCreateInfo
+        {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 1,
+            PBindings = &paletteBinding
+        };
+        Check(_vk!.CreateDescriptorSetLayout(_device, &paletteLayoutInfo, null,
+            out _pipelines.SkinPaletteDescriptorSetLayout),
+            "create skin palette descriptor layout");
+        const uint maximumPaletteSets = 2048;
+        var poolSize = new DescriptorPoolSize
+        {
+            Type = DescriptorType.StorageBuffer,
+            DescriptorCount = maximumPaletteSets
+        };
+        var poolInfo = new DescriptorPoolCreateInfo
+        {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+            PoolSizeCount = 1,
+            PPoolSizes = &poolSize,
+            MaxSets = maximumPaletteSets
+        };
+        Check(_vk.CreateDescriptorPool(_device, &poolInfo, null,
+            out _pipelines.SkinPaletteDescriptorPool),
+            "create skin palette descriptor pool");
+        var layouts = stackalloc DescriptorSetLayout[]
+        {
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.SkinPaletteDescriptorSetLayout
+        };
+        var pushConstantRange = new PushConstantRange
+        {
+            StageFlags = ShaderStageFlags.VertexBit,
+            Size = (uint)sizeof(PushConstants)
+        };
+        var pipelineLayoutInfo = new PipelineLayoutCreateInfo
+        {
+            SType = StructureType.PipelineLayoutCreateInfo,
+            SetLayoutCount = 2,
+            PSetLayouts = layouts,
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
+        };
+        Check(_vk.CreatePipelineLayout(_device, &pipelineLayoutInfo, null,
+            out _pipelines.SkinnedModelLayout), "create skinned model pipeline layout");
+        _pipelines.SkinnedModelVertexShader = CreateShaderModule("skinned_model.vert.spv");
+        _pipelines.SkinnedModelFragmentShader = CreateShaderModule("skinned_model.frag.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+        try
+        {
+            var stages = stackalloc PipelineShaderStageCreateInfo[]
+            {
+                new()
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.VertexBit,
+                    Module = _pipelines.SkinnedModelVertexShader,
+                    PName = (byte*)entryPointName
+                },
+                new()
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.FragmentBit,
+                    Module = _pipelines.SkinnedModelFragmentShader,
+                    PName = (byte*)entryPointName
+                }
+            };
+            var binding = new VertexInputBindingDescription
+            {
+                Binding = 0,
+                Stride = SkinnedForwardModelVertex.Stride,
+                InputRate = VertexInputRate.Vertex
+            };
+            var attributes = stackalloc VertexInputAttributeDescription[]
+            {
+                new() { Binding = 0, Location = 0, Format = Format.R32G32B32Sfloat, Offset = 0 },
+                new() { Binding = 0, Location = 1, Format = Format.R32G32B32Sfloat,
+                    Offset = sizeof(float) * 3u },
+                new() { Binding = 0, Location = 2, Format = Format.R32G32Sfloat,
+                    Offset = sizeof(float) * 6u },
+                new() { Binding = 0, Location = 3, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 8u },
+                new() { Binding = 0, Location = 4, Format = Format.R32G32B32A32Uint,
+                    Offset = sizeof(float) * 12u },
+                new() { Binding = 0, Location = 5, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 12u + sizeof(uint) * 4u }
+            };
+            var vertexInput = new PipelineVertexInputStateCreateInfo
+            {
+                SType = StructureType.PipelineVertexInputStateCreateInfo,
+                VertexBindingDescriptionCount = 1,
+                PVertexBindingDescriptions = &binding,
+                VertexAttributeDescriptionCount = 6,
+                PVertexAttributeDescriptions = attributes
+            };
+            var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+            {
+                SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                Topology = PrimitiveTopology.TriangleList
+            };
+            var dynamicStates = stackalloc[] { DynamicState.Viewport, DynamicState.Scissor };
+            var dynamicState = new PipelineDynamicStateCreateInfo
+            {
+                SType = StructureType.PipelineDynamicStateCreateInfo,
+                DynamicStateCount = 2,
+                PDynamicStates = dynamicStates
+            };
+            var viewportState = new PipelineViewportStateCreateInfo
+            {
+                SType = StructureType.PipelineViewportStateCreateInfo,
+                ViewportCount = 1,
+                ScissorCount = 1
+            };
+            var rasterizer = new PipelineRasterizationStateCreateInfo
+            {
+                SType = StructureType.PipelineRasterizationStateCreateInfo,
+                PolygonMode = PolygonMode.Fill,
+                CullMode = CullModeFlags.BackBit,
+                FrontFace = FrontFace.CounterClockwise,
+                LineWidth = 1f
+            };
+            var multisampling = new PipelineMultisampleStateCreateInfo
+            {
+                SType = StructureType.PipelineMultisampleStateCreateInfo,
+                RasterizationSamples = _msaaSamples
+            };
+            var depthStencil = new PipelineDepthStencilStateCreateInfo
+            {
+                SType = StructureType.PipelineDepthStencilStateCreateInfo,
+                DepthTestEnable = true,
+                DepthWriteEnable = true,
+                DepthCompareOp = CompareOp.LessOrEqual
+            };
+            var blendAttachment = new PipelineColorBlendAttachmentState
+            {
+                ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+                    ColorComponentFlags.BBit | ColorComponentFlags.ABit
+            };
+            var blending = new PipelineColorBlendStateCreateInfo
+            {
+                SType = StructureType.PipelineColorBlendStateCreateInfo,
+                AttachmentCount = 1,
+                PAttachments = &blendAttachment
+            };
+            var pipelineInfo = new GraphicsPipelineCreateInfo
+            {
+                SType = StructureType.GraphicsPipelineCreateInfo,
+                StageCount = 2,
+                PStages = stages,
+                PVertexInputState = &vertexInput,
+                PInputAssemblyState = &inputAssembly,
+                PViewportState = &viewportState,
+                PRasterizationState = &rasterizer,
+                PMultisampleState = &multisampling,
+                PDepthStencilState = &depthStencil,
+                PColorBlendState = &blending,
+                PDynamicState = &dynamicState,
+                Layout = _pipelines.SkinnedModelLayout,
+                RenderPass = _fboRenderPass,
+                Subpass = 0
+            };
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                null, out _pipelines.SkinnedModelPipeline),
+                "create skinned model pipeline");
+        }
+        finally
+        {
+            SilkMarshal.Free(entryPointName);
+        }
+        _logger.LogInformation("Skinned model pipeline created");
+    }
+
+    /// <summary>Throws when Vulkan reports a failed backend operation.</summary>
+    /// <param name="result">Vulkan result.</param>
+    /// <param name="operation">Operation description.</param>
+    private static void Check(Result result, string operation)
+    {
+        if (result != Result.Success)
+            throw new InvalidOperationException($"Failed to {operation}: {result}");
+    }
+
     /// <summary>
     /// Creates the fullscreen procedural ground-grid pipeline for viewport FBOs.
     /// </summary>
@@ -2928,6 +3130,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         foreach (var command in renderQueue.CommandSpan)
         {
             ValidateOwner(command.Mesh);
+            if (command.SkinPalette.IsValid)
+                ValidateOwner(command.SkinPalette);
             _pendingViewportDraws[viewportId].Add(command);
         }
         _pendingViewportRenders.Add(viewportId);
@@ -2957,6 +3161,48 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     }
 
     /// <inheritdoc/>
+    public SkinnedMeshHandles CreateSkinnedMesh(
+        SkinnedMeshResource mesh,
+        StandardMaterialResource material)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(material);
+        var meshHandle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
+        var paletteHandle = new SkinPaletteHandle(CreateOwnedHandle(_nextPaletteHandle++));
+        var vertices = BuiltInForwardMeshBuilder.BuildSkinnedVertices(mesh, material);
+        var texture = material.BaseColorTexture.IsValid
+            ? material.BaseColorTexture : _defaultModelTexture;
+        ValidateOwner(texture);
+        _persistentTextures!.GetDescriptor(texture);
+        var pose = new SkeletonPose(mesh.Skeleton);
+        _persistentSkinnedMeshes!.Add(meshHandle, paletteHandle, vertices, mesh.Mesh.Indices,
+            texture, pose.SkinMatrices);
+        return new SkinnedMeshHandles(meshHandle, paletteHandle);
+    }
+
+    /// <inheritdoc/>
+    public void UpdateSkinPalette(
+        SkinPaletteHandle palette,
+        ReadOnlySpan<Matrix4x4> matrices)
+    {
+        ValidateOwner(palette);
+        if (_pendingPaletteRetirements.Contains(palette))
+            throw new ObjectDisposedException(nameof(palette));
+        _persistentSkinnedMeshes!.UpdatePalette(palette, matrices);
+    }
+
+    /// <inheritdoc/>
+    public void DestroySkinPalette(SkinPaletteHandle palette)
+    {
+        ValidateOwner(palette);
+        if (!_persistentSkinnedMeshes!.ContainsPalette(palette))
+            throw new ArgumentOutOfRangeException(nameof(palette), palette,
+                "Skin palette was not found.");
+        if (!_pendingPaletteRetirements.Add(palette))
+            throw new InvalidOperationException("The skin palette is already pending destruction.");
+    }
+
+    /// <inheritdoc/>
     public TextureHandle CreateTexture(TextureResource texture)
     {
         ArgumentNullException.ThrowIfNull(texture);
@@ -2982,7 +3228,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         ArgumentNullException.ThrowIfNull(update);
         ArgumentNullException.ThrowIfNull(update.Vertices);
         ValidateOwner(mesh);
-        if (_persistentIndexedMeshes!.Contains(mesh))
+        if (_persistentIndexedMeshes!.Contains(mesh) || _persistentSkinnedMeshes!.ContainsMesh(mesh))
             throw new InvalidOperationException("Immutable static model meshes cannot be updated.");
         _persistentVertices!.Update(mesh, update);
     }
@@ -2991,7 +3237,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     public void DestroyMesh(MeshHandle mesh)
     {
         ValidateOwner(mesh);
-        if (!_persistentIndexedMeshes!.Contains(mesh))
+        if (!_persistentIndexedMeshes!.Contains(mesh) && !_persistentSkinnedMeshes!.ContainsMesh(mesh))
             _persistentVertices!.GetBinding(mesh);
         if (!_pendingMeshRetirements.Add(mesh))
             throw new InvalidOperationException("The mesh is already pending destruction.");
@@ -3063,6 +3309,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         if (!texture.IsValid || (uint)(texture.Value >> 32) != _rendererId)
             throw new ArgumentException("Texture handle belongs to another renderer.",
                 nameof(texture));
+    }
+
+    /// <summary>Ensures a skin palette belongs to this renderer.</summary>
+    /// <param name="palette">Palette handle to validate.</param>
+    private void ValidateOwner(SkinPaletteHandle palette)
+    {
+        if (!palette.IsValid || (uint)(palette.Value >> 32) != _rendererId)
+            throw new ArgumentException("Skin palette belongs to another renderer.",
+                nameof(palette));
     }
 
     private void RecreateDirtyFbos()
@@ -3471,7 +3726,13 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _transientArena!.Reset(frameIndex);
         foreach (var mesh in _retiredMeshes[frameIndex])
         {
-            if (_persistentIndexedMeshes!.Contains(mesh))
+            if (_persistentSkinnedMeshes!.ContainsMesh(mesh))
+            {
+                var resource = _persistentSkinnedMeshes.RemoveMesh(mesh);
+                _pendingPaletteRetirements.Remove(resource.PaletteHandle);
+                _persistentSkinnedMeshes.Release(resource);
+            }
+            else if (_persistentIndexedMeshes!.Contains(mesh))
                 _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
             else
                 _persistentVertices!.Release(_persistentVertices.Remove(mesh));
@@ -3558,6 +3819,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _persistentVertices!.RecordPendingUploads(commandBuffer, _transientArena!, _activeFrameIndex);
         _persistentIndexedMeshes!.RecordPendingUploads(
             commandBuffer, _transientArena!, _activeFrameIndex);
+        _persistentSkinnedMeshes!.RecordPendingUploads(
+            commandBuffer, _transientArena!, _activeFrameIndex);
         _persistentTextures!.RecordPendingUploads(
             commandBuffer, _transientArena!, _activeFrameIndex);
         // ═══════════════════════════════════════════════════════════════
@@ -3565,6 +3828,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         // ═══════════════════════════════════════════════════════════════
 
         var clearValues = stackalloc ClearValue[2];
+        var skinnedDescriptorSets = stackalloc DescriptorSet[2];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty || !_pendingViewportRenders.Remove(viewportId))
@@ -3634,6 +3898,36 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
                 foreach (var draw in draws)
                 {
+                    if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
+                    {
+                        if (!draw.SkinPalette.IsValid)
+                            throw new InvalidOperationException(
+                                "A skinned mesh draw requires a joint palette.");
+                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                            _pipelines.SkinnedModelPipeline);
+                        var skinned = _persistentSkinnedMeshes.GetBinding(
+                            draw.Mesh, draw.SkinPalette, _activeFrameIndex);
+                        if (skinned.IndexCount == 0)
+                            continue;
+                        var skinnedVertexBuffer = skinned.VertexBuffer;
+                        var skinnedOffset = 0UL;
+                        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                            &skinnedVertexBuffer, &skinnedOffset);
+                        _vk.CmdBindIndexBuffer(commandBuffer, skinned.IndexBuffer, 0,
+                            IndexType.Uint32);
+                        var textureDescriptor = _persistentTextures.GetDescriptor(skinned.Texture);
+                        skinnedDescriptorSets[0] = textureDescriptor;
+                        skinnedDescriptorSets[1] = skinned.PaletteDescriptor;
+                        _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                            _pipelines.SkinnedModelLayout, 0, 2,
+                            skinnedDescriptorSets, 0, null);
+                        var skinnedConstants = draw.PushConstants;
+                        _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
+                            ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants),
+                            &skinnedConstants);
+                        _vk.CmdDrawIndexed(commandBuffer, skinned.IndexCount, 1, 0, 0, 0);
+                        continue;
+                    }
                     if (_persistentIndexedMeshes!.Contains(draw.Mesh))
                     {
                         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
@@ -4113,12 +4407,19 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _viewportQuadVertices.Clear();
 
         // Drain deferred retirements while their lookup stores are still alive.
-        if (_persistentIndexedMeshes is not null && _persistentVertices is not null)
+        if (_persistentIndexedMeshes is not null && _persistentSkinnedMeshes is not null &&
+            _persistentVertices is not null)
         {
             foreach (var retired in _retiredMeshes)
             foreach (var mesh in retired)
             {
-                if (_persistentIndexedMeshes.Contains(mesh))
+                if (_persistentSkinnedMeshes.ContainsMesh(mesh))
+                {
+                    var resource = _persistentSkinnedMeshes.RemoveMesh(mesh);
+                    _pendingPaletteRetirements.Remove(resource.PaletteHandle);
+                    _persistentSkinnedMeshes.Release(resource);
+                }
+                else if (_persistentIndexedMeshes.Contains(mesh))
                     _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
                 else
                     _persistentVertices.Release(_persistentVertices.Remove(mesh));
@@ -4127,7 +4428,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         foreach (var retired in _retiredMeshes)
             retired.Clear();
         _pendingMeshRetirements.Clear();
+        _pendingPaletteRetirements.Clear();
         _persistentIndexedMeshes?.Destroy();
+        _persistentSkinnedMeshes?.Destroy();
         _persistentVertices?.Destroy();
         if (_persistentTextures is not null)
         {

@@ -8,6 +8,14 @@ public readonly record struct MeshHandle(ulong Value)
     public bool IsValid => Value != 0;
 }
 
+/// <summary>Identifies a renderer-owned joint palette.</summary>
+/// <param name="Value">Opaque renderer-owned identifier.</param>
+public readonly record struct SkinPaletteHandle(ulong Value)
+{
+    /// <summary>Gets whether this handle identifies a resource.</summary>
+    public bool IsValid => Value != 0;
+}
+
 /// <summary>Identifies a renderer-owned view and render target.</summary>
 /// <param name="Value">Opaque renderer-owned identifier.</param>
 public readonly record struct RenderViewHandle(ulong Value)

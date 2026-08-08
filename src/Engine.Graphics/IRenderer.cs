@@ -18,6 +18,23 @@ public interface IRenderer
     /// <returns>Opaque handle used by render submissions.</returns>
     MeshHandle CreateStaticMesh(StaticMeshResource mesh, StandardMaterialResource material);
 
+    /// <summary>Creates an immutable mesh and mutable joint palette for GPU skinning.</summary>
+    /// <param name="mesh">Indexed skinned geometry and skeleton.</param>
+    /// <param name="material">Initial standard material.</param>
+    /// <returns>Opaque handles used by skinned render submissions.</returns>
+    SkinnedMeshHandles CreateSkinnedMesh(
+        SkinnedMeshResource mesh,
+        StandardMaterialResource material);
+
+    /// <summary>Updates the current matrices in a renderer-owned joint palette.</summary>
+    /// <param name="palette">Palette to update.</param>
+    /// <param name="matrices">Mesh-space skin matrices in skeleton order.</param>
+    void UpdateSkinPalette(SkinPaletteHandle palette, ReadOnlySpan<Matrix4x4> matrices);
+
+    /// <summary>Releases a joint palette after in-flight work completes.</summary>
+    /// <param name="palette">Palette to release.</param>
+    void DestroySkinPalette(SkinPaletteHandle palette);
+
     /// <summary>Creates an immutable sampled texture.</summary>
     /// <param name="texture">Decoded RGBA8 texture.</param>
     /// <returns>Opaque renderer-owned texture handle.</returns>

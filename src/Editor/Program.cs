@@ -45,6 +45,8 @@ using var runtimeResources = new RuntimeResourceManager(
     unusedCapacity: 128);
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
     "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
+    "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
     "nico/standard-material", (stream, _, _) =>
     {
@@ -912,7 +914,8 @@ void AddImportedSubAssets(FileSystemNode node)
 /// <returns>True for user-facing model resources.</returns>
 bool IsVisibleImportedArtifact(string contentType)
 {
-    return contentType is "nico/static-mesh" or "nico/standard-material" or "nico/texture2d";
+    return contentType is "nico/static-mesh" or "nico/skinned-mesh" or
+        "nico/standard-material" or "nico/texture2d";
 }
 
 /// <summary>Builds a concise typed label for one imported artifact.</summary>
@@ -923,12 +926,14 @@ string GetImportedArtifactDisplayName(AssetArtifact artifact)
     var type = artifact.ContentType switch
     {
         "nico/static-mesh" => "Mesh",
+        "nico/skinned-mesh" => "Skinned Mesh",
         "nico/standard-material" => "Material",
         "nico/texture2d" => "Texture",
         _ => "Asset"
     };
     var keyParts = artifact.Key.Split('/');
-    var name = artifact.ContentType == "nico/static-mesh" && keyParts.Length > 1
+    var name = (artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh") &&
+        keyParts.Length > 1
         ? string.Join(" / ", keyParts.Skip(1))
         : Path.GetFileNameWithoutExtension(artifact.RelativePath);
     return $"{name} [{type}]";
@@ -1022,7 +1027,7 @@ void OpenFileSystemEntry(Node item)
 /// <param name="target">Hierarchy parent target, or null for the scene root.</param>
 void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
 {
-    if (source.ContentType != "nico/static-mesh")
+    if (source.ContentType is not "nico/static-mesh" and not "nico/skinned-mesh")
     {
         logger.LogWarning("Imported {ContentType} cannot be placed in the Hierarchy",
             source.ContentType);
@@ -1038,6 +1043,8 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
         Mesh = source.Reference,
         Name = source.Name[..source.Name.LastIndexOf(" [", StringComparison.Ordinal)]
     };
+    if (source.ContentType == "nico/skinned-mesh")
+        instance.AddComponent(new AnimatorComponent());
     var destination = target ?? sceneRoot;
     try
     {
@@ -1080,7 +1087,7 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
     }
     var outcome = assetImportPipeline.Import(record, "editor");
     var primaryMesh = outcome.Artifacts.FirstOrDefault(artifact =>
-        artifact.ContentType == "nico/static-mesh");
+        artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
     if (!outcome.Succeeded || primaryMesh is null)
     {
         logger.LogWarning("GLB {FilePath} has no importable primary mesh", source.FullPath);
@@ -1104,6 +1111,7 @@ void LoadAssetMeshResources(
     var meshReference = instance.Mesh;
     AssetImportOutcome? outcome = null;
     StaticMeshResource importedMesh;
+    SkinnedMeshResource? importedSkin = null;
     if (BuiltInAssets.IsBuiltInMesh(meshReference))
     {
         importedMesh = BuiltInAssets.LoadMesh(meshReference);
@@ -1117,15 +1125,26 @@ void LoadAssetMeshResources(
             return;
         }
         outcome = knownOutcome ?? assetImportPipeline.Import(record, "editor");
-        if (!outcome.Succeeded || outcome.ArtifactDirectory is null ||
-            !outcome.Artifacts.Any(artifact => artifact.Key == meshReference.SubAsset &&
-                artifact.ContentType == "nico/static-mesh"))
+        var meshArtifact = outcome.Artifacts.FirstOrDefault(artifact =>
+            artifact.Key == meshReference.SubAsset &&
+            artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
+        if (!outcome.Succeeded || outcome.ArtifactDirectory is null || meshArtifact is null)
         {
             logger.LogError("Mesh sub-asset {Reference} has no valid artifact", meshReference);
             return;
         }
-        importedMesh = LoadRuntimeResource(meshReference,
-            new StaticMeshResource([], [], []));
+        if (meshArtifact.ContentType == "nico/skinned-mesh")
+        {
+            importedSkin = LoadRuntimeResource(meshReference,
+                new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
+                    new SkeletonResource([]), []));
+            importedMesh = importedSkin.Mesh;
+        }
+        else
+        {
+            importedMesh = LoadRuntimeResource(meshReference,
+                new StaticMeshResource([], [], []));
+        }
     }
     instance.LocalBounds = new MeshBounds(importedMesh.BoundsMinimum, importedMesh.BoundsMaximum);
     var defaultMaterial = MaterialProperties.Default;
@@ -1178,8 +1197,16 @@ void LoadAssetMeshResources(
         textureResource = ResolveTextureResource(materialOverride.BaseColorTexture)
             ?? textureResource;
     }
-    (targetRenderer ?? viewportRenderer).SetAssetMeshResource(instance, importedMesh, material,
-        textureResource);
+    if (importedSkin is null)
+    {
+        (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
+            instance, importedMesh, material, textureResource);
+    }
+    else
+    {
+        (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
+            instance, importedSkin, material, textureResource);
+    }
 }
 
 /// <summary>Loads one imported texture reference for a material override.</summary>
@@ -1681,6 +1708,17 @@ void AddRigidBodyComponent(Node target)
     InvalidateViewports();
 }
 
+/// <summary>Adds skeletal animation playback settings to one mesh instance.</summary>
+/// <param name="target">Selected hierarchy node.</param>
+void AddAnimatorComponent(Node target)
+{
+    if (target is not MeshInstance3D node || node.GetComponent<AnimatorComponent>() is not null)
+        return;
+    node.AddComponent(new AnimatorComponent());
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
 /// <summary>Shows nested object and component actions for the hierarchy target.</summary>
 void ShowHierarchyContextMenu()
 {
@@ -1713,6 +1751,8 @@ void ShowHierarchyContextMenu()
         canAddToTarget && target.GetComponent<ColliderComponent>() is null);
     componentMenu.AddItem("Add Rigid Body", () => AddRigidBodyComponent(target),
         canAddToTarget && target.GetComponent<RigidBodyComponent>() is null);
+    componentMenu.AddItem("Add Animator", () => AddAnimatorComponent(target),
+        target is MeshInstance3D && target.GetComponent<AnimatorComponent>() is null);
     menu.AddSubmenu("Add Component", componentMenu);
     hierarchyContextMenu = menu;
     overlay.Add(menu, new Vector2(menuX, menuY));
@@ -2165,6 +2205,9 @@ window.Update += delta =>
             scriptHost.Update(delta);
             physicsWorld?.Update(delta);
             scriptHost.LateUpdate(delta);
+            viewportRenderer.UpdateAnimations(delta);
+            detachedSceneRenderer?.UpdateAnimations(delta);
+            detachedGameRenderer?.UpdateAnimations(delta);
         }
         catch (Exception exception)
         {
