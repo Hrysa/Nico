@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
     <PackageReference Include="StbImageSharp" Version="2.30.15" />
   </ItemGroup>
 
