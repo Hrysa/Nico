@@ -157,6 +157,8 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="pointerPosition">Pointer position in the same window.</param>
     public void RenderScene(ViewportPanel sceneViewport, Vector2 pointerPosition)
     {
+        if (!sceneViewport.IsEffectivelyVisible)
+            return;
         _sceneQueue.Clear();
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
@@ -168,6 +170,8 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="gameViewport">Current Game viewport layout.</param>
     public void RenderGame(ViewportPanel gameViewport)
     {
+        if (!gameViewport.IsEffectivelyVisible)
+            return;
         _gameQueue.Clear();
         RenderGameViewport(gameViewport.Width, gameViewport.Height);
     }

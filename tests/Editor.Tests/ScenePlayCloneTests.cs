@@ -21,6 +21,21 @@ public class ScenePlayCloneTests
         };
         var material = new AssetReference(AssetId.New(), "material/0");
         cube.Materials.Add(material);
+        var authoredScript = Assert.IsType<ScriptComponent>(Assert.Single(cube.Components));
+        authoredScript.SetPropertyOverride(42, SerializedPropertyValue.From("authored"));
+        cube.AddComponent(new ScriptComponent(AssetId.New()) { Enabled = false });
+        var authoredCollider = new ColliderComponent
+        {
+            Shape = ColliderShape.Sphere,
+            Radius = 0.75f
+        };
+        var authoredBody = new RigidBodyComponent
+        {
+            Mass = 2f,
+            LinearVelocity = Vector3.UnitX
+        };
+        cube.AddComponent(authoredCollider);
+        cube.AddComponent(authoredBody);
         var camera = new PerspectiveCamera { Name = "Camera" };
         root.AddChild(cube);
         root.AddChild(camera);
@@ -32,6 +47,24 @@ public class ScenePlayCloneTests
         Assert.Equal(cube.Mesh, playScene.MeshInstances[0].Mesh);
         Assert.Equal(new Vector3(2f, 0f, 0f), cube.Position);
         Assert.Equal(cube.ScriptId, playScene.MeshInstances[0].ScriptId);
+        Assert.Equal(4, playScene.MeshInstances[0].Components.Count);
+        var clonedScript = Assert.IsType<ScriptComponent>(
+            playScene.MeshInstances[0].Components[0]);
+        Assert.NotSame(authoredScript, clonedScript);
+        Assert.True(clonedScript.TryGetPropertyOverride(42, out var clonedValue));
+        Assert.True(clonedValue.TryGetString(out var text));
+        Assert.Equal("authored", text);
+        Assert.False(playScene.MeshInstances[0].Components[1].Enabled);
+        var clonedCollider = Assert.IsType<ColliderComponent>(
+            playScene.MeshInstances[0].Components[2]);
+        Assert.NotSame(authoredCollider, clonedCollider);
+        Assert.Equal(ColliderShape.Sphere, clonedCollider.Shape);
+        Assert.Equal(0.75f, clonedCollider.Radius);
+        var clonedBody = Assert.IsType<RigidBodyComponent>(
+            playScene.MeshInstances[0].Components[3]);
+        Assert.NotSame(authoredBody, clonedBody);
+        Assert.Equal(2f, clonedBody.Mass);
+        Assert.Equal(Vector3.UnitX, clonedBody.LinearVelocity);
         Assert.Equal(material, Assert.Single(playScene.MeshInstances[0].Materials));
         Assert.NotSame(camera, playScene.GameCamera);
     }

@@ -3,6 +3,7 @@ using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
 using Engine.Scripting;
+using Engine.UI;
 using Xunit;
 
 namespace Editor.Tests;
@@ -23,11 +24,14 @@ public class GameScriptHostTests
                 using System.Numerics;
                 using Engine.Scripting;
 
-                public sealed class MoveScript : SceneScript
+                public sealed partial class MoveScript : SceneScript
                 {
+                    [Observe(Editor)]
+                    public partial float Speed { get; set; } = 2f;
+
                     public override void OnUpdate(double deltaTime)
                     {
-                        Owner.Position += Vector3.UnitX * (float)deltaTime;
+                        Owner.Position += Vector3.UnitX * Speed * (float)deltaTime;
                     }
                 }
                 """);
@@ -42,6 +46,19 @@ public class GameScriptHostTests
             {
                 Assert.NotNull(host.Catalog);
                 Assert.True(host.Catalog.TryResolve(script.Id, out _));
+                var inspector = new SceneInspector(320f, 620f)
+                {
+                    ResolveScriptType = id =>
+                        host.Catalog.TryResolve(id, out var type) ? type : null
+                };
+                inspector.Bind(owner);
+                var speed = Assert.Single(inspector.Children.OfType<TextField>(),
+                    field => field.Name == "ScriptProperty0_Speed");
+                Assert.Equal("2", speed.Text);
+                speed.SetFocus(true);
+                speed.InvokeKeyDown((int)InputKey.Backspace);
+                speed.InvokeTextInput('3');
+                Assert.True(inspector.EditForm.CommitAll());
                 host.LoadScene(root);
                 host.Update(0.5);
             }
@@ -59,7 +76,7 @@ public class GameScriptHostTests
             runtime.Start();
             runtime.Update(0.25);
 
-            Assert.Equal(0.75f, owner.Position.X);
+            Assert.Equal(2.25f, owner.Position.X);
         }
         finally
         {

@@ -73,12 +73,17 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     private Timer? _continuousWakeTimer;
     private Timer? _deferredWakeTimer;
     private int _frameRequested;
+    private int _discardNextUpdateDelta;
+    private bool _updatingFrame;
     private bool _firstFramePresented;
     private long _profileAllocationStart;
     private double _profileUpdateMilliseconds;
     private ulong _profileFrameNumber;
 #if DEBUG_GC_ALLOC
     private long _frameAllocationStart;
+    private int _frameGen0CollectionStart;
+    private int _frameGen1CollectionStart;
+    private int _frameGen2CollectionStart;
     private ulong _allocationFrameNumber;
 #endif
 
@@ -138,6 +143,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
     private uint _activeFrameIndex;
+    private Vector4 _swapchainClearColor = new(0f, 0f, 0f, 1f);
 
     public bool IsRunning => _window != null && !_window.IsClosing;
 
@@ -704,12 +710,19 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     private void OnUpdate(double delta)
     {
         Interlocked.Exchange(ref _frameRequested, 0);
+        var discardDelta = Interlocked.Exchange(ref _discardNextUpdateDelta, 0) != 0;
+        var updateDelta = _eventDrivenIdle && (!_continuousRendering || discardDelta)
+            ? 0d
+            : delta;
         CpuProfiler.BeginFrame();
         _profileFrameNumber++;
         _profileAllocationStart = GC.GetTotalAllocatedBytes(precise: true);
         var profileStart = System.Diagnostics.Stopwatch.GetTimestamp();
 #if DEBUG_GC_ALLOC
         _frameAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+        _frameGen0CollectionStart = GC.CollectionCount(0);
+        _frameGen1CollectionStart = GC.CollectionCount(1);
+        _frameGen2CollectionStart = GC.CollectionCount(2);
 #endif
         if (_pendingInitialLogicalWidth > 0 && _pendingInitialLogicalHeight > 0)
         {
@@ -718,7 +731,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             _pendingInitialLogicalHeight = 0;
         }
 
-        Update?.Invoke(delta);
+        _updatingFrame = true;
+        try
+        {
+            Update?.Invoke(updateDelta);
+        }
+        finally
+        {
+            _updatingFrame = false;
+        }
         _profileUpdateMilliseconds = System.Diagnostics.Stopwatch
             .GetElapsedTime(profileStart).TotalMilliseconds;
     }
@@ -747,10 +768,15 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 #if DEBUG_GC_ALLOC
             var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
             var allocatedBytes = Math.Max(0L, allocationEnd - _frameAllocationStart);
+            var gen0Collections = Math.Max(0, GC.CollectionCount(0) - _frameGen0CollectionStart);
+            var gen1Collections = Math.Max(0, GC.CollectionCount(1) - _frameGen1CollectionStart);
+            var gen2Collections = Math.Max(0, GC.CollectionCount(2) - _frameGen2CollectionStart);
             _allocationFrameNumber++;
             _logger.LogInformation(
-                "Frame {FrameNumber} GC allocation: {AllocatedBytes} bytes",
-                _allocationFrameNumber, allocatedBytes);
+                "Frame {FrameNumber} GC allocation: {AllocatedBytes} bytes; " +
+                "frame collections: gen0={Gen0Collections}, gen1={Gen1Collections}, gen2={Gen2Collections}",
+                _allocationFrameNumber, allocatedBytes,
+                gen0Collections, gen1Collections, gen2Collections);
 #endif
         }
         finally
@@ -930,6 +956,44 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         cursor.CursorMode = cursor.IsSupported(CursorMode.Raw)
             ? CursorMode.Raw
             : CursorMode.Disabled;
+    }
+
+    /// <summary>Sets the logical pointer cursor style.</summary>
+    /// <param name="kind">Requested pointer cursor kind.</param>
+    public void SetPointerCursor(PointerCursorKind kind)
+    {
+        if (_mouse is null)
+            return;
+
+        var standardCursor = kind switch
+        {
+            PointerCursorKind.HorizontalResize => StandardCursor.HResize,
+            PointerCursorKind.VerticalResize => StandardCursor.VResize,
+            _ => StandardCursor.Default
+        };
+
+        var cursor = _mouse.Cursor;
+        if (cursor.IsSupported(standardCursor))
+        {
+            cursor.StandardCursor = standardCursor;
+            return;
+        }
+
+        if (standardCursor != StandardCursor.Default && cursor.IsSupported(StandardCursor.Default))
+            cursor.StandardCursor = StandardCursor.Default;
+    }
+
+    /// <summary>Sets the swapchain clear color used as the base background behind UI draws.</summary>
+    /// <param name="color">Linear color used for swapchain clear.</param>
+    public void SetUiClearColor(Color color)
+    {
+        SetUiClearColor(color.R, color.G, color.B, 1f);
+    }
+
+    /// <inheritdoc/>
+    public void SetUiClearColor(float r, float g, float b, float a = 1f)
+    {
+        _swapchainClearColor = new Vector4(r, g, b, a);
     }
 
     /// <inheritdoc/>
@@ -3623,7 +3687,13 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         // ═══════════════════════════════════════════════════════════════
         var clearColor = new ClearValue
         {
-            Color = new ClearColorValue { Float32_0 = 0.0f, Float32_1 = 0.0f, Float32_2 = 0.0f, Float32_3 = 1.0f }
+            Color = new ClearColorValue
+            {
+                Float32_0 = _swapchainClearColor.X,
+                Float32_1 = _swapchainClearColor.Y,
+                Float32_2 = _swapchainClearColor.Z,
+                Float32_3 = _swapchainClearColor.W
+            }
         };
 
         var renderPassInfo = new RenderPassBeginInfo
@@ -4170,6 +4240,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     {
         if (_continuousRendering == enabled)
             return;
+        if (_eventDrivenIdle && enabled && !_updatingFrame)
+            Interlocked.Exchange(ref _discardNextUpdateDelta, 1);
         _continuousRendering = enabled;
         if (_eventDrivenIdle)
         {

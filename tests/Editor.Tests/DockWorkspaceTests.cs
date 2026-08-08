@@ -6,6 +6,83 @@ namespace Editor.Tests;
 /// <summary>Verifies docking model mutation and safe workspace persistence.</summary>
 public sealed class DockWorkspaceTests
 {
+    /// <summary>Verifies dock panes use the theme surface without painting the splitter backing.</summary>
+    [Fact]
+    public void DockHost_TabPaneBackground_UsesThemeSurface()
+    {
+        var theme = UITheme.HighContrast;
+        var group = new DockTabGroup([new DockTab("scene", "Scene")], "scene");
+        var host = new DockHost(
+            new DockWorkspace { Root = group }, _ => new UIElement(), theme);
+        var presenter = Assert.IsAssignableFrom<Box>(Assert.Single(host.VisualChildren));
+
+        Assert.False(host.PaintBackground);
+        Assert.Equal(new Thickness(4f), host.Margin);
+        Assert.Equal(Thickness.Zero, host.Padding);
+        Assert.True(presenter.PaintBackground);
+        Assert.Equal(theme.Surface, presenter.BackgroundColor);
+        Assert.Equal(theme.PanelCornerRadius, presenter.CornerRadius);
+    }
+
+    /// <summary>Verifies dock margin and splitter thickness participate in pane layout.</summary>
+    [Fact]
+    public void DockHost_SplitLayout_UsesFourPixelMarginAndSplitter()
+    {
+        var split = new DockSplit(
+            DockSplitOrientation.Horizontal,
+            new DockTabGroup([new DockTab("left", "Left")]),
+            new DockTabGroup([new DockTab("right", "Right")]),
+            0.5f);
+        var host = new DockHost(
+            new DockWorkspace { Root = split }, _ => new UIElement())
+        {
+            Width = 400f,
+            Height = 200f
+        };
+
+        host.BuildDrawList();
+
+        var splitPresenter = Assert.IsAssignableFrom<UIElement>(Assert.Single(host.VisualChildren));
+        var first = Assert.IsAssignableFrom<UIElement>(splitPresenter.VisualChildren[0]);
+        var second = Assert.IsAssignableFrom<UIElement>(splitPresenter.VisualChildren[1]);
+        var splitter = Assert.IsAssignableFrom<UIElement>(splitPresenter.VisualChildren[2]);
+        Assert.Equal(4f, splitPresenter.Left);
+        Assert.Equal(4f, splitPresenter.Top);
+        Assert.Equal(392f, splitPresenter.Width);
+        Assert.Equal(192f, splitPresenter.Height);
+        Assert.Equal(198f, first.Right);
+        Assert.Equal(4f, splitter.Width);
+        Assert.Equal(198f, splitter.Left);
+        Assert.Equal(202f, second.Left);
+        Assert.Equal(396f, second.Right);
+    }
+
+    /// <summary>Verifies dock content exceeding its pane receives a visible vertical scroll bar.</summary>
+    [Fact]
+    public void DockHost_OverflowingContent_ShowsVerticalScrollBar()
+    {
+        var group = new DockTabGroup([new DockTab("inspector", "Inspector")], "inspector");
+        var content = new Panel(Engine.Graphics.Color.Red, 100f, 300f)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var host = new DockHost(
+            new DockWorkspace { Root = group }, _ => content)
+        {
+            Width = 200f,
+            Height = 120f
+        };
+
+        host.BuildDrawList();
+
+        var presenter = Assert.IsAssignableFrom<UIElement>(Assert.Single(host.VisualChildren));
+        var tabs = Assert.IsType<TabControl>(presenter.VisualChildren[0]);
+        var scroller = Assert.Single(tabs.VisualChildren.OfType<ScrollViewer>());
+        Assert.True(scroller.VerticalScrollBar.IsVisible);
+        Assert.Equal(300f, scroller.ExtentHeight);
+    }
+
     /// <summary>Verifies the five overlay targets map pointer centers to their zones.</summary>
     [Fact]
     public void DockDropOverlay_TargetCenters_HitEveryZone()
@@ -270,7 +347,7 @@ public sealed class DockWorkspaceTests
         Assert.True(factory.Windows[0].Disposed);
         Assert.Empty(session.Workspace.FloatingRoots);
         Assert.Same(profiler, registry.Resolve("profiler"));
-        Assert.Same(session.MainHost, profiler.Parent?.Parent?.Parent);
+        Assert.Same(session.MainHost, profiler.Parent?.Parent?.Parent?.Parent);
     }
 
     /// <summary>Verifies floating recurring work contributes to the shared window-loop demand.</summary>
@@ -318,7 +395,7 @@ public sealed class DockWorkspaceTests
 
         Assert.True(factory.Windows[0].Disposed);
         Assert.Empty(session.Workspace.FloatingRoots);
-        Assert.Same(session.MainHost, profiler.Parent?.Parent?.Parent);
+        Assert.Same(session.MainHost, profiler.Parent?.Parent?.Parent?.Parent);
     }
 
     /// <summary>Verifies a session transfers tabs between native-host model roots and refreshes both.</summary>
@@ -358,8 +435,8 @@ public sealed class DockWorkspaceTests
         Assert.Equal(["inspector", "game"], floatingTarget.Tabs.Select(tab => tab.Id));
         Assert.Single(factory.Windows);
         Assert.False(factory.Windows[0].Disposed);
-        Assert.Same(session.MainHost, scene.Parent?.Parent?.Parent);
-        Assert.Same(factory.Windows[0].Content, game.Parent?.Parent?.Parent);
+        Assert.Same(session.MainHost, scene.Parent?.Parent?.Parent?.Parent);
+        Assert.Same(factory.Windows[0].Content, game.Parent?.Parent?.Parent?.Parent);
     }
 
     /// <summary>Verifies physical screen coordinates resolve across a differently scaled floating host.</summary>
@@ -407,7 +484,7 @@ public sealed class DockWorkspaceTests
         Assert.True(session.TryGetDropTarget(screenPosition, out var target));
         Assert.Same(floatingWindow.Content, target.Host);
         Assert.Same(floatingTarget, target.Group);
-        Assert.Equal(new System.Numerics.Vector2(150f, 100f), target.LocalPosition);
+        Assert.Equal(new System.Numerics.Vector2(146f, 96f), target.LocalPosition);
         Assert.True(session.DockTabAtScreenPosition(
             "game", screenPosition, DockDropZone.Center));
         Assert.Equal(["scene"], main.Tabs.Select(tab => tab.Id));
@@ -766,9 +843,9 @@ public sealed class DockWorkspaceTests
 
         host.BuildDrawList();
 
-        Assert.InRange(left.Width, 98f, 100f);
-        Assert.InRange(right.Width, 295f, 297f);
-        Assert.Equal(left.Right + 5f, right.Left);
+        Assert.Equal(97f, left.Width);
+        Assert.Equal(291f, right.Width);
+        Assert.Equal(left.Right + 4f, right.Left);
     }
 
     /// <summary>Verifies host-local pointer discovery resolves a nested tab well and its bounds.</summary>
@@ -805,10 +882,10 @@ public sealed class DockWorkspaceTests
         Assert.True(matched);
         Assert.Same(lowerRight, target);
         Assert.True(bounds.Contains(300f, 150f));
-        Assert.InRange(bounds.Left, 103f, 105f);
-        Assert.InRange(bounds.Top, 102f, 104f);
-        Assert.Equal(400f, bounds.Right);
-        Assert.Equal(200f, bounds.Bottom);
+        Assert.Equal(101f, bounds.Left);
+        Assert.Equal(98f, bounds.Top);
+        Assert.Equal(392f, bounds.Right);
+        Assert.Equal(192f, bounds.Bottom);
     }
 
     /// <summary>Verifies an external pointer over a tab strip negotiates an indexed center drop.</summary>
@@ -845,14 +922,21 @@ public sealed class DockWorkspaceTests
             new DockTab("scene", "Scene"),
             new DockTab("game", "Game")
         ]);
+        var scene = new Panel(Engine.Graphics.Color.Black, 10f, 10f);
+        var game = new Panel(Engine.Graphics.Color.Black, 10f, 10f);
         var host = new DockHost(new DockWorkspace { Root = group },
-            _ => new Panel(Engine.Graphics.Color.Black, 10f, 10f));
+            id => id == "scene" ? scene : game);
         var presenter = host.Children[0];
         var tabs = Assert.IsType<TabControl>(presenter.Children[0]);
+
+        Assert.True(scene.IsEffectivelyVisible);
+        Assert.False(game.IsEffectivelyVisible);
 
         tabs.Select(1);
 
         Assert.Equal("game", group.SelectedId);
+        Assert.False(scene.IsEffectivelyVisible);
+        Assert.True(game.IsEffectivelyVisible);
     }
 
     /// <summary>Verifies a header drag commits a center drop through routed pointer input.</summary>

@@ -57,6 +57,30 @@ public class UIHostTests
         Assert.Equal(1, services.ViewportQuadUpdateCount);
     }
 
+    /// <summary>Verifies an invisible tab ancestor suppresses viewport presentation.</summary>
+    [Fact]
+    public void LayoutUpdated_HiddenViewportAncestor_DisablesPresentationQuad()
+    {
+        var services = new HostServices();
+        var parent = new Panel(Color.Black, 100f, 80f);
+        var viewport = new ViewportPanel(100f, 80f, Color.Black)
+        {
+            RenderView = new RenderViewHandle(1)
+        };
+        parent.AddChild(viewport);
+        var tracker = new ViewportPresentationTracker(viewport);
+        using var host = new UIHost(services, services, services, parent, 100f, 80f);
+        host.LayoutUpdated += () => tracker.Synchronize(services);
+        host.Refresh();
+
+        parent.IsVisible = false;
+        host.Refresh();
+
+        Assert.False(viewport.IsEffectivelyVisible);
+        Assert.NotNull(services.LastViewportQuad);
+        Assert.All(services.LastViewportQuad!, vertex => Assert.Equal(0f, vertex.Opacity));
+    }
+
     /// <summary>Verifies host-local notifications stack and expire through overlay time.</summary>
     [Fact]
     public void OverlayManager_Toasts_StackAndExpire()
@@ -737,6 +761,72 @@ public class UIHostTests
         Assert.False(services.ContinuousRendering);
     }
 
+    /// <summary>Verifies a dragging thumb retains its resize cursor outside its hover bounds.</summary>
+    [Fact]
+    public void Host_CapturedThumb_RetainsCursorUntilRelease()
+    {
+        var services = new VersionedHostServices();
+        var root = new Canvas();
+        var thumb = new Thumb { Width = 20f, Height = 100f, CursorKind = PointerCursorKind.HorizontalResize };
+        root.Add(thumb, Vector2.Zero);
+        using var host = new UIHost(services, services, services, root, 200f, 100f);
+
+        services.RaiseVersionedMove(new Vector2(10f, 50f));
+        Assert.Equal(PointerCursorKind.HorizontalResize, services.PointerCursor);
+
+        services.RaiseVersionedPress(new Vector2(10f, 50f));
+        services.RaiseVersionedMove(new Vector2(150f, 50f));
+        Assert.Equal(PointerCursorKind.HorizontalResize, services.PointerCursor);
+
+        services.RaiseVersionedRelease(new Vector2(150f, 50f));
+        Assert.Equal(PointerCursorKind.Default, services.PointerCursor);
+    }
+
+    /// <summary>Verifies consumed movement clears a stale retained-UI cursor hint.</summary>
+    [Fact]
+    public void Host_ConsumedPointerMove_ResetsCursor()
+    {
+        var services = new VersionedHostServices();
+        var thumb = new Thumb { CursorKind = PointerCursorKind.VerticalResize };
+        using var host = new UIHost(services, services, services, thumb, 20f, 100f);
+
+        services.RaiseVersionedMove(new Vector2(10f, 50f));
+        Assert.Equal(PointerCursorKind.VerticalResize, services.PointerCursor);
+
+        host.PreviewPointerMove = _ => true;
+        services.RaiseVersionedMove(new Vector2(10f, 50f));
+
+        Assert.Equal(PointerCursorKind.Default, services.PointerCursor);
+    }
+
+    /// <summary>Verifies host disposal restores a cursor it changed.</summary>
+    [Fact]
+    public void Host_Dispose_RestoresDefaultCursor()
+    {
+        var services = new HostServices();
+        var thumb = new Thumb { CursorKind = PointerCursorKind.HorizontalResize };
+        var host = new UIHost(services, services, services, thumb, 20f, 100f);
+        services.RaiseMove(new Vector2(10f, 50f));
+
+        host.Dispose();
+
+        Assert.Equal(PointerCursorKind.Default, services.PointerCursor);
+    }
+
+    /// <summary>Verifies UI snapshot submission does not replace the application's clear color.</summary>
+    [Fact]
+    public void Host_Refresh_DoesNotOverrideRendererClearColor()
+    {
+        var services = new HostServices();
+        services.SetUiClearColor(0.1f, 0.2f, 0.3f);
+        using var host = new UIHost(
+            services, services, services, new Panel(Color.Red), 100f, 100f);
+
+        host.Refresh();
+
+        Assert.Equal(1, services.UiClearColorSetCount);
+    }
+
     /// <summary>Verifies externally managed hosts expose pointer-capture scheduling demand.</summary>
     [Fact]
     public void Host_ExternalPointerCapture_ReportsContinuousUpdateDemand()
@@ -788,6 +878,33 @@ public class UIHostTests
         Assert.Equal(3, field.CaretIndex);
     }
 
+    /// <summary>Verifies an idle wake starts rather than consumes the initial repeat delay.</summary>
+    [Fact]
+    public void Host_EventDrivenKeyboardRepeat_IdleWakePreservesInitialDelay()
+    {
+        var services = new VersionedHostServices();
+        var field = new TextField(180f, 30f) { Text = "abcdef" };
+        using var host = new UIHost(
+            services, services, services, field, 180f, 30f,
+            schedulingMode: UIHostSchedulingMode.EventDriven)
+        {
+            KeyRepeatDelay = 0.1d,
+            KeyRepeatInterval = 0.05d
+        };
+        host.InputRouter.Focus(field);
+        host.InputRouter.RouteKey(new KeyInputEvent(
+            InputKey.Home, true, false, InputModifiers.None));
+
+        services.RaiseKey(new KeyInputEvent(
+            InputKey.Right, true, false, InputModifiers.None));
+        services.PumpFrame(0d);
+        services.PumpFrame(0.099d);
+
+        Assert.Equal(1, field.CaretIndex);
+        services.PumpFrame(0.001d);
+        Assert.Equal(2, field.CaretIndex);
+    }
+
     /// <summary>Verifies repeat-enabled editing commands delete continuously while held.</summary>
     [Fact]
     public void Host_KeyboardRepeat_RepeatsBackspaceEditingCommand()
@@ -811,7 +928,7 @@ public class UIHostTests
         services.RaiseKey(new KeyInputEvent(
             InputKey.Backspace, false, false, InputModifiers.None));
 
-        Assert.Equal("ab", field.Text);
+        Assert.Equal("abcd", field.Text);
     }
 
     /// <summary>Verifies native repeat disables synthesis for that hold to prevent duplicate events.</summary>
@@ -869,6 +986,24 @@ public class UIHostTests
         Assert.False(controller.IsRepeatPending);
         controller.Advance(1d, repeats.Add);
         Assert.Equal(2, repeats.Count);
+    }
+
+    /// <summary>Verifies an idle update cannot replay accumulated repeats in one frame.</summary>
+    [Fact]
+    public void KeyboardRepeatController_LongIdle_EmitsOnlyOneRepeat()
+    {
+        var controller = new UIKeyRepeatController
+        {
+            Delay = 0.1d,
+            Interval = 0.05d
+        };
+        var repeats = new List<KeyInputEvent>();
+        controller.Observe(new KeyInputEvent(
+            InputKey.Right, true, false, InputModifiers.None));
+
+        controller.Advance(5d, repeats.Add);
+
+        Assert.Single(repeats);
     }
 
     /// <summary>Verifies application previews can intercept versioned input around standard routing.</summary>
@@ -1151,6 +1286,12 @@ public class UIHostTests
         /// <summary>Gets the number of immediate captured-interaction frame requests.</summary>
         internal int InteractiveFrameCount { get; private set; }
 
+        /// <summary>Gets the latest native pointer cursor request.</summary>
+        internal PointerCursorKind PointerCursor { get; private set; }
+
+        /// <summary>Gets the number of renderer clear-color assignments.</summary>
+        internal int UiClearColorSetCount { get; private set; }
+
         /// <inheritdoc/>
         public bool IsRunning => true;
 
@@ -1269,6 +1410,12 @@ public class UIHostTests
         public void SetMouseCaptured(bool captured) { }
 
         /// <inheritdoc/>
+        public void SetPointerCursor(PointerCursorKind kind)
+        {
+            PointerCursor = kind;
+        }
+
+        /// <inheritdoc/>
         public MeshHandle CreateMesh(MeshDescription description) => default;
 
         /// <inheritdoc/>
@@ -1293,6 +1440,10 @@ public class UIHostTests
 
         /// <inheritdoc/>
         public void SetPushConstants(PushConstants pushConstants) { }
+
+        /// <inheritdoc/>
+        public void SetUiClearColor(float r, float g, float b, float a = 1f) =>
+            UiClearColorSetCount++;
 
         /// <inheritdoc/>
         public RenderViewHandle CreateRenderView(float width, float height) => default;

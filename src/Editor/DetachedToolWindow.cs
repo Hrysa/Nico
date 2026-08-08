@@ -42,12 +42,11 @@ public sealed class DetachedToolWindow : IDisposable
         _windowGroup = windowGroup;
         Content = content;
         var theme = UITheme.Dark;
-        var titleBarHeight = OperatingSystem.IsWindows() ? 36f : 48f;
+        const float titleBarHeight = TitleBar.DefaultHeight;
         TitleBar = new TitleBar(width, titleBarHeight, theme)
         {
             Width = 0f,
-            FlexShrink = 0f,
-            Margin = new Thickness(0f, 0f, 0f, 1f)
+            FlexShrink = 0f
         };
         TitleBar.CenterZone.AddChild(new Label(title)
         {
@@ -65,6 +64,7 @@ public sealed class DetachedToolWindow : IDisposable
             Height = height,
             CustomTitleBar = true
         });
+        Window.SetUiClearColor(theme.Canvas);
         _uiHost = new UIHost(
             Window, Window, Window, _root, width, height, textLayout: Window);
         TitleBar.DragStarted += () => Window.BeginWindowDrag(_uiHost.PointerPosition);

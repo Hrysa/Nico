@@ -30,8 +30,8 @@ public class StackPanel : Panel
     /// </summary>
     /// <param name="width">Panel width.</param>
     /// <param name="height">Panel height.</param>
-    /// <param name="backgroundColor">Panel background color.</param>
-    public StackPanel(float width, float height, Color backgroundColor)
+    /// <param name="backgroundColor">Optional panel background color.</param>
+    public StackPanel(float width, float height, Color? backgroundColor = null)
         : base(backgroundColor, width, height)
     {
     }

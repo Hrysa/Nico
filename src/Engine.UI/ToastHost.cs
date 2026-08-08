@@ -194,7 +194,6 @@ public sealed class ToastHost : UIElement
         _theme = theme ?? UITheme.Dark;
         IsOverlay = true;
         IsHitTestVisible = false;
-        BackgroundColor = Color.Black;
     }
 
     /// <summary>Shows a notification for a bounded duration.</summary>

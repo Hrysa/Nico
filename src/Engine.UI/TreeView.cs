@@ -7,7 +7,7 @@ namespace Engine.UI;
 /// <summary>
 /// Displays a selectable, expandable, vertically scrollable tree of engine nodes.
 /// </summary>
-public sealed class TreeView : Panel
+public sealed class TreeView : Panel, IScrollViewportContent
 {
     private readonly List<Node> _roots = [];
     private readonly HashSet<Node> _expanded = [];
@@ -17,7 +17,7 @@ public sealed class TreeView : Panel
     private readonly List<TreeViewItem> _rows = [];
     private bool _flattenedRowsValid;
     private Node? _selectedItem;
-    private int _scrollRow;
+    private float _viewportOffsetY;
     private readonly UITheme _theme;
     private Vector2 _arrangedSize;
     private float _rowHeight;
@@ -142,13 +142,11 @@ public sealed class TreeView : Panel
     /// <param name="height">Tree height.</param>
     /// <param name="theme">Theme supplying tree colors and typography.</param>
     public TreeView(float width, float height, UITheme? theme = null)
-        : base((theme ?? UITheme.Dark).Surface, width, height)
+        : base(null, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         RowHeight = _theme.ItemRowHeight;
         ForegroundColor = _theme.TextPrimary;
-        PaintBackground = false;
-        Scroll += ScrollRows;
         Pointer += OnPointer;
         RoutedTextInput += OnTextInput;
     }
@@ -166,7 +164,7 @@ public sealed class TreeView : Panel
         _selectionAnchor = null;
         foreach (var root in _roots)
             _expanded.Add(root);
-        _scrollRow = 0;
+        _viewportOffsetY = 0f;
         RebuildSortCache();
         InvalidateFlattenedRows();
         RebuildRows();
@@ -461,8 +459,8 @@ public sealed class TreeView : Panel
                     | System.Globalization.CompareOptions.IgnoreNonSpace))
                 continue;
             Select(item);
-            EnsureRowVisible(index, rows.Count);
-            var visibleIndex = index - _scrollRow;
+            EnsureRowVisible(index);
+            var visibleIndex = index - GetFirstVisibleRowIndex();
             if ((uint)visibleIndex < (uint)_rows.Count)
                 textEvent.Focus(_rows[visibleIndex]);
             textEvent.Handled = true;
@@ -520,30 +518,16 @@ public sealed class TreeView : Panel
         return -1;
     }
 
-    /// <summary>Scrolls by wheel rows.</summary>
-    /// <param name="offset">Wheel offset.</param>
-    private void ScrollRows(float offset)
-    {
-        var rows = Flatten();
-        var visibleCount = GetVisibleRowCount(roundUp: false);
-        var maximum = Math.Max(0, rows.Count - visibleCount);
-        var nextScrollRow = Math.Clamp(
-            _scrollRow - Math.Sign(offset) * 3, 0, maximum);
-        if (nextScrollRow == _scrollRow)
-            return;
-        _scrollRow = nextScrollRow;
-        RebuildRows();
-    }
-
     /// <summary>Reuses and rebinds the bounded visible row pool.</summary>
     private void RebuildRows()
     {
         var rows = Flatten();
+        var first = GetFirstVisibleRowIndex();
         var visibleCount = GetVisibleRowCount(roundUp: true);
-        var end = Math.Min(rows.Count, _scrollRow + visibleCount);
-        EnsureRowCount(end - _scrollRow);
+        var end = Math.Min(rows.Count, first + visibleCount);
+        EnsureRowCount(end - first);
         var rowIndex = 0;
-        for (var index = _scrollRow; index < end; index++)
+        for (var index = first; index < end; index++)
         {
             var (item, depth) = rows[index];
             _rows[rowIndex++].Bind(item, depth, _expanded.Contains(item),
@@ -561,7 +545,7 @@ public sealed class TreeView : Panel
         {
             var row = new TreeViewItem(Width, RowHeight, new Node(), 0, false,
                 _theme, string.Empty, _columns);
-            row.BindOwner(SelectWithModifiers, ActivateItem, HandleKeyDown, ScrollRows);
+            row.BindOwner(SelectWithModifiers, ActivateItem, HandleKeyDown);
             _rows.Add(row);
             AddChild(row);
         }
@@ -632,7 +616,7 @@ public sealed class TreeView : Panel
     {
         index = Math.Clamp(index, 0, rows.Count - 1);
         Select(rows[index].Item);
-        EnsureRowVisible(index, rows.Count);
+        EnsureRowVisible(index);
     }
 
     /// <summary>Expands the selected node or enters its first child.</summary>
@@ -697,20 +681,19 @@ public sealed class TreeView : Panel
 
     /// <summary>Adjusts the scroll window so the selected row remains visible.</summary>
     /// <param name="rowIndex">Selected row index.</param>
-    /// <param name="rowCount">Total visible row count.</param>
-    private void EnsureRowVisible(int rowIndex, int rowCount)
+    private void EnsureRowVisible(int rowIndex)
     {
-        var visibleCount = GetVisibleRowCount(roundUp: false);
-        var nextScroll = _scrollRow;
-        if (rowIndex < nextScroll)
-            nextScroll = rowIndex;
-        else if (rowIndex >= nextScroll + visibleCount)
-            nextScroll = rowIndex - visibleCount + 1;
-        nextScroll = Math.Clamp(nextScroll, 0, Math.Max(0, rowCount - visibleCount));
-        if (nextScroll == _scrollRow)
+        if (Parent is not ScrollViewer viewer)
             return;
-        _scrollRow = nextScroll;
-        RebuildRows();
+        var bodyHeight = MathF.Max(0f, Height - GetColumnHeaderHeight());
+        var rowTop = rowIndex * RowHeight;
+        var rowBottom = rowTop + RowHeight;
+        var nextOffset = _viewportOffsetY;
+        if (rowTop < nextOffset)
+            nextOffset = rowTop;
+        else if (rowBottom > nextOffset + bodyHeight)
+            nextOffset = rowBottom - bodyHeight;
+        viewer.ScrollTo(viewer.HorizontalOffset, nextOffset);
     }
 
     /// <inheritdoc/>
@@ -786,11 +769,35 @@ public sealed class TreeView : Panel
     /// <returns>At least one row.</returns>
     private int GetVisibleRowCount(bool roundUp)
     {
-        var bodyHeight = MathF.Max(0f, Height - GetColumnHeaderHeight());
+        var viewportHeight = _arrangedSize.Y > 0f ? _arrangedSize.Y : Height;
+        var bodyHeight = MathF.Max(0f, viewportHeight - GetColumnHeaderHeight());
         var rowCount = roundUp
             ? (int)MathF.Ceiling(bodyHeight / RowHeight)
             : (int)MathF.Floor(bodyHeight / RowHeight);
         return Math.Max(1, rowCount);
+    }
+
+    /// <summary>Gets the first logical row intersecting the parent-owned viewport.</summary>
+    /// <returns>Zero-based flattened row index.</returns>
+    private int GetFirstVisibleRowIndex() => Math.Max(0, (int)(_viewportOffsetY / RowHeight));
+
+    /// <inheritdoc/>
+    Vector2 IScrollViewportContent.GetScrollExtent(Vector2 viewportSize)
+    {
+        var rows = Flatten();
+        return new Vector2(viewportSize.X, GetColumnHeaderHeight() + rows.Count * RowHeight);
+    }
+
+    /// <inheritdoc/>
+    void IScrollViewportContent.SetScrollViewport(Vector2 offset, Vector2 viewportSize)
+    {
+        var offsetY = MathF.Max(0f, offset.Y);
+        if (_viewportOffsetY == offsetY && _arrangedSize == viewportSize)
+            return;
+        _viewportOffsetY = offsetY;
+        _arrangedSize = viewportSize;
+        RebuildRows();
+        InvalidateArrange();
     }
 
     /// <summary>Flattens expanded nodes in display order.</summary>

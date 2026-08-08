@@ -5,7 +5,7 @@ namespace Engine.UI;
 /// <summary>
 /// Displays renderer-independent TrueType text.
 /// </summary>
-public class Label : UIElement
+public class Label : Box
 {
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -21,7 +21,6 @@ public class Label : UIElement
     private string _text = string.Empty;
     private float _fontSize = UITheme.Dark.FontSize;
     private float _paddingLeft = 4f;
-    private bool _paintBackground;
 
     /// <summary>Gets or sets the displayed text.</summary>
     public string Text
@@ -49,13 +48,6 @@ public class Label : UIElement
     {
         get => _paddingLeft;
         set { if (_paddingLeft != value) { _paddingLeft = value; InvalidateMeasure(); } }
-    }
-
-    /// <summary>Gets or sets whether the label paints its background.</summary>
-    public bool PaintBackground
-    {
-        get => _paintBackground;
-        set { if (_paintBackground != value) { _paintBackground = value; InvalidateVisual(); } }
     }
 
     /// <summary>
@@ -108,8 +100,7 @@ public class Label : UIElement
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        if (PaintBackground)
-            base.Paint(drawList);
+        base.Paint(drawList);
 
         var textHeight = FontSize;
         drawList.AddText(Text, Left + PaddingLeft, Top + MathF.Max(0f, (Height - textHeight) / 2f),

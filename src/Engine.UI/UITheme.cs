@@ -32,10 +32,10 @@ public sealed record UITheme
     };
 
     /// <summary>Gets the application background color.</summary>
-    public Color Canvas { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
+    public Color Canvas { get; init; } = Color.FromSrgb(0x25, 0x27, 0x2A);
 
     /// <summary>Gets the primary surface color.</summary>
-    public Color Surface { get; init; } = Color.FromSrgb(0x12, 0x13, 0x14);
+    public Color Surface { get; init; } = Color.FromSrgb(0x19, 0x1A, 0x1C);
 
     /// <summary>Gets the raised surface color.</summary>
     public Color SurfaceRaised { get; init; } = Color.FromSrgb(0x29, 0x29, 0x29);

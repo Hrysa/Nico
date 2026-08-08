@@ -8,11 +8,16 @@ namespace Engine.Core;
 public class Node
 {
     private readonly List<Node> _children = new();
+    private readonly List<Component> _components = new();
     private Node? _parent;
     private Vector3 _position;
     private Vector3 _rotation;
     private Quaternion _orientation = Quaternion.Identity;
     private Vector3 _scale = Vector3.One;
+    private string _name = string.Empty;
+
+    /// <summary>Occurs after authored state on this node changes.</summary>
+    public event Action<NodeChangeKind>? Changed;
 
     /// <summary>Gets or sets the local position relative to the parent.</summary>
     public Vector3 Position
@@ -23,7 +28,7 @@ public class Node
             if (_position == value)
                 return;
             _position = value;
-            OnTransformChanged();
+            NotifyTransformChanged();
         }
     }
 
@@ -38,7 +43,7 @@ public class Node
                 return;
             _rotation = value;
             _orientation = Quaternion.CreateFromRotationMatrix(CreateEulerRotation(value));
-            OnTransformChanged();
+            NotifyTransformChanged();
         }
     }
 
@@ -56,7 +61,7 @@ public class Node
                 return;
             _orientation = normalized;
             _rotation = ExtractEuler(Matrix4x4.CreateFromQuaternion(normalized));
-            OnTransformChanged();
+            NotifyTransformChanged();
         }
     }
 
@@ -69,21 +74,68 @@ public class Node
             if (_scale == value)
                 return;
             _scale = value;
-            OnTransformChanged();
+            NotifyTransformChanged();
         }
     }
 
     /// <summary>Gets or sets the node name for debugging.</summary>
-    public string Name { get; set; } = string.Empty;
+    public string Name
+    {
+        get => _name;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_name, value, StringComparison.Ordinal))
+                return;
+            _name = value;
+            Changed?.Invoke(NodeChangeKind.Name);
+        }
+    }
 
-    /// <summary>Gets or sets the persistent game script asset attached to this node.</summary>
-    public AssetId? ScriptId { get; set; }
+    /// <summary>Gets or sets the first persistent game script attached to this node.</summary>
+    /// <remarks>This compatibility facade removes all scripts when assigned null. Use
+    /// <see cref="AddComponent"/> and <see cref="Components"/> for multiple components.</remarks>
+    public AssetId? ScriptId
+    {
+        get
+        {
+            for (var index = 0; index < _components.Count; index++)
+            {
+                if (_components[index] is ScriptComponent script)
+                    return script.ScriptId;
+            }
+            return null;
+        }
+        set
+        {
+            if (value is null)
+            {
+                for (var index = _components.Count - 1; index >= 0; index--)
+                {
+                    if (_components[index] is ScriptComponent)
+                        RemoveComponent(_components[index]);
+                }
+                return;
+            }
+            for (var index = 0; index < _components.Count; index++)
+            {
+                if (_components[index] is not ScriptComponent script)
+                    continue;
+                script.ScriptId = value.Value;
+                return;
+            }
+            AddComponent(new ScriptComponent(value.Value));
+        }
+    }
 
     /// <summary>Gets the parent node, or null if this is a root node.</summary>
     public Node? Parent => _parent;
 
     /// <summary>Gets the children of this node.</summary>
     public IReadOnlyList<Node> Children => _children;
+
+    /// <summary>Gets components attached to this node in authored order.</summary>
+    public IReadOnlyList<Component> Components => _components;
 
     /// <summary>Gets whether this node has any children.</summary>
     public bool HasChildren => _children.Count > 0;
@@ -141,11 +193,72 @@ public class Node
         _children.Clear();
     }
 
+    /// <summary>Attaches one component to this node.</summary>
+    /// <param name="component">Unattached component to add.</param>
+    public void AddComponent(Component component)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        if (ReferenceEquals(component.Owner, this))
+            return;
+        if (component.Owner is not null)
+            throw new InvalidOperationException("A component cannot belong to multiple nodes.");
+        component.Owner = this;
+        _components.Add(component);
+        Changed?.Invoke(NodeChangeKind.Components);
+    }
+
+    /// <summary>Removes one component from this node.</summary>
+    /// <param name="component">Component to detach.</param>
+    /// <returns>True when the component belonged to this node.</returns>
+    public bool RemoveComponent(Component component)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        if (!ReferenceEquals(component.Owner, this) || !_components.Remove(component))
+            return false;
+        component.Owner = null;
+        Changed?.Invoke(NodeChangeKind.Components);
+        return true;
+    }
+
+    /// <summary>Returns the first attached component assignable to a requested type.</summary>
+    /// <typeparam name="T">Requested component type.</typeparam>
+    /// <returns>The first matching component, or null.</returns>
+    public T? GetComponent<T>() where T : Component
+    {
+        for (var index = 0; index < _components.Count; index++)
+        {
+            if (_components[index] is T component)
+                return component;
+        }
+        return null;
+    }
+
     /// <summary>
     /// Called after a local transform property changes.
     /// </summary>
     protected virtual void OnTransformChanged()
     {
+    }
+
+    /// <summary>Publishes a derived node's authored state transition.</summary>
+    /// <param name="kind">Changed state category.</param>
+    protected void NotifyChanged(NodeChangeKind kind)
+    {
+        Changed?.Invoke(kind);
+    }
+
+    /// <summary>Publishes a change made by one attached component.</summary>
+    /// <param name="kind">Component change category.</param>
+    internal void NotifyComponentChanged(NodeChangeKind kind)
+    {
+        NotifyChanged(kind);
+    }
+
+    /// <summary>Runs the extension hook and publishes one transform transition.</summary>
+    private void NotifyTransformChanged()
+    {
+        OnTransformChanged();
+        NotifyChanged(NodeChangeKind.Transform);
     }
 
     /// <summary>Creates the engine's row-vector Rz * Ry * Rx Euler rotation matrix.</summary>
@@ -173,4 +286,22 @@ public class Node
             y,
             MathF.Atan2(-rotation.M21, rotation.M11));
     }
+}
+
+/// <summary>Identifies coarse authored state changed on one scene node.</summary>
+[Flags]
+public enum NodeChangeKind
+{
+    /// <summary>No state changed.</summary>
+    None = 0,
+    /// <summary>The display name changed.</summary>
+    Name = 1,
+    /// <summary>Position, orientation, rotation, or scale changed.</summary>
+    Transform = 2,
+    /// <summary>Component attachment, configuration, or override data changed.</summary>
+    Components = 4,
+    /// <summary>An authored value inside an existing component changed.</summary>
+    ComponentValues = 8,
+    /// <summary>Renderable resource or material state changed.</summary>
+    Render = 16
 }

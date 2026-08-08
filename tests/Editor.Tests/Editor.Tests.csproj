@@ -16,6 +16,7 @@
     </PackageReference>
     <ProjectReference Include="../../src/Editor/Editor.csproj" />
     <ProjectReference Include="../../src/Engine.Scripting/Engine.Scripting.csproj" />
+    <ProjectReference Include="../../tools/Engine.Script.Generator/Engine.Script.Generator.csproj" />
   </ItemGroup>
 
 </Project>

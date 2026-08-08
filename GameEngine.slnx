@@ -4,6 +4,7 @@
     <Project Path="src/Engine.Core/Engine.Core.csproj" />
     <Project Path="src/Engine.Graphics/Engine.Graphics.csproj" />
     <Project Path="src/Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
+    <Project Path="src/Engine.Physics/Engine.Physics.csproj" />
     <Project Path="src/Engine.Scripting/Engine.Scripting.csproj" />
     <Project Path="src/Engine.UI/Engine.UI.csproj" />
     <Project Path="src/Engine/Engine.csproj" />
@@ -16,9 +17,11 @@
     <Project Path="tests/Engine.Core.Tests/Engine.Core.Tests.csproj" />
     <Project Path="tests/Editor.Tests/Editor.Tests.csproj" />
     <Project Path="tests/Engine.Graphics.Tests/Engine.Graphics.Tests.csproj" />
+    <Project Path="tests/Engine.Physics.Tests/Engine.Physics.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Engine.Profiler.Weaver/Engine.Profiler.Weaver.csproj" />
+    <Project Path="tools/Engine.Script.Generator/Engine.Script.Generator.csproj" />
     <Project Path="tools/Engine.UI.Benchmarks/Engine.UI.Benchmarks.csproj" />
   </Folder>
 </Solution>

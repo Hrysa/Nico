@@ -3,6 +3,7 @@ using Editor;
 using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.Physics;
 using Engine.UI;
 using Microsoft.Extensions.Logging;
 
@@ -99,8 +100,10 @@ assetWatcher.RefreshRequested += () =>
 
 logger.LogInformation("Setting up editor UI...");
 var editorView = EditorUI.BuildView(width, height);
+editorView.Root.BackgroundColor = editorView.TitleBar.BackgroundColor;
 var uiRoot = editorView.Root;
 var overlay = editorView.Overlay;
+window.SetUiClearColor(editorView.TitleBar.BackgroundColor);
 var dockWorkspace = EditorDockWorkspace.Load(project.RootPath, out var dockRestoreError);
 if (dockRestoreError is not null)
     logger.LogWarning(dockRestoreError, "Could not restore the Editor dock workspace; using defaults");
@@ -187,13 +190,28 @@ inspector.ResolveMaterialName = ResolveMaterialDisplayName;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
+PhysicsWorld? physicsWorld = null;
+GameScriptHost? scriptSchemaHost = null;
 LoadedScene? playScene = null;
 LoadedScene? pendingPlayScene = null;
 Task<GameScriptHost>? playBuildTask = null;
 CancellationTokenSource? playBuildCancellation = null;
+Task<GameScriptHost>? scriptSchemaBuildTask = null;
+CancellationTokenSource? scriptSchemaBuildCancellation = null;
 CompilationProgressDialog? compilationProgressDialog = null;
 Node3D? editSelectionBeforePlay = null;
 var isPlaying = false;
+var isShuttingDown = false;
+inspector.ResolveScriptType = id =>
+{
+    var catalog = scriptHost?.Catalog ?? scriptSchemaHost?.Catalog;
+    if (catalog?.TryResolve(id, out var type) == true)
+        return type;
+    return null;
+};
+inspector.ResolveScriptInstance = component =>
+    scriptHost?.TryGetScript(component, out var script) == true ? script : null;
+StartScriptSchemaBuild();
 
 // ── Game viewport: scene rendered through its GameCamera ─────
 var gameViewport = editorView.GameViewport;
@@ -444,6 +462,45 @@ void CloseFloatingGameViewport(DetachedToolWindow toolWindow)
     window.RequestFrame();
 }
 
+/// <summary>Starts a background build of edit-mode script metadata.</summary>
+void StartScriptSchemaBuild()
+{
+    if (isShuttingDown || isPlaying || playBuildTask is not null ||
+        scriptSchemaBuildTask is not null)
+        return;
+    scriptSchemaBuildCancellation = new CancellationTokenSource();
+    var cancellationToken = scriptSchemaBuildCancellation.Token;
+    scriptSchemaBuildTask = Task.Run(
+        () => scriptCompiler.BuildAndLoad(cancellationToken), cancellationToken);
+}
+
+/// <summary>Publishes a completed background schema build to edit-mode Inspector bindings.</summary>
+void UpdateScriptSchemaBuild()
+{
+    if (scriptSchemaBuildTask is not { IsCompleted: true } build)
+        return;
+    scriptSchemaBuildTask = null;
+    scriptSchemaBuildCancellation?.Dispose();
+    scriptSchemaBuildCancellation = null;
+    try
+    {
+        var replacement = build.GetAwaiter().GetResult();
+        var previous = scriptSchemaHost;
+        scriptSchemaHost = replacement;
+        previous?.Dispose();
+        inspector.RefreshScriptSchemas();
+        logger.LogInformation("Refreshed Inspector schemas for {ScriptCount} scripts",
+            replacement.Catalog is CompiledScriptTypeCatalog catalog ? catalog.Count : 0);
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Could not compile script schemas for the Inspector");
+    }
+}
+
 /// <summary>Starts an isolated runtime copy of the authored scene.</summary>
 void StartPlayMode()
 {
@@ -491,14 +548,19 @@ void UpdatePlayModeStart(double deltaTime)
         candidateHost = build.GetAwaiter().GetResult();
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
-        candidateHost.LoadScene(candidateScene.Root);
+        candidateHost.LoadScene(candidateScene.Root, window);
+        var candidatePhysicsWorld = new PhysicsWorld();
+        candidatePhysicsWorld.EnableInterpolation = true;
+        candidatePhysicsWorld.Attach(candidateScene.Root);
         editSelectionBeforePlay = selection.SelectedNode;
         selection.SetObjects(candidateScene.MeshInstances);
         playScene = candidateScene;
         scriptHost = candidateHost;
+        physicsWorld = candidatePhysicsWorld;
         isPlaying = true;
         viewportRenderer.SetSceneObjects(candidateScene.MeshInstances);
         hierarchyTree.SetRoots(candidateScene.Root.Children);
+        inspector.RefreshScriptSchemas();
         gameViewport.Camera = candidateScene.GameCamera;
         viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
         foreach (var assetMesh in candidateScene.MeshInstances)
@@ -573,12 +635,14 @@ void StopPlayMode()
         logger.LogError(exception, "A script failed while leaving play mode");
     }
     scriptHost = null;
+    physicsWorld = null;
     playScene = null;
     isPlaying = false;
     selection.SetObjects(sceneObjects);
     viewportRenderer.SetSceneObjects(sceneObjects);
     hierarchyTree.SetRoots(sceneRoot.Children);
     selection.Select(editSelectionBeforePlay);
+    inspector.RefreshScriptSchemas();
     editSelectionBeforePlay = null;
     gameViewport.Camera = gameCamera;
     viewportRenderer.SetGameScene(gameCamera, sceneObjects);
@@ -592,6 +656,7 @@ void StopPlayMode()
     }
     editorView.PlayButtonLabel.Text = "Play";
     logger.LogInformation("Exited play mode");
+    StartScriptSchemaBuild();
     RefreshVertices();
 }
 
@@ -1036,7 +1101,7 @@ void LoadAssetMeshResources(
     var meshReference = instance.Mesh;
     AssetImportOutcome? outcome = null;
     StaticMeshResource importedMesh;
-    if (BuiltInAssets.IsCubeMesh(meshReference))
+    if (BuiltInAssets.IsBuiltInMesh(meshReference))
     {
         importedMesh = BuiltInAssets.LoadMesh(meshReference);
     }
@@ -1503,14 +1568,23 @@ void AttachTitleBar(TitleBar titleBar)
     titleBar.CloseRequested += window.Close;
 }
 
-void AddSceneNode(Node parent, bool withCubeMesh)
+/// <summary>Adds an empty node or one built-in mesh primitive to the active scene.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+/// <param name="mesh">Optional built-in mesh reference.</param>
+/// <param name="displayName">Base display name for the created object.</param>
+void AddSceneNode(Node parent, AssetReference? mesh, string displayName)
 {
     var activeRoot = GetActiveSceneRoot();
     var activeObjects = GetActiveSceneObjects();
     Node child;
-    if (withCubeMesh)
+    if (mesh is { } meshReference)
     {
-        var meshInstance = new MeshInstance3D { Name = $"Cube {createdObjectIndex++}" };
+        var meshInstance = new MeshInstance3D
+        {
+            Name = $"{displayName} {createdObjectIndex++}",
+            Mesh = meshReference
+        };
+        AddPrimitivePhysics(meshInstance, meshReference);
         activeObjects.Add(meshInstance);
         LoadAssetMeshResources(meshInstance);
         if (detachedSceneRenderer is not null)
@@ -1521,7 +1595,7 @@ void AddSceneNode(Node parent, bool withCubeMesh)
     }
     else
     {
-        child = new Node3D { Name = $"Object {createdObjectIndex++}" };
+        child = new Node3D { Name = $"{displayName} {createdObjectIndex++}" };
     }
 
     parent.AddChild(child);
@@ -1532,6 +1606,39 @@ void AddSceneNode(Node parent, bool withCubeMesh)
     hierarchyTree.Select(child);
     CloseHierarchyContextMenu();
     CloseFileContextMenu();
+}
+
+/// <summary>Adds matching collision geometry and default motion to a built-in primitive.</summary>
+/// <param name="node">Primitive node receiving the components.</param>
+/// <param name="mesh">Built-in primitive mesh.</param>
+void AddPrimitivePhysics(Node3D node, AssetReference mesh)
+{
+    var collider = new ColliderComponent();
+    if (mesh == BuiltInAssets.PlaneMesh)
+    {
+        collider.Shape = ColliderShape.Plane;
+        node.AddComponent(collider);
+        return;
+    }
+    if (mesh == BuiltInAssets.SphereMesh)
+    {
+        collider.Shape = ColliderShape.Sphere;
+    }
+    else if (mesh == BuiltInAssets.CapsuleMesh)
+    {
+        collider.Shape = ColliderShape.Capsule;
+        collider.Height = 2f;
+    }
+    else if (mesh == BuiltInAssets.CylinderMesh)
+    {
+        collider.Shape = ColliderShape.Cylinder;
+    }
+    else
+    {
+        collider.Shape = ColliderShape.Box;
+    }
+    node.AddComponent(collider);
+    node.AddComponent(new RigidBodyComponent());
 }
 
 void ShowHierarchyContextMenu()
@@ -1546,12 +1653,16 @@ void ShowHierarchyContextMenu()
     hierarchyTree.Select(ReferenceEquals(target, activeRoot) ? null : target);
 
     const float menuWidth = 160f;
-    const float menuHeight = 56f;
+    const float menuHeight = 184f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
     var menu = new ContextMenu(menuWidth) { Name = "HierarchyContextMenu" };
-    menu.AddItem("Add Empty Object", () => AddSceneNode(target, withCubeMesh: false));
-    menu.AddItem("Add Cube", () => AddSceneNode(target, withCubeMesh: true));
+    menu.AddItem("Add Empty Object", () => AddSceneNode(target, null, "Object"));
+    menu.AddItem("Add Cube", () => AddSceneNode(target, BuiltInAssets.CubeMesh, "Cube"));
+    menu.AddItem("Add Plane", () => AddSceneNode(target, BuiltInAssets.PlaneMesh, "Plane"));
+    menu.AddItem("Add Sphere", () => AddSceneNode(target, BuiltInAssets.SphereMesh, "Sphere"));
+    menu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
+    menu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
     hierarchyContextMenu = menu;
     overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);
@@ -1979,8 +2090,10 @@ window.Update += delta =>
             logger.LogInformation("Refreshed asset database with {ChangeCount} changes",
                 assetChanges.Count);
             RefreshFileSystem();
+            StartScriptSchemaBuild();
         }
     }
+    UpdateScriptSchemaBuild();
     UpdatePlayModeStart(delta);
     if (pendingResizeTimestamp != 0)
     {
@@ -1999,6 +2112,8 @@ window.Update += delta =>
         try
         {
             scriptHost.Update(delta);
+            physicsWorld?.Update(delta);
+            scriptHost.LateUpdate(delta);
         }
         catch (Exception exception)
         {
@@ -2006,28 +2121,31 @@ window.Update += delta =>
             StopPlayMode();
         }
     }
-    if (!selection.IsDragging && inspector.RefreshValues())
-        RefreshVertices();
     var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
     var gameContinuous = scriptHost is not null;
-    var sceneInvalid = renderScheduler.Consume(RenderInvalidation.SceneViewport);
-    var gameInvalid = renderScheduler.Consume(RenderInvalidation.GameViewport);
+    var sceneVisible = sceneViewport.IsEffectivelyVisible;
+    var gameVisible = gameViewport.IsEffectivelyVisible;
+    var sceneInvalid = sceneVisible &&
+        renderScheduler.Consume(RenderInvalidation.SceneViewport);
+    var gameInvalid = gameVisible &&
+        renderScheduler.Consume(RenderInvalidation.GameViewport);
     if (detachedSceneWindow is null
-        && (sceneContinuous || sceneInvalid))
+        && sceneVisible && (sceneContinuous || sceneInvalid))
         viewportRenderer.RenderScene(sceneViewport, lastMousePos);
     if (detachedGameWindow is null
-        && (gameContinuous || gameInvalid))
+        && gameVisible && (gameContinuous || gameInvalid))
         viewportRenderer.RenderGame(gameViewport);
     secondaryWindows.PumpFrames();
-    if (detachedSceneWindow is null &&
+    if (detachedSceneWindow is null && sceneViewport.IsEffectivelyVisible &&
         renderScheduler.Consume(RenderInvalidation.SceneViewport))
         viewportRenderer.RenderScene(sceneViewport, lastMousePos);
-    if (detachedGameWindow is null &&
+    if (detachedGameWindow is null && gameViewport.IsEffectivelyVisible &&
         renderScheduler.Consume(RenderInvalidation.GameViewport))
         viewportRenderer.RenderGame(gameViewport);
     dockSession.SynchronizeFloatingWindows();
     window.SetContinuousRendering(
         flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
+            || scriptSchemaBuildTask is not null
             || pendingResizeTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates
             || dockSession.RequiresContinuousUpdates
@@ -2037,6 +2155,7 @@ window.Update += delta =>
 
 logger.LogInformation("Running main loop...");
 window.Run();
+isShuttingDown = true;
 try
 {
     EditorDockWorkspace.Save(project.RootPath, dockSession.Workspace);
@@ -2059,5 +2178,22 @@ if (playBuildTask is not null)
     }
 }
 playBuildCancellation?.Dispose();
+if (scriptSchemaBuildTask is not null)
+{
+    scriptSchemaBuildCancellation?.Cancel();
+    try
+    {
+        scriptSchemaBuildTask.GetAwaiter().GetResult().Dispose();
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Could not finish the pending Inspector schema build");
+    }
+}
+scriptSchemaBuildCancellation?.Dispose();
+scriptSchemaHost?.Dispose();
 logger.LogInformation("Done.");
 return 0;

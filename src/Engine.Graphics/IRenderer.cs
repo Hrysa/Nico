@@ -44,6 +44,13 @@ public interface IRenderer
     /// <param name="pushConstants">UI transform constants.</param>
     void SetPushConstants(PushConstants pushConstants);
 
+    /// <summary>Sets the swapchain clear color used as the base background behind UI draws.</summary>
+    /// <param name="r">Red component.</param>
+    /// <param name="g">Green component.</param>
+    /// <param name="b">Blue component.</param>
+    /// <param name="a">Alpha component.</param>
+    void SetUiClearColor(float r, float g, float b, float a = 1f);
+
     /// <summary>Registers a viewport render target.</summary>
     /// <param name="width">Initial width.</param>
     /// <param name="height">Initial height.</param>

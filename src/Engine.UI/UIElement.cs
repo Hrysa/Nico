@@ -80,6 +80,8 @@ public class UIElement : Node
     private float? _flexBasis;
     private FlexAlignment _alignSelf;
     private Color _backgroundColor = Color.Black;
+    private bool _hasBackgroundColor;
+    private bool _paintBackground;
     private Color _foregroundColor = Color.White;
     private bool _isVisible = true;
     private float _opacity = 1f;
@@ -601,12 +603,36 @@ public class UIElement : Node
         }
     }
 
-    /// <summary>Gets or sets the background color.</summary>
+    /// <summary>Gets or sets the background color and marks this element as having an explicit fill.</summary>
     public Color BackgroundColor
     {
         get => _backgroundColor;
-        set { if (!_backgroundColor.Equals(value)) { _backgroundColor = value; InvalidateVisual(); } }
+        set
+        {
+            if (_hasBackgroundColor && _paintBackground && _backgroundColor.Equals(value))
+                return;
+            _backgroundColor = value;
+            _hasBackgroundColor = true;
+            _paintBackground = true;
+            InvalidateVisual();
+        }
     }
+
+    /// <summary>Gets or sets whether an explicitly configured background is painted.</summary>
+    public bool PaintBackground
+    {
+        get => _paintBackground;
+        set
+        {
+            if (_paintBackground == value)
+                return;
+            _paintBackground = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>Gets whether a background color was explicitly configured.</summary>
+    protected bool HasBackgroundColor => _hasBackgroundColor;
 
     /// <summary>Gets or sets the foreground (text/icon) color.</summary>
     public Color ForegroundColor
@@ -626,6 +652,22 @@ public class UIElement : Node
             _isVisible = value;
             InvalidateInputTree();
             InvalidateMeasure();
+        }
+    }
+
+    /// <summary>Gets whether this element and every retained ancestor are visible.</summary>
+    public bool IsEffectivelyVisible
+    {
+        get
+        {
+            Node? current = this;
+            while (current is UIElement element)
+            {
+                if (!element.IsVisible)
+                    return false;
+                current = element.Parent;
+            }
+            return true;
         }
     }
 
@@ -1691,6 +1733,8 @@ public class UIElement : Node
     /// <param name="drawList">Draw list receiving paint commands.</param>
     protected virtual void Paint(UIDrawList drawList)
     {
+        if (!PaintBackground || !HasBackgroundColor)
+            return;
         drawList.AddRectangle(Left, Top, Right, Bottom, BackgroundColor);
     }
 

@@ -1,7 +1,7 @@
 namespace Engine.UI;
 
 /// <summary>Base class for retained controls supporting resources, styles, and visual templates.</summary>
-public class Control : UIElement
+public class Control : Box
 {
     private IUIStyle? _style;
     private IUIControlTemplate? _template;

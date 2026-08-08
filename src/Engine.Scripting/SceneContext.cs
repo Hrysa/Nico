@@ -1,4 +1,5 @@
 using Engine.Core;
+using Engine.Graphics;
 
 namespace Engine.Scripting;
 
@@ -10,14 +11,25 @@ public sealed class SceneContext
     /// <summary>Gets the synthetic root of the active scene.</summary>
     public Node Root { get; }
 
+    /// <summary>Gets frame-stable keyboard input for the active scene.</summary>
+    public SceneInput Input { get; }
+
     /// <summary>
     /// Creates a scene context for a root node.
     /// </summary>
     /// <param name="root">Synthetic scene root.</param>
-    public SceneContext(Node root)
+    public SceneContext(Node root) : this(root, null)
+    {
+    }
+
+    /// <summary>Creates a scene context backed by an optional input source.</summary>
+    /// <param name="root">Synthetic scene root.</param>
+    /// <param name="inputSource">Runtime input source, or null for headless use.</param>
+    internal SceneContext(Node root, IInputSource? inputSource)
     {
         ArgumentNullException.ThrowIfNull(root);
         Root = root;
+        Input = new SceneInput(inputSource);
     }
 
     /// <summary>

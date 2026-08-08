@@ -13,18 +13,10 @@ public enum BoxVisualStateMode
 }
 
 /// <summary>Paints the visual border box used by compositional controls.</summary>
-public class Box : Control
+public class Box : UIElement
 {
-    private bool _paintBackground = true;
     private float _cornerRadius;
     private BoxVisualStateMode _visualStateMode;
-
-    /// <summary>Gets or sets whether the box paints its background.</summary>
-    public bool PaintBackground
-    {
-        get => _paintBackground;
-        set { if (_paintBackground != value) { _paintBackground = value; InvalidateVisual(); } }
-    }
 
     /// <summary>Gets or sets the background corner radius.</summary>
     public float CornerRadius
@@ -63,7 +55,7 @@ public class Box : Control
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        if (!PaintBackground)
+        if (!PaintBackground || !HasBackgroundColor)
             return;
         if (CornerRadius > 0f)
             drawList.AddRoundedRectangle(Left, Top, Right, Bottom, CornerRadius, BackgroundColor);

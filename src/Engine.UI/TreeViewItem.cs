@@ -124,17 +124,14 @@ public sealed class TreeViewItem : Button
     /// <param name="selectItem">Selection callback.</param>
     /// <param name="activateItem">Activation callback.</param>
     /// <param name="handleKeyDown">Keyboard callback.</param>
-    /// <param name="scrollRows">Wheel callback.</param>
     internal void BindOwner(
         Action<Node, Engine.Graphics.InputModifiers> selectItem,
         Action<Node> activateItem,
-        Action<int> handleKeyDown,
-        Action<float> scrollRows)
+        Action<int> handleKeyDown)
     {
         _selectItem = selectItem;
         _activateItem = activateItem;
         KeyDown += handleKeyDown;
-        Scroll += scrollRows;
     }
 
     /// <summary>Rebinds this retained row container to a logical tree node.</summary>

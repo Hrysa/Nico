@@ -64,6 +64,7 @@ public sealed class UIHost : IDisposable
     private Vector2 _clientSize;
     private bool _disposed;
     private UIInputContextMode _inputContext;
+    private PointerCursorKind _pointerCursor = PointerCursorKind.Default;
     private UINavigationAction? _heldNavigationAction;
     private int _heldNavigationDevice;
     private double _navigationRepeatElapsed;
@@ -415,6 +416,11 @@ public sealed class UIHost : IDisposable
             _navigationInput.NavigationChanged -= OnNavigationChanged;
         if (_schedulingMode != UIHostSchedulingMode.ExternallyManaged)
             _window.SetContinuousRendering(false);
+        if (_pointerCursor != PointerCursorKind.Default)
+        {
+            _pointerCursor = PointerCursorKind.Default;
+            _window.SetPointerCursor(PointerCursorKind.Default);
+        }
         OverlayManager?.Dispose();
         _windowsAccessibility?.Dispose();
         _macOSAccessibility?.Dispose();
@@ -485,9 +491,26 @@ public sealed class UIHost : IDisposable
         var routed = PreviewPointerMove?.Invoke(logicalEvent) != true;
         if (routed)
             InputRouter.RoutePointerMove(logicalEvent);
+        if (_disposed)
+            return;
+        UpdatePointerCursor(routed);
         PointerMoveProcessed?.Invoke(logicalEvent, routed);
         UpdatePointerInteractionScheduling();
         PresentCapturedInteraction();
+    }
+
+    /// <summary>Updates the host cursor from captured drag or routed hover state.</summary>
+    /// <param name="routed">Whether retained UI received the current pointer event.</param>
+    private void UpdatePointerCursor(bool routed)
+    {
+        var thumb = InputRouter.CapturedElement as Thumb;
+        if (thumb is null || !thumb.IsDragging)
+            thumb = routed ? InputRouter.HoveredElement as Thumb : null;
+        var cursor = thumb?.CursorKind ?? PointerCursorKind.Default;
+        if (_pointerCursor == cursor)
+            return;
+        _pointerCursor = cursor;
+        _window.SetPointerCursor(cursor);
     }
 
     /// <summary>Relays one versioned pointer-button event.</summary>
@@ -516,6 +539,7 @@ public sealed class UIHost : IDisposable
         }
         if (_disposed)
             return;
+        UpdatePointerCursor(routed);
         PointerButtonProcessed?.Invoke(logicalEvent, routed);
         UpdatePointerInteractionScheduling();
     }
@@ -681,6 +705,9 @@ public sealed class UIHost : IDisposable
     {
         PointerPosition = _viewportLayout.ToLogical(position);
         InputRouter.MovePointer(PointerPosition);
+        if (_disposed)
+            return;
+        UpdatePointerCursor(routed: true);
         UpdatePointerInteractionScheduling();
         PresentCapturedInteraction();
     }
@@ -690,6 +717,9 @@ public sealed class UIHost : IDisposable
     private void OnMouseDown(int button)
     {
         InputRouter.Press();
+        if (_disposed)
+            return;
+        UpdatePointerCursor(routed: true);
         UpdatePointerInteractionScheduling();
     }
 
@@ -700,6 +730,7 @@ public sealed class UIHost : IDisposable
         InputRouter.Release(invokeClick: true);
         if (_disposed)
             return;
+        UpdatePointerCursor(routed: true);
         UpdatePointerInteractionScheduling();
     }
 

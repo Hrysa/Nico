@@ -75,9 +75,8 @@ public sealed class FlexPanel : Panel
     /// <summary>Creates an empty flex panel.</summary>
     /// <param name="backgroundColor">Optional painted background; null creates a layout-only panel.</param>
     public FlexPanel(Color? backgroundColor = null)
-        : base(backgroundColor ?? Color.Black)
+        : base(backgroundColor)
     {
-        PaintBackground = backgroundColor.HasValue;
     }
 
     /// <summary>Measures intrinsic item sizes and flex line breaks.</summary>

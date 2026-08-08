@@ -10,12 +10,20 @@
   <ItemGroup>
     <ProjectReference Include="../../tools/Engine.Profiler.Weaver/Engine.Profiler.Weaver.csproj"
                       ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="../../tools/Engine.Script.Generator/Engine.Script.Generator.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../Engine.Assets/Engine.Assets.csproj" />
     <ProjectReference Include="../Engine.Graphics/Engine.Graphics.csproj" />
     <ProjectReference Include="../Engine.Graphics.Silk/Engine.Graphics.Silk.csproj" />
+    <ProjectReference Include="../Engine.Physics/Engine.Physics.csproj" />
     <ProjectReference Include="../Engine.Scripting/Engine.Scripting.csproj" />
     <ProjectReference Include="../Engine.UI/Engine.UI.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyScriptGenerator" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/../../tools/Engine.Script.Generator/bin/$(Configuration)/netstandard2.0/Engine.Script.Generator.dll"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
 
   <PropertyGroup>
     <EnableManagedProfilerInstrumentation Condition="'$(EnableManagedProfilerInstrumentation)' == '' and '$(Configuration)' == 'Debug'">true</EnableManagedProfilerInstrumentation>

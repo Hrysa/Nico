@@ -9,9 +9,15 @@ public sealed class Thumb : UIElement
     private readonly UITheme _theme;
     private bool _isDragging;
     private Vector2 _lastPosition;
+    private readonly bool _isTransparent;
+    private readonly bool _enableHoverState;
+    private readonly Color? _overrideColor;
 
     /// <summary>Gets whether this thumb currently owns an active drag.</summary>
     public bool IsDragging => _isDragging;
+
+    /// <summary>Gets or sets the pointer cursor requested while this thumb is hovered.</summary>
+    public PointerCursorKind CursorKind { get; set; } = PointerCursorKind.Default;
 
     /// <summary>Occurs when a captured drag begins.</summary>
     public event Action? DragStarted;
@@ -24,16 +30,33 @@ public sealed class Thumb : UIElement
 
     /// <summary>Creates a draggable thumb.</summary>
     /// <param name="theme">Theme supplying thumb colors.</param>
-    public Thumb(UITheme? theme = null)
+    /// <param name="isTransparent">Whether to skip background paint for this thumb.</param>
+    /// <param name="enableHoverState">Whether to alter color for hover and pressed states.</param>
+    /// <param name="overrideColor">Optional fixed color replacing the usual state-based or theme color.</param>
+    public Thumb(
+        UITheme? theme = null,
+        bool isTransparent = false,
+        bool enableHoverState = true,
+        Color? overrideColor = null)
     {
         _theme = theme ?? UITheme.Dark;
+        _isTransparent = isTransparent;
+        _enableHoverState = enableHoverState;
+        _overrideColor = overrideColor;
         Pointer += OnPointer;
     }
 
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        var color = IsPressed ? _theme.SurfacePressed : IsHovered ? _theme.SurfaceHover : _theme.BorderStrong;
+        if (_isTransparent)
+            return;
+        var color = _overrideColor ?? (_enableHoverState switch
+        {
+            true when IsPressed => _theme.SurfacePressed,
+            true when IsHovered => _theme.SurfaceHover,
+            _ => _theme.BorderStrong
+        });
         drawList.AddRoundedRectangle(Left, Top, Right, Bottom,
             MathF.Min(MathF.Min(Width, Height) / 2f, 4f), color);
     }

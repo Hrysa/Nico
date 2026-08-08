@@ -247,10 +247,9 @@ public class ItemsControl<TItem> : Control
     /// <param name="spacing">Vertical spacing between generated containers.</param>
     public ItemsControl(float spacing = 0f)
     {
-        ItemsPresenter = new StackPanel(0f, 0f, Color.Black)
+        ItemsPresenter = new StackPanel(0f, 0f)
         {
-            Spacing = spacing,
-            PaintBackground = false
+            Spacing = spacing
         };
         AddVisualChild(ItemsPresenter);
     }

@@ -56,6 +56,10 @@ public interface IWindow : IDisposable
     /// <summary>Requests native window closure.</summary>
     void Close();
 
+    /// <summary>Requests a logical pointer cursor style for the host window.</summary>
+    /// <param name="kind">Requested cursor kind.</param>
+    void SetPointerCursor(PointerCursorKind kind);
+
     /// <summary>Occurs before rendering each frame.</summary>
     event Action<double>? Update;
 

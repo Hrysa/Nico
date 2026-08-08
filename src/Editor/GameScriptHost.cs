@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 using Engine.Core;
+using Engine.Graphics;
 using Engine.Scripting;
 
 namespace Editor;
@@ -20,6 +21,19 @@ public sealed class GameScriptHost : IDisposable
 
     /// <summary>Gets the compiled UUID script catalog when asset discovery was supplied.</summary>
     public IScriptTypeCatalog? Catalog => _catalog;
+
+    /// <summary>Finds the live runtime script created for one play-scene component.</summary>
+    /// <param name="component">Play-scene script component.</param>
+    /// <param name="script">Live script instance when found.</param>
+    /// <returns>True when the active runtime owns the component.</returns>
+    public bool TryGetScript(ScriptComponent component, out SceneScript? script)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_runtime is not null)
+            return _runtime.TryGetScript(component, out script);
+        script = null;
+        return false;
+    }
 
     /// <summary>
     /// Builds and loads a generated game script project.
@@ -62,7 +76,8 @@ public sealed class GameScriptHost : IDisposable
     /// Attaches compiled scripts to a newly active scene and starts their lifecycle.
     /// </summary>
     /// <param name="root">Synthetic active scene root.</param>
-    public void LoadScene(Node root)
+    /// <param name="inputSource">Optional gameplay input source.</param>
+    public void LoadScene(Node root, IInputSource? inputSource = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(root);
@@ -71,9 +86,10 @@ public sealed class GameScriptHost : IDisposable
         var runtime = new SceneScriptRuntime();
         try
         {
-            if (_catalog is null && Enumerate(root).Any(node => node.ScriptId is not null))
+            if (_catalog is null && Enumerate(root).Any(HasScriptComponent))
                 throw new InvalidOperationException("The compiled game has no script asset catalog.");
-            runtime.Attach(root, (IScriptTypeCatalog?)_catalog ?? EmptyScriptTypeCatalog.Instance);
+            runtime.Attach(root, (IScriptTypeCatalog?)_catalog ?? EmptyScriptTypeCatalog.Instance,
+                inputSource);
             runtime.Start();
             _runtime = runtime;
         }
@@ -90,6 +106,14 @@ public sealed class GameScriptHost : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _runtime?.Update(deltaTime);
+    }
+
+    /// <summary>Updates scripts after physics and before rendering.</summary>
+    /// <param name="deltaTime">Elapsed time in seconds since the previous update.</param>
+    public void LateUpdate(double deltaTime)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _runtime?.LateUpdate(deltaTime);
     }
 
     /// <summary>Stops and detaches scripts belonging to the active play scene.</summary>
@@ -141,6 +165,20 @@ public sealed class GameScriptHost : IDisposable
         foreach (var child in root.Children)
         foreach (var descendant in Enumerate(child))
             yield return descendant;
+    }
+
+    /// <summary>Checks whether one node owns at least one script component.</summary>
+    /// <param name="node">Node to inspect.</param>
+    /// <returns>True when a script component is attached.</returns>
+    private static bool HasScriptComponent(Node node)
+    {
+        var components = node.Components;
+        for (var index = 0; index < components.Count; index++)
+        {
+            if (components[index] is ScriptComponent)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Provides an empty catalog for scenes without attached scripts.</summary>

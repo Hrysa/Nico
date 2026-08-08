@@ -58,7 +58,7 @@ public sealed class UIKeyRepeatController
         }
     }
 
-    /// <summary>Advances unscaled host time and emits bounded repeat transitions.</summary>
+    /// <summary>Advances unscaled host time and emits at most one repeat transition.</summary>
     /// <param name="deltaTime">Elapsed host time in seconds.</param>
     /// <param name="emit">Synchronous receiver for synthesized repeat transitions.</param>
     public void Advance(double deltaTime, Action<KeyInputEvent> emit)
@@ -67,17 +67,15 @@ public sealed class UIKeyRepeatController
         if (!IsRepeatPending || deltaTime <= 0d || !double.IsFinite(deltaTime))
             return;
         _elapsed += deltaTime;
-        var emitted = 0;
-        while (_heldKey is { } key && emitted < 8)
-        {
-            var threshold = _started ? Math.Max(0.01d, Interval) : Math.Max(0d, Delay);
-            if (_elapsed < threshold)
-                break;
-            _elapsed -= threshold;
-            _started = true;
-            emit(new KeyInputEvent(key, true, IsRepeat: true, _heldModifiers));
-            emitted++;
-        }
+        var threshold = _started ? Math.Max(0.01d, Interval) : Math.Max(0d, Delay);
+        if (_elapsed < threshold || _heldKey is not { } key)
+            return;
+        _elapsed -= threshold;
+        _started = true;
+        var interval = Math.Max(0.01d, Interval);
+        if (_elapsed >= interval)
+            _elapsed %= interval;
+        emit(new KeyInputEvent(key, true, IsRepeat: true, _heldModifiers));
     }
 
     /// <summary>Clears held-key and timing state.</summary>

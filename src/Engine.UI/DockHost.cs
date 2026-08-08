@@ -1,4 +1,5 @@
 using System.Numerics;
+using Engine.Graphics;
 
 namespace Engine.UI;
 
@@ -42,6 +43,7 @@ public sealed class DockHost : UIElement
         _workspace = workspace;
         _resolveContent = resolveContent;
         _theme = theme ?? UITheme.Dark;
+        Margin = new Thickness(4f);
         _resolveRoot = resolveRoot ?? (() => _workspace.Root);
         _canFloat = canFloat ?? (_ => true);
         Refresh();
@@ -179,15 +181,21 @@ public sealed class DockHost : UIElement
     private UIElement CreateTabPresenter(DockTabGroup group)
     {
         if (group.Tabs.Count == 0)
-            return new Panel(_theme.Surface, 0f, 0f);
+            return new Panel(_theme.Surface, 0f, 0f, _theme);
         var tabs = new TabControl(0f, 0f, _theme.ControlHeight, _theme);
+        var mountedContents = new List<UIElement>(group.Tabs.Count);
         var selectedIndex = 0;
         for (var index = 0; index < group.Tabs.Count; index++)
         {
             var tab = group.Tabs[index];
             var content = _resolveContent(tab.Id) ?? CreateMissingContent(tab.Id);
+            var contentScroller = new ScrollViewer(theme: _theme)
+            {
+                Content = content
+            };
+            mountedContents.Add(content);
             var tabId = tab.Id;
-            tabs.AddTab(tab.Title, content);
+            tabs.AddTab(tab.Title, contentScroller);
             tabs.GetHeader(index).DragData = new UIDragData(
                 new DockTabDragData(tab.Id), tab.Title);
             tabs.GetHeader(index).AllowedDragEffects = UIDragEffect.Move;
@@ -196,10 +204,24 @@ public sealed class DockHost : UIElement
                 selectedIndex = index;
         }
         tabs.Select(selectedIndex);
-        tabs.SelectionChanged += (index, _) => group.SelectedId = group.Tabs[index].Id;
+        SynchronizeContentVisibility(mountedContents, selectedIndex);
+        tabs.SelectionChanged += (index, _) =>
+        {
+            group.SelectedId = group.Tabs[index].Id;
+            SynchronizeContentVisibility(mountedContents, index);
+        };
         var presenter = new DockTabGroupPresenter(this, group, tabs, _theme);
         _groupPresenters.Add(presenter);
         return presenter;
+    }
+
+    /// <summary>Keeps caller-owned content visibility aligned with its scroll-wrapper tab state.</summary>
+    /// <param name="contents">Mounted content in tab order.</param>
+    /// <param name="selectedIndex">Currently selected content index.</param>
+    private static void SynchronizeContentVisibility(List<UIElement> contents, int selectedIndex)
+    {
+        for (var index = 0; index < contents.Count; index++)
+            contents[index].IsVisible = index == selectedIndex;
     }
 
     /// <summary>Handles the platform close-tab gesture from a focused header.</summary>
@@ -235,7 +257,9 @@ public sealed class DockHost : UIElement
     {
         if (Children.Count == 0 || Children[0] is not UIElement child)
             return Vector2.Zero;
-        child.Measure(availableSize);
+        child.Measure(new Vector2(
+            MathF.Max(0f, availableSize.X - Padding.Horizontal),
+            MathF.Max(0f, availableSize.Y - Padding.Vertical)));
         return availableSize;
     }
 
@@ -243,7 +267,7 @@ public sealed class DockHost : UIElement
     protected override void ArrangeOverride(Vector2 contentSize)
     {
         if (Children.Count > 0 && Children[0] is UIElement child)
-            child.Arrange(Vector2.Zero, contentSize);
+            child.Arrange(new Vector2(Padding.Left, Padding.Top), contentSize);
     }
 }
 
@@ -261,7 +285,7 @@ public readonly record struct DockDropPlacement(
     int TargetIndex = -1);
 
 /// <summary>Hosts one tab group and commits routed tab drops through its dock workspace.</summary>
-internal sealed class DockTabGroupPresenter : UIElement
+internal sealed class DockTabGroupPresenter : Box
 {
     private readonly DockHost _host;
     private readonly DockTabGroup _group;
@@ -283,6 +307,8 @@ internal sealed class DockTabGroupPresenter : UIElement
         _group = group;
         _tabs = tabs;
         _overlay = new DockDropOverlay(theme);
+        BackgroundColor = theme.Surface;
+        CornerRadius = theme.PanelCornerRadius;
         AllowDrop = true;
         Drag += HandleDrag;
         AddChild(_tabs);
@@ -408,7 +434,7 @@ internal sealed class DockTabGroupPresenter : UIElement
 /// <summary>Arranges two dock presenters around a draggable splitter.</summary>
 internal sealed class DockSplitPresenter : UIElement
 {
-    private const float SplitterThickness = 5f;
+    private const float SplitterThickness = 4f;
     private readonly DockSplit _model;
     private readonly UIElement _first;
     private readonly UIElement _second;
@@ -431,7 +457,10 @@ internal sealed class DockSplitPresenter : UIElement
         _model = model;
         _first = first;
         _second = second;
-        _splitter = new Thumb(theme);
+        _splitter = new Thumb(theme, isTransparent: true, enableHoverState: false);
+        _splitter.CursorKind = _model.Orientation == DockSplitOrientation.Horizontal
+            ? PointerCursorKind.HorizontalResize
+            : PointerCursorKind.VerticalResize;
         _splitter.DragDelta += Resize;
         _splitter.DragCompleted += resizeCompleted;
         AddChild(_first);

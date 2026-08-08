@@ -13,12 +13,13 @@ public class Panel : Box
     /// </summary>
     /// <param name="width">The panel width.</param>
     /// <param name="height">The panel height.</param>
-    /// <param name="backgroundColor">The panel background color.</param>
+    /// <param name="backgroundColor">Optional panel background color.</param>
     /// <param name="theme">Theme supplying the panel's default corner radius.</param>
-    public Panel(Color backgroundColor, float width = 0f, float height = 0f, UITheme? theme = null)
+    public Panel(Color? backgroundColor = null, float width = 0f, float height = 0f, UITheme? theme = null)
         : base(width, height)
     {
-        BackgroundColor = backgroundColor;
+        if (backgroundColor is { } color)
+            BackgroundColor = color;
         CornerRadius = (theme ?? UITheme.Dark).PanelCornerRadius;
     }
 

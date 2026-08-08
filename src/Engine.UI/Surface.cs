@@ -29,10 +29,10 @@ public class Surface : Panel
     /// </summary>
     /// <param name="width">Surface width.</param>
     /// <param name="height">Surface height.</param>
-    /// <param name="backgroundColor">Surface fill color.</param>
+    /// <param name="backgroundColor">Optional surface fill color.</param>
     /// <param name="borderColor">Surface border color.</param>
     /// <param name="theme">Theme supplying the default panel corner radius.</param>
-    public Surface(Color backgroundColor, Color borderColor, float width = 0f, float height = 0f, UITheme? theme = null)
+    public Surface(Color? backgroundColor, Color borderColor, float width = 0f, float height = 0f, UITheme? theme = null)
         : base(backgroundColor, width, height, theme)
     {
         BorderColor = borderColor;

@@ -12,9 +12,8 @@ public sealed class Canvas : Panel
     public IPopupWorkAreaProvider? PopupWorkAreaProvider { get; set; }
 
     /// <summary>Creates a transparent canvas.</summary>
-    public Canvas() : base(Color.Black)
+    public Canvas() : base()
     {
-        PaintBackground = false;
         IsHitTestVisible = false;
         IsOverlay = true;
     }

@@ -29,6 +29,7 @@ public sealed class ProfilerView : Panel
     private readonly long[] _gcHistory = new long[HistoryCapacity];
     private readonly FrameProfileSample[] _frames = new FrameProfileSample[HistoryCapacity];
     private readonly TreeView _callTree;
+    private readonly ScrollViewer _callTreeScroller;
     private int _nextSample;
     private int _sampleCount;
     private int _samplesSinceRefresh;
@@ -55,6 +56,9 @@ public sealed class ProfilerView : Panel
     /// <summary>Gets the expandable tree displaying the selected frame's call paths.</summary>
     public TreeView CallTree => _callTree;
 
+    /// <summary>Gets the scroll container owning the call-tree viewport and scroll bar.</summary>
+    public ScrollViewer CallTreeScroller => _callTreeScroller;
+
     /// <summary>Creates an empty profiler history view.</summary>
     /// <param name="theme">Theme supplying profiler colors and typography.</param>
     public ProfilerView(UITheme? theme = null)
@@ -78,8 +82,8 @@ public sealed class ProfilerView : Panel
             new TreeViewColumn("GC", 75f, FormatGcAllocation, TreeViewColumnAlignment.Right),
             new TreeViewColumn("Self GC", 75f, FormatSelfGcAllocation, TreeViewColumnAlignment.Right)
         ]);
-        AddChild(_callTree);
-        Scroll += _callTree.InvokeScroll;
+        _callTreeScroller = new ScrollViewer(theme: _theme) { Content = _callTree };
+        AddChild(_callTreeScroller);
     }
 
     /// <summary>Adds one frame and reports whether the visible charts should be submitted.</summary>
@@ -205,8 +209,8 @@ public sealed class ProfilerView : Panel
         var treeSize = new Vector2(
             MathF.Max(0f, contentSize.X - GraphInset * 2f),
             MathF.Max(0f, contentSize.Y - treeTop));
-        _callTree.Measure(treeSize);
-        _callTree.Arrange(new Vector2(GraphInset, treeTop), treeSize);
+        _callTreeScroller.Measure(treeSize);
+        _callTreeScroller.Arrange(new Vector2(GraphInset, treeTop), treeSize);
     }
 
     /// <summary>Paints the label above the expandable call tree.</summary>

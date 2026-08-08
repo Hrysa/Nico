@@ -3,7 +3,7 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>A box that owns and arranges exactly one visual content child.</summary>
-public class ContentControl : Box
+public class ContentControl : Control
 {
     private UIElement? _content;
 

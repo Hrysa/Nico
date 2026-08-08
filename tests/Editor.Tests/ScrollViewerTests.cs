@@ -7,6 +7,37 @@ namespace Editor.Tests;
 
 public class ScrollViewerTests
 {
+    /// <summary>Verifies overflowing content paints before the thumb on a transparent scroll bar.</summary>
+    [Fact]
+    public void Content_FirstAssignment_PaintsVisibleThumbAboveContent()
+    {
+        var viewer = new ScrollViewer(100f, 100f)
+        {
+            Content = new Panel(Color.Red, 100f, 300f)
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            }
+        };
+
+        var commands = viewer.BuildDrawList().Commands;
+        var contentIndex = -1;
+        var scrollThumbIndex = -1;
+        for (var index = 0; index < commands.Count; index++)
+        {
+            if (commands[index].Color == Color.Red)
+                contentIndex = index;
+            if (commands[index].Color == UITheme.Dark.BorderStrong)
+                scrollThumbIndex = index;
+        }
+
+        Assert.True(viewer.VerticalScrollBar.IsVisible);
+        Assert.True(contentIndex >= 0);
+        Assert.True(scrollThumbIndex > contentIndex);
+        Assert.DoesNotContain(commands, command =>
+            command.Color == UITheme.Dark.SurfaceRaised);
+    }
+
     /// <summary>Verifies vertical wheel input moves content and synchronizes the visible bar.</summary>
     [Fact]
     public void Wheel_VerticalOverflow_OffsetsContentAndScrollBar()

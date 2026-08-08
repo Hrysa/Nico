@@ -1,10 +1,22 @@
 using System.Numerics;
+using Engine.Core;
 using Xunit;
 
 namespace Engine.Graphics.Tests;
 
 public class BuiltInForwardMeshBuilderTests
 {
+    /// <summary>Gets expected bounds for every engine-owned primitive.</summary>
+    public static TheoryData<AssetReference, Vector3, Vector3> BuiltInPrimitiveBounds => new()
+    {
+        { BuiltInAssets.PlaneMesh, new Vector3(-0.5f, 0f, -0.5f),
+            new Vector3(0.5f, 0f, 0.5f) },
+        { BuiltInAssets.SphereMesh, new Vector3(-0.5f), new Vector3(0.5f) },
+        { BuiltInAssets.CylinderMesh, new Vector3(-0.5f), new Vector3(0.5f) },
+        { BuiltInAssets.CapsuleMesh, new Vector3(-0.5f, -1f, -0.5f),
+            new Vector3(0.5f, 1f, 0.5f) }
+    };
+
     /// <summary>Preserves source vertex addressing for the native indexed backend path.</summary>
     [Fact]
     public void BuildIndexedVertices_IndexedMesh_DoesNotExpandIndices()
@@ -62,5 +74,57 @@ public class BuiltInForwardMeshBuilderTests
         Assert.Equal(source.Vertices.Length, mesh.Indices.Length);
         Assert.All(mesh.Vertices, vertex => Assert.InRange(vertex.Normal.Length(), 0.999f, 1.001f));
         Assert.Equal(0, Assert.Single(mesh.Submeshes).MaterialSlot);
+    }
+
+    /// <summary>Verifies each new primitive has finite geometry, outward winding, and stable bounds.</summary>
+    /// <param name="reference">Built-in mesh reference.</param>
+    /// <param name="expectedMinimum">Expected minimum bound.</param>
+    /// <param name="expectedMaximum">Expected maximum bound.</param>
+    [Theory]
+    [MemberData(nameof(BuiltInPrimitiveBounds))]
+    public void LoadMesh_NewPrimitive_ProducesValidOutwardGeometry(
+        AssetReference reference,
+        Vector3 expectedMinimum,
+        Vector3 expectedMaximum)
+    {
+        var mesh = BuiltInAssets.LoadMesh(reference);
+
+        Assert.True(BuiltInAssets.IsBuiltInMesh(reference));
+        Assert.NotEmpty(mesh.Vertices);
+        Assert.NotEmpty(mesh.Indices);
+        Assert.Equal(0, mesh.Indices.Length % 3);
+        Assert.Equal(expectedMinimum, mesh.BoundsMinimum);
+        Assert.Equal(expectedMaximum, mesh.BoundsMaximum);
+        Assert.All(mesh.Vertices, vertex =>
+        {
+            Assert.True(float.IsFinite(vertex.Position.X));
+            Assert.InRange(vertex.Normal.Length(), 0.999f, 1.001f);
+        });
+        for (var index = 0; index < mesh.Indices.Length; index += 3)
+        {
+            var a = mesh.Vertices[mesh.Indices[index]];
+            var b = mesh.Vertices[mesh.Indices[index + 1]];
+            var c = mesh.Vertices[mesh.Indices[index + 2]];
+            var face = Vector3.Cross(b.Position - a.Position, c.Position - a.Position);
+            Assert.True(face.LengthSquared() > 0.0000001f);
+            Assert.True(Vector3.Dot(face, a.Normal + b.Normal + c.Normal) > 0f);
+        }
+    }
+
+    /// <summary>Verifies built-in primitive references are stable and mutually distinct.</summary>
+    [Fact]
+    public void BuiltInMeshReferences_AreDistinctAndRegistered()
+    {
+        AssetReference[] references =
+        [
+            BuiltInAssets.CubeMesh,
+            BuiltInAssets.PlaneMesh,
+            BuiltInAssets.SphereMesh,
+            BuiltInAssets.CapsuleMesh,
+            BuiltInAssets.CylinderMesh
+        ];
+
+        Assert.Equal(references.Length, references.Distinct().Count());
+        Assert.All(references, reference => Assert.True(BuiltInAssets.IsBuiltInMesh(reference)));
     }
 }

@@ -3,6 +3,7 @@ using Editor;
 using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.Scripting;
 using Engine.UI;
 using Xunit;
 
@@ -55,7 +56,7 @@ public class SceneInspectorTests
         Assert.Equal(1, nameChangeCount);
     }
 
-    /// <summary>Verifies non-focused fields follow runtime transform changes.</summary>
+    /// <summary>Verifies non-focused fields follow runtime transform notifications immediately.</summary>
     [Fact]
     public void RefreshValues_RuntimeTransform_UpdatesDisplayedPosition()
     {
@@ -65,10 +66,33 @@ public class SceneInspectorTests
         var positionX = Assert.IsType<TextField>(FindByName<TextField>(inspector, "PositionX"));
         node.Position = new Vector3(2.5f, 0f, 0f);
 
+        Assert.Equal("2.5", positionX.Text);
+    }
+
+    /// <summary>Verifies an inactive dock ancestor suppresses Inspector binding refresh work.</summary>
+    [Fact]
+    public void RefreshValues_InactiveDockPanel_SkipsBindings()
+    {
+        var node = new Node3D { ScriptId = AssetId.New() };
+        var resolveCount = 0;
+        var inspector = new SceneInspector(300f, 500f)
+        {
+            ResolveScriptName = _ =>
+            {
+                resolveCount++;
+                return "PlayerController";
+            }
+        };
+        var tabContent = new Panel(Color.Black);
+        tabContent.AddChild(inspector);
+        inspector.Bind(node);
+        resolveCount = 0;
+
+        tabContent.IsVisible = false;
         var changed = inspector.RefreshValues();
 
-        Assert.True(changed);
-        Assert.Equal("2.5", positionX.Text);
+        Assert.False(changed);
+        Assert.Equal(0, resolveCount);
     }
 
     /// <summary>Verifies revisiting a node reuses its retained Inspector controls.</summary>
@@ -356,6 +380,70 @@ public class SceneInspectorTests
         }
     }
 
+    /// <summary>Uses generated Editor metadata for event-driven script editing and refresh.</summary>
+    [Fact]
+    public void ObservedScriptProperty_UsesGeneratedBindingWithoutPolling()
+    {
+        var node = new Node3D { Name = "Player" };
+        var component = new ScriptComponent(AssetId.New());
+        node.AddComponent(component);
+        var script = new TestObservedScript { Speed = 2.5d };
+        var inspector = new SceneInspector(320f, 620f)
+        {
+            ResolveScriptName = _ => "PlayerController.cs",
+            ResolveScriptInstance = candidate =>
+                ReferenceEquals(candidate, component) ? script : null
+        };
+        var tabContent = new Panel(Color.Black, 320f, 620f);
+        tabContent.AddChild(inspector);
+        var nodeChanges = 0;
+        inspector.NodeChanged += _ => nodeChanges++;
+        inspector.Bind(node);
+        var field = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "ScriptProperty0_Speed"));
+
+        Assert.Equal("2.5", field.Text);
+        Assert.Null(FindByName<TextField>(inspector, "ScriptProperty0_RuntimeCounter"));
+        tabContent.IsVisible = false;
+        script.Speed = 8d;
+        Assert.Equal("2.5", field.Text);
+        tabContent.IsVisible = true;
+        inspector.Measure(new Vector2(320f, 620f));
+        inspector.Arrange(Vector2.Zero, new Vector2(320f, 620f));
+        Assert.Equal("8", field.Text);
+        component.SetPropertyOverride(TestObservedScript.SpeedId,
+            SerializedPropertyValue.From(9d));
+        Assert.Equal(9d, script.Speed);
+        Assert.Equal("9", field.Text);
+
+        field.SetFocus(true);
+        field.InvokeKeyDown((int)InputKey.Backspace);
+        field.InvokeTextInput('4');
+        Assert.True(inspector.EditForm.CommitAll());
+
+        Assert.Equal(4d, script.Speed);
+        Assert.True(component.TryGetPropertyOverride(TestObservedScript.SpeedId, out var stored));
+        Assert.True(stored.TryGetNumber(out var storedSpeed));
+        Assert.Equal(4d, storedSpeed);
+        Assert.Equal(1, nodeChanges);
+    }
+
+    /// <summary>Refreshes material editors directly from material change notifications.</summary>
+    [Fact]
+    public void MaterialOverride_ExternalMutation_RefreshesWithoutPolling()
+    {
+        var material = new MaterialProperties { Roughness = 0.25f };
+        var mesh = new MeshInstance3D { MaterialOverride = material };
+        var inspector = new SceneInspector(320f, 620f);
+        inspector.Bind(mesh);
+        var roughness = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "MaterialRoughness"));
+
+        material.Roughness = 0.8f;
+
+        Assert.Equal("0.8", roughness.Text);
+    }
+
     /// <summary>Finds a named UI element recursively.</summary>
     /// <typeparam name="TElement">Required UI element type.</typeparam>
     /// <param name="root">Subtree root.</param>
@@ -372,5 +460,59 @@ public class SceneInspectorTests
                 return descendant;
         }
         return null;
+    }
+
+    /// <summary>Provides generator-equivalent metadata for Inspector integration coverage.</summary>
+    private sealed class TestObservedScript : SceneScript
+    {
+        private static readonly ObservedPropertyDescriptor[] Descriptors =
+        [
+            new(SpeedId, nameof(Speed), ObservedValueKind.Number, ObserveScope.Editor),
+            new(RuntimeCounterId, "RuntimeCounter", ObservedValueKind.SignedInteger,
+                ObserveScope.Runtime)
+        ];
+        private double _speed;
+
+        /// <summary>Stable generated property identifier.</summary>
+        internal const int SpeedId = 31873;
+
+        /// <summary>Stable runtime-only property identifier.</summary>
+        internal const int RuntimeCounterId = 31874;
+
+        /// <summary>Gets generated Editor-facing metadata.</summary>
+        public override IReadOnlyList<ObservedPropertyDescriptor> ObservedProperties => Descriptors;
+
+        /// <summary>Gets or sets the observed test speed.</summary>
+        internal double Speed
+        {
+            get => _speed;
+            set
+            {
+                if (_speed == value)
+                    return;
+                _speed = value;
+                NotifyObservedPropertyChanged(SpeedId, ObserveScope.Editor);
+            }
+        }
+
+        /// <inheritdoc/>
+        public override bool TryGetObservedValue(int propertyId, out ObservedValue value)
+        {
+            if (propertyId == SpeedId)
+            {
+                value = ObservedValue.From(Speed);
+                return true;
+            }
+            return base.TryGetObservedValue(propertyId, out value);
+        }
+
+        /// <inheritdoc/>
+        public override bool TrySetObservedValue(int propertyId, ObservedValue value)
+        {
+            if (propertyId != SpeedId || !value.TryGetNumber(out var speed))
+                return false;
+            Speed = speed;
+            return true;
+        }
     }
 }

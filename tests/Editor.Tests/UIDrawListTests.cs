@@ -6,6 +6,75 @@ namespace Editor.Tests;
 
 public class UIDrawListTests
 {
+    /// <summary>Verifies an element without an explicit background is layout-only by default.</summary>
+    [Fact]
+    public void UIElement_WithoutBackground_PaintsNoFill()
+    {
+        var element = new UIElement(100f, 50f);
+
+        Assert.False(element.PaintBackground);
+        Assert.Empty(element.BuildDrawList().Commands);
+    }
+
+    /// <summary>Verifies assigning even the fallback black color enables background painting.</summary>
+    [Fact]
+    public void UIElement_WithExplicitBlackBackground_PaintsFill()
+    {
+        var element = new UIElement(100f, 50f) { BackgroundColor = Color.Black };
+
+        Assert.True(element.PaintBackground);
+        var command = Assert.Single(element.BuildDrawList().Commands);
+        Assert.Equal(Color.Black, command.Color);
+    }
+
+    /// <summary>Verifies assigning a color again re-enables explicitly suppressed background paint.</summary>
+    [Fact]
+    public void BackgroundColor_Assignment_EnablesBackgroundPaint()
+    {
+        var element = new UIElement(100f, 50f) { BackgroundColor = Color.Red };
+        element.PaintBackground = false;
+
+        element.BackgroundColor = Color.Red;
+
+        Assert.True(element.PaintBackground);
+        Assert.Single(element.BuildDrawList().Commands);
+    }
+
+    /// <summary>Verifies layout and host containers do not configure implicit backgrounds.</summary>
+    [Fact]
+    public void LayoutContainers_DefaultToUnconfiguredBackgrounds()
+    {
+        UIElement[] containers =
+        [
+            new Panel(),
+            new FlexPanel(),
+            new OverlayPanel(),
+            new Canvas(),
+            new StackPanel(100f, 50f),
+            new ScrollViewer(100f, 50f),
+            new ListView(100f, 50f),
+            new TreeView(100f, 50f),
+            new ToastHost()
+        ];
+
+        foreach (var container in containers)
+            Assert.False(container.PaintBackground);
+    }
+
+    /// <summary>Verifies labels share box background behavior without painting one by default.</summary>
+    [Fact]
+    public void Label_Background_IsTransparentUntilConfigured()
+    {
+        var label = new Label("Title", 100f, 20f);
+        Assert.DoesNotContain(label.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Rectangle);
+
+        label.BackgroundColor = Color.Red;
+
+        Assert.Contains(label.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Rectangle && command.Color == Color.Red);
+    }
+
     /// <summary>Verifies opacity multiplies through retained parent and child subtrees.</summary>
     [Fact]
     public void BuildDrawList_MultipliesInheritedOpacity()

@@ -20,6 +20,9 @@ public enum TitleBarStyle
 /// </summary>
 public sealed class TitleBar : Surface
 {
+    /// <summary>Gets the standard editor title-bar height.</summary>
+    public const float DefaultHeight = 30f;
+
     private readonly TitleBarStyle _resolvedStyle;
 
     /// <summary>Gets the left-aligned content zone.</summary>
@@ -62,6 +65,7 @@ public sealed class TitleBar : Surface
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         Name = "TitleBar";
+        BorderThickness = 0f;
         _resolvedStyle = style == TitleBarStyle.Auto
             ? OperatingSystem.IsMacOS() ? TitleBarStyle.MacOS : TitleBarStyle.Windows
             : style;
@@ -143,10 +147,9 @@ public sealed class TitleBar : Surface
         /// <summary>Creates an aligned title-bar content zone.</summary>
         /// <param name="contentAlignment">Alignment of the child group within the zone.</param>
         public TitleBarZone(HorizontalAlignment contentAlignment)
-            : base(Color.Black)
+            : base()
         {
             _contentAlignment = contentAlignment;
-            PaintBackground = false;
             IsHitTestVisible = false;
         }
 

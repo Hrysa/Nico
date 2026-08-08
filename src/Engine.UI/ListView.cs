@@ -74,11 +74,10 @@ public sealed class ListView : Panel
     /// <param name="height">List height.</param>
     /// <param name="theme">Theme supplying list colors.</param>
     public ListView(float width, float height, UITheme? theme = null)
-        : base((theme ?? UITheme.Dark).Surface, width, height)
+        : base(null, width, height)
     {
         _theme = theme ?? UITheme.Dark;
         RowHeight = _theme.ItemRowHeight;
-        PaintBackground = false;
         Scroll += ScrollRows;
         Key += OnKey;
         RoutedTextInput += OnTextInput;

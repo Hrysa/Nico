@@ -9,9 +9,8 @@ public sealed class OverlayPanel : Panel
     /// <summary>Creates an overlay panel.</summary>
     /// <param name="backgroundColor">Optional painted background; null creates a layout-only panel.</param>
     public OverlayPanel(Color? backgroundColor = null)
-        : base(backgroundColor ?? Color.Black)
+        : base(backgroundColor)
     {
-        PaintBackground = backgroundColor.HasValue;
     }
 
     /// <summary>Measures all layers and returns the largest intrinsic extent.</summary>

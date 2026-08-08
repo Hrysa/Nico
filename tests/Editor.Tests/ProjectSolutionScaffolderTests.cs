@@ -26,6 +26,8 @@ public class ProjectSolutionScaffolderTests
             Assert.Contains(Path.GetFullPath(engineAssemblyPath), userContents);
             Assert.Contains("Engine.Graphics.dll", userContents);
             Assert.Contains("Engine.Scripting.dll", userContents);
+            Assert.Contains("Engine.Script.Generator.dll", userContents);
+            Assert.Contains("<Analyzer", userContents);
         }
         finally
         {

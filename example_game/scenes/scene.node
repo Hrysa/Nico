@@ -1,10 +1,10 @@
 {
-  "formatVersion": 3,
-  "gameCameraId": "33d05542030340e7bdea8430e233b6fa",
+  "formatVersion": 4,
+  "gameCameraId": "79649b4492c64877acb8b16d51db1905",
   "nodes": [
     {
-      "id": "9e375bf788404e54b8abbe1374335a6d",
-      "type": "cube",
+      "id": "9e5a38dc0e194bf88751ca5bfffe3cf4",
+      "type": "assetMesh",
       "name": "SceneCube",
       "position": {
         "x": 1.9573392,
@@ -21,46 +21,31 @@
         "y": 1,
         "z": 1
       },
-      "scriptId": "019fcbdc-bff3-7205-80fc-add216624bc2",
-      "camera": null,
-      "model": null,
-      "children": []
-    },
-    {
-      "id": "33d05542030340e7bdea8430e233b6fa",
-      "type": "perspectiveCamera",
-      "name": "GameCamera",
-      "position": {
-        "x": 4,
-        "y": 3,
-        "z": 6
-      },
-      "rotation": {
-        "x": -0.39424437,
-        "y": -0.58800256,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      },
       "scriptId": null,
-      "camera": {
-        "fov": 0.7853982,
-        "near": 0.1,
-        "far": 1000
+      "components": [
+        {
+          "type": "script",
+          "enabled": true,
+          "scriptId": "019fcbdc-bff3-7205-80fc-add216624bc2",
+          "properties": []
+        }
+      ],
+      "camera": null,
+      "model": {
+        "asset": "00000000-0000-7000-8000-000000000001",
+        "subAsset": "mesh/cube",
+        "materials": []
       },
-      "model": null,
+      "materialOverride": null,
       "children": []
     },
     {
-      "id": "67124c5aa9604ba491de13f02dbbeb95",
-      "type": "importedModel",
+      "id": "9518b938aac7446c9c6159f9b2d27228",
+      "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
         "x": 0,
-        "y": 0,
+        "y": 1.8088154,
         "z": 0
       },
       "rotation": {
@@ -74,11 +59,155 @@
         "z": 1
       },
       "scriptId": null,
+      "components": [
+        {
+          "type": "script",
+          "enabled": true,
+          "scriptId": "3fcb96d4-931c-410b-a6e8-7f9ea3f99aad",
+          "properties": []
+        },
+        {
+          "type": "collider",
+          "enabled": true,
+          "collider": {
+            "shape": "capsule",
+            "center": { "x": 0, "y": 0.9, "z": 0 },
+            "size": { "x": 1, "y": 1, "z": 1 },
+            "radius": 0.35,
+            "height": 1.8,
+            "isTrigger": false,
+            "friction": 0.5,
+            "restitution": 0
+          }
+        },
+        {
+          "type": "rigidBody",
+          "enabled": true,
+          "rigidBody": {
+            "motionType": "dynamic",
+            "mass": 1,
+            "linearVelocity": { "x": 0, "y": 0, "z": 0 },
+            "useGravity": true,
+            "gravityScale": 1,
+            "linearDamping": 0.1
+          }
+        }
+      ],
       "camera": null,
       "model": {
         "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
-        "subAsset": "mesh/Mesh/0"
+        "subAsset": "mesh/Mesh/0",
+        "materials": [
+          {
+            "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
+            "subAsset": "material/0"
+          }
+        ]
       },
+      "materialOverride": null,
+      "children": [
+        {
+          "id": "e04e23a41e0a4892ae058e605ff84e37",
+          "type": "node3D",
+          "name": "CameraRig",
+          "position": {
+            "x": 0,
+            "y": 1.25,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          },
+          "scriptId": null,
+          "components": [],
+          "camera": null,
+          "model": null,
+          "materialOverride": null,
+          "children": [
+            {
+              "id": "79649b4492c64877acb8b16d51db1905",
+              "type": "perspectiveCamera",
+              "name": "GameCamera",
+              "position": {
+                "x": 0,
+                "y": 5,
+                "z": 5
+              },
+              "rotation": {
+                "x": -0.7853982,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "scriptId": null,
+              "components": [],
+              "camera": {
+                "fov": 0.7853982,
+                "near": 0.1,
+                "far": 1000
+              },
+              "model": null,
+              "materialOverride": null,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "add3e38fd1be45e4a7e65eef108546b1",
+      "type": "assetMesh",
+      "name": "Plane 1",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 100,
+        "y": 100,
+        "z": 100
+      },
+      "scriptId": null,
+      "components": [
+        {
+          "type": "collider",
+          "enabled": true,
+          "collider": {
+            "shape": "plane",
+            "center": { "x": 0, "y": 0, "z": 0 },
+            "size": { "x": 1, "y": 1, "z": 1 },
+            "radius": 0.5,
+            "height": 1,
+            "isTrigger": false,
+            "friction": 0.5,
+            "restitution": 0
+          }
+        }
+      ],
+      "camera": null,
+      "model": {
+        "asset": "00000000-0000-7000-8000-000000000001",
+        "subAsset": "mesh/plane",
+        "materials": []
+      },
+      "materialOverride": null,
       "children": []
     }
   ]

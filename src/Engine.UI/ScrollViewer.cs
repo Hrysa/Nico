@@ -3,6 +3,20 @@ using Engine.Graphics;
 
 namespace Engine.UI;
 
+/// <summary>Supplies a logical extent while rendering only the viewport owned by a scroll container.</summary>
+internal interface IScrollViewportContent
+{
+    /// <summary>Gets the complete logical extent for a proposed viewport.</summary>
+    /// <param name="viewportSize">Visible content size.</param>
+    /// <returns>Complete scrollable extent.</returns>
+    Vector2 GetScrollExtent(Vector2 viewportSize);
+
+    /// <summary>Applies the parent-owned offset and visible size.</summary>
+    /// <param name="offset">Parent scroll offset.</param>
+    /// <param name="viewportSize">Visible content size.</param>
+    void SetScrollViewport(Vector2 offset, Vector2 viewportSize);
+}
+
 /// <summary>Clips one content element and provides two-axis scrolling with synchronized bars.</summary>
 public sealed class ScrollViewer : Panel
 {
@@ -25,15 +39,13 @@ public sealed class ScrollViewer : Panel
                 return;
             if (_content is not null)
                 RemoveChild(_content);
+            RemoveChild(HorizontalScrollBar);
+            RemoveChild(VerticalScrollBar);
             _content = value;
             if (_content is not null)
-            {
-                RemoveChild(HorizontalScrollBar);
-                RemoveChild(VerticalScrollBar);
                 AddChild(_content);
-                AddChild(HorizontalScrollBar);
-                AddChild(VerticalScrollBar);
-            }
+            AddChild(HorizontalScrollBar);
+            AddChild(VerticalScrollBar);
             InvalidateMeasure();
         }
     }
@@ -70,9 +82,8 @@ public sealed class ScrollViewer : Panel
     /// <param name="height">Viewer height.</param>
     /// <param name="theme">Theme used by its scroll bars.</param>
     public ScrollViewer(float width = 0f, float height = 0f, UITheme? theme = null)
-        : base(Color.Black, width, height)
+        : base(null, width, height)
     {
-        PaintBackground = false;
         ClipToBounds = true;
         HorizontalScrollBar = new ScrollBar(UIOrientation.Horizontal, theme);
         VerticalScrollBar = new ScrollBar(UIOrientation.Vertical, theme);
@@ -94,9 +105,11 @@ public sealed class ScrollViewer : Panel
     {
         if (_content is null)
             return availableSize;
-        _content.Measure(new Vector2(
-            CanScrollHorizontally ? float.PositiveInfinity : availableSize.X,
-            CanScrollVertically ? float.PositiveInfinity : availableSize.Y));
+        _content.Measure(_content is IScrollViewportContent
+            ? availableSize
+            : new Vector2(
+                CanScrollHorizontally ? float.PositiveInfinity : availableSize.X,
+                CanScrollVertically ? float.PositiveInfinity : availableSize.Y));
         return availableSize;
     }
 
@@ -105,8 +118,11 @@ public sealed class ScrollViewer : Panel
     {
         if (_content is not null)
         {
-            _extentWidth = _content.DesiredSize.X;
-            _extentHeight = _content.DesiredSize.Y;
+            var extent = _content is IScrollViewportContent virtualized
+                ? virtualized.GetScrollExtent(contentSize)
+                : _content.DesiredSize;
+            _extentWidth = extent.X;
+            _extentHeight = extent.Y;
         }
         else
         {
@@ -126,8 +142,20 @@ public sealed class ScrollViewer : Panel
 
         if (_content is not null)
         {
-            _content.Arrange(new Vector2(Padding.Left - _horizontalOffset, Padding.Top - _verticalOffset),
-                new Vector2(MathF.Max(_extentWidth, _viewportWidth), MathF.Max(_extentHeight, _viewportHeight)));
+            if (_content is IScrollViewportContent virtualized)
+            {
+                var viewportSize = new Vector2(_viewportWidth, _viewportHeight);
+                virtualized.SetScrollViewport(
+                    new Vector2(_horizontalOffset, _verticalOffset), viewportSize);
+                _content.Arrange(new Vector2(Padding.Left, Padding.Top), viewportSize);
+            }
+            else
+            {
+                _content.Arrange(
+                    new Vector2(Padding.Left - _horizontalOffset, Padding.Top - _verticalOffset),
+                    new Vector2(MathF.Max(_extentWidth, _viewportWidth),
+                        MathF.Max(_extentHeight, _viewportHeight)));
+            }
         }
         HorizontalScrollBar.IsVisible = showHorizontal;
         VerticalScrollBar.IsVisible = showVertical;

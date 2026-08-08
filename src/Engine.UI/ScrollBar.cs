@@ -82,12 +82,6 @@ public sealed class ScrollBar : UIElement
     public void SynchronizeValue(float value) => SetValue(value, notify: false);
 
     /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-        drawList.AddRectangle(Left, Top, Right, Bottom, _theme.SurfaceRaised);
-    }
-
-    /// <inheritdoc/>
     protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
     {
         Thumb.Measure(availableSize);

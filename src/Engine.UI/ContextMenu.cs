@@ -66,9 +66,8 @@ public sealed class ContextMenu : Popup
     {
         _theme = theme ?? UITheme.Dark;
         IsOverlay = true;
-        _rowViewport = new Panel(_theme.SurfaceRaised)
+        _rowViewport = new Panel()
         {
-            PaintBackground = false,
             ClipToBounds = true
         };
         AddChild(_rowViewport);

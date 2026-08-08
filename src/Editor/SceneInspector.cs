@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Numerics;
+using System.Reflection;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.Scripting;
 using Engine.UI;
 
 namespace Editor;
@@ -14,11 +16,21 @@ public sealed class SceneInspector : Panel
     private readonly UITheme _theme;
     private readonly List<Func<bool>> _refreshBindings = new();
     private readonly Dictionary<Node, CachedInspectorView> _cachedViews = new();
+    private readonly List<ScriptFieldBinding> _scriptBindings = new();
     private readonly UIEditForm _editForm;
     private MaterialProperties? _resolvedMaterial;
+    private bool _scriptBindingsDirty;
+    private bool _modelBindingsDirty;
+    private Node? _subscribedNode;
 
     /// <summary>Gets or sets the editor display-name resolver for attached script assets.</summary>
     public Func<AssetId, string?>? ResolveScriptName { get; set; }
+
+    /// <summary>Gets or sets the resolver for compiled script types in edit mode.</summary>
+    public Func<AssetId, Type?>? ResolveScriptType { get; set; }
+
+    /// <summary>Gets or sets the resolver for live script instances in play mode.</summary>
+    public Func<ScriptComponent, SceneScript?>? ResolveScriptInstance { get; set; }
 
     /// <summary>Gets or sets the resolver for a mesh instance's effective material values.</summary>
     public Func<MeshInstance3D, MaterialProperties>? ResolveMaterial { get; set; }
@@ -66,10 +78,13 @@ public sealed class SceneInspector : Panel
             return;
         }
 
+        UnsubscribeFromNode();
         InspectedNode = node;
+        DeactivateScriptBindings();
         _editForm.Clear();
         ClearChildren();
         _refreshBindings.Clear();
+        _scriptBindings.Clear();
         ResolveBoundMaterial(node);
         if (node is null)
         {
@@ -78,7 +93,10 @@ public sealed class SceneInspector : Panel
             return;
         }
         if (RestoreCachedView(node))
+        {
+            SubscribeToNode(node);
             return;
+        }
 
         AddChild(CreateLabel(12f, 8f, MathF.Max(0f, Width - 148f), 24f,
             node.GetType().Name, _theme.TextSecondary));
@@ -116,19 +134,9 @@ public sealed class SceneInspector : Panel
             scriptY = 464f;
         }
 
-        AddChild(CreateLabel(12f, scriptY, Width - 24f, 26f,
-            "Script", _theme.TextPrimary));
-        var scriptField = new TextField(Width - 24f, 30f, _theme)
-        {
-            Name = "ScriptAssetField",
-            Text = GetScriptDisplayName(node.ScriptId),
-            Placeholder = "No script attached",
-            IsReadOnly = true,
-            Margin = new Thickness(12f, scriptY + 30f, 0f, 0f)
-        };
-        RegisterRefresh(scriptField, () => GetScriptDisplayName(node.ScriptId));
-        AddChild(scriptField);
+        AddScriptSections(node, scriptY);
         CacheCurrentView(node);
+        SubscribeToNode(node);
     }
 
     /// <summary>Resolves material values associated with the currently bound node.</summary>
@@ -156,6 +164,9 @@ public sealed class SceneInspector : Panel
                 _editForm.Register(editor);
         }
         _refreshBindings.AddRange(cached.RefreshBindings);
+        _scriptBindings.AddRange(cached.ScriptBindings);
+        for (var index = 0; index < _scriptBindings.Count; index++)
+            _scriptBindings[index].Activate();
         RefreshValues();
         return true;
     }
@@ -166,7 +177,183 @@ public sealed class SceneInspector : Panel
     {
         _cachedViews[node] = new CachedInspectorView(
             Children.OfType<UIElement>().ToArray(),
-            _refreshBindings.ToArray());
+            _refreshBindings.ToArray(),
+            _scriptBindings.ToArray());
+    }
+
+    /// <summary>Rebuilds script sections after compiled schemas or runtime instances change.</summary>
+    public void RefreshScriptSchemas()
+    {
+        if (InspectedNode is not { } node)
+            return;
+        _cachedViews.Remove(node);
+        InspectedNode = null;
+        Bind(node);
+    }
+
+    /// <summary>Adds all script components and generated Editor-observed properties.</summary>
+    /// <param name="node">Inspected component owner.</param>
+    /// <param name="y">Top of the script section.</param>
+    private void AddScriptSections(Node node, float y)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Scripts", _theme.TextPrimary));
+        var components = node.Components;
+        var scriptIndex = 0;
+        var rowY = y + 30f;
+        for (var componentIndex = 0; componentIndex < components.Count; componentIndex++)
+        {
+            if (components[componentIndex] is not ScriptComponent component)
+                continue;
+            var currentIndex = scriptIndex++;
+            var scriptField = new TextField(Width - 24f, 30f, _theme)
+            {
+                Name = currentIndex == 0 ? "ScriptAssetField" : $"ScriptAssetField{currentIndex}",
+                Text = GetScriptDisplayName(component.ScriptId),
+                IsReadOnly = true,
+                Margin = new Thickness(12f, rowY, 0f, 0f)
+            };
+            AddChild(scriptField);
+            rowY += 38f;
+            if (!TryResolveScript(component, out var script))
+                continue;
+            var descriptors = script.ObservedProperties;
+            for (var descriptorIndex = 0; descriptorIndex < descriptors.Count; descriptorIndex++)
+            {
+                var descriptor = descriptors[descriptorIndex];
+                if ((descriptor.Scope & ObserveScope.Editor) == 0 ||
+                    !script.TryGetObservedValue(descriptor.Id, out var value))
+                    continue;
+                AddChild(CreateLabel(20f, rowY, 92f, 30f,
+                    descriptor.Name, _theme.TextSecondary));
+                var field = new TextField(Width - 136f, 30f, _theme)
+                {
+                    Name = $"ScriptProperty{currentIndex}_{descriptor.Name}",
+                    Text = FormatObservedValue(value),
+                    UpdateTrigger = TextUpdateTrigger.Commit,
+                    Validator = text => ValidateObservedText(descriptor.Kind, text),
+                    Margin = new Thickness(112f, rowY, 0f, 0f)
+                };
+                var binding = new ScriptFieldBinding(
+                    script, component, descriptor, field,
+                    () => NodeChanged?.Invoke(node),
+                    () => _scriptBindingsDirty = true);
+                field.ValueUpdateRequested += binding.ApplyText;
+                _editForm.Register(field);
+                _scriptBindings.Add(binding);
+                binding.Activate();
+                AddChild(field);
+                rowY += 38f;
+            }
+        }
+        if (scriptIndex != 0)
+            return;
+        AddChild(new TextField(Width - 24f, 30f, _theme)
+        {
+            Name = "ScriptAssetField",
+            Placeholder = "No script attached",
+            IsReadOnly = true,
+            Margin = new Thickness(12f, rowY, 0f, 0f)
+        });
+    }
+
+    /// <summary>Resolves a live script or creates an edit-mode schema instance.</summary>
+    /// <param name="component">Script component to inspect.</param>
+    /// <param name="script">Resolved script instance.</param>
+    /// <returns>True when generated metadata is available.</returns>
+    private bool TryResolveScript(ScriptComponent component, out SceneScript script)
+    {
+        if (ResolveScriptInstance?.Invoke(component) is { } live)
+        {
+            script = live;
+            return true;
+        }
+        var type = ResolveScriptType?.Invoke(component.ScriptId);
+        if (type is null || !typeof(SceneScript).IsAssignableFrom(type) || type.IsAbstract)
+        {
+            script = null!;
+            return false;
+        }
+        SceneScript created;
+        try
+        {
+            if (Activator.CreateInstance(type) is not SceneScript instance)
+            {
+                script = null!;
+                return false;
+            }
+            created = instance;
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or
+                                           MemberAccessException or MissingMethodException)
+        {
+            script = null!;
+            return false;
+        }
+        var overrides = component.PropertyOverrides;
+        for (var index = 0; index < overrides.Count; index++)
+        {
+            var propertyOverride = overrides[index];
+            if (ObservedValue.TryFromSerialized(propertyOverride.Value, out var value))
+                created.TrySetObservedValue(propertyOverride.PropertyId, value);
+        }
+        script = created;
+        return true;
+    }
+
+    /// <summary>Stops listening to script instances belonging to the outgoing cached view.</summary>
+    private void DeactivateScriptBindings()
+    {
+        for (var index = 0; index < _scriptBindings.Count; index++)
+            _scriptBindings[index].Deactivate();
+    }
+
+    /// <summary>Subscribes to coarse node changes for event-driven field synchronization.</summary>
+    /// <param name="node">Currently inspected node.</param>
+    private void SubscribeToNode(Node node)
+    {
+        _subscribedNode = node;
+        node.Changed += OnInspectedNodeChanged;
+    }
+
+    /// <summary>Detaches the outgoing inspected-node subscription.</summary>
+    private void UnsubscribeFromNode()
+    {
+        if (_subscribedNode is null)
+            return;
+        _subscribedNode.Changed -= OnInspectedNodeChanged;
+        _subscribedNode = null;
+    }
+
+    /// <summary>Refreshes or rebuilds only after the selected model reports a change.</summary>
+    /// <param name="kind">Coarse node change category.</param>
+    private void OnInspectedNodeChanged(NodeChangeKind kind)
+    {
+        var dispatcher = Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            try
+            {
+                dispatcher.Post(() => OnInspectedNodeChanged(kind));
+            }
+            catch (ObjectDisposedException)
+            {
+                UnsubscribeFromNode();
+            }
+            return;
+        }
+        if ((kind & NodeChangeKind.Components) != 0)
+        {
+            RefreshScriptSchemas();
+            return;
+        }
+        if ((kind & NodeChangeKind.ComponentValues) != 0)
+        {
+            for (var index = 0; index < _scriptBindings.Count; index++)
+                _scriptBindings[index].ApplyComponentValue();
+        }
+        _modelBindingsDirty = true;
+        if (IsEffectivelyVisible)
+            RefreshValues();
     }
 
     /// <summary>Adds slot-zero material assignment and copy-on-write property editors.</summary>
@@ -325,9 +512,18 @@ public sealed class SceneInspector : Panel
     /// <returns>True when at least one displayed value changed.</returns>
     public bool RefreshValues()
     {
+        if (!IsEffectivelyVisible)
+            return false;
+        _modelBindingsDirty = false;
         var changed = false;
         foreach (var refresh in _refreshBindings)
             changed |= refresh();
+        if (_scriptBindingsDirty)
+        {
+            _scriptBindingsDirty = false;
+            for (var index = 0; index < _scriptBindings.Count; index++)
+                changed |= _scriptBindings[index].SynchronizeIfDirty();
+        }
         return changed;
     }
 
@@ -338,11 +534,11 @@ public sealed class SceneInspector : Panel
     {
         if (InspectedNode is not { } node)
             return false;
-        node.ScriptId = scriptId;
-        var field = Children.OfType<TextField>()
+        var dropTarget = Children.OfType<TextField>()
             .FirstOrDefault(element => element.Name == "ScriptAssetField");
-        if (field is not null)
-            field.Text = GetScriptDisplayName(scriptId);
+        if (dropTarget is not null)
+            dropTarget.Text = GetScriptDisplayName(scriptId);
+        node.AddComponent(new ScriptComponent(scriptId));
         NodeChanged?.Invoke(node);
         return true;
     }
@@ -525,6 +721,116 @@ public sealed class SceneInspector : Panel
         };
     }
 
+    /// <summary>Formats a generated observed value for a text editor.</summary>
+    /// <param name="value">Typed generated value.</param>
+    /// <returns>Invariant editable text.</returns>
+    private static string FormatObservedValue(ObservedValue value)
+    {
+        return value.Kind switch
+        {
+            ObservedValueKind.Boolean when value.TryGetBoolean(out var boolean) =>
+                boolean ? "true" : "false",
+            ObservedValueKind.SignedInteger when value.TryGetSignedInteger(out var signed) =>
+                signed.ToString(CultureInfo.InvariantCulture),
+            ObservedValueKind.UnsignedInteger when value.TryGetUnsignedInteger(out var unsigned) =>
+                unsigned.ToString(CultureInfo.InvariantCulture),
+            ObservedValueKind.Number when value.TryGetNumber(out var number) =>
+                number.ToString("G", CultureInfo.InvariantCulture),
+            ObservedValueKind.String when value.TryGetString(out var text) => text ?? string.Empty,
+            ObservedValueKind.Vector2 when value.TryGetVector2(out var vector2) =>
+                FormattableString.Invariant($"{vector2.X:G}, {vector2.Y:G}"),
+            ObservedValueKind.Vector3 when value.TryGetVector3(out var vector3) =>
+                FormattableString.Invariant($"{vector3.X:G}, {vector3.Y:G}, {vector3.Z:G}"),
+            ObservedValueKind.Vector4 when value.TryGetVector4(out var vector4) =>
+                FormattableString.Invariant(
+                    $"{vector4.X:G}, {vector4.Y:G}, {vector4.Z:G}, {vector4.W:G}"),
+            _ => string.Empty
+        };
+    }
+
+    /// <summary>Validates text for one generated observed value kind.</summary>
+    /// <param name="kind">Expected generated value kind.</param>
+    /// <param name="text">Pending invariant text.</param>
+    /// <returns>An error message, or null when parseable.</returns>
+    private static string? ValidateObservedText(ObservedValueKind kind, string text) =>
+        TryParseObservedText(kind, text, out _) ? null : "Enter a valid value.";
+
+    /// <summary>Parses invariant Inspector text into the generated value contract.</summary>
+    /// <param name="kind">Expected generated value kind.</param>
+    /// <param name="text">Committed text.</param>
+    /// <param name="value">Parsed typed value.</param>
+    /// <returns>True when parsing succeeds.</returns>
+    private static bool TryParseObservedText(
+        ObservedValueKind kind,
+        string text,
+        out ObservedValue value)
+    {
+        switch (kind)
+        {
+            case ObservedValueKind.Boolean when bool.TryParse(text, out var boolean):
+                value = ObservedValue.From(boolean);
+                return true;
+            case ObservedValueKind.SignedInteger when long.TryParse(
+                text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var signed):
+                value = ObservedValue.From(signed);
+                return true;
+            case ObservedValueKind.UnsignedInteger when ulong.TryParse(
+                text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var unsigned):
+                value = ObservedValue.From(unsigned);
+                return true;
+            case ObservedValueKind.Number when double.TryParse(
+                text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number):
+                value = ObservedValue.From(number);
+                return true;
+            case ObservedValueKind.String:
+                value = ObservedValue.From(text);
+                return true;
+            case ObservedValueKind.Vector2:
+                return TryParseVector(text, 2, out value);
+            case ObservedValueKind.Vector3:
+                return TryParseVector(text, 3, out value);
+            case ObservedValueKind.Vector4:
+                return TryParseVector(text, 4, out value);
+            default:
+                value = default;
+                return false;
+        }
+    }
+
+    /// <summary>Parses a comma-separated two-, three-, or four-component vector.</summary>
+    /// <param name="text">Invariant vector text.</param>
+    /// <param name="componentCount">Required number of components.</param>
+    /// <param name="value">Parsed observed vector.</param>
+    /// <returns>True when every required component is valid.</returns>
+    private static bool TryParseVector(string text, int componentCount, out ObservedValue value)
+    {
+        var parts = text.Split(',', StringSplitOptions.TrimEntries);
+        Span<float> components = stackalloc float[4];
+        if (parts.Length != componentCount)
+        {
+            value = default;
+            return false;
+        }
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (!float.TryParse(parts[index], NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out components[index]))
+            {
+                value = default;
+                return false;
+            }
+        }
+        value = componentCount switch
+        {
+            2 => ObservedValue.From(new Vector2(components[0], components[1])),
+            3 => ObservedValue.From(new Vector3(components[0], components[1], components[2])),
+            4 => ObservedValue.From(new Vector4(
+                components[0], components[1], components[2], components[3])),
+            _ => default
+        };
+        return value.Kind != ObservedValueKind.None;
+    }
+
     /// <summary>Returns a vector with one component replaced.</summary>
     /// <param name="value">Source vector.</param>
     /// <param name="index">Component index.</param>
@@ -594,6 +900,8 @@ public sealed class SceneInspector : Panel
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
+        if (_modelBindingsDirty || _scriptBindingsDirty)
+            RefreshValues();
         foreach (var child in Children.OfType<UIElement>())
         {
             child.Measure(contentSize);
@@ -601,10 +909,153 @@ public sealed class SceneInspector : Panel
         }
     }
 
+    /// <summary>Connects one generated script property to one retained Inspector field.</summary>
+    private sealed class ScriptFieldBinding
+    {
+        private readonly SceneScript _script;
+        private readonly ScriptComponent _component;
+        private readonly ObservedPropertyDescriptor _descriptor;
+        private readonly TextField _field;
+        private readonly Action _edited;
+        private readonly Action _markDirty;
+        private bool _active;
+        private bool _dirty;
+
+        /// <summary>Creates one generated-property binding.</summary>
+        /// <param name="script">Schema or live script instance.</param>
+        /// <param name="component">Persistent attachment receiving authored overrides.</param>
+        /// <param name="descriptor">Generated property metadata.</param>
+        /// <param name="field">Retained text editor.</param>
+        /// <param name="edited">Callback invoked after an authored edit.</param>
+        /// <param name="markDirty">Callback recording deferred inactive synchronization.</param>
+        internal ScriptFieldBinding(
+            SceneScript script,
+            ScriptComponent component,
+            ObservedPropertyDescriptor descriptor,
+            TextField field,
+            Action edited,
+            Action markDirty)
+        {
+            _script = script;
+            _component = component;
+            _descriptor = descriptor;
+            _field = field;
+            _edited = edited;
+            _markDirty = markDirty;
+            _field.Blur += SynchronizeAfterEdit;
+        }
+
+        /// <summary>Subscribes while this cached Inspector view is selected.</summary>
+        internal void Activate()
+        {
+            if (_active)
+                return;
+            _active = true;
+            _script.ObservedPropertyChanged += OnPropertyChanged;
+            _dirty = true;
+            _markDirty();
+        }
+
+        /// <summary>Unsubscribes while this cached Inspector view is not selected.</summary>
+        internal void Deactivate()
+        {
+            if (!_active)
+                return;
+            _script.ObservedPropertyChanged -= OnPropertyChanged;
+            _active = false;
+        }
+
+        /// <summary>Applies committed Inspector text through the generated setter.</summary>
+        /// <param name="text">Committed invariant text.</param>
+        internal void ApplyText(string text)
+        {
+            if (!TryParseObservedText(_descriptor.Kind, text, out var requested) ||
+                !_script.TrySetObservedValue(_descriptor.Id, requested) ||
+                !_script.TryGetObservedValue(_descriptor.Id, out var applied))
+            {
+                _dirty = true;
+                _markDirty();
+                return;
+            }
+            if (applied.TryToSerialized(out var persistent))
+                _component.SetPropertyOverride(_descriptor.Id, persistent);
+            _edited();
+        }
+
+        /// <summary>Applies an authored override changed outside this Inspector field.</summary>
+        internal void ApplyComponentValue()
+        {
+            if (!_component.TryGetPropertyOverride(_descriptor.Id, out var persistent) ||
+                !ObservedValue.TryFromSerialized(persistent, out var value))
+                return;
+            _script.TrySetObservedValue(_descriptor.Id, value);
+        }
+
+        /// <summary>Synchronizes a deferred model change after visibility or focus permits it.</summary>
+        /// <returns>True when displayed text changed.</returns>
+        internal bool SynchronizeIfDirty()
+        {
+            if (!_dirty || !_field.IsEffectivelyVisible || _field.IsFocused)
+                return false;
+            _dirty = false;
+            if (!_script.TryGetObservedValue(_descriptor.Id, out var value))
+                return false;
+            var text = FormatObservedValue(value);
+            if (_field.Text == text)
+                return false;
+            _field.Text = text;
+            return true;
+        }
+
+        /// <summary>Defers one generated property change to the owning UI thread when required.</summary>
+        /// <param name="change">Generated property transition.</param>
+        private void OnPropertyChanged(ObservedPropertyChange change)
+        {
+            if (!_active || change.PropertyId != _descriptor.Id ||
+                (change.Scope & ObserveScope.Editor) == 0)
+                return;
+            var dispatcher = _field.Dispatcher;
+            if (dispatcher is not null && !dispatcher.CheckAccess())
+            {
+                try
+                {
+                    dispatcher.Post(MarkDirtyAndSynchronize);
+                }
+                catch (ObjectDisposedException)
+                {
+                    Deactivate();
+                }
+                return;
+            }
+            MarkDirtyAndSynchronize();
+        }
+
+        /// <summary>Marks the field stale and synchronizes immediately when it is active.</summary>
+        private void MarkDirtyAndSynchronize()
+        {
+            _dirty = true;
+            SynchronizeIfDirty();
+            if (_dirty)
+                _markDirty();
+        }
+
+        /// <summary>Reconciles a deferred external change after the editor loses focus.</summary>
+        private void SynchronizeAfterEdit()
+        {
+            if (!_dirty)
+                return;
+            SynchronizeIfDirty();
+            if (_dirty)
+                _markDirty();
+        }
+    }
+
     /// <summary>Stores one retained node-specific Inspector view.</summary>
     /// <param name="Children">Constructed controls.</param>
     /// <param name="RefreshBindings">Value refresh callbacks associated with the controls.</param>
+    /// <param name="ScriptBindings">Generated script-property subscriptions.</param>
     private readonly record struct CachedInspectorView(
         UIElement[] Children,
-        Func<bool>[] RefreshBindings);
+        Func<bool>[] RefreshBindings,
+        ScriptFieldBinding[] ScriptBindings);
 }

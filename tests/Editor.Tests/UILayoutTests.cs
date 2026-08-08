@@ -242,6 +242,8 @@ public sealed class UILayoutTests
         Assert.Equal("GameButton", view.GameButton.Name);
         Assert.Equal("InspectorButton", view.InspectorButton.Name);
         Assert.Equal("ProfilerButton", view.ProfilerButton.Name);
+        Assert.True(view.Profiler.IsPaused);
+        Assert.Equal("Record", view.ProfilerPauseLabel.Text);
         Assert.Contains(view.Profiler, Descendants(view.ProfilerContent));
         Assert.Contains(view.ProfilerPauseButton, Descendants(view.ProfilerContent));
     }

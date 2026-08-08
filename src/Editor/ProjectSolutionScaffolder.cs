@@ -141,6 +141,7 @@ public static class ProjectSolutionScaffolder
             Path.Combine(assemblyDirectory, "Engine.Graphics.dll"));
         EnsureReference(itemGroup, "Engine.Scripting",
             Path.Combine(assemblyDirectory, "Engine.Scripting.dll"));
+        EnsureAnalyzer(project, Path.Combine(assemblyDirectory, "Engine.Script.Generator.dll"));
         SaveAtomically(document, userProjectPath);
     }
 
@@ -203,6 +204,30 @@ public static class ProjectSolutionScaffolder
             reference.Add(privateElement);
         }
         privateElement.Value = "false";
+    }
+
+    /// <summary>Adds or updates the engine-managed observed-property source generator.</summary>
+    /// <param name="project">User project root.</param>
+    /// <param name="assemblyPath">Current absolute generator assembly path.</param>
+    private static void EnsureAnalyzer(XElement project, string assemblyPath)
+    {
+        var itemGroup = project.Elements().FirstOrDefault(element =>
+            element.Name.LocalName == "ItemGroup" &&
+            string.Equals((string?)element.Attribute("Label"), "NicoEngineAnalyzers",
+                StringComparison.Ordinal));
+        if (itemGroup is null)
+        {
+            itemGroup = new XElement("ItemGroup", new XAttribute("Label", "NicoEngineAnalyzers"));
+            project.Add(itemGroup);
+        }
+        var analyzer = itemGroup.Elements().FirstOrDefault(element =>
+            element.Name.LocalName == "Analyzer");
+        if (analyzer is null)
+        {
+            analyzer = new XElement("Analyzer");
+            itemGroup.Add(analyzer);
+        }
+        analyzer.SetAttributeValue("Include", Path.GetFullPath(assemblyPath));
     }
 
     /// <summary>

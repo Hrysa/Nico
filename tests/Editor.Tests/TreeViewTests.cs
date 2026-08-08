@@ -8,6 +8,23 @@ namespace Editor.Tests;
 
 public class TreeViewTests
 {
+    /// <summary>Verifies a parent scroll viewer owns the bar for overflowing tree rows.</summary>
+    [Fact]
+    public void Overflow_ParentScrollViewerShowsVerticalBar()
+    {
+        var roots = Enumerable.Range(0, 10)
+            .Select(index => new Node { Name = $"Node {index}" }).ToArray();
+        var tree = new TreeView(200f, 48f);
+        tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 48f) { Content = tree };
+
+        viewer.BuildDrawList();
+
+        Assert.True(viewer.VerticalScrollBar.IsVisible);
+        Assert.Equal(roots.Length * tree.RowHeight, viewer.ExtentHeight);
+        Assert.InRange(tree.Children.Count, 1, 3);
+    }
+
     /// <summary>Verifies tree columns inherit renderer-backed measurement for fitting and alignment.</summary>
     [Fact]
     public void Columns_UseInheritedTextLayoutService()
@@ -36,12 +53,13 @@ public class TreeViewTests
         var root = new Node { Name = "Root" };
         var tree = new TreeView(200f, 100f);
         tree.SetRoots([root]);
-        tree.BuildDrawList();
+        var viewer = new ScrollViewer(200f, 100f) { Content = tree };
+        viewer.BuildDrawList();
         var row = Assert.IsType<TreeViewItem>(tree.Children[0]);
         var allocationStart = GC.GetAllocatedBytesForCurrentThread();
 
         for (var index = 0; index < 100; index++)
-            tree.InvokeScroll(1f);
+            viewer.ScrollTo(0f, 100f);
 
         Assert.Same(row, tree.Children[0]);
         Assert.Equal(allocationStart, GC.GetAllocatedBytesForCurrentThread());
@@ -253,11 +271,14 @@ public class TreeViewTests
             .Select(index => new Node { Name = $"Node {index}" }).ToArray();
         var tree = new TreeView(200f, 48f);
         tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 48f) { Content = tree };
+        viewer.BuildDrawList();
         tree.Select(roots[0]);
         var focusedRow = Assert.IsType<TreeViewItem>(tree.Children[0]);
 
         for (var index = 0; index < 4; index++)
             focusedRow.InvokeKeyDown((int)InputKey.Down);
+        viewer.BuildDrawList();
 
         Assert.Same(roots[4], tree.SelectedItem);
         Assert.Contains(tree.Children.OfType<TreeViewItem>(), row => row.Item == roots[4]);
@@ -270,9 +291,12 @@ public class TreeViewTests
         var roots = Enumerable.Range(0, 10).Select(index => new Node { Name = $"Node {index}" }).ToArray();
         var tree = new TreeView(200f, 48f);
         tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 48f) { Content = tree };
+        viewer.BuildDrawList();
         var firstBefore = Assert.IsType<TreeViewItem>(tree.Children[0]).Item;
 
-        tree.InvokeScroll(-1f);
+        viewer.ScrollTo(0f, 32f);
+        viewer.BuildDrawList();
 
         var firstAfter = Assert.IsType<TreeViewItem>(tree.Children[0]).Item;
         Assert.NotSame(firstBefore, firstAfter);
@@ -285,15 +309,18 @@ public class TreeViewTests
         var roots = Enumerable.Range(0, 10).Select(index => new Node { Name = $"Node {index}" }).ToArray();
         var tree = new TreeView(200f, 48f);
         tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 48f) { Content = tree };
+        viewer.BuildDrawList();
         var firstRow = Assert.IsType<TreeViewItem>(tree.Children[0]);
         var secondRow = Assert.IsType<TreeViewItem>(tree.Children[1]);
 
-        tree.InvokeScroll(-1f);
+        viewer.ScrollTo(0f, 32f);
+        viewer.BuildDrawList();
 
         Assert.Same(firstRow, tree.Children[0]);
         Assert.Same(secondRow, tree.Children[1]);
-        Assert.Same(roots[3], firstRow.Item);
-        Assert.Same(roots[4], secondRow.Item);
+        Assert.Same(roots[1], firstRow.Item);
+        Assert.Same(roots[2], secondRow.Item);
     }
 
     /// <summary>Verifies scrolling a large tree retains a viewport-bounded visual pool.</summary>
@@ -305,10 +332,12 @@ public class TreeViewTests
             roots[index] = new Node { Name = $"Node {index}" };
         var tree = new TreeView(200f, 240f);
         tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 240f) { Content = tree };
+        viewer.BuildDrawList();
         var childCount = tree.Children.Count;
 
-        for (var index = 0; index < 100; index++)
-            tree.InvokeScroll(-1f);
+        viewer.ScrollTo(0f, 300f * tree.RowHeight);
+        viewer.BuildDrawList();
 
         Assert.InRange(childCount, 1, 10);
         Assert.Equal(childCount, tree.Children.Count);
@@ -324,9 +353,12 @@ public class TreeViewTests
             roots[index] = new Node { Name = $"Node {index}" };
         var tree = new TreeView(200f, 240f);
         tree.SetRoots(roots);
+        var viewer = new ScrollViewer(200f, 240f) { Content = tree };
+        viewer.BuildDrawList();
         tree.Select(roots[50_000]);
 
         tree.InvokeKeyDown((int)InputKey.Down);
+        viewer.BuildDrawList();
 
         Assert.Same(roots[50_001], tree.SelectedItem);
         Assert.Contains(tree.Children, child =>

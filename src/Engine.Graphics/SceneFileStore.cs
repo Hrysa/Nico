@@ -11,7 +11,8 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 3;
+    private const int CurrentFormatVersion = 4;
+    private const int LegacyFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -65,9 +66,10 @@ public static class SceneFileStore
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var document = JsonSerializer.Deserialize<SceneDocument>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("The scene file is empty.");
-        if (document.FormatVersion != CurrentFormatVersion)
+        if (document.FormatVersion is not CurrentFormatVersion and not LegacyFormatVersion)
             throw new InvalidDataException(
-                $"Unsupported scene format version {document.FormatVersion}; expected {CurrentFormatVersion}.");
+                $"Unsupported scene format version {document.FormatVersion}; expected " +
+                $"{LegacyFormatVersion} or {CurrentFormatVersion}.");
 
         if (string.IsNullOrWhiteSpace(document.GameCameraId))
             throw new InvalidDataException("The scene does not identify an active game camera.");
@@ -115,7 +117,8 @@ public static class SceneFileStore
             SceneVector3.From(node.Position),
             SceneVector3.From(node.Rotation),
             SceneVector3.From(node.Scale),
-            node.ScriptId,
+            null,
+            EncodeComponents(node),
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
@@ -152,7 +155,7 @@ public static class SceneFileStore
         node.Position = data.Position.ToVector3();
         node.Rotation = data.Rotation.ToVector3();
         node.Scale = data.Scale.ToVector3();
-        node.ScriptId = data.ScriptId;
+        DecodeComponents(data, node);
         if (node is MeshInstance3D meshNode && data.MaterialOverride is not null)
             meshNode.MaterialOverride = data.MaterialOverride.ToMaterial();
         nodesById.Add(data.Id, node);
@@ -163,6 +166,126 @@ public static class SceneFileStore
         foreach (var child in data.Children)
             node.AddChild(DecodeNode(child, nodesById, meshInstances));
         return node;
+    }
+
+    /// <summary>Encodes all supported components attached to one node.</summary>
+    /// <param name="node">Component owner.</param>
+    /// <returns>Persistent component records in authored order.</returns>
+    private static List<SceneComponentData> EncodeComponents(Node node)
+    {
+        var result = new List<SceneComponentData>(node.Components.Count);
+        var components = node.Components;
+        for (var index = 0; index < components.Count; index++)
+        {
+            switch (components[index])
+            {
+                case ScriptComponent script:
+                    var properties = new List<PropertyOverrideData>(
+                        script.PropertyOverrides.Count);
+                    var overrides = script.PropertyOverrides;
+                    for (var propertyIndex = 0; propertyIndex < overrides.Count; propertyIndex++)
+                        properties.Add(PropertyOverrideData.From(overrides[propertyIndex]));
+                    result.Add(new SceneComponentData(
+                        SceneComponentType.Script, script.Enabled, script.ScriptId, properties));
+                    break;
+                case RigidBodyComponent rigidBody:
+                    result.Add(new SceneComponentData(
+                        SceneComponentType.RigidBody,
+                        rigidBody.Enabled,
+                        RigidBody: new RigidBodyData(
+                            rigidBody.MotionType,
+                            rigidBody.Mass,
+                            SceneVector3.From(rigidBody.LinearVelocity),
+                            rigidBody.UseGravity,
+                            rigidBody.GravityScale,
+                            rigidBody.LinearDamping)));
+                    break;
+                case ColliderComponent collider:
+                    result.Add(new SceneComponentData(
+                        SceneComponentType.Collider,
+                        collider.Enabled,
+                        Collider: new ColliderData(
+                            collider.Shape,
+                            SceneVector3.From(collider.Center),
+                            SceneVector3.From(collider.Size),
+                            collider.Radius,
+                            collider.Height,
+                            collider.IsTrigger,
+                            collider.Friction,
+                            collider.Restitution)));
+                    break;
+                default:
+                    throw new NotSupportedException(
+                        $"Component type '{components[index].GetType().Name}' cannot be saved.");
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Restores current component records or the legacy single-script field.</summary>
+    /// <param name="data">Serialized node.</param>
+    /// <param name="node">Reconstructed component owner.</param>
+    private static void DecodeComponents(SceneNodeData data, Node node)
+    {
+        if (data.Components is null)
+        {
+            node.ScriptId = data.ScriptId;
+            return;
+        }
+        for (var index = 0; index < data.Components.Count; index++)
+        {
+            var componentData = data.Components[index];
+            Component component;
+            switch (componentData.Type)
+            {
+                case SceneComponentType.Script:
+                    if (componentData.ScriptId is not { } scriptId || scriptId.Value == Guid.Empty)
+                        throw new InvalidDataException(
+                            $"Scene component {index} is not a valid script component.");
+                    var script = new ScriptComponent(scriptId);
+                    if (componentData.Properties is not null)
+                    {
+                        for (var propertyIndex = 0;
+                             propertyIndex < componentData.Properties.Count;
+                             propertyIndex++)
+                        {
+                            var property = componentData.Properties[propertyIndex];
+                            script.SetPropertyOverride(property.PropertyId, property.ToValue());
+                        }
+                    }
+                    component = script;
+                    break;
+                case SceneComponentType.RigidBody when componentData.RigidBody is { } body:
+                    component = new RigidBodyComponent
+                    {
+                        MotionType = body.MotionType,
+                        Mass = body.Mass,
+                        LinearVelocity = body.LinearVelocity.ToVector3(),
+                        UseGravity = body.UseGravity,
+                        GravityScale = body.GravityScale,
+                        LinearDamping = body.LinearDamping
+                    };
+                    break;
+                case SceneComponentType.Collider when componentData.Collider is { } collider:
+                    component = new ColliderComponent
+                    {
+                        Shape = collider.Shape,
+                        Center = collider.Center.ToVector3(),
+                        Size = collider.Size.ToVector3(),
+                        Radius = collider.Radius,
+                        Height = collider.Height,
+                        IsTrigger = collider.IsTrigger,
+                        Friction = collider.Friction,
+                        Restitution = collider.Restitution
+                    };
+                    break;
+                default:
+                    throw new InvalidDataException(
+                        $"Scene component {index} has incomplete or unsupported physics data.");
+            }
+            component.Enabled = componentData.Enabled;
+            node.AddComponent(component);
+        }
     }
 
     /// <summary>
@@ -203,10 +326,108 @@ public static class SceneFileStore
         SceneVector3 Rotation,
         SceneVector3 Scale,
         AssetId? ScriptId,
+        List<SceneComponentData>? Components,
         CameraData? Camera,
         ModelData? Model,
         MaterialOverrideData? MaterialOverride,
         List<SceneNodeData> Children);
+
+    private sealed record SceneComponentData(
+        SceneComponentType Type,
+        bool Enabled,
+        AssetId? ScriptId = null,
+        List<PropertyOverrideData>? Properties = null,
+        RigidBodyData? RigidBody = null,
+        ColliderData? Collider = null);
+
+    private sealed record RigidBodyData(
+        RigidBodyMotionType MotionType,
+        float Mass,
+        SceneVector3 LinearVelocity,
+        bool UseGravity,
+        float GravityScale,
+        float LinearDamping);
+
+    private sealed record ColliderData(
+        ColliderShape Shape,
+        SceneVector3 Center,
+        SceneVector3 Size,
+        float Radius,
+        float Height,
+        bool IsTrigger,
+        float Friction,
+        float Restitution);
+
+    private sealed record PropertyOverrideData(
+        int PropertyId,
+        SerializedPropertyValueKind Kind,
+        bool? Boolean = null,
+        long? SignedInteger = null,
+        ulong? UnsignedInteger = null,
+        double? Number = null,
+        string? Text = null,
+        SceneVector4? Vector = null)
+    {
+        /// <summary>Encodes one persistent script property override.</summary>
+        /// <param name="propertyOverride">Authored override.</param>
+        /// <returns>Serializable property data.</returns>
+        public static PropertyOverrideData From(ScriptPropertyOverride propertyOverride)
+        {
+            var value = propertyOverride.Value;
+            return value.Kind switch
+            {
+                SerializedPropertyValueKind.Boolean when value.TryGetBoolean(out var boolean) =>
+                    new(propertyOverride.PropertyId, value.Kind, Boolean: boolean),
+                SerializedPropertyValueKind.SignedInteger
+                    when value.TryGetSignedInteger(out var signed) =>
+                    new(propertyOverride.PropertyId, value.Kind, SignedInteger: signed),
+                SerializedPropertyValueKind.UnsignedInteger
+                    when value.TryGetUnsignedInteger(out var unsigned) =>
+                    new(propertyOverride.PropertyId, value.Kind, UnsignedInteger: unsigned),
+                SerializedPropertyValueKind.Number when value.TryGetNumber(out var number) =>
+                    new(propertyOverride.PropertyId, value.Kind, Number: number),
+                SerializedPropertyValueKind.String when value.TryGetString(out var text) =>
+                    new(propertyOverride.PropertyId, value.Kind, Text: text),
+                SerializedPropertyValueKind.Vector2 when value.TryGetVector2(out var vector2) =>
+                    new(propertyOverride.PropertyId, value.Kind,
+                        Vector: SceneVector4.From(new Vector4(vector2, 0f, 0f))),
+                SerializedPropertyValueKind.Vector3 when value.TryGetVector3(out var vector3) =>
+                    new(propertyOverride.PropertyId, value.Kind,
+                        Vector: SceneVector4.From(new Vector4(vector3, 0f))),
+                SerializedPropertyValueKind.Vector4 when value.TryGetVector4(out var vector4) =>
+                    new(propertyOverride.PropertyId, value.Kind,
+                        Vector: SceneVector4.From(vector4)),
+                _ => throw new InvalidDataException(
+                    $"Property {propertyOverride.PropertyId} has no serializable value.")
+            };
+        }
+
+        /// <summary>Decodes one persistent script property override.</summary>
+        /// <returns>Validated persistent value.</returns>
+        public SerializedPropertyValue ToValue()
+        {
+            return Kind switch
+            {
+                SerializedPropertyValueKind.Boolean when Boolean is { } boolean =>
+                    SerializedPropertyValue.From(boolean),
+                SerializedPropertyValueKind.SignedInteger when SignedInteger is { } signed =>
+                    SerializedPropertyValue.From(signed),
+                SerializedPropertyValueKind.UnsignedInteger when UnsignedInteger is { } unsigned =>
+                    SerializedPropertyValue.From(unsigned),
+                SerializedPropertyValueKind.Number when Number is { } number =>
+                    SerializedPropertyValue.From(number),
+                SerializedPropertyValueKind.String => SerializedPropertyValue.From(Text),
+                SerializedPropertyValueKind.Vector2 when Vector is { } vector =>
+                    SerializedPropertyValue.From(new Vector2(vector.X, vector.Y)),
+                SerializedPropertyValueKind.Vector3 when Vector is { } vector =>
+                    SerializedPropertyValue.From(new Vector3(vector.X, vector.Y, vector.Z)),
+                SerializedPropertyValueKind.Vector4 when Vector is { } vector =>
+                    SerializedPropertyValue.From(vector.ToVector4()),
+                _ => throw new InvalidDataException(
+                    $"Property {PropertyId} is missing its {Kind} value.")
+            };
+        }
+    }
 
     private sealed record CameraData(float Fov, float Near, float Far);
 
@@ -288,6 +509,13 @@ public static class SceneFileStore
         ImportedModel,
         AssetMesh,
         PerspectiveCamera
+    }
+
+    private enum SceneComponentType
+    {
+        Script,
+        RigidBody,
+        Collider
     }
 }
 

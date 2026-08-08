@@ -513,7 +513,9 @@ public class UIThemeTests
         Assert.Contains(view.Inspector, descendants);
         Assert.Contains(descendants, child => child.Name == "BottomDock");
         Assert.Contains(descendants, child => child.Name == "SceneToolbar");
-        Assert.Equal(1f, view.TitleBar.Margin.Bottom);
+        Assert.Equal(TitleBar.DefaultHeight, view.TitleBar.Height);
+        Assert.Equal(Thickness.Zero, view.TitleBar.Margin);
+        Assert.Equal(0f, view.TitleBar.BorderThickness);
         Assert.Equal(640f, view.PlayButton.Left + view.PlayButton.Width / 2f);
         Assert.Equal(view.TitleBar.Top + (view.TitleBar.Height - view.PlayButton.Height) / 2f,
             view.PlayButton.Top);

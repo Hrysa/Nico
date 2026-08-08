@@ -19,7 +19,7 @@ public static class EditorUI
     public static EditorView BuildView(float width, float height)
     {
         var theme = UITheme.Dark;
-        var titleBarHeight = OperatingSystem.IsWindows() ? 36f : 48f;
+        const float titleBarHeight = TitleBar.DefaultHeight;
         const float bottomDockHeight = 30f;
         const float separatorWidth = 1f;
         const float hierarchyWidth = 252f;
@@ -53,8 +53,7 @@ public static class EditorUI
         var titleBar = new TitleBar(width, titleBarHeight, theme)
         {
             Width = 0f,
-            FlexShrink = 0f,
-            Margin = new Thickness(0f, 0f, 0f, 1f)
+            FlexShrink = 0f
         }.Configure(bar =>
         {
             bar.LeftZone.WithChildren(projectLabel);
@@ -79,7 +78,7 @@ public static class EditorUI
         backgroundColor: theme.Surface,
         justifyContent: FlexJustify.Center).Named("BottomDock");
 
-        var profilerPauseLabel = new Label("Pause")
+        var profilerPauseLabel = new Label("Record")
         {
             FontSize = theme.CaptionFontSize,
             ForegroundColor = theme.TextPrimary,
@@ -101,7 +100,8 @@ public static class EditorUI
                 toolbar.Height = theme.ControlHeight;
                 toolbar.FlexShrink = 0f;
             }),
-            UI.Ref(new ProfilerView(theme) { Name = "ProfilerView" }, out var profiler).Grow()
+            UI.Ref(new ProfilerView(theme) { Name = "ProfilerView" }
+                .Configure(view => view.SetPaused(true)), out var profiler).Grow()
         ], backgroundColor: theme.Surface);
         var profilerPanel = CreateToolPanel(width, 0f, "Profiler", "Profiler",
             profilerLayout, theme, isVisible: false, autoWidth: true);

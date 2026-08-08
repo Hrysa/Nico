@@ -73,13 +73,59 @@ public static class ScenePlayClone
         destination.Position = source.Position;
         destination.Orientation = source.Orientation;
         destination.Scale = source.Scale;
-        destination.ScriptId = source.ScriptId;
+        var components = source.Components;
+        for (var index = 0; index < components.Count; index++)
+            destination.AddComponent(CloneComponent(components[index]));
         if (source is MeshInstance3D sourceMesh && destination is MeshInstance3D destinationMesh)
         {
             destinationMesh.Mesh = sourceMesh.Mesh;
             destinationMesh.LocalBounds = sourceMesh.LocalBounds;
             destinationMesh.Materials.AddRange(sourceMesh.Materials);
             destinationMesh.MaterialOverride = sourceMesh.MaterialOverride?.Clone();
+        }
+    }
+
+    /// <summary>Clones one supported authored component without sharing mutable state.</summary>
+    /// <param name="source">Component to clone.</param>
+    /// <returns>Detached component clone.</returns>
+    private static Component CloneComponent(Component source)
+    {
+        switch (source)
+        {
+            case ScriptComponent sourceScript:
+                var script = new ScriptComponent(sourceScript.ScriptId)
+                    { Enabled = sourceScript.Enabled };
+                var overrides = sourceScript.PropertyOverrides;
+                for (var index = 0; index < overrides.Count; index++)
+                    script.SetPropertyOverride(overrides[index].PropertyId, overrides[index].Value);
+                return script;
+            case RigidBodyComponent sourceBody:
+                return new RigidBodyComponent
+                {
+                    Enabled = sourceBody.Enabled,
+                    MotionType = sourceBody.MotionType,
+                    Mass = sourceBody.Mass,
+                    LinearVelocity = sourceBody.LinearVelocity,
+                    UseGravity = sourceBody.UseGravity,
+                    GravityScale = sourceBody.GravityScale,
+                    LinearDamping = sourceBody.LinearDamping
+                };
+            case ColliderComponent sourceCollider:
+                return new ColliderComponent
+                {
+                    Enabled = sourceCollider.Enabled,
+                    Shape = sourceCollider.Shape,
+                    Center = sourceCollider.Center,
+                    Size = sourceCollider.Size,
+                    Radius = sourceCollider.Radius,
+                    Height = sourceCollider.Height,
+                    IsTrigger = sourceCollider.IsTrigger,
+                    Friction = sourceCollider.Friction,
+                    Restitution = sourceCollider.Restitution
+                };
+            default:
+                throw new NotSupportedException(
+                    $"Component type '{source.GetType().Name}' cannot enter play mode.");
         }
     }
 

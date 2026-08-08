@@ -241,11 +241,13 @@ public class CollectionControlTests
         };
         var tree = new TreeView(200f, 60f);
         tree.SetRoots(roots);
-        tree.BuildDrawList();
-        var router = new UIEventRouter(tree, () => { });
+        var viewer = new ScrollViewer(200f, 60f) { Content = tree };
+        viewer.BuildDrawList();
+        var router = new UIEventRouter(viewer, () => { });
         router.Focus(Assert.IsType<TreeViewItem>(tree.Children[0]));
 
         router.RouteText("g");
+        viewer.BuildDrawList();
 
         Assert.Same(roots[3], tree.SelectedItem);
         Assert.Contains(tree.Children, child => child is TreeViewItem row && row.Item == roots[3]);

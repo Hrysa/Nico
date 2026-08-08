@@ -1,5 +1,4 @@
 using System.Numerics;
-using Engine.Core;
 using Engine.Graphics;
 
 namespace Engine.UI;
@@ -36,7 +35,7 @@ public sealed class ViewportPresentationTracker
             return false;
         }
 
-        var visible = IsEffectivelyVisible();
+        var visible = _viewport.IsEffectivelyVisible;
         var bounds = new UIClipRect(
             _viewport.Left, _viewport.Top, _viewport.Right, _viewport.Bottom);
         if (_synchronized && ReferenceEquals(_renderer, renderer) &&
@@ -61,20 +60,6 @@ public sealed class ViewportPresentationTracker
         _bounds = default;
         _visible = false;
         _synchronized = false;
-    }
-
-    /// <summary>Checks local and ancestor visibility for presentation compositing.</summary>
-    /// <returns>True when every retained ancestor is visible.</returns>
-    private bool IsEffectivelyVisible()
-    {
-        Node? current = _viewport;
-        while (current is UIElement element)
-        {
-            if (!element.IsVisible)
-                return false;
-            current = element.Parent;
-        }
-        return true;
     }
 
     /// <summary>Updates the reusable six-vertex presentation quad without per-layout allocation.</summary>

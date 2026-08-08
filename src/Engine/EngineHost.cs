@@ -1,6 +1,7 @@
 using Engine.Graphics;
 using Engine.Assets;
 using Engine.Core;
+using Engine.Physics;
 using Engine.Scripting;
 using Engine.UI;
 using System.Numerics;
@@ -43,6 +44,7 @@ public sealed class EngineApplication : IDisposable
         _renderables = [];
     private CompiledScriptCatalog? _scriptCatalog;
     private SceneScriptRuntime? _scriptRuntime;
+    private PhysicsWorld? _physicsWorld;
     private RuntimeResourceManager? _runtimeResources;
     private UIHost? _uiHost;
     private IUIViewportPolicy? _uiViewportPolicy;
@@ -90,6 +92,9 @@ public sealed class EngineApplication : IDisposable
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
+        _physicsWorld = new PhysicsWorld();
+        _physicsWorld.EnableInterpolation = true;
+        _physicsWorld.Attach(scene.Root);
         _window.Update += RenderScene;
         _window.Resized += ResizeScene;
         _window.SetContinuousRendering(true);
@@ -258,6 +263,7 @@ public sealed class EngineApplication : IDisposable
         _worldSpaceUI = null;
         _scriptRuntime?.Dispose();
         _scriptRuntime = null;
+        _physicsWorld = null;
         _scriptCatalog?.Dispose();
         _scriptCatalog = null;
         _runtimeResources?.Dispose();
@@ -284,7 +290,7 @@ public sealed class EngineApplication : IDisposable
         var meshReference = instance.Mesh;
         AssetImportOutcome? outcome = null;
         StaticMeshResource mesh;
-        if (BuiltInAssets.IsCubeMesh(meshReference))
+        if (BuiltInAssets.IsBuiltInMesh(meshReference))
         {
             mesh = BuiltInAssets.LoadMesh(meshReference);
         }
@@ -432,7 +438,10 @@ public sealed class EngineApplication : IDisposable
     /// <param name="delta">Elapsed frame time.</param>
     private void RenderScene(double delta)
     {
-        _scriptRuntime?.Update(delta * _simulationTimeScale);
+        var simulationDelta = delta * _simulationTimeScale;
+        _scriptRuntime?.Update(simulationDelta);
+        _physicsWorld?.Update(simulationDelta);
+        _scriptRuntime?.LateUpdate(simulationDelta);
         if (_camera is null)
             return;
         _renderQueue.Clear();
@@ -526,7 +535,7 @@ public sealed class EngineApplication : IDisposable
         _scriptRuntime = new SceneScriptRuntime();
         try
         {
-            _scriptRuntime.Attach(sceneRoot, _scriptCatalog);
+            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window);
             _scriptRuntime.Start();
         }
         catch

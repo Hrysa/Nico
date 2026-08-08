@@ -27,7 +27,6 @@ public sealed class UIValidationSummary : Label, IDisposable
         _form = form;
         ForegroundColor = resolvedTheme.Error;
         FontSize = resolvedTheme.CaptionFontSize;
-        PaintBackground = false;
         _form.StateChanged += Refresh;
         Refresh();
     }

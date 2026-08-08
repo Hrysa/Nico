@@ -192,7 +192,7 @@ public sealed class ProfilerViewTests
         Assert.DoesNotContain(profiler.BuildDrawList().Commands,
             command => command.Text?.Contains("Method10") == true);
 
-        profiler.InvokeScroll(-1f);
+        profiler.CallTreeScroller.ScrollTo(0f, 10f * profiler.CallTree.RowHeight);
 
         Assert.Contains(profiler.BuildDrawList().Commands,
             command => command.Text?.Contains("Method10") == true);

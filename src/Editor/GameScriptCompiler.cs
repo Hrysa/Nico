@@ -11,6 +11,7 @@ public sealed partial class GameScriptCompiler : IDisposable
     private readonly ScriptingWorkspace _workspace;
     private readonly FileSystemWatcher _watcher;
     private readonly object _stateLock = new();
+    private readonly object _buildLock = new();
     private readonly string _assemblyPath;
     private readonly AssetDatabase? _assetDatabase;
     private long _changeVersion = 1;
@@ -52,6 +53,17 @@ public sealed partial class GameScriptCompiler : IDisposable
     public GameScriptHost BuildAndLoad(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_buildLock)
+        {
+            return BuildAndLoadCore(cancellationToken);
+        }
+    }
+
+    /// <summary>Builds and loads while the caller owns the compiler's build lock.</summary>
+    /// <param name="cancellationToken">Cancels the active SDK process.</param>
+    /// <returns>A host loaded from the latest successful compilation.</returns>
+    private GameScriptHost BuildAndLoadCore(CancellationToken cancellationToken)
+    {
         long version;
         long projectVersion;
         lock (_stateLock)
