@@ -1,76 +1,110 @@
 # Architecture
 
-The engine uses a layered, in-place architecture. Rebuilding as a separate project is unnecessary: the existing project boundaries are sound now, and the remaining Vulkan complexity is isolated inside the backend.
+The engine uses a layered "Editor as a Game" architecture. The Editor is retained 2D UI, while its Scene and Game viewports render into independent offscreen targets that are presented inside the UI.
 
-## Dependency direction
+## Projects and dependencies
 
 ```text
-Player ──> Engine ──> Engine.Core
-                  ├─> Engine.Graphics ──> Engine.Core
-                  ├─> Engine.Scripting ──> Engine.Core, Engine.Graphics
-                  ├─> Engine.UI ────────> Engine.Core, Engine.Graphics
-                  └─> Engine.Graphics.Silk ──> Engine.Graphics, Silk.NET
+Engine.Core
+    ↑
+    ├── Engine.Graphics
+    │       ↑
+    │       ├── Engine.Graphics.Silk ── Silk.NET
+    │       ├── Engine.Physics
+    │       ├── Engine.Scripting
+    │       └── Engine.UI
+    └── Engine.Assets
 
-Editor ──> Engine.Graphics, Engine.Scripting, Engine.UI, Engine.Graphics.Silk
+Engine ── runtime composition used by Player
+Editor ── editor composition and tooling
+Player ── packaged/loose game runtime
 ```
 
-Only `Engine.Graphics.Silk` may reference Silk.NET. `Engine.Core`, `Engine.Graphics`, `Engine.Scripting`, and `Engine.UI` remain renderer-independent.
+- `Engine.Core` owns nodes, components, asset IDs, and renderer-independent state.
+- `Engine.Graphics` owns transforms, cameras, meshes, materials, render queues, input contracts, and scene persistence.
+- `Engine.Graphics.Silk` is the only project that references Silk.NET or Vulkan.
+- `Engine.Physics` owns fixed-step simulation and depends on `Node3D` through `Engine.Graphics`.
+- `Engine.Scripting` owns script lifecycle, observed-property contracts, scene queries, and gameplay input state.
+- `Engine.UI` owns the retained UI tree, layout, routed input, controls, docking, accessibility, and UI scheduling.
+- `Engine.Assets` owns asset metadata, importers, artifacts, and cache management.
 
-## Runtime contracts
+Silk.NET types must never cross the public `Engine.Graphics` boundary.
 
-- `IWindow` owns the platform window lifecycle and resize/update events.
-- `IInputSource` exposes renderer-independent keyboard and pointer events.
-- `IRenderer` accepts viewport, grid, UI, and overlay render data.
-- `EngineHost` is the runtime composition facade used by Player.
-- `SceneScript`, `SceneContext`, and `SceneScriptRuntime` form the renderer-independent game scripting API.
+## Scene model
 
-The current Silk implementation implements all three contracts on `SilkWindow`; consumers depend on the narrow contract they need.
+`Node` owns hierarchy, local transform state, and an ordered `Component` collection. `Node3D` composes local transforms through its ancestors. A node may own multiple script and engine components.
 
-## Editor composition
+Built-in component types currently include:
 
-`Program` is the composition root. Behavior is split into focused collaborators:
+- `ScriptComponent`, which references a persistent script asset and stores authored property overrides;
+- `RigidBodyComponent`, which stores motion mode, mass, velocity, gravity, and damping;
+- `ColliderComponent`, which stores primitive collision geometry and contact material values.
 
-- `EditorView` builds and lays out the UI tree.
-- `UIEventRouter` owns hit testing and UI input state.
-- `FlyCameraController` owns scene-camera input.
-- `SceneSelectionController` owns viewport picking and selection.
-- `EditorViewportRenderer` builds per-frame render submissions.
-- `GameScriptHost` builds the generated game project and owns its collectible assembly context.
+Scene format 4 persists component collections. Format 3 remains readable through the legacy single-`scriptId` migration path. Entering Play mode clones the authored graph, including all components and material overrides. Runtime changes affect only that clone.
 
-UI produces semantic `UIDrawCommand` values. Only the Silk backend translates those commands into GPU vertices.
+## Frame lifecycle
 
-## Scene and rendering
+The client update order is:
 
-`Node` owns hierarchy invariants and local transforms. `Node3D` composes parent transforms. Cameras implement `ICamera`; selection uses `MeshPicker`; `RenderQueue` separates scene submission from backend execution.
+```text
+native input
+    -> SceneScript.OnUpdate
+    -> fixed physics steps
+    -> interpolated presentation transforms
+    -> SceneScript.OnLateUpdate
+    -> viewport and UI submission
+    -> Vulkan render/present
+```
 
-A node may persist one script asset ID. Entering play mode clones the authored graph, builds the game-owned script project, semantically maps script assets to validated types in its output assembly, binds one `SceneScript` instance per runtime node, and invokes its lifecycle before rendering. Stopping play discards the clone, leaving authored state unchanged. Script assemblies are loaded into a collectible context; engine contract assemblies remain shared with the default context so node and script type identity is stable.
+Gameplay scripts submit velocity and other intent before physics. Camera follow and other presentation work belongs in `OnLateUpdate`, after physics has published the current client pose.
 
-The Vulkan backend separates resource lifetimes even though `SilkWindow` remains its facade:
+`PhysicsWorld` defaults to authoritative, non-interpolated transforms. Editor Play mode and Player enable interpolation so a 60 Hz physics simulation renders smoothly at higher display rates. A headless server should leave interpolation disabled.
+
+## Rendering
+
+Each visible frame has two conceptual stages:
+
+1. Registered Scene/Game viewports render meshes into per-view FBOs.
+2. The Editor or Player UI renders to the swapchain and presents viewport textures as quads.
+
+The Vulkan backend separates resource ownership:
 
 - `FrameScheduler` owns per-frame command pools, fences, command buffers, and semaphore chaining.
-- `SwapchainManager` owns swapchain selection, images, views, extent, and framebuffers.
+- `SwapchainManager` owns swapchain images, views, extent, and framebuffers.
 - `FrameVertexBuffers` owns frame-indexed mapped upload buffers.
-- `PipelineResources` owns shader modules, pipeline layouts, pipelines, and texture descriptors.
-- `ViewportFbo` owns each viewport's offscreen attachments and descriptor set.
+- `PipelineResources` owns shaders, layouts, pipelines, and descriptors.
+- `ViewportFbo` owns each viewport's color/depth attachments and texture descriptor.
+
+Raw `System.Numerics.Matrix4x4` values are pushed without an explicit transpose. Perspective projection performs only the Vulkan Y-axis correction.
+
+## UI and windows
+
+Each native window owns one `UIHost`, dispatcher, input router, retained root, and rendering context. `DockSession` coordinates one authoritative dock workspace across the main and floating native windows.
+
+UI hosts support four scheduling policies:
+
+- `ExternallyManaged`: a game loop explicitly advances and refreshes UI;
+- `EventDriven`: sleep until input or invalidation requests work;
+- `Continuous`: update every frame;
+- `Hybrid`: event-driven while idle and continuous while retained timers or interactions require ticks.
+
+Hidden dock content sets `IsVisible = false`, which removes the subtree from layout, painting, hit testing, and retained time updates.
 
 ## Invariants
 
-1. No Silk.NET types cross the `Engine.Graphics` public boundary.
-2. GPU resources have one explicit owner and idempotent cleanup.
-3. CPU writes target only the active frame's upload buffers.
-4. Viewport resize updates both FBO resources and camera projection state.
-5. UI coordinates are parent-local; drawing and hit testing resolve them through the tree.
-6. Raw `Matrix4x4` push constants are not explicitly transposed.
+1. GPU resources have one explicit owner and idempotent cleanup.
+2. CPU uploads target only resources safe for the active frame.
+3. Runtime Play state never mutates the authored scene.
+4. Dynamic physics owns position integration; scripts control it through motion state rather than per-frame transform assignment.
+5. UI coordinates are parent-local; layout, painting, clipping, and hit testing resolve them through the retained tree.
+6. Update, input, layout, and rendering hot paths avoid LINQ and interface-typed enumeration.
 
 ## Verification
 
-Run:
-
 ```bash
 dotnet build GameEngine.slnx
-dotnet test tests/Engine.Graphics.Tests/Engine.Graphics.Tests.csproj
-dotnet test tests/Editor.Tests/Editor.Tests.csproj
-./run.sh
+dotnet test GameEngine.slnx -m:1
+./run.sh example_game
 ```
 
-The unit suites cover hierarchy/transforms, cameras, render queues/helpers, mesh picking, UI routing, fly-camera input, selection, and viewport rendering orchestration. `./run.sh` is the Vulkan integration smoke test.
+The final command is the macOS Vulkan integration smoke test.
