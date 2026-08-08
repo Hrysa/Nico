@@ -2004,6 +2004,7 @@ bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
 
 Node? pendingDragItem = null;
 var pendingDragStart = Vector2.Zero;
+var pendingDragFromHierarchy = false;
 var primaryPointerDown = false;
 var dragActive = false;
 
@@ -2029,10 +2030,10 @@ mainUIHost.PointerMoveProcessed = (pointerEvent, routed) =>
         if (!dragActive)
         {
             dragActive = true;
-            if (pendingDragItem is FileSystemNode or ImportedSubAssetNode)
-                fileSystemTree.Select(pendingDragItem);
-            else
+            if (pendingDragFromHierarchy)
                 hierarchyTree.Select(pendingDragItem);
+            else
+                fileSystemTree.Select(pendingDragItem);
             dragPreview = new DragPreview(string.IsNullOrWhiteSpace(pendingDragItem.Name)
                     ? pendingDragItem.GetType().Name : pendingDragItem.Name)
                 { Name = "DragPreview" };
@@ -2074,13 +2075,13 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
                 IsInside(inspector, lastMousePos) && TryAssignInspectorSubAsset(importedSource))
                 RefreshVertices();
             else if (draggedItem is ImportedSubAssetNode hierarchySource &&
-                     IsInside(hierarchyTree, lastMousePos))
+                     IsInside(hierarchyTree, lastMousePos) &&
+                     EditorDragPolicy.CanInstantiateInHierarchy(hierarchySource))
                 InstantiateImportedMesh(hierarchySource, targetRow?.Item);
             else if (draggedItem is FileSystemNode fileSource)
             {
                 if (IsInside(hierarchyTree, lastMousePos) &&
-                    Path.GetExtension(fileSource.FullPath).Equals(".glb",
-                        StringComparison.OrdinalIgnoreCase))
+                    EditorDragPolicy.CanInstantiateInHierarchy(fileSource))
                     InstantiateGlbPrimaryMesh(fileSource, targetRow?.Item);
                 else if (ScriptFileDrop.TryAttach(
                              fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
@@ -2092,7 +2093,8 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
                 else if (IsInside(fileSystemTree, lastMousePos))
                     MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
             }
-            else if (draggedItem is not FileSystemNode && IsInside(hierarchyTree, lastMousePos))
+            else if (pendingDragFromHierarchy &&
+                     IsInside(hierarchyTree, lastMousePos))
                 MoveHierarchyNode(draggedItem, targetRow?.Item);
         }
         if (dragPreview is not null)
@@ -2104,6 +2106,7 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
         renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
         window.RequestFrame();
         pendingDragItem = null;
+        pendingDragFromHierarchy = false;
         var suppressClick = consumedByGizmo || dragActive;
         dragActive = false;
         return suppressClick
@@ -2123,9 +2126,21 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
     primaryPointerDown = true;
     pendingDragStart = lastMousePos;
     dragActive = false;
-    pendingDragItem = uiEventRouter.HoveredElement is TreeViewItem dragRow &&
-        (IsInside(hierarchyTree, lastMousePos) || IsInside(fileSystemTree, lastMousePos))
-        ? dragRow.Item : null;
+    pendingDragItem = null;
+    pendingDragFromHierarchy = false;
+    if (uiEventRouter.HoveredElement is TreeViewItem dragRow)
+    {
+        if (IsInside(hierarchyTree, lastMousePos))
+        {
+            pendingDragItem = dragRow.Item;
+            pendingDragFromHierarchy = true;
+        }
+        else if (IsInside(fileSystemTree, lastMousePos) &&
+                 EditorDragPolicy.CanStartFileSystemDrag(dragRow.Item))
+        {
+            pendingDragItem = dragRow.Item;
+        }
+    }
     if (hierarchyContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)
         CloseHierarchyContextMenu();
     if (fileContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)
