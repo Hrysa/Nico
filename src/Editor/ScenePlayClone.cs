@@ -1,5 +1,6 @@
 using Engine.Core;
 using Engine.Graphics;
+using Engine.UI;
 
 namespace Editor;
 
@@ -43,11 +44,12 @@ public static class ScenePlayClone
         ICollection<MeshInstance3D> meshInstances,
         ref PerspectiveCamera? clonedGameCamera)
     {
-        Node3D clone = source switch
+        Node clone = source switch
         {
             PerspectiveCamera camera => new PerspectiveCamera(
                 camera.Fov, near: camera.Near, far: camera.Far),
             MeshInstance3D => new MeshInstance3D(),
+            HudRoot => new HudRoot(),
             Node3D when source.GetType() == typeof(Node3D) => new Node3D(),
             _ => throw new NotSupportedException(
                 $"Scene node type '{source.GetType().Name}' cannot enter play mode.")

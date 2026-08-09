@@ -2,12 +2,45 @@ using System.Numerics;
 using Editor;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.UI;
 using Xunit;
 
 namespace Editor.Tests;
 
 public class SceneFileStoreTests
 {
+    /// <summary>Verifies higher-level HUD roots survive scene persistence through their factory.</summary>
+    [Fact]
+    public void SaveAndLoad_HudRoot_PreservesCustomNodeAndComponents()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hud-scene-{Guid.NewGuid():N}.node");
+        var root = new Node3D { Name = "Scene" };
+        var hud = new HudRoot { Name = "Player HUD" };
+        var scriptId = AssetId.New();
+        hud.AddComponent(new ScriptComponent(scriptId));
+        var camera = new PerspectiveCamera { Name = "Camera" };
+        root.AddChild(hud);
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+
+            Assert.Throws<InvalidDataException>(() => SceneFileStore.Load(path));
+            var loaded = SceneFileStore.Load(path, HudSceneNodeFactory.Instance);
+
+            var loadedHud = Assert.IsType<HudRoot>(loaded.Root.Children[0]);
+            Assert.Equal("Player HUD", loadedHud.Name);
+            Assert.Equal(scriptId,
+                Assert.IsType<ScriptComponent>(Assert.Single(loadedHud.Components)).ScriptId);
+            Assert.True(loadedHud.Content.IsOverlay);
+            Assert.True(loadedHud.Content.ClipToBounds);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>Verifies scene hierarchy, transforms, meshes, and active camera survive a disk round trip.</summary>
     [Fact]
     public void SaveAndLoad_RoundTrip_PreservesScene()

@@ -48,6 +48,7 @@ public sealed class EngineApplication : IDisposable
     private UIHost? _uiHost;
     private IUIViewportPolicy? _uiViewportPolicy;
     private WorldSpaceUIHost? _worldSpaceUI;
+    private HudRoot? _sceneHud;
     private RuntimePauseMenu? _pauseMenu;
     private UIInputContextMode _prePauseInputContext = UIInputContextMode.GameplayOnly;
     private double _simulationTimeScale = 1d;
@@ -76,7 +77,7 @@ public sealed class EngineApplication : IDisposable
         var root = Path.GetFullPath(projectRoot);
         var fullScenePath = Path.IsPathRooted(scenePath)
             ? Path.GetFullPath(scenePath) : Path.GetFullPath(Path.Combine(root, scenePath));
-        var scene = SceneFileStore.Load(fullScenePath);
+        var scene = SceneFileStore.Load(fullScenePath, HudSceneNodeFactory.Instance);
         var database = new AssetDatabase(root, SelectImporter);
         var registry = new AssetImporterRegistry();
         registry.Register(new GlbModelImporter());
@@ -87,7 +88,9 @@ public sealed class EngineApplication : IDisposable
         _renderView = _window.CreateRenderView(_width, _height);
         ConfigurePresentation(_width, _height);
         _window.SetViewportClearColor(_renderView, 0.05f, 0.05f, 0.12f);
-        _window.SubmitUI(new UIDrawList());
+        MountSceneHud(scene.Root);
+        if (_sceneHud is null)
+            _window.SubmitUI(new UIDrawList());
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
@@ -139,6 +142,9 @@ public sealed class EngineApplication : IDisposable
 
     /// <summary>Gets whether gameplay should receive input under the active UI context.</summary>
     public bool AllowsGameplayInput => _uiHost?.AllowsGameplayInput ?? true;
+
+    /// <summary>Gets whether the loaded scene supplies its own authored HUD root.</summary>
+    public bool HasSceneHud => _sceneHud is not null;
 
     /// <summary>Changes gameplay/UI input arbitration, for example when opening a pause menu.</summary>
     /// <param name="inputContext">New input-sharing mode.</param>
@@ -260,6 +266,7 @@ public sealed class EngineApplication : IDisposable
         _uiHost?.Dispose();
         _uiHost = null;
         _worldSpaceUI = null;
+        DetachSceneHud();
         _scriptRuntime?.Dispose();
         _scriptRuntime = null;
         _physicsWorld?.Dispose();
@@ -414,6 +421,43 @@ public sealed class EngineApplication : IDisposable
                 _window.DestroyTexture(textureHandle);
             throw;
         }
+    }
+
+    /// <summary>Mounts the single authored HUD found in a loaded scene.</summary>
+    /// <param name="root">Loaded synthetic scene root.</param>
+    private void MountSceneHud(Node root)
+    {
+        DetachSceneHud();
+        HudRoot? found = null;
+        foreach (var node in Enumerate(root))
+        {
+            if (node is not HudRoot hud)
+                continue;
+            if (found is not null)
+                throw new InvalidDataException("A scene can contain only one HUD root.");
+            found = hud;
+        }
+        if (found is null)
+            return;
+        _sceneHud = found;
+        _sceneHud.ContentChanged += HandleSceneHudContentChanged;
+        SetUI(_sceneHud.Content, inputContext: UIInputContextMode.Shared);
+    }
+
+    /// <summary>Rehosts a runtime-replaced authored HUD tree.</summary>
+    /// <param name="previous">Previously hosted tree.</param>
+    /// <param name="current">Replacement tree.</param>
+    private void HandleSceneHudContentChanged(UIElement previous, UIElement current)
+    {
+        SetUI(current, inputContext: UIInputContextMode.Shared);
+    }
+
+    /// <summary>Disconnects the authored HUD without disposing its scene node.</summary>
+    private void DetachSceneHud()
+    {
+        if (_sceneHud is not null)
+            _sceneHud.ContentChanged -= HandleSceneHudContentChanged;
+        _sceneHud = null;
     }
 
     /// <summary>Creates the shared decoded-resource manager for a loose Player project.</summary>

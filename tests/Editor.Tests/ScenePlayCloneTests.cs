@@ -2,6 +2,7 @@ using System.Numerics;
 using Editor;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.UI;
 using Xunit;
 
 namespace Editor.Tests;
@@ -119,5 +120,28 @@ public class ScenePlayCloneTests
         Assert.Equal(reference, clone.Mesh);
         Assert.Equal(material, Assert.Single(clone.Materials));
         Assert.Equal("Character", clone.Name);
+    }
+
+    /// <summary>Verifies authored HUD identity and scripts are cloned without sharing runtime content.</summary>
+    [Fact]
+    public void Create_HudRoot_CreatesIndependentRuntimeRoot()
+    {
+        var root = new Node3D { Name = "Scene" };
+        var hud = new HudRoot { Name = "HUD" };
+        var scriptId = AssetId.New();
+        hud.AddComponent(new ScriptComponent(scriptId));
+        hud.Content = new Label("Edit-only preview");
+        var camera = new PerspectiveCamera { Name = "Camera" };
+        root.AddChild(hud);
+        root.AddChild(camera);
+
+        var playScene = ScenePlayClone.Create(root, camera);
+
+        var clone = Assert.IsType<HudRoot>(playScene.Root.Children[0]);
+        Assert.NotSame(hud, clone);
+        Assert.NotSame(hud.Content, clone.Content);
+        Assert.IsType<Canvas>(clone.Content);
+        Assert.Equal(scriptId,
+            Assert.IsType<ScriptComponent>(Assert.Single(clone.Components)).ScriptId);
     }
 }

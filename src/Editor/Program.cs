@@ -155,7 +155,7 @@ if (activeScenePath is not null)
 {
     try
     {
-        var loadedScene = SceneFileStore.Load(activeScenePath);
+        var loadedScene = SceneFileStore.Load(activeScenePath, HudSceneNodeFactory.Instance);
         sceneRoot = loadedScene.Root;
         sceneObjects = loadedScene.MeshInstances;
         gameCamera = loadedScene.GameCamera;
@@ -222,12 +222,15 @@ StartScriptSchemaBuild();
 
 // ── Game viewport: scene rendered through its GameCamera ─────
 var gameViewport = editorView.GameViewport;
+gameViewport.ClipToBounds = true;
 var gameViewportId = window.CreateRenderView(gameViewport.Width, gameViewport.Height);
 gameViewport.RenderView = gameViewportId;
 gameViewport.Camera = gameCamera;
 var gameViewportPresentation = new ViewportPresentationTracker(gameViewport);
 gameViewportPresentation.Synchronize(window);
 window.SetViewportClearColor(gameViewportId, 0.05f, 0.05f, 0.12f);
+HudRoot? presentedHud = null;
+UIElement? presentedHudContent = null;
 
 Vector2 lastMousePos = Vector2.Zero;
 var selection = new SceneSelectionController(sceneObjects, sceneCamera, GetSceneGizmoViewport);
@@ -636,12 +639,14 @@ void UpdatePlayModeStart(double deltaTime)
             if (detachedGameRenderer is not null)
                 LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
         }
+        MountPlayHud(candidateScene.Root);
         editorView.PlayButtonIcon.Kind = IconKind.Stop;
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
     }
     catch (Exception exception)
     {
+        UnmountPlayHud();
         candidatePhysicsWorld?.Dispose();
         try
         {
@@ -687,6 +692,73 @@ void CloseCompilationProgress()
     RefreshVertices();
 }
 
+/// <summary>Mounts the active play scene's HUD above the Game viewport texture.</summary>
+/// <param name="root">Play-scene synthetic root.</param>
+void MountPlayHud(Node root)
+{
+    UnmountPlayHud();
+    HudRoot? found = null;
+    FindHudRoot(root, ref found);
+    if (found is null)
+        return;
+    presentedHud = found;
+    presentedHud.ContentChanged += HandlePlayHudContentChanged;
+    AttachPlayHudContent(presentedHud.Content);
+}
+
+/// <summary>Finds the single HUD root in one scene subtree.</summary>
+/// <param name="node">Current subtree node.</param>
+/// <param name="found">Previously found HUD root, if any.</param>
+void FindHudRoot(Node node, ref HudRoot? found)
+{
+    if (node is HudRoot hud)
+    {
+        if (found is not null)
+            throw new InvalidOperationException("A scene can contain only one HUD root.");
+        found = hud;
+    }
+    var children = node.Children;
+    for (var index = 0; index < children.Count; index++)
+        FindHudRoot(children[index], ref found);
+}
+
+/// <summary>Replaces the HUD tree mounted over the Game viewport.</summary>
+/// <param name="previous">Previously mounted tree.</param>
+/// <param name="current">Replacement tree.</param>
+void HandlePlayHudContentChanged(UIElement previous, UIElement current)
+{
+    if (ReferenceEquals(previous.Parent, gameViewport))
+        gameViewport.RemoveChild(previous);
+    presentedHudContent = null;
+    AttachPlayHudContent(current);
+}
+
+/// <summary>Attaches one detached retained tree to the Game viewport overlay.</summary>
+/// <param name="content">Detached HUD tree.</param>
+void AttachPlayHudContent(UIElement content)
+{
+    if (content.Parent is not null)
+        throw new InvalidOperationException("HUD content is already mounted by another host.");
+    content.IsOverlay = true;
+    content.ClipToBounds = true;
+    gameViewport.AddChild(content);
+    presentedHudContent = content;
+}
+
+/// <summary>Disconnects and removes the currently presented play-scene HUD.</summary>
+void UnmountPlayHud()
+{
+    if (presentedHud is not null)
+        presentedHud.ContentChanged -= HandlePlayHudContentChanged;
+    if (presentedHudContent is not null &&
+        ReferenceEquals(presentedHudContent.Parent, gameViewport))
+    {
+        gameViewport.RemoveChild(presentedHudContent);
+    }
+    presentedHud = null;
+    presentedHudContent = null;
+}
+
 /// <summary>Stops scripts and discards the isolated runtime scene.</summary>
 void StopPlayMode()
 {
@@ -700,6 +772,7 @@ void StopPlayMode()
     {
         logger.LogError(exception, "A script failed while leaving play mode");
     }
+    UnmountPlayHud();
     scriptHost = null;
     physicsWorld?.Dispose();
     physicsWorld = null;
@@ -844,7 +917,7 @@ bool LoadScene(string scenePath, bool makeActive)
     try
     {
         StopPlayMode();
-        var loadedScene = SceneFileStore.Load(scenePath);
+        var loadedScene = SceneFileStore.Load(scenePath, HudSceneNodeFactory.Instance);
         selection.Select(null);
         sceneRoot.ClearChildren();
         foreach (var child in loadedScene.Root.Children.ToArray())
@@ -1747,6 +1820,27 @@ void AddSceneNode(Node parent, AssetReference? mesh, string displayName)
     CloseFileContextMenu();
 }
 
+/// <summary>Adds the scene's single screen-space HUD root.</summary>
+void AddHudRoot()
+{
+    var activeRoot = GetActiveSceneRoot();
+    HudRoot? existing = null;
+    FindHudRoot(activeRoot, ref existing);
+    if (existing is not null)
+    {
+        hierarchyTree.Select(existing);
+        CloseHierarchyContextMenu();
+        return;
+    }
+    var hud = new HudRoot();
+    activeRoot.AddChild(hud);
+    hierarchyTree.SetRoots(activeRoot.Children);
+    hierarchyTree.Select(hud);
+    if (isPlaying)
+        MountPlayHud(activeRoot);
+    CloseHierarchyContextMenu();
+}
+
 /// <summary>Adds matching collision geometry and default motion to a built-in primitive.</summary>
 /// <param name="node">Primitive node receiving the components.</param>
 /// <param name="mesh">Built-in primitive mesh.</param>
@@ -1841,6 +1935,8 @@ void DeleteSceneNode(Node target)
 
     hierarchyTree.Select(null);
     selection.Select(null);
+    if (presentedHud is not null && ContainsNode(target, presentedHud))
+        UnmountPlayHud();
     var activeObjects = GetActiveSceneObjects();
     RemoveSceneObjects(target, activeObjects);
     target.Parent.RemoveChild(target);
@@ -1854,6 +1950,23 @@ void DeleteSceneNode(Node target)
     hierarchyTree.SetRoots(activeRoot.Children);
     CloseHierarchyContextMenu();
     InvalidateViewports();
+}
+
+/// <summary>Checks whether one subtree contains a specific node identity.</summary>
+/// <param name="root">Subtree root.</param>
+/// <param name="candidate">Node identity to find.</param>
+/// <returns>True when the candidate is the root or one of its descendants.</returns>
+bool ContainsNode(Node root, Node candidate)
+{
+    if (ReferenceEquals(root, candidate))
+        return true;
+    var children = root.Children;
+    for (var index = 0; index < children.Count; index++)
+    {
+        if (ContainsNode(children[index], candidate))
+            return true;
+    }
+    return false;
 }
 
 /// <summary>Removes every mesh instance in a deleted subtree from the renderable list.</summary>
@@ -1908,6 +2021,12 @@ void ShowHierarchyContextMenu()
     objectMenu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
     objectMenu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
     menu.AddSubmenu("Add 3D Object", objectMenu);
+
+    HudRoot? existingHud = null;
+    FindHudRoot(activeRoot, ref existingHud);
+    var uiMenu = new ContextMenu(menuWidth) { Name = "HierarchyAddUIObjectMenu" };
+    uiMenu.AddItem("Add HUD Root", AddHudRoot, existingHud is null);
+    menu.AddSubmenu("Add UI", uiMenu);
 
     var componentMenu = new ContextMenu(menuWidth) { Name = "HierarchyAddComponentMenu" };
     var canAddToTarget = !ReferenceEquals(target, activeRoot) && target is Node3D;

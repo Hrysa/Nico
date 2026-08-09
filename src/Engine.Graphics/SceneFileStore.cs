@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 7;
+    private const int CurrentFormatVersion = 8;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -60,8 +60,9 @@ public static class SceneFileStore
     /// Loads and validates a scene graph from disk.
     /// </summary>
     /// <param name="path">Source scene-file path.</param>
+    /// <param name="nodeFactory">Optional higher-level custom node factory.</param>
     /// <returns>The reconstructed scene graph, renderable meshes, and active game camera.</returns>
-    public static LoadedScene Load(string path)
+    public static LoadedScene Load(string path, ISceneNodeFactory? nodeFactory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var document = JsonSerializer.Deserialize<SceneDocument>(File.ReadAllText(path), JsonOptions)
@@ -81,7 +82,7 @@ public static class SceneFileStore
         var nodesById = new Dictionary<string, Node>(StringComparer.Ordinal);
         var meshInstances = new List<MeshInstance3D>();
         foreach (var nodeData in document.Nodes)
-            root.AddChild(DecodeNode(nodeData, nodesById, meshInstances));
+            root.AddChild(DecodeNode(nodeData, nodesById, meshInstances, nodeFactory));
 
         if (!nodesById.TryGetValue(document.GameCameraId, out var cameraNode)
             || cameraNode is not PerspectiveCamera gameCamera)
@@ -107,6 +108,7 @@ public static class SceneFileStore
             PerspectiveCamera => SceneNodeType.PerspectiveCamera,
             MeshInstance3D => SceneNodeType.AssetMesh,
             Node3D when node.GetType() == typeof(Node3D) => SceneNodeType.Node3D,
+            ICustomSceneNode => SceneNodeType.Custom,
             _ => throw new NotSupportedException($"Scene node type '{node.GetType().Name}' cannot be saved.")
         };
         var camera = node as PerspectiveCamera;
@@ -120,6 +122,7 @@ public static class SceneFileStore
             SceneVector3.From(node.Scale),
             null,
             EncodeComponents(node),
+            (node as ICustomSceneNode)?.SceneTypeId,
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
@@ -135,21 +138,24 @@ public static class SceneFileStore
     /// <param name="data">Serialized node data.</param>
     /// <param name="nodesById">Index used to resolve scene references.</param>
     /// <param name="meshInstances">Collection receiving renderable mesh nodes.</param>
+    /// <param name="nodeFactory">Optional higher-level custom node factory.</param>
     /// <returns>The reconstructed scene node.</returns>
     private static Node DecodeNode(
         SceneNodeData data,
         IDictionary<string, Node> nodesById,
-        ICollection<MeshInstance3D> meshInstances)
+        ICollection<MeshInstance3D> meshInstances,
+        ISceneNodeFactory? nodeFactory)
     {
         if (string.IsNullOrWhiteSpace(data.Id) || nodesById.ContainsKey(data.Id))
             throw new InvalidDataException($"Scene node ID '{data.Id}' is empty or duplicated.");
 
-        Node3D node = data.Type switch
+        Node node = data.Type switch
         {
             SceneNodeType.Node3D => new Node3D(),
             SceneNodeType.Cube => new MeshInstance3D(),
             SceneNodeType.ImportedModel or SceneNodeType.AssetMesh => CreateAssetMesh(data.Model),
             SceneNodeType.PerspectiveCamera => CreateCamera(data.Camera),
+            SceneNodeType.Custom => CreateCustomNode(data.CustomType, nodeFactory),
             _ => throw new InvalidDataException($"Unsupported scene node type '{data.Type}'.")
         };
         node.Name = data.Name ?? string.Empty;
@@ -165,7 +171,20 @@ public static class SceneFileStore
         if (data.Children is null)
             throw new InvalidDataException($"Scene node '{data.Id}' does not contain a child collection.");
         foreach (var child in data.Children)
-            node.AddChild(DecodeNode(child, nodesById, meshInstances));
+            node.AddChild(DecodeNode(child, nodesById, meshInstances, nodeFactory));
+        return node;
+    }
+
+    /// <summary>Creates one higher-level custom node through the supplied factory.</summary>
+    /// <param name="sceneTypeId">Stable custom type identifier.</param>
+    /// <param name="nodeFactory">Optional higher-level node factory.</param>
+    /// <returns>The created detached node.</returns>
+    private static Node CreateCustomNode(string? sceneTypeId, ISceneNodeFactory? nodeFactory)
+    {
+        if (string.IsNullOrWhiteSpace(sceneTypeId))
+            throw new InvalidDataException("A custom scene node is missing its type identifier.");
+        if (nodeFactory?.TryCreate(sceneTypeId, out var node) != true || node is null)
+            throw new InvalidDataException($"Custom scene node type '{sceneTypeId}' is not registered.");
         return node;
     }
 
@@ -351,6 +370,7 @@ public static class SceneFileStore
         SceneVector3 Scale,
         AssetId? ScriptId,
         List<SceneComponentData>? Components,
+        string? CustomType,
         CameraData? Camera,
         ModelData? Model,
         MaterialOverrideData? MaterialOverride,
@@ -541,7 +561,8 @@ public static class SceneFileStore
         Cube,
         ImportedModel,
         AssetMesh,
-        PerspectiveCamera
+        PerspectiveCamera,
+        Custom
     }
 
     private enum SceneComponentType

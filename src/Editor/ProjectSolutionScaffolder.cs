@@ -141,6 +141,8 @@ public static class ProjectSolutionScaffolder
             Path.Combine(assemblyDirectory, "Engine.Graphics.dll"));
         EnsureReference(itemGroup, "Engine.Scripting",
             Path.Combine(assemblyDirectory, "Engine.Scripting.dll"));
+        EnsureReference(itemGroup, "Engine.UI",
+            Path.Combine(assemblyDirectory, "Engine.UI.dll"));
         EnsureAnalyzer(project, Path.Combine(assemblyDirectory, "Engine.Script.Generator.dll"));
         SaveAtomically(document, userProjectPath);
     }
@@ -150,7 +152,8 @@ public static class ProjectSolutionScaffolder
     /// <returns>True for one of the game scripting API assemblies.</returns>
     private static bool IsEngineReference(string? assemblyName)
     {
-        return assemblyName is "Engine.Core" or "Engine.Graphics" or "Engine.Scripting";
+        return assemblyName is "Engine.Core" or "Engine.Graphics" or "Engine.Scripting"
+            or "Engine.UI";
     }
 
     /// <summary>Saves an XML document through an atomic same-directory replacement.</summary>

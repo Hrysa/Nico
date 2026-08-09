@@ -26,6 +26,7 @@ public class ProjectSolutionScaffolderTests
             Assert.Contains(Path.GetFullPath(engineAssemblyPath), userContents);
             Assert.Contains("Engine.Graphics.dll", userContents);
             Assert.Contains("Engine.Scripting.dll", userContents);
+            Assert.Contains("Engine.UI.dll", userContents);
             Assert.Contains("Engine.Script.Generator.dll", userContents);
             Assert.Contains("<Analyzer", userContents);
         }
@@ -87,6 +88,7 @@ public class ProjectSolutionScaffolderTests
             Assert.Contains("<UserSetting>preserved</UserSetting>", userContents);
             Assert.Contains(Path.Combine(directory, "new", "Engine.Scripting.dll"), userContents);
             Assert.Contains("Engine.Graphics", userContents);
+            Assert.Contains("Engine.UI", userContents);
         }
         finally
         {

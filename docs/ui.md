@@ -75,6 +75,33 @@ Use shared `UITheme` tokens and typed styles instead of component-local colors o
 
 Use `SectionHeader` when standalone content needs its own title. Dock tabs use content-sized flex headers within 95% of the pane width, leaving the content's rounded top-right corner exposed. Header-style toggle buttons remain transparent when idle and use shared hover and pressed surface colors.
 
+## Scene HUDs
+
+Add one `HudRoot` to a scene through **Hierarchy → Add UI → Add HUD Root**. A scene may contain only one HUD root. It is persisted and cloned with the scene, but its `Content` is a runtime retained tree rather than a 3D child hierarchy.
+
+Attach a scene script to the HUD root and assign declarative content during `OnReady`:
+
+```csharp
+public override void OnReady()
+{
+    if (Owner is not HudRoot hud)
+        throw new InvalidOperationException("This script requires a HUD root.");
+
+    var score = new Label("Score: 0")
+    {
+        Margin = new Thickness(16f),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Top,
+        IsHitTestVisible = false
+    };
+    var root = UI.Overlay([score]);
+    root.IsHitTestVisible = false;
+    hud.Content = root;
+}
+```
+
+The Editor mounts this content above the Game viewport during play, including when the viewport moves to another native window. Player creates a `UIHost` for the same content and does not install its fallback interface when a scene HUD exists. HUD layout always matches the logical game viewport, uses top-left-origin screen coordinates, clips to the viewport, and renders after its 3D texture. Non-interactive full-screen roots should set `IsHitTestVisible = false`; interactive descendants such as buttons remain independently hittable.
+
 ## Rendering and accessibility
 
 `UIDrawList` contains semantic commands for solid/rounded shapes, strokes, text, images, and viewport textures. The Silk backend performs clipping, batching, glyph shaping/rasterization, and texture binding.
