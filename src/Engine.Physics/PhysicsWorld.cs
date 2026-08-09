@@ -7,6 +7,7 @@ using BepuUtilities;
 using BepuUtilities.Memory;
 using Engine.Core;
 using Engine.Graphics;
+using BepuMesh = BepuPhysics.Collidables.Mesh;
 
 namespace Engine.Physics;
 
@@ -32,6 +33,7 @@ public sealed class PhysicsWorld : IDisposable
     private readonly List<PhysicsBody?> _bodyHandles = [];
     private readonly List<PhysicsBody?> _staticHandles = [];
     private readonly ContactBridge _contactBridge;
+    private readonly Func<AssetReference, StaticMeshResource?>? _meshResolver;
     private readonly List<PhysicsBody> _bodies = [];
     private Simulation _simulation;
     private double _accumulator;
@@ -40,8 +42,10 @@ public sealed class PhysicsWorld : IDisposable
     private bool _disposed;
 
     /// <summary>Creates an empty Bepu-backed physics world.</summary>
-    public PhysicsWorld()
+    /// <param name="meshResolver">Optional imported mesh resolver used by static mesh colliders.</param>
+    public PhysicsWorld(Func<AssetReference, StaticMeshResource?>? meshResolver = null)
     {
+        _meshResolver = meshResolver;
         _contactBridge = new ContactBridge(this);
         _simulation = CreateSimulation();
     }
@@ -210,11 +214,43 @@ public sealed class PhysicsWorld : IDisposable
                 body.CenterOffset = pose.Position - origin;
                 AddBepuBody(body, pose, new Box(PlaneExtent, PlaneThickness, PlaneExtent));
                 break;
+            case ColliderShape.Mesh:
+                AddMeshBody(body, pose, scale);
+                break;
             default:
                 var size = collider.Size * scale;
                 AddBepuBody(body, pose, new Box(size.X, size.Y, size.Z));
                 break;
         }
+    }
+
+    /// <summary>Adds one imported triangle mesh as a static BEPU collidable.</summary>
+    /// <param name="body">Engine body mapping receiving the static handle.</param>
+    /// <param name="pose">World pose of the mesh origin.</param>
+    /// <param name="scale">Absolute world scale applied by BEPU.</param>
+    private void AddMeshBody(PhysicsBody body, RigidPose pose, Vector3 scale)
+    {
+        if (body.RigidBody is { MotionType: not RigidBodyMotionType.Static })
+            throw new InvalidOperationException("Triangle mesh colliders must be static.");
+        var reference = body.Collider.Mesh
+            ?? throw new InvalidOperationException("A mesh collider requires a mesh reference.");
+        var resource = _meshResolver?.Invoke(reference)
+            ?? throw new InvalidOperationException($"Collision mesh '{reference}' could not be resolved.");
+        var triangleCount = resource.Indices.Length / 3;
+        _bufferPool.Take<Triangle>(triangleCount, out var triangles);
+        for (var triangleIndex = 0; triangleIndex < triangleCount; triangleIndex++)
+        {
+            var indexOffset = triangleIndex * 3;
+            var a = resource.Vertices[checked((int)resource.Indices[indexOffset])].Position;
+            var b = resource.Vertices[checked((int)resource.Indices[indexOffset + 2])].Position;
+            var c = resource.Vertices[checked((int)resource.Indices[indexOffset + 1])].Position;
+            triangles[triangleIndex] = new Triangle(a, b, c);
+        }
+        var mesh = new BepuMesh(triangles, scale, _bufferPool);
+        var shapeIndex = _simulation.Shapes.Add(mesh);
+        var handle = _simulation.Statics.Add(new StaticDescription(pose, shapeIndex));
+        body.StaticHandle = handle;
+        RegisterHandle(_staticHandles, handle.Value, body);
     }
 
     /// <summary>Adds one convex shape as a dynamic, kinematic, or static Bepu collidable.</summary>

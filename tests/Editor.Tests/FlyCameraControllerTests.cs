@@ -1,3 +1,4 @@
+using System.Numerics;
 using Editor;
 using Engine.Graphics;
 using Xunit;
@@ -99,5 +100,47 @@ public class FlyCameraControllerTests
         Assert.False(controller.IsActive);
         Assert.False(captured);
         Assert.Equal(position, camera.Position);
+    }
+
+    /// <summary>Verifies an unmodified two-finger gesture rotates without translating.</summary>
+    [Fact]
+    public void ApplyTwoFingerGesture_WithoutShift_RotatesCamera()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var position = camera.Position;
+
+        controller.ApplyTwoFingerGesture(new Vector2(2f, -3f), translate: false);
+
+        Assert.Equal(position, camera.Position);
+        Assert.NotEqual(Vector3.Zero, camera.Rotation);
+    }
+
+    /// <summary>Verifies Shift changes a two-finger gesture into camera-plane movement.</summary>
+    [Fact]
+    public void ApplyTwoFingerGesture_WithShift_TranslatesCamera()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var rotation = camera.Rotation;
+        var position = camera.Position;
+
+        controller.ApplyTwoFingerGesture(new Vector2(2f, -3f), translate: true);
+
+        Assert.NotEqual(position, camera.Position);
+        Assert.Equal(rotation, camera.Rotation);
+    }
+
+    /// <summary>Verifies positive pinch magnification moves toward the viewed scene.</summary>
+    [Fact]
+    public void ApplyPinchZoom_PositiveMagnification_MovesForward()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var before = camera.Position;
+
+        controller.ApplyPinchZoom(0.1f);
+
+        Assert.True(Vector3.Dot(camera.Position - before, camera.GetForwardVector()) > 0f);
     }
 }

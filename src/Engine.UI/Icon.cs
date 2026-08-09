@@ -30,7 +30,13 @@ public enum IconKind
     Minus,
 
     /// <summary>Draws a magnifying-glass search symbol.</summary>
-    Search
+    Search,
+
+    /// <summary>Draws a right-pointing play symbol.</summary>
+    Play,
+
+    /// <summary>Draws a square debug-stop symbol.</summary>
+    Stop
 }
 
 /// <summary>Displays a texture-backed image or a bundled Visual Studio Code Codicon glyph.</summary>
@@ -42,7 +48,9 @@ public sealed class Icon : UIElement
     private const string CheckGlyph = "\uEAB2";
     private const string ChevronDownGlyph = "\uEAB4";
     private const string ChevronRightGlyph = "\uEAB6";
+    private const string DebugStopGlyph = "\uEAD7";
     private const string RemoveGlyph = "\uEB3B";
+    private const string PlayGlyph = "\uEB2C";
     private IconKind _kind;
     private TextureHandle _texture;
 
@@ -117,6 +125,8 @@ public sealed class Icon : UIElement
     /// <summary>Configures icons as clipped non-interactive visual content.</summary>
     private void ConfigureInteraction()
     {
+        HorizontalAlignment = HorizontalAlignment.Center;
+        VerticalAlignment = VerticalAlignment.Center;
         IsHitTestVisible = false;
         ClipToBounds = true;
     }
@@ -134,6 +144,8 @@ public sealed class Icon : UIElement
             IconKind.Plus => AddGlyph,
             IconKind.Minus => RemoveGlyph,
             IconKind.Search => SearchGlyph,
+            IconKind.Play => PlayGlyph,
+            IconKind.Stop => DebugStopGlyph,
             _ => null
         };
         if (glyph is null)

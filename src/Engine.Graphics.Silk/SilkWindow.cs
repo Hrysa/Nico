@@ -15,7 +15,8 @@ using GlfwMonitor = Silk.NET.GLFW.Monitor;
 
 namespace Engine.Graphics;
 
-public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplayService,
+public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource, IRenderer,
+    IDisplayService,
     IClipboardService, ITextLayoutService, IWindowCoordinateMapper, IUIRasterScaleService,
     INavigationInputSource, INativeWindowHandleSource, IInteractiveFrameScheduler
 {
@@ -33,6 +34,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     private GlfwApi? _glfw;
     private Vector2 _lastPointerPosition;
     private PointerButtons _pressedPointerButtons;
+    private nint _macGestureView;
     private readonly HashSet<InputKey> _pressedInputKeys = new(64);
 
     private Instance _instance;
@@ -145,6 +147,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
+    private UIClipRect? _overlayClip;
     private uint _activeFrameIndex;
     private Vector4 _swapchainClearColor = new(0f, 0f, 0f, 1f);
 
@@ -439,6 +442,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     public event Action<PointerWheelEvent>? PointerWheelChanged;
 
     /// <inheritdoc/>
+    public event Action<PointerMagnifyEvent>? PointerMagnified;
+
+    /// <inheritdoc/>
     public event Action<NavigationInputEvent>? NavigationChanged;
 
     /// <inheritdoc/>
@@ -538,6 +544,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         _window.FramebufferResize += OnFramebufferResize;
 
         _window.Initialize();
+        _macGestureView = MacOSGestureBridge.Attach(_window, OnMacOSMagnify);
         if (options.CustomTitleBar && OperatingSystem.IsMacOS())
             MacOSWindowChrome.Apply(_window);
         if (!OperatingSystem.IsWindows())
@@ -889,6 +896,16 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         MouseScroll?.Invoke(scroll.Y);
         PointerWheelChanged?.Invoke(new PointerWheelEvent(
             0, _lastPointerPosition, new Vector2(scroll.X, scroll.Y), GetInputModifiers()));
+    }
+
+    /// <summary>Publishes one native macOS trackpad magnification increment.</summary>
+    /// <param name="magnification">Incremental AppKit magnification.</param>
+    private void OnMacOSMagnify(double magnification)
+    {
+        if (!double.IsFinite(magnification) || magnification == 0d)
+            return;
+        PointerMagnified?.Invoke(new PointerMagnifyEvent(
+            0, _lastPointerPosition, (float)magnification, GetInputModifiers()));
     }
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int keyCode)
@@ -3220,6 +3237,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         if (!_pendingTextureRetirements.Add(texture))
             throw new InvalidOperationException("The texture is already pending destruction.");
         _retiredTextures[_activeFrameIndex].Add(texture);
+        RequestFrame();
     }
 
     /// <inheritdoc/>
@@ -3241,7 +3259,23 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
             _persistentVertices!.GetBinding(mesh);
         if (!_pendingMeshRetirements.Add(mesh))
             throw new InvalidOperationException("The mesh is already pending destruction.");
+        RemovePendingDraws(mesh);
         _retiredMeshes[_activeFrameIndex].Add(mesh);
+        RequestFrame();
+    }
+
+    /// <summary>Removes queued viewport commands that reference a retiring mesh.</summary>
+    /// <param name="mesh">Mesh that can no longer be submitted.</param>
+    private void RemovePendingDraws(MeshHandle mesh)
+    {
+        foreach (var draws in _pendingViewportDraws.Values)
+        {
+            for (var index = draws.Count - 1; index >= 0; index--)
+            {
+                if (draws[index].Mesh == mesh)
+                    draws.RemoveAt(index);
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -3266,6 +3300,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
     {
         ArgumentNullException.ThrowIfNull(geometry.Vertices);
         _overlayVertices = geometry.Vertices;
+        _overlayClip = geometry.Clip;
     }
 
     /// <inheritdoc/>
@@ -3766,6 +3801,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         {
             RecreateSwapchain();
             _frameScheduler.EndFrame();
+            RequestRetirementFrameIfNeeded();
             return;
         }
 
@@ -3812,6 +3848,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         }
 
         _frameScheduler.EndFrame();
+        RequestRetirementFrameIfNeeded();
+    }
+
+    /// <summary>Keeps event-driven rendering alive until both deferred frame slots are drained.</summary>
+    private void RequestRetirementFrameIfNeeded()
+    {
+        if (_pendingMeshRetirements.Count > 0 || _pendingTextureRetirements.Count > 0)
+            RequestFrame();
     }
 
     private void RecordFboPass(CommandBuffer commandBuffer)
@@ -4113,6 +4157,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
         // Draw 2D overlay (gizmo lines, etc.)
         if (_overlayVertices.Length > 0)
         {
+            SetUiScissor(commandBuffer, _overlayClip);
             _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
             var ovSize = checked((uint)(_overlayVertices.Length * Vertex.Stride));
@@ -4598,6 +4643,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IRenderer, IDisplaySer
 
     public void Dispose()
     {
+        MacOSGestureBridge.Detach(_macGestureView);
+        _macGestureView = 0;
         Shutdown();
         _window?.Dispose();
         _window = null;

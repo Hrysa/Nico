@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 5;
+    private const int CurrentFormatVersion = 7;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -213,13 +213,15 @@ public static class SceneFileStore
                             collider.Height,
                             collider.IsTrigger,
                             collider.Friction,
-                            collider.Restitution)));
+                            collider.Restitution,
+                            collider.Mesh)));
                     break;
                 case AnimatorComponent animator:
                     result.Add(new SceneComponentData(
                         SceneComponentType.Animator,
                         animator.Enabled,
                         Animator: new AnimatorData(
+                            animator.AnimationSource,
                             animator.Clip,
                             animator.PlayAutomatically,
                             animator.Loop,
@@ -287,12 +289,14 @@ public static class SceneFileStore
                         Height = collider.Height,
                         IsTrigger = collider.IsTrigger,
                         Friction = collider.Friction,
-                        Restitution = collider.Restitution
+                        Restitution = collider.Restitution,
+                        Mesh = collider.Mesh
                     };
                     break;
                 case SceneComponentType.Animator when componentData.Animator is { } animator:
                     component = new AnimatorComponent
                     {
+                        AnimationSource = animator.AnimationSource,
                         Clip = animator.Clip,
                         PlayAutomatically = animator.PlayAutomatically,
                         Loop = animator.Loop,
@@ -377,9 +381,11 @@ public static class SceneFileStore
         float Height,
         bool IsTrigger,
         float Friction,
-        float Restitution);
+        float Restitution,
+        AssetReference? Mesh = null);
 
     private sealed record AnimatorData(
+        AssetReference? AnimationSource,
         string? Clip,
         bool PlayAutomatically,
         bool Loop,

@@ -38,6 +38,9 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets or sets the display-name resolver for a mesh material assignment.</summary>
     public Func<MeshInstance3D, string>? ResolveMaterialName { get; set; }
 
+    /// <summary>Gets or sets the display-name resolver for standalone animation assignments.</summary>
+    public Func<AssetReference?, string>? ResolveAnimationName { get; set; }
+
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
 
@@ -150,6 +153,17 @@ public sealed class SceneInspector : Panel
         AddChild(CreateLabel(12f, y, Width - 24f, 26f,
             "Animator", _theme.TextPrimary));
         AddChild(CreateLabel(12f, y + 30f, 66f, 30f,
+            "Source", _theme.TextSecondary));
+        var source = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = "AnimatorSource",
+            Text = ResolveAnimationName?.Invoke(animator.AnimationSource) ??
+                animator.AnimationSource?.ToString() ?? "Embedded in mesh",
+            IsReadOnly = true,
+            Margin = new Thickness(78f, y + 30f, 0f, 0f)
+        };
+        AddChild(source);
+        AddChild(CreateLabel(12f, y + 68f, 66f, 30f,
             "Clip", _theme.TextSecondary));
         var clip = new TextField(Width - 90f, 30f, _theme)
         {
@@ -157,7 +171,7 @@ public sealed class SceneInspector : Panel
             Text = animator.Clip ?? string.Empty,
             Placeholder = "First imported clip",
             UpdateTrigger = TextUpdateTrigger.Commit,
-            Margin = new Thickness(78f, y + 30f, 0f, 0f)
+            Margin = new Thickness(78f, y + 68f, 0f, 0f)
         };
         clip.ValueUpdateRequested += value =>
         {
@@ -168,7 +182,7 @@ public sealed class SceneInspector : Panel
         RegisterRefresh(clip, () => animator.Clip ?? string.Empty);
         _editForm.Register(clip);
         AddChild(clip);
-        AddChild(CreateLabel(12f, y + 68f, 66f, 30f,
+        AddChild(CreateLabel(12f, y + 106f, 66f, 30f,
             "Speed", _theme.TextSecondary));
         var speed = new TextField(Width - 90f, 30f, _theme)
         {
@@ -176,7 +190,7 @@ public sealed class SceneInspector : Panel
             Text = Format(animator.Speed),
             UpdateTrigger = TextUpdateTrigger.Commit,
             Validator = ValidateFloat,
-            Margin = new Thickness(78f, y + 68f, 0f, 0f)
+            Margin = new Thickness(78f, y + 106f, 0f, 0f)
         };
         speed.ValueUpdateRequested += value =>
         {
@@ -195,7 +209,7 @@ public sealed class SceneInspector : Panel
         {
             Name = "AnimatorPlayAutomatically",
             IsChecked = animator.PlayAutomatically,
-            Margin = new Thickness(12f, y + 106f, 0f, 0f)
+            Margin = new Thickness(12f, y + 144f, 0f, 0f)
         };
         play.CheckedChanged += value =>
         {
@@ -209,7 +223,7 @@ public sealed class SceneInspector : Panel
         {
             Name = "AnimatorLoop",
             IsChecked = animator.Loop,
-            Margin = new Thickness(16f + (Width - 28f) * 0.5f, y + 106f, 0f, 0f)
+            Margin = new Thickness(16f + (Width - 28f) * 0.5f, y + 144f, 0f, 0f)
         };
         loop.CheckedChanged += value =>
         {
@@ -218,7 +232,7 @@ public sealed class SceneInspector : Panel
                 NodeChanged?.Invoke(node);
         };
         AddChild(loop);
-        return y + 148f;
+        return y + 186f;
     }
 
     /// <summary>Resolves material values associated with the currently bound node.</summary>
@@ -649,6 +663,28 @@ public sealed class SceneInspector : Panel
             return false;
         GetOrCreateOverride(instance).BaseColorTexture = texture;
         NodeChanged?.Invoke(instance);
+        Bind(instance);
+        return true;
+    }
+
+    /// <summary>Assigns a standalone skeletal-animation artifact to the inspected mesh.</summary>
+    /// <param name="animation">Standalone animation sub-asset.</param>
+    /// <returns>True when an inspected mesh received the assignment.</returns>
+    public bool AssignAnimation(AssetReference animation)
+    {
+        if (InspectedNode is not MeshInstance3D instance)
+            return false;
+        var animator = instance.GetComponent<AnimatorComponent>();
+        if (animator is null)
+        {
+            animator = new AnimatorComponent();
+            instance.AddComponent(animator);
+        }
+        animator.AnimationSource = animation;
+        animator.Clip = null;
+        NodeChanged?.Invoke(instance);
+        _cachedViews.Remove(instance);
+        InspectedNode = null;
         Bind(instance);
         return true;
     }

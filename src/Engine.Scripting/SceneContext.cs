@@ -11,7 +11,7 @@ public sealed class SceneContext
     /// <summary>Gets the synthetic root of the active scene.</summary>
     public Node Root { get; }
 
-    /// <summary>Gets frame-stable keyboard input for the active scene.</summary>
+    /// <summary>Gets frame-stable keyboard and pointer input for the active scene.</summary>
     public SceneInput Input { get; }
 
     /// <summary>

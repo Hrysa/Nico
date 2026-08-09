@@ -25,11 +25,7 @@ public static class EditorUI
         const float hierarchyWidth = 252f;
         const float inspectorWidth = 300f;
         const float viewportToolbarHeight = 36f;
-        var panelHeaderHeight = theme.PanelHeaderHeight;
-
         var workspaceHeight = MathF.Max(0f, height - titleBarHeight - bottomDockHeight);
-        var hierarchyHeight = MathF.Floor(workspaceHeight * 0.58f);
-        var filesystemHeight = MathF.Max(0f, workspaceHeight - hierarchyHeight - separatorWidth);
 
         var projectLabel = new Label("scene.node", 180f, titleBarHeight)
         {
@@ -38,17 +34,14 @@ public static class EditorUI
             ForegroundColor = theme.TextSecondary,
             PaddingLeft = 0f
         };
-        var playButtonLabel = new Label("Play")
+        var playButtonIcon = new Icon(IconKind.Play, 16f)
         {
-            FontSize = theme.FontSize,
-            ForegroundColor = theme.Accent,
-            PaddingLeft = 0f,
-            IsHitTestVisible = false
+            ForegroundColor = theme.Accent
         };
         var playButton = new Button(28f, theme, ButtonStyle.Primary)
         {
             Name = "Play",
-            Content = playButtonLabel
+            Content = playButtonIcon
         };
         var titleBar = new TitleBar(width, titleBarHeight, theme)
         {
@@ -103,50 +96,24 @@ public static class EditorUI
             UI.Ref(new ProfilerView(theme) { Name = "ProfilerView" }
                 .Configure(view => view.SetPaused(true)), out var profiler).Grow()
         ], backgroundColor: theme.Surface);
-        var profilerPanel = CreateToolPanel(width, 0f, "Profiler", "Profiler",
-            profilerLayout, theme, isVisible: false, autoWidth: true);
-
-        var hierarchyPanel = CreateToolPanel(
-            hierarchyWidth,
-            hierarchyHeight,
-            "Hierarchy",
-            "Hierarchy",
-            UI.Ref(new TreeView(hierarchyWidth,
-                MathF.Max(0f, hierarchyHeight - panelHeaderHeight), theme)
-            {
-                Name = "HierarchyTree",
-                Width = 0f,
-                Height = 0f
-            }, out var hierarchyTree),
-            theme);
-
-        var filesystemPanel = CreateToolPanel(
-            hierarchyWidth,
-            filesystemHeight,
-            "File System",
-            "FileSystem",
-            UI.Ref(new TreeView(hierarchyWidth,
-                MathF.Max(0f, filesystemHeight - panelHeaderHeight), theme)
-            {
-                Name = "ProjectFiles",
-                Width = 0f,
-                Height = 0f
-            }, out var fileTree),
-            theme);
-
-        var inspectorPanel = CreateToolPanel(
-            inspectorWidth,
-            workspaceHeight,
-            "Inspector",
-            "Inspector",
-            UI.Ref(new SceneInspector(inspectorWidth,
-                MathF.Max(0f, workspaceHeight - panelHeaderHeight), theme)
-            {
-                Name = "SceneInspector",
-                Width = 0f,
-                Height = 0f
-            }, out var inspector),
-            theme);
+        var hierarchyTree = new TreeView(hierarchyWidth, 0f, theme)
+        {
+            Name = "HierarchyTree",
+            Width = 0f,
+            Height = 0f
+        };
+        var fileTree = new TreeView(hierarchyWidth, 0f, theme)
+        {
+            Name = "ProjectFiles",
+            Width = 0f,
+            Height = 0f
+        };
+        var inspector = new SceneInspector(inspectorWidth, 0f, theme)
+        {
+            Name = "SceneInspector",
+            Width = 0f,
+            Height = 0f
+        };
 
         var viewportWidth = MathF.Max(0f, width - hierarchyWidth - inspectorWidth - (separatorWidth * 2f));
         var sceneSlotHeight = MathF.Floor(workspaceHeight * 0.73f);
@@ -252,46 +219,11 @@ public static class EditorUI
         background.Arrange(Vector2.Zero, new Vector2(width, height));
 
         return new EditorView(background, sceneViewport, gameViewport, hierarchyTree, fileTree,
-            projectLabel, playButton, playButtonLabel, inspector, titleBar, overlay,
+            projectLabel, playButton, playButtonIcon, inspector, titleBar, overlay,
             sceneSlot, gameSlot, sceneTools, initialDockHost, workspaceHost,
-            hierarchyPanel, filesystemPanel, inspectorPanel, profilerPanel, profilerLayout,
-            profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
+            profilerLayout, profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
             inspectorButton, profilerButton,
             profilerPauseButton, profilerPauseLabel);
-    }
-
-    /// <summary>Composes a standard tool panel around one declarative content subtree.</summary>
-    /// <param name="width">Initial panel width.</param>
-    /// <param name="height">Initial panel height.</param>
-    /// <param name="title">Header title.</param>
-    /// <param name="name">Stable panel name.</param>
-    /// <param name="content">Content subtree.</param>
-    /// <param name="theme">Editor theme.</param>
-    /// <param name="isVisible">Initial visibility.</param>
-    /// <param name="autoWidth">Whether the panel width is owned by its parent.</param>
-    /// <returns>The composed retained tool panel.</returns>
-    private static ToolPanel CreateToolPanel(
-        float width,
-        float height,
-        string title,
-        string name,
-        UIElement content,
-        UITheme theme,
-        bool isVisible = true,
-        bool autoWidth = false)
-    {
-        var panel = new ToolPanel(width, height, title, theme)
-        {
-            Name = name,
-            IsVisible = isVisible,
-            Height = 0f
-        };
-        if (autoWidth)
-            panel.Width = 0f;
-        panel.Content.Name = name;
-        panel.Header.Name = $"{name}Header";
-        panel.Content.WithChildren(content);
-        return panel;
     }
 
     /// <summary>
@@ -337,23 +269,15 @@ public static class EditorUI
 /// <param name="FileSystemTree">Project-root filesystem tree.</param>
 /// <param name="ProjectLabel">Title-bar label displaying the active node asset.</param>
 /// <param name="PlayButton">Editor control that starts and stops play mode.</param>
-/// <param name="PlayButtonLabel">Text content composed inside the play button.</param>
+/// <param name="PlayButtonIcon">State icon composed inside the play button.</param>
 /// <param name="Inspector">Selection-bound scene property Inspector.</param>
 /// <param name="TitleBar">Custom native-window title bar.</param>
 /// <param name="Overlay">Canvas hosting floating editor UI.</param>
-/// <param name="ViewportDock">Main viewport docking grid.</param>
-/// <param name="SceneSlot">Detachable Scene tool content.</param>
-/// <param name="GameSlot">Detachable Game tool content.</param>
-/// <param name="SceneToolbar">Scene tool header used to detach its window.</param>
 /// <param name="SceneSlot">Retained Scene viewport content.</param>
 /// <param name="GameSlot">Retained Game viewport content.</param>
 /// <param name="SceneToolbar">Scene viewport toolbar.</param>
 /// <param name="InitialDockHost">Default host replaced by the restored live dock session.</param>
 /// <param name="WorkspaceHost">Stable content slot receiving the active main dock host.</param>
-/// <param name="HierarchyPanel">Detachable Hierarchy tool.</param>
-/// <param name="FileSystemPanel">Detachable File System tool.</param>
-/// <param name="InspectorPanel">Detachable Inspector tool.</param>
-/// <param name="ProfilerPanel">Dockable Profiler tool panel.</param>
 /// <param name="ProfilerContent">Profiler toolbar and history layout.</param>
 /// <param name="Profiler">Live CPU and allocation history view.</param>
 /// <param name="HierarchyButton">Command that activates or restores Hierarchy.</param>
@@ -372,7 +296,7 @@ public sealed record EditorView(
     TreeView FileSystemTree,
     Label ProjectLabel,
     Button PlayButton,
-    Label PlayButtonLabel,
+    Icon PlayButtonIcon,
     SceneInspector Inspector,
     TitleBar TitleBar,
     Canvas Overlay,
@@ -381,10 +305,6 @@ public sealed record EditorView(
     Surface SceneToolbar,
     DockHost InitialDockHost,
     ContentControl WorkspaceHost,
-    ToolPanel HierarchyPanel,
-    ToolPanel FileSystemPanel,
-    ToolPanel InspectorPanel,
-    ToolPanel ProfilerPanel,
     FlexPanel ProfilerContent,
     ProfilerView Profiler,
     Button HierarchyButton,

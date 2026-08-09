@@ -63,7 +63,7 @@ Use shared `UITheme` tokens and typed styles instead of component-local colors o
 
 | Token | Default | Purpose |
 |---|---:|---|
-| `Surface` | `#191A1C` | Panel and tab-well background |
+| `Surface` | `#191A1C` | Panel, selected-tab, and tab-content background |
 | `PanelCornerRadius` | `6` | Docked panel corners |
 | `PanelHeaderHeight` | `32` | Standalone `SectionHeader` height |
 | `PanelTitleFontSize` | `16` | Standalone panel-title typography |
@@ -73,7 +73,7 @@ Use shared `UITheme` tokens and typed styles instead of component-local colors o
 | `ItemRowPadding` | `5` | Row horizontal inset |
 | `TreeIndent` | `14` | Additional inset per tree depth |
 
-Use `ToolPanel` only when standalone content needs its own `SectionHeader`. Do not place `ToolPanel` inside `DockHost`. Header-style toggle buttons use a style that suppresses hover and pressed backgrounds; do not alter `ToggleButton` behavior globally.
+Use `SectionHeader` when standalone content needs its own title. Dock tabs use content-sized flex headers within 95% of the pane width, leaving the content's rounded top-right corner exposed. Header-style toggle buttons remain transparent when idle and use shared hover and pressed surface colors.
 
 ## Rendering and accessibility
 

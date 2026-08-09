@@ -62,6 +62,31 @@ public class BuiltInForwardMeshBuilderTests
         Assert.All(vertices, vertex => Assert.Equal(factor, vertex.BaseColor));
     }
 
+    /// <summary>Multiplies imported vertex colors by the material base-color factor.</summary>
+    [Fact]
+    public void BuildIndexedVertices_ColoredMesh_CombinesVertexAndMaterialColors()
+    {
+        var vertexColor = new Vector4(0.8f, 0.5f, 0.25f, 0.75f);
+        var mesh = new StaticMeshResource(
+        [
+            new ModelVertex(Vector3.Zero, Vector3.UnitY, Vector2.Zero, Vector4.UnitX,
+                vertexColor),
+            new ModelVertex(Vector3.UnitX, Vector3.UnitY, Vector2.Zero, Vector4.UnitX,
+                vertexColor),
+            new ModelVertex(Vector3.UnitZ, Vector3.UnitY, Vector2.Zero, Vector4.UnitX,
+                vertexColor)
+        ], [0, 1, 2], [new Submesh(0, 3, 0)]);
+        var material = new StandardMaterialResource
+        {
+            BaseColor = new Vector4(0.5f, 0.4f, 0.2f, 0.5f)
+        };
+
+        var vertices = BuiltInForwardMeshBuilder.BuildIndexedVertices(mesh, material);
+
+        Assert.All(vertices, vertex => Assert.Equal(
+            new Vector4(0.4f, 0.2f, 0.05f, 0.375f), vertex.BaseColor));
+    }
+
     /// <summary>Converts procedural triangle meshes into material-capable forward geometry.</summary>
     [Fact]
     public void BuildStaticMesh_Cube_ProducesIndexedForwardTriangles()

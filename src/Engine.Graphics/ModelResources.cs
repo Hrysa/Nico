@@ -19,8 +19,11 @@ public struct ModelVertex
     /// <summary>Gets or sets tangent direction and handedness.</summary>
     public Vector4 Tangent;
 
+    /// <summary>Gets or sets linear per-vertex color.</summary>
+    public Vector4 Color;
+
     /// <summary>Gets the packed byte stride.</summary>
-    public static uint Stride => sizeof(float) * 12u;
+    public static uint Stride => sizeof(float) * 16u;
 
     /// <summary>Creates one model vertex.</summary>
     /// <param name="position">Object-space position.</param>
@@ -28,11 +31,28 @@ public struct ModelVertex
     /// <param name="texCoord">Primary texture coordinates.</param>
     /// <param name="tangent">Tangent direction and handedness.</param>
     public ModelVertex(Vector3 position, Vector3 normal, Vector2 texCoord, Vector4 tangent)
+        : this(position, normal, texCoord, tangent, Vector4.One)
+    {
+    }
+
+    /// <summary>Creates one colored model vertex.</summary>
+    /// <param name="position">Object-space position.</param>
+    /// <param name="normal">Object-space normal.</param>
+    /// <param name="texCoord">Primary texture coordinates.</param>
+    /// <param name="tangent">Tangent direction and handedness.</param>
+    /// <param name="color">Linear per-vertex color.</param>
+    public ModelVertex(
+        Vector3 position,
+        Vector3 normal,
+        Vector2 texCoord,
+        Vector4 tangent,
+        Vector4 color)
     {
         Position = position;
         Normal = normal;
         TexCoord = texCoord;
         Tangent = tangent;
+        Color = color;
     }
 }
 
@@ -200,12 +220,14 @@ public sealed class StaticMeshResource
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
         if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
             throw new InvalidDataException("Static mesh artifact has an invalid signature.");
-        if (reader.ReadUInt32() != 1u)
+        var version = reader.ReadUInt32();
+        if (version is not 1u and not 2u)
             throw new InvalidDataException("Static mesh artifact version is unsupported.");
         var vertexCount = reader.ReadUInt32();
         var indexCount = reader.ReadUInt32();
         var materialSlot = reader.ReadInt32();
-        var requiredBytes = checked((long)vertexCount * ModelVertex.Stride +
+        var storedVertexStride = version >= 2u ? ModelVertex.Stride : sizeof(float) * 12u;
+        var requiredBytes = checked((long)vertexCount * storedVertexStride +
             (long)indexCount * sizeof(uint));
         if (!stream.CanSeek || requiredBytes != stream.Length - stream.Position)
             throw new InvalidDataException("Static mesh artifact payload length is invalid.");
@@ -213,7 +235,8 @@ public sealed class StaticMeshResource
         for (var index = 0; index < vertices.Length; index++)
         {
             vertices[index] = new ModelVertex(
-                ReadVector3(reader), ReadVector3(reader), ReadVector2(reader), ReadVector4(reader));
+                ReadVector3(reader), ReadVector3(reader), ReadVector2(reader), ReadVector4(reader),
+                version >= 2u ? ReadVector4(reader) : Vector4.One);
         }
         var indices = new uint[checked((int)indexCount)];
         for (var index = 0; index < indices.Length; index++)

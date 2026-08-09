@@ -443,43 +443,94 @@ public class NavigationControlTests
         tabs.AddTab("First", first);
         tabs.AddTab("Second", second);
         tabs.BuildDrawList();
+        var headerStrip = Assert.IsType<FlexPanel>(tabs.VisualChildren[0]);
+        var firstHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[0]);
+        var secondHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[1]);
         Assert.True(first.IsVisible);
         Assert.False(second.IsVisible);
+        Assert.True(firstHeader.IsHitTestVisible);
+        Assert.True(secondHeader.IsHitTestVisible);
         var router = new UIEventRouter(tabs, () => { });
-        Click(router, 150f, 15f);
+        Click(router, secondHeader.Left + secondHeader.Width * 0.5f, 15f);
         Assert.Equal(1, tabs.SelectedIndex);
         Assert.False(first.IsVisible);
         Assert.True(second.IsVisible);
+        Assert.True(firstHeader.IsHitTestVisible);
+        Assert.True(secondHeader.IsHitTestVisible);
 
         router.RouteKey(new KeyInputEvent(InputKey.Left, true, false, InputModifiers.None));
 
         Assert.Equal(0, tabs.SelectedIndex);
     }
 
-    /// <summary>Verifies tab titles retain button behavior without hover, pressed, or checked fills.</summary>
+    /// <summary>Verifies tab titles paint hover, pressed, and selected state fills.</summary>
     [Fact]
-    public void TabControl_HeaderTitle_DoesNotPaintInteractionBackground()
+    public void TabControl_HeaderTitle_PaintsInteractionBackgrounds()
+    {
+        var theme = UITheme.Dark;
+        var tabs = new TabControl(240f, 120f, theme: theme);
+        tabs.AddTab("First", new UIElement());
+        tabs.AddTab("Second", new UIElement());
+        var router = new UIEventRouter(tabs, () => { });
+        tabs.BuildDrawList();
+        var headerStrip = Assert.IsType<FlexPanel>(tabs.VisualChildren[0]);
+        var firstHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[0]);
+        var secondHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[1]);
+
+        Assert.Contains(tabs.BuildDrawList().Commands,
+            command => command.Left == firstHeader.Left && command.Top == firstHeader.Top &&
+                command.Right == firstHeader.Right && command.Bottom == firstHeader.Bottom &&
+                command.Color == theme.Surface);
+
+        var secondCenter = new Vector2(
+            secondHeader.Left + secondHeader.Width * 0.5f,
+            secondHeader.Top + secondHeader.Height * 0.5f);
+        router.MovePointer(secondCenter);
+        Assert.Contains(tabs.BuildDrawList().Commands,
+            command => command.Left == secondHeader.Left && command.Top == secondHeader.Top &&
+                command.Right == secondHeader.Right && command.Bottom == secondHeader.Bottom &&
+                command.Color == theme.SurfaceHover);
+        router.Press();
+        Assert.Contains(tabs.BuildDrawList().Commands,
+            command => command.Left == secondHeader.Left && command.Top == secondHeader.Top &&
+                command.Right == secondHeader.Right && command.Bottom == secondHeader.Bottom &&
+                command.Color == theme.SurfacePressed);
+        router.Release(true);
+        router.MovePointer(new Vector2(220f, 100f));
+
+        Assert.Equal(1, tabs.SelectedIndex);
+        Assert.Contains(tabs.BuildDrawList().Commands,
+            command => command.Left == secondHeader.Left && command.Top == secondHeader.Top &&
+                command.Right == secondHeader.Right && command.Bottom == secondHeader.Bottom &&
+                command.Color == theme.Surface);
+
+        router.MovePointer(secondCenter);
+        Assert.DoesNotContain(tabs.BuildDrawList().Commands,
+            command => command.Left == secondHeader.Left && command.Top == secondHeader.Top &&
+                command.Right == secondHeader.Right && command.Bottom == secondHeader.Bottom &&
+                command.Color == theme.SurfaceHover);
+        Assert.Contains(tabs.BuildDrawList().Commands,
+            command => command.Left == secondHeader.Left && command.Top == secondHeader.Top &&
+                command.Right == secondHeader.Right && command.Bottom == secondHeader.Bottom &&
+                command.Color == theme.Surface);
+    }
+
+    /// <summary>Verifies flex-sized headers remain inside the configured strip width.</summary>
+    [Fact]
+    public void TabControl_HeaderStrip_AutoSizesWithinNinetyFivePercentWidth()
     {
         var tabs = new TabControl(240f, 120f);
-        tabs.AddTab("First", new UIElement());
-        var router = new UIEventRouter(tabs, () => { });
+        tabs.AddTab("A", new UIElement());
+        tabs.AddTab("A much longer title", new UIElement());
 
-        Assert.DoesNotContain(tabs.BuildDrawList().Commands,
-            command => command.Left == 0f && command.Top == 0f &&
-                command.Right == 100f && command.Bottom == 30f &&
-                command.Type is UIDrawCommandType.Rectangle or
-                    UIDrawCommandType.RoundedRectangle);
+        tabs.BuildDrawList();
 
-        router.MovePointer(new Vector2(20f, 15f));
-        router.Press();
-
-        Assert.DoesNotContain(tabs.BuildDrawList().Commands,
-            command => command.Left == 0f && command.Top == 0f &&
-                command.Right == 100f && command.Bottom == 30f &&
-                command.Type is UIDrawCommandType.Rectangle or
-                    UIDrawCommandType.RoundedRectangle);
-        router.Release(true);
-        Assert.Equal(0, tabs.SelectedIndex);
+        var headerStrip = Assert.IsType<FlexPanel>(tabs.VisualChildren[0]);
+        var shortHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[0]);
+        var longHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[1]);
+        Assert.True(longHeader.Width > shortHeader.Width);
+        Assert.True(longHeader.Right <= tabs.Left + tabs.Width * 0.95f);
+        Assert.Equal(0.95f, tabs.HeaderWidthRatio);
     }
 
     /// <summary>Verifies toolbar items arrange horizontally with a semantic separator.</summary>

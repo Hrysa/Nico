@@ -7,6 +7,29 @@ namespace Editor.Tests;
 
 public class ScrollViewerTests
 {
+    /// <summary>Verifies viewer padding insets its content without creating overflow.</summary>
+    [Fact]
+    public void Padding_InsetsContentInsideViewport()
+    {
+        var content = new Panel(Color.Red, 10f, 10f)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var viewer = new ScrollViewer(100f, 100f)
+        {
+            Padding = new Thickness(3f, 5f, 3f, 5f),
+            Content = content
+        };
+
+        viewer.BuildDrawList();
+
+        Assert.Equal(3f, content.Left);
+        Assert.Equal(5f, content.Top);
+        Assert.False(viewer.HorizontalScrollBar.IsVisible);
+        Assert.False(viewer.VerticalScrollBar.IsVisible);
+    }
+
     /// <summary>Verifies overflowing content paints before the thumb on a transparent scroll bar.</summary>
     [Fact]
     public void Content_FirstAssignment_PaintsVisibleThumbAboveContent()

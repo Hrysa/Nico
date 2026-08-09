@@ -47,6 +47,8 @@ runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshReso
     "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
     "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
+    "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
     "nico/standard-material", (stream, _, _) =>
     {
@@ -189,6 +191,9 @@ var inspector = editorView.Inspector;
 inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
 inspector.ResolveMaterial = ResolveMaterialProperties;
 inspector.ResolveMaterialName = ResolveMaterialDisplayName;
+inspector.ResolveAnimationName = reference => reference is null
+    ? "Embedded in mesh"
+    : assetDatabase.Find(reference.Value.Asset)?.ProjectPath ?? reference.Value.ToString();
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
@@ -254,9 +259,19 @@ EditorViewportRenderer? detachedGameRenderer = null;
 void SynchronizeMainViewportPresentations()
 {
     if (detachedSceneWindow is null)
-        sceneViewportPresentation.Synchronize(window);
+    {
+        sceneViewportPresentation.Synchronize(window, out var sceneTargetResized);
+        if (sceneTargetResized)
+            renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    }
+    viewportRenderer.SynchronizeSceneVisibility(
+        detachedSceneWindow is null && sceneViewport.IsEffectivelyVisible);
     if (detachedGameWindow is null)
-        gameViewportPresentation.Synchronize(window);
+    {
+        gameViewportPresentation.Synchronize(window, out var gameTargetResized);
+        if (gameTargetResized)
+            renderScheduler.Invalidate(RenderInvalidation.GameViewport);
+    }
 }
 
 mainUIHost.LayoutUpdated += SynchronizeMainViewportPresentations;
@@ -317,18 +332,64 @@ RefreshVertices();
 /// <summary>Connects focused Scene viewport input to one native-window UI host.</summary>
 /// <param name="host">Host whose independent router owns focus for the viewport.</param>
 /// <param name="includePointerLook">Whether this host also needs standalone fly-camera pointer routing.</param>
-void ConfigureSceneViewportInput(UIHost host, bool includePointerLook)
+void ConfigureSceneViewportInput(UIHost host, IWindow inputWindow, bool includePointerLook)
 {
     host.PreviewKey = keyEvent => sceneInputContext.RouteKey(host.InputRouter, keyEvent);
     host.PreviewTextInput = _ => sceneInputContext.RoutesText(host.InputRouter);
     host.PreviewTextComposition = _ => sceneInputContext.RoutesText(host.InputRouter);
+    host.PreviewPointerWheel = pointerEvent =>
+        ApplySceneTwoFingerGesture(pointerEvent, inputWindow);
+    host.PreviewPointerMagnify = pointerEvent =>
+        ApplyScenePinchGesture(pointerEvent, inputWindow);
     if (!includePointerLook)
         return;
     host.PreviewPointerMove = pointerEvent => flyCamera.MovePointer(pointerEvent.Position);
-    host.PreviewPointerWheel = _ => flyCamera.IsActive;
     host.PreviewPointerButton = _ => flyCamera.IsActive
         ? UIHostPointerRouting.Consume
         : UIHostPointerRouting.Route;
+}
+
+/// <summary>Rotates or pans the Scene camera from a two-finger trackpad gesture.</summary>
+/// <param name="pointerEvent">Two-axis wheel event produced by trackpad scrolling.</param>
+/// <param name="inputWindow">Window to wake after changing the camera.</param>
+/// <returns>True when the Scene viewport consumed the gesture.</returns>
+bool ApplySceneTwoFingerGesture(PointerWheelEvent pointerEvent, IWindow inputWindow)
+{
+    if (flyCamera.IsActive)
+        return true;
+    if (!IsInsideSceneViewport(pointerEvent.Position))
+        return false;
+    flyCamera.ApplyTwoFingerGesture(pointerEvent.Delta,
+        (pointerEvent.Modifiers & InputModifiers.Shift) != 0);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    inputWindow.RequestFrame();
+    return true;
+}
+
+/// <summary>Moves the Scene camera forward or backward from native trackpad magnification.</summary>
+/// <param name="pointerEvent">Incremental magnification gesture.</param>
+/// <param name="inputWindow">Window to wake after changing the camera.</param>
+/// <returns>True when the Scene viewport consumed the gesture.</returns>
+bool ApplyScenePinchGesture(PointerMagnifyEvent pointerEvent, IWindow inputWindow)
+{
+    if (flyCamera.IsActive)
+        return true;
+    if (!IsInsideSceneViewport(pointerEvent.Position))
+        return false;
+    flyCamera.ApplyPinchZoom(pointerEvent.Delta);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    inputWindow.RequestFrame();
+    return true;
+}
+
+/// <summary>Checks whether a host-local position lies in the visible Scene viewport.</summary>
+/// <param name="position">Logical host position.</param>
+/// <returns>True when the visible Scene viewport contains the position.</returns>
+bool IsInsideSceneViewport(Vector2 position)
+{
+    return sceneViewport.IsEffectivelyVisible &&
+        position.X >= sceneViewport.Left && position.X <= sceneViewport.Right &&
+        position.Y >= sceneViewport.Top && position.Y <= sceneViewport.Bottom;
 }
 
 /// <summary>Transfers Scene rendering into a newly opened dock window.</summary>
@@ -336,12 +397,13 @@ void ConfigureSceneViewportInput(UIHost host, bool includePointerLook)
 void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
 {
     detachedSceneWindow = toolWindow;
+    viewportRenderer.SynchronizeSceneVisibility(false);
     window.DestroyRenderView(sceneViewportId);
     sceneViewportPresentation.Reset();
     var detachedWindow = toolWindow.Window;
     flyCamera.ReleaseFocus();
     flyInputWindow = detachedWindow;
-    ConfigureSceneViewportInput(toolWindow.UIHost, includePointerLook: true);
+    ConfigureSceneViewportInput(toolWindow.UIHost, detachedWindow, includePointerLook: true);
     sceneViewportId = detachedWindow.CreateRenderView(sceneViewport.Width, sceneViewport.Height);
     sceneViewport.RenderView = sceneViewportId;
     detachedWindow.SetViewportClearColor(sceneViewportId, 0f, 0f, 0f);
@@ -552,7 +614,7 @@ void UpdatePlayModeStart(double deltaTime)
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
         candidateHost.LoadScene(candidateScene.Root, window);
-        candidatePhysicsWorld = new PhysicsWorld();
+        candidatePhysicsWorld = new PhysicsWorld(ResolveCollisionMeshResource);
         candidatePhysicsWorld.EnableInterpolation = true;
         candidatePhysicsWorld.Attach(candidateScene.Root);
         editSelectionBeforePlay = selection.SelectedNode;
@@ -574,7 +636,7 @@ void UpdatePlayModeStart(double deltaTime)
             if (detachedGameRenderer is not null)
                 LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
         }
-        editorView.PlayButtonLabel.Text = "Stop";
+        editorView.PlayButtonIcon.Kind = IconKind.Stop;
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
     }
@@ -659,7 +721,7 @@ void StopPlayMode()
         if (detachedGameRenderer is not null)
             LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
     }
-    editorView.PlayButtonLabel.Text = "Play";
+    editorView.PlayButtonIcon.Kind = IconKind.Play;
     logger.LogInformation("Exited play mode");
     StartScriptSchemaBuild();
     RefreshVertices();
@@ -669,7 +731,7 @@ void StopPlayMode()
 /// <param name="playButton">Play/Stop button to attach.</param>
 void AttachPlayButton(Button playButton)
 {
-    editorView.PlayButtonLabel.Text = isPlaying ? "Stop" : "Play";
+    editorView.PlayButtonIcon.Kind = isPlaying ? IconKind.Stop : IconKind.Play;
     playButton.Click += () =>
     {
         if (isPlaying)
@@ -898,7 +960,8 @@ void AddImportedSubAssets(FileSystemNode node)
     var outcome = assetImportPipeline.TryGetLatestPublished(record, "editor");
     if (outcome is null)
         return;
-    ImportedAssetTreeBuilder.AddObjects(node, outcome.Objects);
+    ImportedAssetTreeBuilder.AddObjects(
+        node, record.Id, outcome.Objects, outcome.Artifacts);
     foreach (var artifact in outcome.Artifacts
                  .Where(artifact => IsVisibleImportedArtifact(artifact.ContentType))
                  .OrderBy(artifact => artifact.ContentType, StringComparer.Ordinal)
@@ -1205,8 +1268,45 @@ void LoadAssetMeshResources(
     }
     else
     {
+        AnimationClipResource[]? externalAnimations = null;
+        if (instance.GetComponent<AnimatorComponent>()?.AnimationSource is { } animationReference)
+        {
+            var animationRecord = assetDatabase.Find(animationReference.Asset);
+            if (animationRecord is null)
+            {
+                logger.LogError("Animation asset {AssetId} is missing", animationReference.Asset);
+            }
+            else
+            {
+                var animationOutcome = assetImportPipeline.Import(animationRecord, "editor");
+                var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
+                    artifact.Key == animationReference.SubAsset &&
+                    artifact.ContentType == "nico/skeletal-animation");
+                if (animationOutcome.Succeeded && animationArtifact is not null)
+                {
+                    var animation = LoadRuntimeResource(animationReference,
+                        new SkeletalAnimationResource(new SkeletonResource([]), []));
+                    try
+                    {
+                        externalAnimations = animation.BindTo(importedSkin.Skeleton);
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        logger.LogError(exception,
+                            "Animation {Reference} is incompatible with mesh {Mesh}",
+                            animationReference, meshReference);
+                    }
+                }
+                else
+                {
+                    logger.LogError(
+                        "Animation sub-asset {Reference} has no valid artifact",
+                        animationReference);
+                }
+            }
+        }
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
-            instance, importedSkin, material, textureResource);
+            instance, importedSkin, material, textureResource, externalAnimations);
     }
 }
 
@@ -1252,6 +1352,14 @@ TResource LoadRuntimeResource<TResource>(AssetReference reference, TResource fal
     {
         runtimeResources.Release(handle);
     }
+}
+
+/// <summary>Loads one imported static mesh for authoritative collision geometry.</summary>
+/// <param name="reference">Imported static-mesh artifact reference.</param>
+/// <returns>The decoded collision mesh.</returns>
+StaticMeshResource ResolveCollisionMeshResource(AssetReference reference)
+{
+    return LoadRuntimeResource(reference, new StaticMeshResource([], [], []));
 }
 
 /// <summary>Creates mutable renderer-local material values from a shared decoded resource.</summary>
@@ -1659,7 +1767,9 @@ ColliderComponent CreatePrimitiveCollider(AssetReference? mesh)
     var collider = new ColliderComponent();
     if (mesh == BuiltInAssets.PlaneMesh)
     {
-        collider.Shape = ColliderShape.Plane;
+        collider.Shape = ColliderShape.Box;
+        collider.Center = new Vector3(0f, -0.01f, 0f);
+        collider.Size = new Vector3(1f, 0.02f, 1f);
         return collider;
     }
     if (mesh == BuiltInAssets.SphereMesh)
@@ -1720,6 +1830,59 @@ void AddAnimatorComponent(Node target)
     InvalidateViewports();
 }
 
+/// <summary>Deletes one hierarchy subtree from the active authored or runtime scene.</summary>
+/// <param name="target">Root of the subtree to remove.</param>
+void DeleteSceneNode(Node target)
+{
+    var activeRoot = GetActiveSceneRoot();
+    if (ReferenceEquals(target, activeRoot) || target.Parent is null ||
+        ContainsActiveGameCamera(target))
+        return;
+
+    hierarchyTree.Select(null);
+    selection.Select(null);
+    var activeObjects = GetActiveSceneObjects();
+    RemoveSceneObjects(target, activeObjects);
+    target.Parent.RemoveChild(target);
+    selection.SetObjects(activeObjects);
+    viewportRenderer.SetSceneObjects(activeObjects);
+    viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    detachedSceneRenderer?.SetSceneObjects(activeObjects);
+    detachedGameRenderer?.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    if (physicsWorld is not null)
+        physicsWorld.Attach(activeRoot);
+    hierarchyTree.SetRoots(activeRoot.Children);
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
+/// <summary>Removes every mesh instance in a deleted subtree from the renderable list.</summary>
+/// <param name="node">Current subtree node.</param>
+/// <param name="objects">Active flattened renderable collection.</param>
+void RemoveSceneObjects(Node node, List<MeshInstance3D> objects)
+{
+    if (node is MeshInstance3D meshInstance)
+        objects.Remove(meshInstance);
+    var children = node.Children;
+    for (var index = 0; index < children.Count; index++)
+        RemoveSceneObjects(children[index], objects);
+}
+
+/// <summary>Checks whether deleting a subtree would remove the active Game camera.</summary>
+/// <param name="target">Candidate subtree root.</param>
+/// <returns>True when the active Game camera is the target or one of its descendants.</returns>
+bool ContainsActiveGameCamera(Node target)
+{
+    Node? current = playScene?.GameCamera ?? gameCamera;
+    while (current is not null)
+    {
+        if (ReferenceEquals(current, target))
+            return true;
+        current = current.Parent;
+    }
+    return false;
+}
+
 /// <summary>Shows nested object and component actions for the hierarchy target.</summary>
 void ShowHierarchyContextMenu()
 {
@@ -1733,7 +1896,7 @@ void ShowHierarchyContextMenu()
     hierarchyTree.Select(ReferenceEquals(target, activeRoot) ? null : target);
 
     const float menuWidth = 180f;
-    const float menuHeight = 56f;
+    const float menuHeight = 84f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
     var menu = new ContextMenu(menuWidth) { Name = "HierarchyContextMenu" };
@@ -1755,6 +1918,9 @@ void ShowHierarchyContextMenu()
     componentMenu.AddItem("Add Animator", () => AddAnimatorComponent(target),
         target is MeshInstance3D && target.GetComponent<AnimatorComponent>() is null);
     menu.AddSubmenu("Add Component", componentMenu);
+    menu.AddItem("Delete", () => DeleteSceneNode(target),
+        !ReferenceEquals(target, activeRoot) && target.Parent is not null &&
+        !ContainsActiveGameCamera(target));
     hierarchyContextMenu = menu;
     overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);
@@ -1998,6 +2164,7 @@ bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
     {
         "nico/standard-material" => inspector.AssignMaterial(source.Reference),
         "nico/texture2d" => inspector.AssignBaseColorTexture(source.Reference),
+        "nico/skeletal-animation" => inspector.AssignAnimation(source.Reference),
         _ => false
     };
 }
@@ -2165,9 +2332,12 @@ mainUIHost.PointerButtonProcessed = (pointerEvent, routed) =>
 
 mainUIHost.PreviewPointerWheel = pointerEvent =>
 {
-    Debug.Input(LogLevel.Debug, "Scroll: offset={Offset:F1}", pointerEvent.Delta.Y);
-    return flyCamera.IsActive;
+    Debug.Input(LogLevel.Debug, "Scroll: offset=({OffsetX:F1}, {OffsetY:F1})",
+        pointerEvent.Delta.X, pointerEvent.Delta.Y);
+    return ApplySceneTwoFingerGesture(pointerEvent, window);
 };
+mainUIHost.PreviewPointerMagnify = pointerEvent =>
+    ApplyScenePinchGesture(pointerEvent, window);
 
 mainUIHost.PreviewKey = keyEvent =>
 {
@@ -2235,6 +2405,8 @@ window.Update += delta =>
     var gameContinuous = scriptHost is not null;
     var sceneVisible = sceneViewport.IsEffectivelyVisible;
     var gameVisible = gameViewport.IsEffectivelyVisible;
+    viewportRenderer.SynchronizeSceneVisibility(
+        detachedSceneWindow is null && sceneVisible);
     var sceneInvalid = sceneVisible &&
         renderScheduler.Consume(RenderInvalidation.SceneViewport);
     var gameInvalid = gameVisible &&

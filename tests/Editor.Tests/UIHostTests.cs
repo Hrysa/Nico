@@ -81,6 +81,52 @@ public class UIHostTests
         Assert.All(services.LastViewportQuad!, vertex => Assert.Equal(0f, vertex.Opacity));
     }
 
+    /// <summary>Verifies activating a hidden viewport repairs its render-target resolution.</summary>
+    [Fact]
+    public void LayoutUpdated_ViewportBecomesVisible_ResizesRenderTarget()
+    {
+        var services = new HostServices();
+        var parent = new Panel(Color.Black, 240f, 160f) { IsVisible = false };
+        var viewport = new ViewportPanel(240f, 160f, Color.Black)
+        {
+            RenderView = new RenderViewHandle(1)
+        };
+        parent.AddChild(viewport);
+        var tracker = new ViewportPresentationTracker(viewport);
+        using var host = new UIHost(services, services, services, parent, 240f, 160f);
+        host.LayoutUpdated += () => tracker.Synchronize(services);
+        host.Refresh();
+
+        parent.IsVisible = true;
+        host.Refresh();
+
+        Assert.Equal(1, services.RenderViewResizeCount);
+        Assert.Equal(new Vector2(240f, 160f), services.LastRenderViewSize);
+    }
+
+    /// <summary>Verifies native magnification is exposed in logical host coordinates.</summary>
+    [Fact]
+    public void PointerMagnified_NativeGesture_ReachesApplicationPreview()
+    {
+        var services = new HostServices();
+        var root = new Panel(Color.Black, 200f, 100f);
+        using var host = new UIHost(services, services, services, root, 200f, 100f);
+        PointerMagnifyEvent? received = null;
+        host.PreviewPointerMagnify = pointerEvent =>
+        {
+            received = pointerEvent;
+            return true;
+        };
+
+        services.RaiseMagnification(new PointerMagnifyEvent(
+            0, new Vector2(50f, 25f), 0.1f, InputModifiers.Shift));
+
+        Assert.NotNull(received);
+        Assert.Equal(new Vector2(50f, 25f), received.Value.Position);
+        Assert.Equal(0.1f, received.Value.Delta);
+        Assert.Equal(InputModifiers.Shift, received.Value.Modifiers);
+    }
+
     /// <summary>Verifies host-local notifications stack and expire through overlay time.</summary>
     [Fact]
     public void OverlayManager_Toasts_StackAndExpire()
@@ -1266,7 +1312,8 @@ public class UIHostTests
     }
 
     /// <summary>Minimal window, input, and renderer used to exercise UIHost boundaries.</summary>
-    private class HostServices : IWindow, IInputSource, IRenderer, IInteractiveFrameScheduler
+    private class HostServices : IWindow, IInputSource, IPointerGestureSource, IRenderer,
+        IInteractiveFrameScheduler
     {
         /// <summary>Gets the number of retained UI submissions.</summary>
         internal int SubmitCount { get; private set; }
@@ -1282,6 +1329,12 @@ public class UIHostTests
 
         /// <summary>Gets the latest viewport presentation geometry.</summary>
         internal VertexT[]? LastViewportQuad { get; private set; }
+
+        /// <summary>Gets the number of render-view resize requests.</summary>
+        internal int RenderViewResizeCount { get; private set; }
+
+        /// <summary>Gets the logical size from the latest render-view resize.</summary>
+        internal Vector2 LastRenderViewSize { get; private set; }
 
         /// <summary>Gets the number of immediate captured-interaction frame requests.</summary>
         internal int InteractiveFrameCount { get; private set; }
@@ -1328,10 +1381,18 @@ public class UIHostTests
         /// <inheritdoc/>
         public event Action<char>? TextInput { add { } remove { } }
 
+        /// <inheritdoc/>
+        public event Action<PointerMagnifyEvent>? PointerMagnified;
+
         /// <summary>Raises one logical resize.</summary>
         /// <param name="width">Logical width.</param>
         /// <param name="height">Logical height.</param>
         internal void RaiseResize(int width, int height) => Resized?.Invoke(width, height);
+
+        /// <summary>Raises one native trackpad magnification event.</summary>
+        /// <param name="pointerEvent">Gesture event to publish.</param>
+        internal void RaiseMagnification(PointerMagnifyEvent pointerEvent) =>
+            PointerMagnified?.Invoke(pointerEvent);
 
         /// <summary>Raises logical pointer movement.</summary>
         /// <param name="position">Logical pointer position.</param>
@@ -1465,7 +1526,11 @@ public class UIHostTests
         public void DestroyRenderView(RenderViewHandle view) { }
 
         /// <inheritdoc/>
-        public void ResizeRenderView(RenderViewHandle view, float width, float height) { }
+        public void ResizeRenderView(RenderViewHandle view, float width, float height)
+        {
+            RenderViewResizeCount++;
+            LastRenderViewSize = new Vector2(width, height);
+        }
 
         /// <inheritdoc/>
         public void SetViewportQuadVertices(RenderViewHandle view, VertexT[] vertices)

@@ -9,11 +9,12 @@ public sealed record TabItem(string Header, UIElement Content);
 /// <summary>Displays a selectable header strip and exactly one active content page.</summary>
 public sealed class TabControl : UIElement
 {
-    private const float DefaultHeaderWidth = 100f;
+    private const float DefaultHeaderWidthRatio = 0.95f;
     private readonly List<TabItem> _items = [];
     private readonly List<ToggleButton> _headers = [];
-    private readonly List<Button?> _closeButtons = [];
     private readonly UITheme _theme;
+    private readonly FlexPanel _headerStrip;
+    private float _headerWidthRatio = DefaultHeaderWidthRatio;
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -66,10 +67,34 @@ public sealed class TabControl : UIElement
     {
         HeaderHeight = headerHeight;
         _theme = theme ?? UITheme.Dark;
+        PaintBackground = false;
+        _headerStrip = new FlexPanel
+        {
+            Name = "TabHeaders",
+            Direction = FlexDirection.Row,
+            AlignItems = FlexAlignment.Stretch,
+            PaintBackground = false
+        };
+        AddChild(_headerStrip);
     }
 
     /// <summary>Gets or sets header-strip height.</summary>
     public float HeaderHeight { get; set; }
+
+    /// <summary>Gets or sets the fraction of control width available to tab headers.</summary>
+    public float HeaderWidthRatio
+    {
+        get => _headerWidthRatio;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0f || value > 1f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (_headerWidthRatio == value)
+                return;
+            _headerWidthRatio = value;
+            InvalidateMeasure();
+        }
+    }
 
     /// <summary>Adds a retained tab and selects the first tab automatically.</summary>
     /// <param name="header">Header text.</param>
@@ -82,9 +107,12 @@ public sealed class TabControl : UIElement
         var index = _items.Count;
         var item = new TabItem(header, content);
         var button = new ToggleButton(
-            DefaultHeaderWidth, HeaderHeight, header, _theme, ButtonStyle.Header)
+            0f, HeaderHeight, header, _theme, ButtonStyle.Header)
         {
-            VisualStateMode = BoxVisualStateMode.Static
+            CheckedColor = _theme.Surface,
+            CornerRadius = _theme.PanelCornerRadius,
+            CornerMode = BoxCornerMode.Top,
+            MinWidth = HeaderHeight * 2f
         };
         button.Click += () =>
         {
@@ -106,11 +134,13 @@ public sealed class TabControl : UIElement
             };
             closeButton.Click += close;
         }
-        _closeButtons.Add(closeButton);
-        AddChild(button);
+        _headerStrip.AddChild(button);
         AddChild(content);
         if (closeButton is not null)
-            AddChild(closeButton);
+        {
+            closeButton.FlexShrink = 0f;
+            _headerStrip.AddChild(closeButton);
+        }
         content.IsVisible = false;
         if (SelectedIndex < 0)
             Select(0);
@@ -164,10 +194,16 @@ public sealed class TabControl : UIElement
         if (SelectedIndex >= 0)
         {
             _headers[SelectedIndex].IsChecked = false;
+            _headers[SelectedIndex].HoverColor = _theme.SurfaceHover;
+            if (_headers[SelectedIndex].IsHovered)
+                _headers[SelectedIndex].BackgroundColor = _theme.SurfaceHover;
             _items[SelectedIndex].Content.IsVisible = false;
         }
         SelectedIndex = index;
         _headers[index].IsChecked = true;
+        _headers[index].HoverColor = _headers[index].CheckedColor;
+        if (_headers[index].IsHovered)
+            _headers[index].BackgroundColor = _headers[index].CheckedColor;
         _items[index].Content.IsVisible = true;
         InvalidateMeasure();
         SelectionChanged?.Invoke(index, _items[index]);
@@ -176,11 +212,8 @@ public sealed class TabControl : UIElement
     /// <inheritdoc/>
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        for (var index = 0; index < _headers.Count; index++)
-        {
-            _headers[index].Measure(new Vector2(DefaultHeaderWidth, HeaderHeight));
-            _closeButtons[index]?.Measure(new Vector2(24f, HeaderHeight));
-        }
+        _headerStrip.Measure(new Vector2(
+            availableSize.X * HeaderWidthRatio, HeaderHeight));
         if (SelectedItem is { } selected)
             selected.Content.Measure(new Vector2(availableSize.X,
                 MathF.Max(0f, availableSize.Y - HeaderHeight)));
@@ -190,14 +223,8 @@ public sealed class TabControl : UIElement
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
-        for (var index = 0; index < _headers.Count; index++)
-        {
-            _headers[index].Arrange(new Vector2(index * DefaultHeaderWidth, 0f),
-                new Vector2(DefaultHeaderWidth, HeaderHeight));
-            _closeButtons[index]?.Arrange(
-                new Vector2((index + 1) * DefaultHeaderWidth - 24f, 0f),
-                new Vector2(24f, HeaderHeight));
-        }
+        _headerStrip.Arrange(Vector2.Zero, new Vector2(
+            contentSize.X * HeaderWidthRatio, HeaderHeight));
         if (SelectedItem is { } selected)
             selected.Content.Arrange(new Vector2(0f, HeaderHeight),
                 new Vector2(contentSize.X, MathF.Max(0f, contentSize.Y - HeaderHeight)));

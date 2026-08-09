@@ -52,6 +52,7 @@ public sealed class UIHost : IDisposable
     private readonly IWindow _window;
     private readonly IInputSource _input;
     private readonly IInputSourceV2? _inputV2;
+    private readonly IPointerGestureSource? _gestureInput;
     private readonly INavigationInputSource? _navigationInput;
     private readonly ITextInputMethodSource? _textInputMethod;
     private readonly IRenderer _renderer;
@@ -102,6 +103,9 @@ public sealed class UIHost : IDisposable
 
     /// <summary>Gets or sets an application preview returning true to consume pointer-wheel input.</summary>
     public Func<PointerWheelEvent, bool>? PreviewPointerWheel { get; set; }
+
+    /// <summary>Gets or sets an application preview consuming trackpad magnification.</summary>
+    public Func<PointerMagnifyEvent, bool>? PreviewPointerMagnify { get; set; }
 
     /// <summary>Gets or sets an application preview returning true to consume keyboard input.</summary>
     public Func<KeyInputEvent, bool>? PreviewKey { get; set; }
@@ -226,6 +230,7 @@ public sealed class UIHost : IDisposable
         _window = window;
         _input = input;
         _inputV2 = input as IInputSourceV2;
+        _gestureInput = input as IPointerGestureSource;
         _navigationInput = input as INavigationInputSource;
         _textInputMethod = input as ITextInputMethodSource;
         _renderer = renderer;
@@ -269,6 +274,8 @@ public sealed class UIHost : IDisposable
         }
         if (_textInputMethod is not null)
             _textInputMethod.TextCompositionChanged += OnTextCompositionChanged;
+        if (_gestureInput is not null)
+            _gestureInput.PointerMagnified += OnPointerMagnified;
         if (_navigationInput is not null)
             _navigationInput.NavigationChanged += OnNavigationChanged;
         _windowsAccessibility = WindowsAccessibilityAdapter.TryCreate(
@@ -412,6 +419,8 @@ public sealed class UIHost : IDisposable
         }
         if (_textInputMethod is not null)
             _textInputMethod.TextCompositionChanged -= OnTextCompositionChanged;
+        if (_gestureInput is not null)
+            _gestureInput.PointerMagnified -= OnPointerMagnified;
         if (_navigationInput is not null)
             _navigationInput.NavigationChanged -= OnNavigationChanged;
         if (_schedulingMode != UIHostSchedulingMode.ExternallyManaged)
@@ -555,6 +564,18 @@ public sealed class UIHost : IDisposable
         PointerPosition = logicalEvent.Position;
         if (PreviewPointerWheel?.Invoke(logicalEvent) != true)
             InputRouter.Scroll(logicalEvent);
+    }
+
+    /// <summary>Relays one native trackpad magnification gesture.</summary>
+    /// <param name="pointerEvent">Device-neutral incremental magnification.</param>
+    private void OnPointerMagnified(PointerMagnifyEvent pointerEvent)
+    {
+        var logicalEvent = pointerEvent with
+        {
+            Position = _viewportLayout.ToLogical(pointerEvent.Position)
+        };
+        PointerPosition = logicalEvent.Position;
+        PreviewPointerMagnify?.Invoke(logicalEvent);
     }
 
     /// <summary>Relays one versioned keyboard transition.</summary>

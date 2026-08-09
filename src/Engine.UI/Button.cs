@@ -11,7 +11,7 @@ public enum ButtonStyle
     /// <summary>Filled button for a primary action.</summary>
     Primary,
 
-    /// <summary>Text-only header action without hover or pressed background fills.</summary>
+    /// <summary>Text-first header action with interaction-only background fills.</summary>
     Header
 }
 

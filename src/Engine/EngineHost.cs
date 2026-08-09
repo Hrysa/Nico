@@ -91,7 +91,7 @@ public sealed class EngineApplication : IDisposable
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
-        _physicsWorld = new PhysicsWorld();
+        _physicsWorld = new PhysicsWorld(ResolveCollisionMeshResource);
         _physicsWorld.EnableInterpolation = true;
         _physicsWorld.Attach(scene.Root);
         _window.Update += RenderScene;
@@ -378,8 +378,31 @@ public sealed class EngineApplication : IDisposable
             }
             else
             {
+                var playbackResource = skin;
+                if (instance.GetComponent<AnimatorComponent>()?.AnimationSource is
+                    { } animationReference)
+                {
+                    var animationRecord = database.Find(animationReference.Asset)
+                        ?? throw new FileNotFoundException(
+                            $"Animation asset '{animationReference.Asset}' is missing.");
+                    var animationOutcome = pipeline.Import(animationRecord, "player");
+                    var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
+                        artifact.Key == animationReference.SubAsset &&
+                        artifact.ContentType == "nico/skeletal-animation");
+                    if (!animationOutcome.Succeeded || animationArtifact is null)
+                    {
+                        throw new InvalidDataException(
+                            $"Animation sub-asset '{animationReference}' is missing.");
+                    }
+                    var animation = LoadRuntimeResource(animationReference,
+                        new SkeletalAnimationResource(new SkeletonResource([]), []));
+                    var clips = animation.BindTo(skin.Skeleton);
+                    playbackResource = new SkinnedMeshResource(
+                        skin.Mesh, skin.Influences, skin.Skeleton, clips,
+                        skin.MeshNodeTransform);
+                }
+                var player = CreateAnimationPlayer(instance, playbackResource);
                 var handles = _window.CreateSkinnedMesh(skin, material);
-                var player = CreateAnimationPlayer(instance, skin);
                 _window.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
                 _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
                     textureHandle, handles.Palette, player));
@@ -409,6 +432,8 @@ public sealed class EngineApplication : IDisposable
             "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
             "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
+            "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
             "nico/standard-material", (stream, _, _) =>
             {
@@ -446,6 +471,14 @@ public sealed class EngineApplication : IDisposable
         {
             manager.Release(handle);
         }
+    }
+
+    /// <summary>Loads one imported static mesh for runtime collision geometry.</summary>
+    /// <param name="reference">Imported static-mesh artifact reference.</param>
+    /// <returns>The decoded collision mesh.</returns>
+    private StaticMeshResource ResolveCollisionMeshResource(AssetReference reference)
+    {
+        return LoadRuntimeResource(reference, new StaticMeshResource([], [], []));
     }
 
     /// <summary>Creates renderer-local mutable values from a shared decoded material.</summary>

@@ -58,8 +58,10 @@ public class SceneFileStoreTests
                 GravityScale = 0.5f,
                 LinearDamping = 0.1f
             });
+            var animationReference = new AssetReference(AssetId.New(), "animation/0");
             cube.AddComponent(new AnimatorComponent
             {
+                AnimationSource = animationReference,
                 Clip = "Run",
                 PlayAutomatically = false,
                 Loop = false,
@@ -119,6 +121,7 @@ public class SceneFileStoreTests
             Assert.Equal(0.5f, loadedBody.GravityScale);
             Assert.Equal(0.1f, loadedBody.LinearDamping);
             var loadedAnimator = Assert.IsType<AnimatorComponent>(loadedCube.Components[4]);
+            Assert.Equal(animationReference, loadedAnimator.AnimationSource);
             Assert.Equal("Run", loadedAnimator.Clip);
             Assert.False(loadedAnimator.PlayAutomatically);
             Assert.False(loadedAnimator.Loop);

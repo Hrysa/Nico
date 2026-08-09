@@ -17,7 +17,7 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 3;
+    public int Version => 6;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
@@ -31,18 +31,25 @@ public sealed class GlbModelImporter : IAssetImporter
         var (document, binary) = ReadContainer(reader);
         using (document)
         {
+            var hasMeshes = document.RootElement.TryGetProperty("meshes", out _);
             var artifacts = ImportMeshes(context, document.RootElement, binary, model).ToList();
+            if (!hasMeshes)
+                artifacts.AddRange(ImportStandaloneAnimations(
+                    context, document.RootElement, binary, model));
             artifacts.AddRange(ImportMaterials(context, document.RootElement));
             artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
-            var objects = ImportObjects(document.RootElement);
+            var objects = ImportObjects(document.RootElement, animationsAreArtifacts: !hasMeshes);
             return new AssetImportResult(artifacts, [], [], objects);
         }
     }
 
     /// <summary>Describes browsable nodes, skeletons, and animations contained in a GLB.</summary>
     /// <param name="root">glTF JSON root.</param>
+    /// <param name="animationsAreArtifacts">Whether animation objects represent artifacts.</param>
     /// <returns>Stable source-object descriptions for editor browsing.</returns>
-    private static IReadOnlyList<AssetImportObject> ImportObjects(JsonElement root)
+    private static IReadOnlyList<AssetImportObject> ImportObjects(
+        JsonElement root,
+        bool animationsAreArtifacts)
     {
         var objects = new List<AssetImportObject>();
         if (root.TryGetProperty("nodes", out var nodes))
@@ -84,7 +91,8 @@ public sealed class GlbModelImporter : IAssetImporter
                 objects.Add(new AssetImportObject(
                     $"animation/{animationIndex}",
                     string.IsNullOrWhiteSpace(name) ? $"Animation {animationIndex}" : name,
-                    "animation"));
+                    "animation",
+                    ArtifactKey: animationsAreArtifacts ? $"animation/{animationIndex}" : null));
             }
         }
         return objects;
@@ -138,7 +146,7 @@ public sealed class GlbModelImporter : IAssetImporter
             throw new InvalidDataException("Only glTF 2.x assets are supported.");
         }
         if (!root.TryGetProperty("meshes", out var meshes))
-            throw new InvalidDataException("GLB contains no meshes.");
+            return [];
         var artifacts = new List<AssetArtifact>();
         var meshIndex = 0;
         foreach (var mesh in meshes.EnumerateArray())
@@ -171,8 +179,11 @@ public sealed class GlbModelImporter : IAssetImporter
                 var tangents = attributes.TryGetProperty("TANGENT", out var tangentAccessor)
                     ? ReadVector4(root, binary, tangentAccessor.GetInt32(), "TANGENT")
                     : Enumerable.Repeat(new Vector4(1f, 0f, 0f, 1f), positions.Length).ToArray();
+                var colors = attributes.TryGetProperty("COLOR_0", out var colorAccessor)
+                    ? ReadColors(root, binary, colorAccessor.GetInt32())
+                    : Enumerable.Repeat(Vector4.One, positions.Length).ToArray();
                 if (normals.Length != positions.Length || texCoords.Length != positions.Length ||
-                    tangents.Length != positions.Length)
+                    tangents.Length != positions.Length || colors.Length != positions.Length)
                 {
                     throw new InvalidDataException("GLB vertex attribute counts do not match POSITION.");
                 }
@@ -183,6 +194,12 @@ public sealed class GlbModelImporter : IAssetImporter
                     throw new InvalidDataException("GLB primitive contains invalid triangle indices.");
                 if (!attributes.TryGetProperty("NORMAL", out _))
                     GenerateNormals(positions, indices, normals);
+                if (skeleton is null)
+                {
+                    var nodeTransform = FindStaticMeshNodeTransform(root, meshIndex);
+                    ApplyStaticMeshTransform(
+                        positions, normals, tangents, indices, nodeTransform);
+                }
                 var materialSlot = primitive.TryGetProperty("material", out var materialElement)
                     ? materialElement.GetInt32() : -1;
                 var relativePath = skeleton is null
@@ -192,7 +209,7 @@ public sealed class GlbModelImporter : IAssetImporter
                 {
                     if (skeleton is null)
                     {
-                        WriteMesh(output, positions, normals, texCoords, tangents, indices,
+                        WriteMesh(output, positions, normals, texCoords, tangents, colors, indices,
                             materialSlot);
                     }
                     else
@@ -209,7 +226,7 @@ public sealed class GlbModelImporter : IAssetImporter
                         if (joints.Length != positions.Length || weights.Length != positions.Length)
                             throw new InvalidDataException(
                                 "GLB skin attribute counts do not match POSITION.");
-                        WriteSkinnedMesh(output, positions, normals, texCoords, tangents,
+                        WriteSkinnedMesh(output, positions, normals, texCoords, tangents, colors,
                             joints, weights, indices, materialSlot, skeleton.Value, animations);
                     }
                 }
@@ -223,6 +240,55 @@ public sealed class GlbModelImporter : IAssetImporter
         }
         if (artifacts.Count == 0)
             throw new InvalidDataException("GLB contains no mesh primitives.");
+        return artifacts;
+    }
+
+    /// <summary>Imports clips from a GLB that intentionally contains no geometry.</summary>
+    /// <param name="context">Artifact output context.</param>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="model">Validated SharpGLTF model used to evaluate animation.</param>
+    /// <returns>One independently addressable artifact per imported clip.</returns>
+    private static IReadOnlyList<AssetArtifact> ImportStandaloneAnimations(
+        AssetImportContext context,
+        JsonElement root,
+        byte[] binary,
+        ModelRoot model)
+    {
+        if (!root.TryGetProperty("skins", out var skins) || skins.GetArrayLength() == 0 ||
+            model.LogicalAnimations.Count == 0)
+        {
+            throw new InvalidDataException(
+                "A mesh-free GLB must contain a skin and at least one skeletal animation.");
+        }
+        if (skins.GetArrayLength() != 1)
+        {
+            throw new InvalidDataException(
+                "Animation-only GLBs containing multiple skins are not supported.");
+        }
+        if (!root.TryGetProperty("nodes", out var nodes))
+            throw new InvalidDataException("GLB skin requires nodes.");
+        var skin = skins[0];
+        var skeletonRoot = skin.TryGetProperty("skeleton", out var rootElement)
+            ? rootElement.GetInt32()
+            : skin.GetProperty("joints")[0].GetInt32();
+        if ((uint)skeletonRoot >= nodes.GetArrayLength())
+            throw new InvalidDataException("GLB skeleton root index is out of range.");
+        var referenceNodeIndex = BuildNodeParents(nodes)[skeletonRoot];
+        var skeleton = ImportSkeleton(root, binary, skin, referenceNodeIndex);
+        var animations = ImportAnimations(model, skeleton);
+        var artifacts = new List<AssetArtifact>(animations.Length);
+        for (var animationIndex = 0; animationIndex < animations.Length; animationIndex++)
+        {
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var name = Sanitize(animations[animationIndex].Name,
+                $"animation-{animationIndex}");
+            var relativePath = $"animations/{name}-{animationIndex}.nanim";
+            using (var output = context.CreateArtifact(relativePath))
+                WriteSkeletalAnimation(output, skeleton, animations[animationIndex]);
+            artifacts.Add(new AssetArtifact(
+                $"animation/{animationIndex}", "nico/skeletal-animation", relativePath));
+        }
         return artifacts;
     }
 
@@ -267,11 +333,77 @@ public sealed class GlbModelImporter : IAssetImporter
             ? null : new SkinBinding(skins[selectedSkin.Value], selectedNode);
     }
 
+    /// <summary>Finds the shared world transform of nodes instantiating one static mesh.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="meshIndex">Logical mesh index.</param>
+    /// <returns>The unique world transform, or identity when the mesh has no unique instance.</returns>
+    private static Matrix4x4 FindStaticMeshNodeTransform(JsonElement root, int meshIndex)
+    {
+        if (!root.TryGetProperty("nodes", out var nodes))
+            return Matrix4x4.Identity;
+        var parents = BuildNodeParents(nodes);
+        var cache = new Matrix4x4[nodes.GetArrayLength()];
+        var states = new byte[nodes.GetArrayLength()];
+        Matrix4x4? selected = null;
+        for (var nodeIndex = 0; nodeIndex < nodes.GetArrayLength(); nodeIndex++)
+        {
+            var node = nodes[nodeIndex];
+            if (!node.TryGetProperty("mesh", out var mesh) || mesh.GetInt32() != meshIndex ||
+                node.TryGetProperty("skin", out _))
+            {
+                continue;
+            }
+            var world = ComputeNodeWorldMatrix(nodes, parents, nodeIndex, cache, states);
+            if (selected is { } existing && existing != world)
+                return Matrix4x4.Identity;
+            selected = world;
+        }
+        return selected ?? Matrix4x4.Identity;
+    }
+
+    /// <summary>Bakes one static mesh node transform into its vertex attributes.</summary>
+    /// <param name="positions">Mutable object-space positions.</param>
+    /// <param name="normals">Mutable object-space normals.</param>
+    /// <param name="tangents">Mutable object-space tangents.</param>
+    /// <param name="indices">Mutable triangle indices.</param>
+    /// <param name="transform">Node world transform to bake.</param>
+    private static void ApplyStaticMeshTransform(
+        Vector3[] positions,
+        Vector3[] normals,
+        Vector4[] tangents,
+        uint[] indices,
+        Matrix4x4 transform)
+    {
+        if (transform == Matrix4x4.Identity)
+            return;
+        if (!Matrix4x4.Invert(transform, out var inverse))
+            throw new InvalidDataException("GLB static mesh node transform is not invertible.");
+        var normalTransform = Matrix4x4.Transpose(inverse);
+        var determinant = transform.GetDeterminant();
+        for (var index = 0; index < positions.Length; index++)
+        {
+            positions[index] = Vector3.Transform(positions[index], transform);
+            var normal = Vector3.TransformNormal(normals[index], normalTransform);
+            normals[index] = normal.LengthSquared() > 0f
+                ? Vector3.Normalize(normal) : Vector3.UnitY;
+            var tangent = Vector3.TransformNormal(
+                new Vector3(tangents[index].X, tangents[index].Y, tangents[index].Z),
+                transform);
+            tangent = tangent.LengthSquared() > 0f ? Vector3.Normalize(tangent) : Vector3.UnitX;
+            tangents[index] = new Vector4(
+                tangent, determinant < 0f ? -tangents[index].W : tangents[index].W);
+        }
+        if (determinant >= 0f)
+            return;
+        for (var index = 0; index < indices.Length; index += 3)
+            (indices[index + 1], indices[index + 2]) = (indices[index + 2], indices[index + 1]);
+    }
+
     /// <summary>Imports and topologically orders joints for one glTF skin.</summary>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
     /// <param name="skin">Skin JSON.</param>
-    /// <param name="meshNodeIndex">Node that instantiates the skinned mesh.</param>
+    /// <param name="meshNodeIndex">Reference node for skeleton-relative transforms, or -1.</param>
     /// <returns>Imported skeleton and source-index mappings.</returns>
     private static ImportedSkeleton ImportSkeleton(
         JsonElement root,
@@ -339,8 +471,10 @@ public sealed class GlbModelImporter : IAssetImporter
         }
         var worldCache = new Matrix4x4[nodeCount];
         var worldStates = new byte[nodeCount];
-        var meshWorld = ComputeNodeWorldMatrix(nodes, parentByNode, meshNodeIndex,
-            worldCache, worldStates);
+        var meshWorld = meshNodeIndex < 0
+            ? Matrix4x4.Identity
+            : ComputeNodeWorldMatrix(nodes, parentByNode, meshNodeIndex,
+                worldCache, worldStates);
         if (!Matrix4x4.Invert(meshWorld, out var inverseMeshWorld))
             throw new InvalidDataException("GLB mesh bind transform is not invertible.");
         var globalBindBySource = new Matrix4x4[sourceNodes.Length];
@@ -409,7 +543,8 @@ public sealed class GlbModelImporter : IAssetImporter
                 times[sample] = sample == sampleCount - 1
                     ? duration : sample / samplesPerSecond;
             var tracks = new ImportedJointTrack?[skeleton.Joints.Length];
-            var meshNode = model.LogicalNodes[skeleton.MeshNodeIndex];
+            var meshNode = skeleton.MeshNodeIndex < 0
+                ? null : model.LogicalNodes[skeleton.MeshNodeIndex];
             var worldMatrices = new Matrix4x4[skeleton.Joints.Length];
             var translations = new Vector3[skeleton.Joints.Length][];
             var rotations = new Vector4[skeleton.Joints.Length][];
@@ -423,7 +558,7 @@ public sealed class GlbModelImporter : IAssetImporter
             for (var sample = 0; sample < sampleCount; sample++)
             {
                 var time = times[sample];
-                var meshWorld = meshNode.GetWorldMatrix(animation, time);
+                var meshWorld = meshNode?.GetWorldMatrix(animation, time) ?? Matrix4x4.Identity;
                 if (!Matrix4x4.Invert(meshWorld, out var inverseMeshWorld))
                     throw new InvalidDataException("Animated GLB mesh transform is not invertible.");
                 for (var jointIndex = 0; jointIndex < skeleton.Joints.Length; jointIndex++)
@@ -944,6 +1079,45 @@ public sealed class GlbModelImporter : IAssetImporter
         return result;
     }
 
+    /// <summary>Reads normalized RGB or RGBA vertex colors into linear four-component values.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="accessorIndex">COLOR_0 accessor index.</param>
+    /// <returns>Decoded vertex colors with opaque alpha for RGB sources.</returns>
+    private static Vector4[] ReadColors(JsonElement root, byte[] binary, int accessorIndex)
+    {
+        var accessor = root.GetProperty("accessors")[accessorIndex];
+        var type = accessor.GetProperty("type").GetString();
+        if (type is not "VEC3" and not "VEC4")
+            throw new InvalidDataException("GLB COLOR_0 must use VEC3 or VEC4 values.");
+        var componentType = accessor.GetProperty("componentType").GetInt32();
+        if (componentType is not 5121 and not 5123 and not 5126)
+            throw new InvalidDataException("GLB COLOR_0 component type is unsupported.");
+        if (componentType != 5126 &&
+            (!accessor.TryGetProperty("normalized", out var normalized) ||
+             !normalized.GetBoolean()))
+        {
+            throw new InvalidDataException("Integer GLB COLOR_0 values must be normalized.");
+        }
+        var view = ResolveAccessor(root, binary, accessorIndex, type, componentType, "COLOR_0");
+        var componentSize = componentType switch { 5121 => 1, 5123 => 2, _ => 4 };
+        var denominator = componentType switch { 5121 => 255f, 5123 => 65535f, _ => 1f };
+        var result = new Vector4[view.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            var offset = view.Offset + index * view.Stride;
+            float ReadComponent(int componentOffset) => componentType == 5126
+                ? ReadSingle(binary, componentOffset)
+                : ReadUnsigned(binary, componentOffset, componentSize) / denominator;
+            result[index] = new Vector4(
+                ReadComponent(offset),
+                ReadComponent(offset + componentSize),
+                ReadComponent(offset + componentSize * 2),
+                type == "VEC4" ? ReadComponent(offset + componentSize * 3) : 1f);
+        }
+        return result;
+    }
+
     /// <summary>Reads an unsigned scalar index accessor into a uniform 32-bit representation.</summary>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
@@ -1045,15 +1219,16 @@ public sealed class GlbModelImporter : IAssetImporter
     /// <param name="normals">Object-space normals.</param>
     /// <param name="texCoords">Primary texture coordinates.</param>
     /// <param name="tangents">Tangent vectors and handedness.</param>
+    /// <param name="colors">Linear per-vertex colors.</param>
     /// <param name="indices">Triangle-list indices.</param>
     /// <param name="materialSlot">Source material slot.</param>
     private static void WriteMesh(
         Stream output, Vector3[] positions, Vector3[] normals, Vector2[] texCoords,
-        Vector4[] tangents, uint[] indices, int materialSlot)
+        Vector4[] tangents, Vector4[] colors, uint[] indices, int materialSlot)
     {
         using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
         writer.Write("NMESH001"u8);
-        writer.Write(1u);
+        writer.Write(2u);
         writer.Write(checked((uint)positions.Length));
         writer.Write(checked((uint)indices.Length));
         writer.Write(materialSlot);
@@ -1063,6 +1238,7 @@ public sealed class GlbModelImporter : IAssetImporter
             Write(writer, normals[index]);
             Write(writer, texCoords[index]);
             Write(writer, tangents[index]);
+            Write(writer, colors[index]);
         }
         foreach (var value in indices)
             writer.Write(value);
@@ -1074,6 +1250,7 @@ public sealed class GlbModelImporter : IAssetImporter
     /// <param name="normals">Bind-pose normals.</param>
     /// <param name="texCoords">Primary texture coordinates.</param>
     /// <param name="tangents">Tangent vectors.</param>
+    /// <param name="colors">Linear per-vertex colors.</param>
     /// <param name="joints">Four joint indices per vertex.</param>
     /// <param name="weights">Four normalized weights per vertex.</param>
     /// <param name="indices">Triangle-list indices.</param>
@@ -1086,6 +1263,7 @@ public sealed class GlbModelImporter : IAssetImporter
         Vector3[] normals,
         Vector2[] texCoords,
         Vector4[] tangents,
+        Vector4[] colors,
         JointIndices[] joints,
         Vector4[] weights,
         uint[] indices,
@@ -1095,7 +1273,7 @@ public sealed class GlbModelImporter : IAssetImporter
     {
         using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
         writer.Write("NSKIN001"u8);
-        writer.Write(2u);
+        writer.Write(3u);
         writer.Write(checked((uint)positions.Length));
         writer.Write(checked((uint)indices.Length));
         writer.Write(materialSlot);
@@ -1106,6 +1284,7 @@ public sealed class GlbModelImporter : IAssetImporter
             Write(writer, normals[index]);
             Write(writer, texCoords[index]);
             Write(writer, tangents[index]);
+            Write(writer, colors[index]);
             writer.Write(joints[index].X);
             writer.Write(joints[index].Y);
             writer.Write(joints[index].Z);
@@ -1129,6 +1308,25 @@ public sealed class GlbModelImporter : IAssetImporter
         writer.Write(checked((uint)animations.Length));
         for (var index = 0; index < animations.Length; index++)
             WriteAnimation(writer, animations[index], skeleton.Joints.Length);
+    }
+
+    /// <summary>Writes one standalone skeletal-animation artifact.</summary>
+    /// <param name="output">Artifact output stream.</param>
+    /// <param name="skeleton">Source skeleton.</param>
+    /// <param name="animation">Single independently addressable clip.</param>
+    private static void WriteSkeletalAnimation(
+        Stream output,
+        ImportedSkeleton skeleton,
+        ImportedAnimation animation)
+    {
+        using (var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("NANIM001"u8);
+            writer.Write(1u);
+            writer.Flush();
+        }
+        WriteSkinnedMesh(output, [], [], [], [], [], [], [], [], -1,
+            skeleton with { MeshNodeTransform = Matrix4x4.Identity }, [animation]);
     }
 
     /// <summary>Writes one imported animation clip.</summary>

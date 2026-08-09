@@ -216,6 +216,46 @@ public class UIThemeTests
         Assert.Equal(UITheme.Dark.PanelCornerRadius, command.CornerRadius);
     }
 
+    /// <summary>Verifies partial corner modes square only the opposite horizontal edge.</summary>
+    [Fact]
+    public void Box_PartialCornerModes_PaintTopAndBottomShapes()
+    {
+        var top = new Panel(Color.Red, 100f, 30f)
+        {
+            CornerRadius = 6f,
+            CornerMode = BoxCornerMode.Top
+        };
+        var bottom = new Panel(Color.Red, 100f, 30f)
+        {
+            CornerRadius = 6f,
+            CornerMode = BoxCornerMode.Bottom
+        };
+
+        var topCommands = top.BuildDrawList().Commands;
+        var bottomCommands = bottom.BuildDrawList().Commands;
+
+        Assert.Contains(topCommands, command =>
+            command.Type == UIDrawCommandType.RoundedRectangle && command.CornerRadius == 6f);
+        Assert.Contains(topCommands, command =>
+            command.Type == UIDrawCommandType.Rectangle &&
+            command.Left == 0f && command.Top == 24f &&
+            command.Right == 6f && command.Bottom == 30f);
+        Assert.Contains(topCommands, command =>
+            command.Type == UIDrawCommandType.Rectangle &&
+            command.Left == 94f && command.Top == 24f &&
+            command.Right == 100f && command.Bottom == 30f);
+        Assert.Contains(bottomCommands, command =>
+            command.Type == UIDrawCommandType.RoundedRectangle && command.CornerRadius == 6f);
+        Assert.Contains(bottomCommands, command =>
+            command.Type == UIDrawCommandType.Rectangle &&
+            command.Left == 0f && command.Top == 0f &&
+            command.Right == 6f && command.Bottom == 6f);
+        Assert.Contains(bottomCommands, command =>
+            command.Type == UIDrawCommandType.Rectangle &&
+            command.Left == 94f && command.Top == 0f &&
+            command.Right == 100f && command.Bottom == 6f);
+    }
+
     /// <summary>Verifies section headers use the same fill as their panel content.</summary>
     [Fact]
     public void SectionHeader_UsesPanelSurfaceColor()
@@ -229,14 +269,13 @@ public class UIThemeTests
         Assert.Equal(UITheme.Dark.PanelTitleFontSize, header.TitleLabel.FontSize);
     }
 
-    /// <summary>Verifies dock tabs are the sole persistent Editor panel chrome.</summary>
+    /// <summary>Verifies dock tabs supply the persistent Editor panel chrome.</summary>
     [Fact]
-    public void EditorView_ToolPanels_UseOneHeaderStandard()
+    public void EditorView_DockTabs_UseOneHeaderStandard()
     {
         var view = EditorUI.BuildView(1280f, 720f);
         var descendants = Descendants(view.Root).ToArray();
 
-        Assert.Empty(descendants.OfType<ToolPanel>());
         Assert.Contains(descendants, element => element is TabControl);
         Assert.DoesNotContain(descendants, element => element.Name == "GameHeader");
     }
@@ -516,6 +555,8 @@ public class UIThemeTests
         Assert.Equal(TitleBar.DefaultHeight, view.TitleBar.Height);
         Assert.Equal(Thickness.Zero, view.TitleBar.Margin);
         Assert.Equal(0f, view.TitleBar.BorderThickness);
+        Assert.Same(view.PlayButtonIcon, view.PlayButton.Content);
+        Assert.Equal(IconKind.Play, view.PlayButtonIcon.Kind);
         Assert.Equal(640f, view.PlayButton.Left + view.PlayButton.Width / 2f);
         Assert.Equal(view.TitleBar.Top + (view.TitleBar.Height - view.PlayButton.Height) / 2f,
             view.PlayButton.Top);

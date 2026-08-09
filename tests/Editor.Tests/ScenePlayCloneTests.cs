@@ -36,8 +36,10 @@ public class ScenePlayCloneTests
         };
         cube.AddComponent(authoredCollider);
         cube.AddComponent(authoredBody);
+        var animationReference = new AssetReference(AssetId.New(), "animation/0");
         var authoredAnimator = new AnimatorComponent
         {
+            AnimationSource = animationReference,
             Clip = "Walk",
             Loop = false,
             Speed = 0.75f
@@ -75,6 +77,7 @@ public class ScenePlayCloneTests
         var clonedAnimator = Assert.IsType<AnimatorComponent>(
             playScene.MeshInstances[0].Components[4]);
         Assert.NotSame(authoredAnimator, clonedAnimator);
+        Assert.Equal(animationReference, clonedAnimator.AnimationSource);
         Assert.Equal("Walk", clonedAnimator.Clip);
         Assert.False(clonedAnimator.Loop);
         Assert.Equal(0.75f, clonedAnimator.Speed);

@@ -109,6 +109,24 @@ public readonly record struct PointerWheelEvent(
     Vector2 Delta,
     InputModifiers Modifiers);
 
+/// <summary>Describes a device-neutral trackpad magnification gesture.</summary>
+/// <param name="PointerId">Stable pointer identity within the source.</param>
+/// <param name="Position">Logical host position.</param>
+/// <param name="Delta">Incremental magnification; positive values zoom in.</param>
+/// <param name="Modifiers">Active keyboard modifiers.</param>
+public readonly record struct PointerMagnifyEvent(
+    int PointerId,
+    Vector2 Position,
+    float Delta,
+    InputModifiers Modifiers);
+
+/// <summary>Optionally supplies native trackpad gestures not represented as pointer wheels.</summary>
+public interface IPointerGestureSource
+{
+    /// <summary>Occurs when a trackpad pinch changes magnification.</summary>
+    event Action<PointerMagnifyEvent>? PointerMagnified;
+}
+
 /// <summary>Describes one device-neutral keyboard transition.</summary>
 /// <param name="Key">Logical engine key.</param>
 /// <param name="IsPressed">Whether the key became pressed.</param>

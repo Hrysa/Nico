@@ -105,11 +105,14 @@ public sealed class ScrollViewer : Panel
     {
         if (_content is null)
             return availableSize;
+        var inner = new Vector2(
+            MathF.Max(0f, availableSize.X - Padding.Horizontal),
+            MathF.Max(0f, availableSize.Y - Padding.Vertical));
         _content.Measure(_content is IScrollViewportContent
-            ? availableSize
+            ? inner
             : new Vector2(
-                CanScrollHorizontally ? float.PositiveInfinity : availableSize.X,
-                CanScrollVertically ? float.PositiveInfinity : availableSize.Y));
+                CanScrollHorizontally ? float.PositiveInfinity : inner.X,
+                CanScrollVertically ? float.PositiveInfinity : inner.Y));
         return availableSize;
     }
 

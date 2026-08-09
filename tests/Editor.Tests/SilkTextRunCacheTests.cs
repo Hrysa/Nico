@@ -130,6 +130,41 @@ public sealed class SilkTextRunCacheTests
         Assert.Equal(6, vertices.Count);
     }
 
+    /// <summary>Verifies Latin glyph uploads include transparent texels for linear filtering.</summary>
+    [Fact]
+    public void TryTakeAtlasUpdate_LatinGlyph_IncludesTransparentSamplingHalo()
+    {
+        using var rasterizer = new TrueTypeFontRasterizer();
+        using var vertices = new NativeBuffer<VertexT>();
+        var command = new UIDrawCommand(
+            0f, 0f, 0f, 0f, Color.White,
+            UIDrawCommandType.Text,
+            "A",
+            20f);
+
+        rasterizer.AppendVertices(vertices, command, 1f);
+
+        Assert.True(rasterizer.TryTakeAtlasUpdate(out var update));
+        Assert.Equal(0, update.X);
+        Assert.Equal(0, update.Y);
+        Assert.True(update.Width > 4);
+        Assert.True(update.Height > 4);
+        var foundCoverage = false;
+        for (var y = 0; y < update.Height; y++)
+        {
+            for (var x = 0; x < update.Width; x++)
+            {
+                var alpha = update.Pixels[(y * update.Width + x) * 4 + 3];
+                if (x < 2 || x >= update.Width - 2 ||
+                    y < 2 || y >= update.Height - 2)
+                    Assert.Equal(0, alpha);
+                else
+                    foundCoverage |= alpha != 0;
+            }
+        }
+        Assert.True(foundCoverage);
+    }
+
     /// <summary>Verifies mixed text exposes visual caret order without losing logical indices.</summary>
     [Fact]
     public void ShapeText_MixedDirection_ProducesReorderedCaretSequence()

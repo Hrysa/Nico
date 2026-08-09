@@ -441,7 +441,7 @@ public sealed class SkinnedMeshResource
         ArgumentNullException.ThrowIfNull(stream);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write("NSKIN001"u8);
-        writer.Write(2u);
+        writer.Write(3u);
         WriteMesh(writer);
         WriteSkeleton(writer);
         writer.Write(checked((uint)_animations.Length));
@@ -459,7 +459,7 @@ public sealed class SkinnedMeshResource
         if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
             throw new InvalidDataException("Skinned mesh artifact has an invalid signature.");
         var version = reader.ReadUInt32();
-        if (version is not 1u and not 2u)
+        if (version is not 1u and not 2u and not 3u)
             throw new InvalidDataException("Skinned mesh artifact version is unsupported.");
         var vertexCount = checked((int)reader.ReadUInt32());
         var indexCount = checked((int)reader.ReadUInt32());
@@ -470,7 +470,8 @@ public sealed class SkinnedMeshResource
         for (var index = 0; index < vertexCount; index++)
         {
             vertices[index] = new ModelVertex(ReadVector3(reader), ReadVector3(reader),
-                ReadVector2(reader), ReadVector4(reader));
+                ReadVector2(reader), ReadVector4(reader),
+                version >= 3u ? ReadVector4(reader) : Vector4.One);
             influences[index] = new SkinInfluence(reader.ReadUInt32(), reader.ReadUInt32(),
                 reader.ReadUInt32(), reader.ReadUInt32(), ReadVector4(reader));
         }
@@ -513,6 +514,7 @@ public sealed class SkinnedMeshResource
             Write(writer, vertex.Normal);
             Write(writer, vertex.TexCoord);
             Write(writer, vertex.Tangent);
+            Write(writer, vertex.Color);
             var influence = Influences[index];
             writer.Write(influence.Joint0);
             writer.Write(influence.Joint1);

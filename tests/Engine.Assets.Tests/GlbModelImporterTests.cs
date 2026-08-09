@@ -33,12 +33,15 @@ public sealed class GlbModelImporterTests : IDisposable
         using var reader = new BinaryReader(File.OpenRead(Path.Combine(staging,
             artifact.RelativePath)));
         Assert.Equal("NMESH001", Encoding.ASCII.GetString(reader.ReadBytes(8)));
-        Assert.Equal(1u, reader.ReadUInt32());
+        Assert.Equal(2u, reader.ReadUInt32());
         Assert.Equal(3u, reader.ReadUInt32());
         Assert.Equal(3u, reader.ReadUInt32());
         Assert.Equal(0, reader.ReadInt32());
-        Assert.Equal(Vector3.Zero, ReadVector3(reader));
+        Assert.Equal(new Vector3(5f, 6f, 7f), ReadVector3(reader));
         Assert.Equal(Vector3.UnitZ, ReadVector3(reader));
+        reader.BaseStream.Position += sizeof(float) * 6;
+        Assert.Equal(new Vector4(0.2f, 0.4f, 0.6f, 1f), ReadVector4(reader));
+        Assert.Equal(new Vector3(7f, 6f, 7f), ReadVector3(reader));
         var materialArtifact = Assert.Single(result.Artifacts, item =>
             item.ContentType == "nico/standard-material");
         using var materialReader = new BinaryReader(File.OpenRead(Path.Combine(staging,
@@ -124,6 +127,36 @@ public sealed class GlbModelImporterTests : IDisposable
             pose.SkinMatrices[0] * resource.MeshNodeTransform);
     }
 
+    /// <summary>Imports a mesh-free skin and clip as standalone skeletal animation.</summary>
+    [Fact]
+    public void Import_AnimationOnlyGlb_WritesBindableAnimationArtifact()
+    {
+        var sourcePath = Path.Combine(_directory, "idle.glb");
+        WriteAnimationOnlyGlb(sourcePath);
+        var staging = Path.Combine(_directory, "animation-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var context = new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None);
+
+        var result = new GlbModelImporter().Import(context);
+
+        var artifact = Assert.Single(result.Artifacts);
+        Assert.Equal("animation/0", artifact.Key);
+        Assert.Equal("nico/skeletal-animation", artifact.ContentType);
+        var animationObject = Assert.Single(result.Objects!, item => item.Kind == "animation");
+        Assert.Equal(artifact.Key, animationObject.ArtifactKey);
+        using var stream = File.OpenRead(Path.Combine(staging, artifact.RelativePath));
+        var resource = SkeletalAnimationResource.Load(stream);
+        Assert.Equal("Idle", Assert.Single(resource.Animations).Name);
+        var target = new SkeletonResource(
+        [
+            new SkeletonJoint("Hips", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var bound = Assert.Single(resource.BindTo(target));
+        Assert.Equal(1f, bound.Tracks[0]!.Translation!.Sample(1f).Y, 5);
+    }
+
     /// <summary>Removes temporary test data.</summary>
     public void Dispose()
     {
@@ -138,6 +171,15 @@ public sealed class GlbModelImporterTests : IDisposable
         return new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
     }
 
+    /// <summary>Reads one four-component vector from the mesh artifact.</summary>
+    /// <param name="reader">Artifact reader.</param>
+    /// <returns>The decoded vector.</returns>
+    private static Vector4 ReadVector4(BinaryReader reader)
+    {
+        return new Vector4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+            reader.ReadSingle());
+    }
+
     /// <summary>Writes a GLB containing one indexed triangle without normals.</summary>
     /// <param name="path">Destination path.</param>
     private static void WriteMinimalGlb(string path)
@@ -147,6 +189,13 @@ public sealed class GlbModelImporterTests : IDisposable
         {
             foreach (var value in new[] { 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f })
                 binary.Write(value);
+            foreach (var value in new[]
+                     {
+                         0.2f, 0.4f, 0.6f,
+                         0.2f, 0.4f, 0.6f,
+                         0.2f, 0.4f, 0.6f
+                     })
+                binary.Write(value);
             binary.Write((ushort)0);
             binary.Write((ushort)1);
             binary.Write((ushort)2);
@@ -155,19 +204,24 @@ public sealed class GlbModelImporterTests : IDisposable
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="));
         }
         var json = """
-            {"asset":{"version":"2.0"},"buffers":[{"byteLength":112}],
+            {"asset":{"version":"2.0"},"scene":0,
+             "scenes":[{"nodes":[0]}],
+             "nodes":[{"mesh":0,"translation":[5,6,7],"scale":[2,3,4]}],
+             "buffers":[{"byteLength":148}],
              "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},
-                            {"buffer":0,"byteOffset":36,"byteLength":6},
-                            {"buffer":0,"byteOffset":44,"byteLength":68}],
+                            {"buffer":0,"byteOffset":36,"byteLength":36},
+                            {"buffer":0,"byteOffset":72,"byteLength":6},
+                            {"buffer":0,"byteOffset":80,"byteLength":68}],
              "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
-                          {"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
+                          {"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"},
+                          {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}],
              "materials":[{"name":"Blue","doubleSided":true,
                "pbrMetallicRoughness":{"baseColorFactor":[0.25,0.5,0.75,1],
                "metallicFactor":0.2,"roughnessFactor":0.6,
                "baseColorTexture":{"index":0}}}],
-             "images":[{"bufferView":2,"mimeType":"image/png"}],
+             "images":[{"bufferView":3,"mimeType":"image/png"}],
              "textures":[{"source":0}],
-             "meshes":[{"name":"Triangle","primitives":[{"attributes":{"POSITION":0},
+             "meshes":[{"name":"Triangle","primitives":[{"attributes":{"POSITION":0,"COLOR_0":2},
                "indices":1,"material":0}]}]}
             """;
         var jsonBytes = Encoding.UTF8.GetBytes(json);
@@ -239,6 +293,34 @@ public sealed class GlbModelImporterTests : IDisposable
              "meshes":[{"name":"Character","primitives":[{"attributes":{"POSITION":0,
                "JOINTS_0":1,"WEIGHTS_0":2},"indices":3}]}],
              "animations":[{"name":"Move","samplers":[{"input":5,"output":6,
+               "interpolation":"LINEAR"}],"channels":[{"sampler":0,
+               "target":{"node":1,"path":"translation"}}]}]}
+            """;
+        WriteGlb(path, json, binaryStream.ToArray());
+    }
+
+    /// <summary>Writes a mesh-free GLB containing one skeleton and animation clip.</summary>
+    /// <param name="path">Destination path.</param>
+    private static void WriteAnimationOnlyGlb(string path)
+    {
+        using var binaryStream = new MemoryStream();
+        using (var binary = new BinaryWriter(binaryStream, Encoding.UTF8, leaveOpen: true))
+        {
+            binary.Write(0f);
+            binary.Write(1f);
+            foreach (var value in new[] { 0f, 0f, 0f, 0f, 1f, 0f })
+                binary.Write(value);
+        }
+        var json = """
+            {"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+             "buffers":[{"byteLength":32}],
+             "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":8},
+                            {"buffer":0,"byteOffset":8,"byteLength":24}],
+             "accessors":[{"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR"},
+                          {"bufferView":1,"componentType":5126,"count":2,"type":"VEC3"}],
+             "nodes":[{"name":"Armature","children":[1]},{"name":"Hips"}],
+             "skins":[{"name":"Rig","joints":[1],"skeleton":1}],
+             "animations":[{"name":"Idle","samplers":[{"input":0,"output":1,
                "interpolation":"LINEAR"}],"channels":[{"sampler":0,
                "target":{"node":1,"path":"translation"}}]}]}
             """;

@@ -202,6 +202,30 @@ public class TreeViewTests
         Assert.Equal("Walk", Assert.Single(source.Children[2].Children).Name);
     }
 
+    /// <summary>Builds artifact-backed animation rows as draggable imported sub-assets.</summary>
+    [Fact]
+    public void ImportedAssetTreeBuilder_AnimationArtifact_CreatesTypedSubAsset()
+    {
+        var source = new FileSystemNode(Path.Combine(Path.GetTempPath(), "Idle.glb"), false);
+        var assetId = AssetId.New();
+        AssetImportObject[] objects =
+        [
+            new("animation/0", "Breathing Idle", "animation",
+                ArtifactKey: "animation/0")
+        ];
+        AssetArtifact[] artifacts =
+        [
+            new("animation/0", "nico/skeletal-animation", "animations/idle.nanim")
+        ];
+
+        ImportedAssetTreeBuilder.AddObjects(source, assetId, objects, artifacts);
+
+        var group = Assert.Single(source.Children);
+        var animation = Assert.IsType<ImportedSubAssetNode>(Assert.Single(group.Children));
+        Assert.Equal(new AssetReference(assetId, "animation/0"), animation.Reference);
+        Assert.Equal("nico/skeletal-animation", animation.ContentType);
+    }
+
     /// <summary>Verifies clicking a row updates tree selection.</summary>
     [Fact]
     public void Click_Row_SelectsRepresentedNode()

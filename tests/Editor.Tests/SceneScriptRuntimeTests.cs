@@ -118,6 +118,39 @@ public class SceneScriptRuntimeTests
         Assert.True(script.Released);
     }
 
+    /// <summary>Verifies scene scripts receive accumulated frame pointer movement and held buttons.</summary>
+    [Fact]
+    public void Runtime_InputSource_ProvidesStablePointerState()
+    {
+        var scriptId = AssetId.New();
+        var root = new Node3D();
+        var owner = new Node3D();
+        owner.AddComponent(new ScriptComponent(scriptId));
+        root.AddChild(owner);
+        var input = new TestInputSource();
+        using var runtime = new SceneScriptRuntime();
+        runtime.Attach(root, new TestScriptCatalog(scriptId, typeof(InputRecordingScript)), input);
+        runtime.Start();
+        var script = Assert.IsType<InputRecordingScript>(Assert.Single(runtime.Scripts));
+
+        input.SetPointerButton(InputPointerButton.Secondary, true);
+        input.MovePointer(new System.Numerics.Vector2(10f, 20f), new System.Numerics.Vector2(3f, -2f));
+        input.MovePointer(new System.Numerics.Vector2(14f, 25f), new System.Numerics.Vector2(4f, 5f));
+        runtime.Update(1d / 60d);
+
+        Assert.True(script.SecondaryPointerHeld);
+        Assert.Equal(new System.Numerics.Vector2(14f, 25f), script.PointerPosition);
+        Assert.Equal(new System.Numerics.Vector2(7f, 3f), script.PointerDelta);
+
+        runtime.Update(1d / 60d);
+        Assert.True(script.SecondaryPointerHeld);
+        Assert.Equal(System.Numerics.Vector2.Zero, script.PointerDelta);
+
+        input.SetPointerButton(InputPointerButton.Secondary, false);
+        runtime.Update(1d / 60d);
+        Assert.False(script.SecondaryPointerHeld);
+    }
+
     private sealed class TestScriptCatalog(AssetId id, Type type) : IScriptTypeCatalog
     {
         /// <inheritdoc />
@@ -200,12 +233,24 @@ public class SceneScriptRuntimeTests
         /// <summary>Gets whether W was newly released.</summary>
         public bool Released { get; private set; }
 
+        /// <summary>Gets whether the secondary pointer button was held.</summary>
+        public bool SecondaryPointerHeld { get; private set; }
+
+        /// <summary>Gets the most recent logical pointer position.</summary>
+        public System.Numerics.Vector2 PointerPosition { get; private set; }
+
+        /// <summary>Gets accumulated pointer movement for the most recent update.</summary>
+        public System.Numerics.Vector2 PointerDelta { get; private set; }
+
         /// <inheritdoc/>
         public override void OnUpdate(double deltaTime)
         {
             Held = Scene.Input.IsKeyDown(InputKey.W);
             Pressed = Scene.Input.WasKeyPressed(InputKey.W);
             Released = Scene.Input.WasKeyReleased(InputKey.W);
+            SecondaryPointerHeld = Scene.Input.IsPointerButtonDown(InputPointerButton.Secondary);
+            PointerPosition = Scene.Input.PointerPosition;
+            PointerDelta = Scene.Input.PointerDelta;
         }
     }
 
@@ -238,6 +283,33 @@ public class SceneScriptRuntimeTests
         /// <param name="key">Released key.</param>
         public void Release(InputKey key) =>
             KeyChanged?.Invoke(new KeyInputEvent(key, false, false, InputModifiers.None));
+
+        /// <summary>Raises one device-neutral pointer movement.</summary>
+        /// <param name="position">New logical pointer position.</param>
+        /// <param name="delta">Movement since the preceding event.</param>
+        public void MovePointer(System.Numerics.Vector2 position, System.Numerics.Vector2 delta) =>
+            PointerMoved?.Invoke(new PointerMoveEvent(
+                0,
+                position,
+                delta,
+                PointerDeviceKind.Mouse,
+                InputModifiers.None,
+                PointerButtons.None));
+
+        /// <summary>Raises one device-neutral pointer-button transition.</summary>
+        /// <param name="button">Changed button.</param>
+        /// <param name="isPressed">Whether the button became pressed.</param>
+        public void SetPointerButton(InputPointerButton button, bool isPressed) =>
+            PointerButtonChanged?.Invoke(new PointerButtonEvent(
+                0,
+                System.Numerics.Vector2.Zero,
+                button,
+                isPressed,
+                1,
+                PointerDeviceKind.Mouse,
+                InputModifiers.None,
+                isPressed && button == InputPointerButton.Secondary
+                    ? PointerButtons.Secondary : PointerButtons.None));
 
         /// <inheritdoc/>
         public void SetMouseCaptured(bool captured)

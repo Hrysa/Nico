@@ -5,8 +5,21 @@ namespace Engine.UI;
 /// <summary>A button with persistent checked state.</summary>
 public class ToggleButton : Button
 {
-    private readonly UITheme _theme;
     private bool _isChecked;
+    private Color _checkedColor;
+
+    /// <summary>Gets or sets the background painted for the idle checked state.</summary>
+    public Color CheckedColor
+    {
+        get => _checkedColor;
+        set
+        {
+            if (_checkedColor.Equals(value))
+                return;
+            _checkedColor = value;
+            InvalidateVisual();
+        }
+    }
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => base.GetSemanticInfo() with
@@ -55,7 +68,7 @@ public class ToggleButton : Button
         ButtonStyle style = ButtonStyle.Subtle)
         : base(width, height, label, theme ?? UITheme.Dark, style)
     {
-        _theme = theme ?? UITheme.Dark;
+        CheckedColor = (theme ?? UITheme.Dark).AccentPressed;
     }
 
     /// <inheritdoc/>
@@ -74,8 +87,11 @@ public class ToggleButton : Button
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        if (IsChecked && VisualStateMode == BoxVisualStateMode.Interactive)
-            drawList.AddRoundedRectangle(Left, Top, Right, Bottom, CornerRadius, _theme.AccentPressed);
+        if (IsChecked && VisualStateMode == BoxVisualStateMode.Interactive &&
+            !IsHovered && !IsPressed)
+        {
+            PaintBox(drawList, CheckedColor);
+        }
         base.Paint(drawList);
     }
 }

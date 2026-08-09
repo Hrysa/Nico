@@ -27,7 +27,17 @@ public sealed class ViewportPresentationTracker
     /// <returns>True when new presentation geometry was submitted.</returns>
     public bool Synchronize(IRenderer renderer)
     {
+        return Synchronize(renderer, out _);
+    }
+
+    /// <summary>Updates presentation geometry and repairs render-target size on activation.</summary>
+    /// <param name="renderer">Renderer that currently owns the viewport's render view.</param>
+    /// <param name="renderTargetResized">Whether the render target was resized for activation.</param>
+    /// <returns>True when new presentation geometry was submitted.</returns>
+    public bool Synchronize(IRenderer renderer, out bool renderTargetResized)
+    {
         ArgumentNullException.ThrowIfNull(renderer);
+        renderTargetResized = false;
         var renderView = _viewport.RenderView;
         if (!renderView.IsValid)
         {
@@ -36,6 +46,13 @@ public sealed class ViewportPresentationTracker
         }
 
         var visible = _viewport.IsEffectivelyVisible;
+        var ownershipChanged = !_synchronized || !ReferenceEquals(_renderer, renderer) ||
+            _renderView != renderView;
+        if (visible && (ownershipChanged || !_visible))
+        {
+            renderer.ResizeRenderView(renderView, _viewport.Width, _viewport.Height);
+            renderTargetResized = true;
+        }
         var bounds = new UIClipRect(
             _viewport.Left, _viewport.Top, _viewport.Right, _viewport.Bottom);
         if (_synchronized && ReferenceEquals(_renderer, renderer) &&

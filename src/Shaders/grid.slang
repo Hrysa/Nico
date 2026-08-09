@@ -20,6 +20,8 @@ struct FragmentOutput
     float depth : SV_Depth;
 };
 
+static const float groundPlaneY = -0.01;
+
 float3 unproject(float2 position, float depth)
 {
     float4 world = mul(float4(position, depth, 1.0), pc.inverseViewProjection);
@@ -59,7 +61,7 @@ FragmentOutput fragmentMain(VertexOutput input)
     if (abs(ray.y) < 0.000001)
         discard;
 
-    float rayDistance = -input.nearWorld.y / ray.y;
+    float rayDistance = (groundPlaneY - input.nearWorld.y) / ray.y;
     if (rayDistance <= 0.0)
         discard;
 

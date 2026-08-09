@@ -1,12 +1,26 @@
 namespace Engine.Core;
 
-/// <summary>Configures playback for animation data embedded in a skinned mesh asset.</summary>
+/// <summary>Configures playback for embedded or separately imported skeletal animation.</summary>
 public sealed class AnimatorComponent : Component
 {
+    private AssetReference? _animationSource;
     private string? _clip;
     private bool _playAutomatically = true;
     private bool _loop = true;
     private float _speed = 1f;
+
+    /// <summary>Gets or sets an optional standalone skeletal-animation artifact.</summary>
+    public AssetReference? AnimationSource
+    {
+        get => _animationSource;
+        set
+        {
+            if (_animationSource == value)
+                return;
+            _animationSource = value;
+            Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
+        }
+    }
 
     /// <summary>Gets or sets the preferred imported clip name, or null for the first clip.</summary>
     public string? Clip

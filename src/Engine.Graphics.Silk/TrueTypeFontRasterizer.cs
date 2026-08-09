@@ -54,16 +54,20 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
             update = default;
             return false;
         }
-        var width = _dirtyRight - _dirtyLeft;
-        var height = _dirtyBottom - _dirtyTop;
+        var uploadLeft = Math.Max(0, _dirtyLeft - AtlasPadding);
+        var uploadTop = Math.Max(0, _dirtyTop - AtlasPadding);
+        var uploadRight = Math.Min((int)AtlasWidth, _dirtyRight + AtlasPadding);
+        var uploadBottom = Math.Min((int)AtlasHeight, _dirtyBottom + AtlasPadding);
+        var width = uploadRight - uploadLeft;
+        var height = uploadBottom - uploadTop;
         var pixels = new byte[width * height * 4];
         for (var row = 0; row < height; row++)
         {
-            var sourceOffset = ((_dirtyTop + row) * (int)AtlasWidth + _dirtyLeft) * 4;
+            var sourceOffset = ((uploadTop + row) * (int)AtlasWidth + uploadLeft) * 4;
             AtlasPixels.AsSpan(sourceOffset, width * 4)
                 .CopyTo(pixels.AsSpan(row * width * 4, width * 4));
         }
-        update = new AtlasUpdate(_dirtyLeft, _dirtyTop, width, height, pixels);
+        update = new AtlasUpdate(uploadLeft, uploadTop, width, height, pixels);
         _dirtyLeft = int.MaxValue;
         _dirtyTop = int.MaxValue;
         _dirtyRight = 0;

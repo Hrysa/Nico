@@ -23,6 +23,7 @@ public sealed class EditorViewportRenderer : IDisposable
     private readonly RenderQueue _gameQueue = new();
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
+    private bool _hasSubmittedSceneOverlay;
     private bool _disposed;
 
     /// <summary>
@@ -101,6 +102,7 @@ public sealed class EditorViewportRenderer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        ClearSceneOverlay();
         foreach (var handle in _meshHandles.Values)
             _renderer.DestroyMesh(handle);
         foreach (var resource in _assetMeshes.Values)
@@ -159,11 +161,13 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="mesh">Imported skinned mesh.</param>
     /// <param name="material">Imported standard material.</param>
     /// <param name="texture">Optional imported base-color texture.</param>
+    /// <param name="animations">Optional standalone clips already bound to this skeleton.</param>
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         SkinnedMeshResource mesh,
         StandardMaterialResource material,
-        TextureResource? texture = null)
+        TextureResource? texture = null,
+        AnimationClipResource[]? animations = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(mesh);
@@ -175,7 +179,11 @@ public sealed class EditorViewportRenderer : IDisposable
         {
             material.BaseColorTexture = textureHandle;
             var handles = _renderer.CreateSkinnedMesh(mesh, material);
-            var player = new AnimationPlayer(mesh);
+            var playbackResource = animations is null
+                ? mesh
+                : new SkinnedMeshResource(mesh.Mesh, mesh.Influences, mesh.Skeleton,
+                    animations, mesh.MeshNodeTransform);
+            var player = new AnimationPlayer(playbackResource);
             ConfigureAnimationPlayer(instance, player);
             _renderer.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
@@ -233,12 +241,39 @@ public sealed class EditorViewportRenderer : IDisposable
     public void RenderScene(ViewportPanel sceneViewport, Vector2 pointerPosition)
     {
         if (!sceneViewport.IsEffectivelyVisible)
+        {
+            ClearSceneOverlay();
             return;
+        }
         _sceneQueue.Clear();
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
         RenderSceneViewport();
-        _renderer.SubmitTransient(new TransientGeometry(_selection.BuildOverlay()));
+        var overlay = _selection.BuildOverlay();
+        var clip = new UIClipRect(
+            sceneViewport.Left,
+            sceneViewport.Top,
+            sceneViewport.Right,
+            sceneViewport.Bottom);
+        _renderer.SubmitTransient(new TransientGeometry(overlay, clip));
+        _hasSubmittedSceneOverlay = overlay.Length > 0;
+    }
+
+    /// <summary>Clears retained Scene overlay geometry when its viewport is not presented.</summary>
+    /// <param name="visible">Whether this renderer currently presents the Scene viewport.</param>
+    public void SynchronizeSceneVisibility(bool visible)
+    {
+        if (!visible)
+            ClearSceneOverlay();
+    }
+
+    /// <summary>Removes the last submitted gizmo overlay on a visibility transition.</summary>
+    private void ClearSceneOverlay()
+    {
+        if (!_hasSubmittedSceneOverlay)
+            return;
+        _renderer.SubmitTransient(new TransientGeometry(Array.Empty<Vertex>()));
+        _hasSubmittedSceneOverlay = false;
     }
 
     /// <summary>Builds and submits only the Game viewport for its owning native window.</summary>

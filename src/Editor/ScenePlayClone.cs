@@ -121,12 +121,14 @@ public static class ScenePlayClone
                     Height = sourceCollider.Height,
                     IsTrigger = sourceCollider.IsTrigger,
                     Friction = sourceCollider.Friction,
-                    Restitution = sourceCollider.Restitution
+                    Restitution = sourceCollider.Restitution,
+                    Mesh = sourceCollider.Mesh
                 };
             case AnimatorComponent sourceAnimator:
                 return new AnimatorComponent
                 {
                     Enabled = sourceAnimator.Enabled,
+                    AnimationSource = sourceAnimator.AnimationSource,
                     Clip = sourceAnimator.Clip,
                     PlayAutomatically = sourceAnimator.PlayAutomatically,
                     Loop = sourceAnimator.Loop,

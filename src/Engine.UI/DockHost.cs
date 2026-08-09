@@ -191,6 +191,10 @@ public sealed class DockHost : UIElement
             var content = _resolveContent(tab.Id) ?? CreateMissingContent(tab.Id);
             var contentScroller = new ScrollViewer(theme: _theme)
             {
+                BackgroundColor = _theme.Surface,
+                CornerRadius = _theme.PanelCornerRadius,
+                CornerMode = BoxCornerMode.TopRight | BoxCornerMode.Bottom,
+                Padding = new Thickness(3f, 5f, 3f, 5f),
                 Content = content
             };
             mountedContents.Add(content);
@@ -307,7 +311,7 @@ internal sealed class DockTabGroupPresenter : Box
         _group = group;
         _tabs = tabs;
         _overlay = new DockDropOverlay(theme);
-        BackgroundColor = theme.Surface;
+        PaintBackground = false;
         CornerRadius = theme.PanelCornerRadius;
         AllowDrop = true;
         Drag += HandleDrag;

@@ -165,6 +165,30 @@ public class SceneInspectorTests
         Assert.Equal(texture, mesh.MaterialOverride?.BaseColorTexture);
     }
 
+    /// <summary>Assigns a standalone clip and creates an animator when one is absent.</summary>
+    [Fact]
+    public void Animator_TypedAssignment_CreatesAndDisplaysAnimationSource()
+    {
+        var mesh = new MeshInstance3D();
+        var animation = new AssetReference(AssetId.New(), "animation/0");
+        var inspector = new SceneInspector(320f, 700f)
+        {
+            ResolveAnimationName = reference => reference == animation
+                ? "Breathing Idle" : "Embedded in mesh"
+        };
+        inspector.Bind(mesh);
+
+        Assert.True(inspector.AssignAnimation(animation));
+
+        var animator = Assert.IsType<AnimatorComponent>(Assert.Single(mesh.Components));
+        Assert.Equal(animation, animator.AnimationSource);
+        Assert.Null(animator.Clip);
+        var source = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "AnimatorSource"));
+        Assert.True(source.IsReadOnly);
+        Assert.Equal("Breathing Idle", source.Text);
+    }
+
     /// <summary>Resolves an imported material once when binding instead of during each refresh.</summary>
     [Fact]
     public void Material_RefreshValues_DoesNotRepeatedlyResolveImportedMaterial()

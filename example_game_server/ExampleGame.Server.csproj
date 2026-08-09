@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../src/Engine.Assets/Engine.Assets.csproj" />
+    <ProjectReference Include="../src/Engine.Core/Engine.Core.csproj" />
+    <ProjectReference Include="../src/Engine.Graphics/Engine.Graphics.csproj" />
+    <ProjectReference Include="../src/Engine.Physics/Engine.Physics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.10" />
+  </ItemGroup>
+</Project>

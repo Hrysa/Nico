@@ -12,6 +12,9 @@
     <Project Path="src/Player/Player.csproj" />
     <Project Path="src/UIShowcase/UIShowcase.csproj" />
   </Folder>
+  <Folder Name="/examples/">
+    <Project Path="example_game_server/ExampleGame.Server.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Engine.Assets.Tests/Engine.Assets.Tests.csproj" />
     <Project Path="tests/Engine.Core.Tests/Engine.Core.Tests.csproj" />

@@ -11,6 +11,9 @@ public sealed class FlyCameraController
     private const float MoveSpeed = 5f;
     private const float FastMultiplier = 3f;
     private const float LookSensitivity = 0.003f;
+    private const float GestureRotateSensitivity = 0.01f;
+    private const float GestureMoveSensitivity = 0.025f;
+    private const float GestureZoomSensitivity = 12f;
 
     private readonly PerspectiveCamera _camera;
     private readonly Action<bool> _setMouseCaptured;
@@ -55,6 +58,31 @@ public sealed class FlyCameraController
         _pointerPosition = position;
         _hasPointerPosition = true;
         return true;
+    }
+
+    /// <summary>Rotates or translates the camera from a two-finger trackpad gesture.</summary>
+    /// <param name="delta">Horizontal and vertical gesture delta.</param>
+    /// <param name="translate">Whether Shift changes rotation into camera-plane movement.</param>
+    public void ApplyTwoFingerGesture(Vector2 delta, bool translate)
+    {
+        if (translate)
+        {
+            _camera.MoveRight(-delta.X * GestureMoveSensitivity);
+            _camera.MoveUp(delta.Y * GestureMoveSensitivity);
+            return;
+        }
+        _camera.Rotate(
+            delta.X * GestureRotateSensitivity,
+            -delta.Y * GestureRotateSensitivity);
+    }
+
+    /// <summary>Moves the camera along its viewing direction for a pinch gesture.</summary>
+    /// <param name="magnification">Incremental magnification; positive values move closer.</param>
+    public void ApplyPinchZoom(float magnification)
+    {
+        if (!float.IsFinite(magnification))
+            return;
+        _camera.MoveForward(magnification * GestureZoomSensitivity);
     }
 
     /// <summary>Handles a key press and mode toggling.</summary>

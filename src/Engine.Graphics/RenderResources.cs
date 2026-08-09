@@ -47,6 +47,7 @@ public sealed record MeshDescription(Vertex[] Vertices, ResourceUsage Usage = Re
 /// <param name="Vertices">Replacement vertices.</param>
 public sealed record MeshUpdate(uint FirstVertex, Vertex[] Vertices);
 
-/// <summary>Describes colored geometry valid only for the current frame.</summary>
+/// <summary>Describes colored screen-space geometry valid only for the current frame.</summary>
 /// <param name="Vertices">One-frame vertices.</param>
-public readonly record struct TransientGeometry(Vertex[] Vertices);
+/// <param name="Clip">Optional logical UI bounds containing the geometry.</param>
+public readonly record struct TransientGeometry(Vertex[] Vertices, UIClipRect? Clip = null);

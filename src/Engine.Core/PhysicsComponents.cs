@@ -78,7 +78,9 @@ public enum ColliderShape
     /// <summary>Y-axis cylinder.</summary>
     Cylinder,
     /// <summary>Infinite local XZ plane with local positive-Y normal.</summary>
-    Plane
+    Plane,
+    /// <summary>Static triangle mesh resolved from an imported mesh artifact.</summary>
+    Mesh
 }
 
 /// <summary>Defines primitive collision geometry and contact material values.</summary>
@@ -92,6 +94,9 @@ public sealed class ColliderComponent : Component
 
     /// <summary>Gets or sets the primitive collision shape.</summary>
     public ColliderShape Shape { get; set; } = ColliderShape.Box;
+
+    /// <summary>Gets or sets the imported triangle mesh used by mesh colliders.</summary>
+    public AssetReference? Mesh { get; set; }
 
     /// <summary>Gets or sets the collider center in node-local coordinates.</summary>
     public Vector3 Center { get; set; }

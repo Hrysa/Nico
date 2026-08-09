@@ -6,21 +6,32 @@ namespace Editor.Tests;
 /// <summary>Verifies docking model mutation and safe workspace persistence.</summary>
 public sealed class DockWorkspaceTests
 {
-    /// <summary>Verifies dock panes use the theme surface without painting the splitter backing.</summary>
+    /// <summary>Verifies transparent tab chrome remains distinct from surfaced content.</summary>
     [Fact]
-    public void DockHost_TabPaneBackground_UsesThemeSurface()
+    public void DockHost_TabChromeTransparent_ContentUsesSurface()
     {
         var theme = UITheme.HighContrast;
         var group = new DockTabGroup([new DockTab("scene", "Scene")], "scene");
         var host = new DockHost(
             new DockWorkspace { Root = group }, _ => new UIElement(), theme);
         var presenter = Assert.IsAssignableFrom<Box>(Assert.Single(host.VisualChildren));
+        var tabs = Assert.IsType<TabControl>(presenter.VisualChildren[0]);
+        var content = Assert.Single(tabs.VisualChildren.OfType<ScrollViewer>());
+        var headerStrip = Assert.IsType<FlexPanel>(tabs.VisualChildren[0]);
+        var header = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[0]);
 
         Assert.False(host.PaintBackground);
         Assert.Equal(new Thickness(4f), host.Margin);
         Assert.Equal(Thickness.Zero, host.Padding);
-        Assert.True(presenter.PaintBackground);
-        Assert.Equal(theme.Surface, presenter.BackgroundColor);
+        Assert.False(presenter.PaintBackground);
+        Assert.False(tabs.PaintBackground);
+        Assert.True(content.PaintBackground);
+        Assert.Equal(theme.Surface, content.BackgroundColor);
+        Assert.Equal(new Thickness(3f, 5f, 3f, 5f), content.Padding);
+        Assert.Equal(theme.PanelCornerRadius, content.CornerRadius);
+        Assert.Equal(BoxCornerMode.TopRight | BoxCornerMode.Bottom, content.CornerMode);
+        Assert.Equal(theme.PanelCornerRadius, header.CornerRadius);
+        Assert.Equal(BoxCornerMode.Top, header.CornerMode);
         Assert.Equal(theme.PanelCornerRadius, presenter.CornerRadius);
     }
 
@@ -843,9 +854,9 @@ public sealed class DockWorkspaceTests
 
         host.BuildDrawList();
 
-        Assert.Equal(97f, left.Width);
-        Assert.Equal(291f, right.Width);
-        Assert.Equal(left.Right + 4f, right.Left);
+        Assert.Equal(91f, left.Width);
+        Assert.Equal(285f, right.Width);
+        Assert.Equal(left.Right + 10f, right.Left);
     }
 
     /// <summary>Verifies host-local pointer discovery resolves a nested tab well and its bounds.</summary>
@@ -903,9 +914,13 @@ public sealed class DockWorkspaceTests
             Height = 200f
         };
         host.BuildDrawList();
+        var presenter = Assert.IsAssignableFrom<UIElement>(Assert.Single(host.VisualChildren));
+        var tabs = Assert.IsType<TabControl>(presenter.VisualChildren[0]);
+        var headerStrip = Assert.IsType<FlexPanel>(tabs.VisualChildren[0]);
+        var firstHeader = Assert.IsType<ToggleButton>(headerStrip.VisualChildren[0]);
 
         var placement = host.UpdateExternalDockPreview(
-            new System.Numerics.Vector2(110f, 10f));
+            new System.Numerics.Vector2(firstHeader.Right, firstHeader.Top + 10f));
 
         Assert.NotNull(placement);
         Assert.Same(group, placement.Value.Group);
