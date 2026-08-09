@@ -25,7 +25,7 @@ internal static class SwapchainPolicy
         return available[0];
     }
 
-    /// <summary>Selects mailbox for low latency when supported, otherwise guaranteed FIFO.</summary>
+    /// <summary>Selects the requested optional presentation mode or guaranteed FIFO fallback.</summary>
     /// <param name="available">Available presentation modes.</param>
     /// <param name="preference">Requested presentation latency policy.</param>
     /// <returns>The selected presentation mode.</returns>
@@ -34,12 +34,18 @@ internal static class SwapchainPolicy
         PresentationModePreference preference)
     {
         ArgumentNullException.ThrowIfNull(available);
-        if (preference == PresentationModePreference.LowLatency)
+        var optionalMode = preference switch
+        {
+            PresentationModePreference.LowLatency => PresentModeKHR.MailboxKhr,
+            PresentationModePreference.Immediate => PresentModeKHR.ImmediateKhr,
+            _ => PresentModeKHR.FifoKhr
+        };
+        if (optionalMode != PresentModeKHR.FifoKhr)
         {
             for (var index = 0; index < available.Count; index++)
             {
-                if (available[index] == PresentModeKHR.MailboxKhr)
-                    return PresentModeKHR.MailboxKhr;
+                if (available[index] == optionalMode)
+                    return optionalMode;
             }
         }
         return PresentModeKHR.FifoKhr;

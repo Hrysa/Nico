@@ -7,7 +7,10 @@ public enum PresentationModePreference
     Fifo,
 
     /// <summary>Prefers tear-free mailbox presentation so stale queued frames are replaced.</summary>
-    LowLatency
+    LowLatency,
+
+    /// <summary>Prefers unsynchronized immediate presentation, allowing visible tearing.</summary>
+    Immediate
 }
 
 /// <summary>Configures creation of an engine window.</summary>

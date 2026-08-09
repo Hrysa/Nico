@@ -5,12 +5,18 @@ using Engine.Scripting;
 
 namespace ExampleGame;
 
-/// <summary>Moves a dynamic character relative to a following third-person camera.</summary>
+/// <summary>Moves a dynamic character relative to an independently orbiting third-person camera.</summary>
 public sealed partial class ThirdPersonController : SceneScript
 {
+    private const float DegreesToRadians = MathF.PI / 180f;
+    private const float MinimumPitch = -80f * DegreesToRadians;
+    private const float MaximumPitch = -10f * DegreesToRadians;
     private RigidBodyComponent _body = null!;
     private PerspectiveCamera? _camera;
     private Node3D? _cameraRig;
+    private float _cameraYaw;
+    private float _cameraPitch = -45f * DegreesToRadians;
+    private int _stableVerticalFrames;
 
     /// <summary>Gets or sets horizontal movement speed in world units per second.</summary>
     [Observe(Editor)]
@@ -24,6 +30,14 @@ public sealed partial class ThirdPersonController : SceneScript
     [Observe(Editor)]
     public partial float CameraTargetHeight { get; set; } = 1.25f;
 
+    /// <summary>Gets or sets the camera distance behind its orbit target.</summary>
+    [Observe(Editor)]
+    public partial float CameraDistance { get; set; } = 7f;
+
+    /// <summary>Gets or sets camera orbit sensitivity in degrees per pointer pixel.</summary>
+    [Observe(Editor)]
+    public partial float CameraOrbitSensitivity { get; set; } = 0.18f;
+
     /// <inheritdoc />
     public override void OnReady()
     {
@@ -36,20 +50,33 @@ public sealed partial class ThirdPersonController : SceneScript
 
         _camera = Scene.FindNode<PerspectiveCamera>("GameCamera");
         _cameraRig = _camera?.Parent as Node3D;
+        if (_camera is not null)
+        {
+            var initialRotation = _camera.GetWorldRotation();
+            _cameraYaw = initialRotation.Y;
+            _cameraPitch = Math.Clamp(initialRotation.X, MinimumPitch, MaximumPitch);
+        }
+        UpdateCameraRig();
     }
 
     /// <inheritdoc />
     public override void OnUpdate(double deltaTime)
     {
-        if (Owner is not Node3D owner3D)
+        if (Owner is not Node3D)
             return;
 
+        UpdateCameraOrbit();
+        UpdateCameraRig();
         var movement = ReadMovement();
         var velocity = _body.LinearVelocity;
         velocity.X = movement.X * MoveSpeed;
         velocity.Z = movement.Z * MoveSpeed;
-        if (Scene.Input.WasKeyPressed(InputKey.Space) && IsGrounded(owner3D, velocity))
+        UpdateGroundedState(velocity);
+        if (Scene.Input.WasKeyPressed(InputKey.Space) && _stableVerticalFrames >= 2)
+        {
             velocity.Y = JumpSpeed;
+            _stableVerticalFrames = 0;
+        }
         _body.LinearVelocity = velocity;
 
         if (movement.LengthSquared() > float.Epsilon)
@@ -90,21 +117,42 @@ public sealed partial class ThirdPersonController : SceneScript
         return movement.LengthSquared() > 1f ? Vector3.Normalize(movement) : movement;
     }
 
-    /// <summary>Keeps the child camera rig level while inheriting the player's position.</summary>
-    private void UpdateCameraRig()
+    /// <summary>Applies right-pointer drag to the independent camera orbit.</summary>
+    private void UpdateCameraOrbit()
     {
-        if (_cameraRig is null)
+        if (!Scene.Input.IsPointerButtonDown(InputPointerButton.Secondary))
             return;
-        _cameraRig.Position = new Vector3(0f, CameraTargetHeight, 0f);
-        _cameraRig.Rotation = new Vector3(0f, -Owner.Rotation.Y, 0f);
+        var delta = Scene.Input.PointerDelta;
+        if (delta == Vector2.Zero || !float.IsFinite(CameraOrbitSensitivity))
+            return;
+        var sensitivity = CameraOrbitSensitivity * DegreesToRadians;
+        _cameraYaw = MathF.IEEERemainder(_cameraYaw - delta.X * sensitivity, MathF.Tau);
+        _cameraPitch = Math.Clamp(
+            _cameraPitch - delta.Y * sensitivity,
+            MinimumPitch,
+            MaximumPitch);
     }
 
-    /// <summary>Checks the initial flat-ground condition supported by the current solver.</summary>
-    /// <param name="owner">Controlled world-space node.</param>
+    /// <summary>Places the orbit pivot at the player and the camera behind that pivot.</summary>
+    private void UpdateCameraRig()
+    {
+        if (_cameraRig is null || _camera is null || Owner is not Node3D owner3D)
+            return;
+        var target = owner3D.GetWorldPosition() + Vector3.UnitY * CameraTargetHeight;
+        _cameraRig.SetWorldTransform(target, new Vector3(_cameraPitch, _cameraYaw, 0f));
+        _camera.Position = new Vector3(0f, 0f, MathF.Max(0.1f, CameraDistance));
+        _camera.Rotation = Vector3.Zero;
+    }
+
+    /// <summary>Tracks consecutive vertically settled frames without assuming a ground height.</summary>
     /// <param name="velocity">Current physics velocity.</param>
-    /// <returns>True when the character is resting at the example scene's ground height.</returns>
-    private static bool IsGrounded(Node3D owner, Vector3 velocity) =>
-        owner.GetWorldPosition().Y <= 0.03f && velocity.Y <= 0.05f;
+    private void UpdateGroundedState(Vector3 velocity)
+    {
+        if (MathF.Abs(velocity.Y) <= 0.05f)
+            _stableVerticalFrames++;
+        else
+            _stableVerticalFrames = 0;
+    }
 
     /// <summary>Adds the default dynamic body used when the scene has none.</summary>
     /// <returns>The attached body.</returns>

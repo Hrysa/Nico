@@ -88,7 +88,7 @@ var options = new WindowOptions
     CustomTitleBar = true,
     IsEventDriven = true,
     TargetFrameRate = 120d,
-    PresentationMode = PresentationModePreference.LowLatency
+    PresentationMode = PresentationModePreference.Immediate
 };
 
 logger.LogInformation("Initializing window...");
@@ -1687,7 +1687,18 @@ void ShowDeleteConfirmation(string targetPath)
             }
             else if (File.Exists(targetPath))
             {
-                File.Delete(targetPath);
+                var asset = assetDatabase.FindByPath(targetPath);
+                if (asset is not null)
+                {
+                    assetDatabase.DeleteAsset(asset.Id);
+                }
+                else
+                {
+                    File.Delete(targetPath);
+                    var sidecarPath = AssetMetadataStore.GetSidecarPath(targetPath);
+                    if (File.Exists(sidecarPath))
+                        File.Delete(sidecarPath);
+                }
             }
             if (removesActiveScene)
             {

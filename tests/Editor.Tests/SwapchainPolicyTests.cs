@@ -37,4 +37,25 @@ public class SwapchainPolicyTests
 
         Assert.Equal(PresentModeKHR.FifoKhr, selected);
     }
+
+    /// <summary>Verifies immediate preference disables synchronized presentation when supported.</summary>
+    [Fact]
+    public void ChoosePresentMode_ImmediateWithSupport_UsesImmediate()
+    {
+        var selected = SwapchainPolicy.ChoosePresentMode(
+            [PresentModeKHR.FifoKhr, PresentModeKHR.ImmediateKhr],
+            PresentationModePreference.Immediate);
+
+        Assert.Equal(PresentModeKHR.ImmediateKhr, selected);
+    }
+
+    /// <summary>Verifies immediate preference safely falls back when the surface lacks support.</summary>
+    [Fact]
+    public void ChoosePresentMode_ImmediateWithoutSupport_UsesFifo()
+    {
+        var selected = SwapchainPolicy.ChoosePresentMode(
+            [PresentModeKHR.FifoKhr], PresentationModePreference.Immediate);
+
+        Assert.Equal(PresentModeKHR.FifoKhr, selected);
+    }
 }

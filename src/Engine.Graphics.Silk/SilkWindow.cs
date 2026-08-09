@@ -72,7 +72,6 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private bool _eventDrivenIdle;
     private double _targetFrameRate;
     private PresentationModePreference _presentationMode;
-    private Timer? _continuousWakeTimer;
     private Timer? _deferredWakeTimer;
     private int _frameRequested;
     private int _discardNextUpdateDelta;
@@ -4419,8 +4418,6 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             uploaded.Dispose();
         foreach (var uploaded in _uploadedTextVertices)
             uploaded.Dispose();
-        _continuousWakeTimer?.Dispose();
-        _continuousWakeTimer = null;
         _deferredWakeTimer?.Dispose();
         _deferredWakeTimer = null;
         _logger.LogInformation("Shutting down...");
@@ -4591,16 +4588,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (_eventDrivenIdle && enabled && !_updatingFrame)
             Interlocked.Exchange(ref _discardNextUpdateDelta, 1);
         _continuousRendering = enabled;
-        if (_eventDrivenIdle)
-        {
-            var interval = TimeSpan.FromSeconds(1d /
-                (_targetFrameRate > 0d ? _targetFrameRate : 60d));
-            _continuousWakeTimer ??= new Timer(
-                static state => ((SilkWindow)state!).RequestFrame(), this,
-                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            _continuousWakeTimer.Change(enabled ? TimeSpan.Zero : Timeout.InfiniteTimeSpan,
-                enabled ? interval : Timeout.InfiniteTimeSpan);
-        }
+        if (_eventDrivenIdle && _window is not null)
+            _window.IsEventDriven = !enabled;
         RequestFrame();
     }
 
