@@ -44,7 +44,7 @@ public sealed record UITheme
     public Color Field { get; init; } = Color.FromSrgb(0x1C, 0x1C, 0x1C);
 
     /// <summary>Gets the hover surface color.</summary>
-    public Color SurfaceHover { get; init; } = Color.FromSrgb(0x23, 0x24, 0x25);
+    public Color SurfaceHover { get; init; } = Color.FromSrgb(0x20, 0x21, 0x22);
 
     /// <summary>Gets the pressed surface color.</summary>
     public Color SurfacePressed { get; init; } = Color.FromSrgb(0x2C, 0x2D, 0x2E);

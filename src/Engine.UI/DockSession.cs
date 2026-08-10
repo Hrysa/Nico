@@ -128,6 +128,9 @@ public interface IDockFloatingWindowFactory
 /// <summary>Coordinates a main dock host with zero or more floating presentation hosts.</summary>
 public sealed class DockSession : IDisposable
 {
+    /// <summary>Occurs after the authoritative workspace or its presentations change.</summary>
+    public event Action? WorkspaceChanged;
+
     private readonly DockPanelRegistry _registry;
     private readonly IDockFloatingWindowFactory _floatingFactory;
     private readonly Dictionary<string, FloatingPresentation> _floatingWindows =
@@ -247,6 +250,19 @@ public sealed class DockSession : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(panelId);
         var title = _registry.GetTitle(panelId);
         if (title is null || !Workspace.OpenTab(panelId, title, anchorId))
+            return false;
+        Refresh();
+        return true;
+    }
+
+    /// <summary>Closes one panel wherever it currently resides.</summary>
+    /// <param name="panelId">Stable registered panel identifier.</param>
+    /// <returns>True when an open panel was removed.</returns>
+    public bool ClosePanel(string panelId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(panelId);
+        if (Workspace.RemoveTab(panelId) is null)
             return false;
         Refresh();
         return true;
@@ -563,6 +579,7 @@ public sealed class DockSession : IDisposable
                 presentation.Host.Refresh();
         }
         SynchronizeFloatingWindows();
+        WorkspaceChanged?.Invoke();
     }
 
     /// <summary>Floats a tab released beyond one of this session's presentation hosts.</summary>

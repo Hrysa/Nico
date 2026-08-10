@@ -104,6 +104,33 @@ public class UIHostTests
         Assert.Equal(new Vector2(240f, 160f), services.LastRenderViewSize);
     }
 
+    /// <summary>Verifies every live layout size change immediately resizes the viewport render target.</summary>
+    [Fact]
+    public void LayoutUpdated_ViewportSizeChanges_ResizesRenderTargetContinuously()
+    {
+        var services = new HostServices();
+        var root = new Canvas();
+        var viewport = new ViewportPanel(100f, 80f, Color.Black)
+        {
+            RenderView = new RenderViewHandle(1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        root.Add(viewport, Vector2.Zero);
+        var tracker = new ViewportPresentationTracker(viewport);
+        using var host = new UIHost(services, services, services, root, 400f, 300f);
+        host.LayoutUpdated += () => tracker.Synchronize(services);
+        host.Refresh();
+        var initialResizeCount = services.RenderViewResizeCount;
+
+        viewport.Width = 180f;
+        viewport.Height = 120f;
+        host.Refresh();
+
+        Assert.Equal(initialResizeCount + 1, services.RenderViewResizeCount);
+        Assert.Equal(new Vector2(180f, 120f), services.LastRenderViewSize);
+    }
+
     /// <summary>Verifies native magnification is exposed in logical host coordinates.</summary>
     [Fact]
     public void PointerMagnified_NativeGesture_ReachesApplicationPreview()

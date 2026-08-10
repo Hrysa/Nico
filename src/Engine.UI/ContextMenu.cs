@@ -884,7 +884,7 @@ public sealed class ContextMenuItem : Button
 
     /// <summary>Updates state and its retained visual marker.</summary>
     /// <param name="isChecked">New state.</param>
-    internal void SetChecked(bool isChecked)
+    public void SetChecked(bool isChecked)
     {
         if (!IsCheckable)
             return;

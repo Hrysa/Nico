@@ -27,6 +27,7 @@ internal static class SystemFontResolver
         if (string.IsNullOrWhiteSpace(windows))
             return;
         var fonts = Path.Combine(windows, "Fonts");
+        Add(sources, paths, Path.Combine(fonts, "SegUIVar.ttf"));
         Add(sources, paths, Path.Combine(fonts, "segoeui.ttf"));
         Add(sources, paths, Path.Combine(fonts, "seguiemj.ttf"));
         Add(sources, paths, Path.Combine(fonts, "seguisym.ttf"));

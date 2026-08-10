@@ -322,6 +322,14 @@ editorView.InspectorButton.Click += () => OpenDockPanel(
     EditorDockWorkspace.InspectorId, EditorDockWorkspace.SceneId);
 editorView.ProfilerButton.Click += ToggleProfiler;
 editorView.ProfilerPauseButton.Click += ToggleProfilerPause;
+foreach (var panelItem in editorView.WindowPanelItems)
+{
+    var panelId = panelItem.Key;
+    var item = panelItem.Value;
+    item.Click += () => SetDockPanelVisible(panelId, item.IsChecked);
+}
+dockSession.WorkspaceChanged += SynchronizeWindowMenuChecks;
+SynchronizeWindowMenuChecks();
 editorView.Profiler.Click += () =>
 {
     if (editorView.Profiler.SelectFrame(lastMousePos))
@@ -573,6 +581,7 @@ void StartPlayMode()
 {
     if (isPlaying || playBuildTask is not null)
         return;
+    OpenDockPanel(EditorDockWorkspace.GameId, EditorDockWorkspace.SceneId);
     try
     {
         pendingPlayScene = ScenePlayClone.Create(sceneRoot, gameCamera);
@@ -626,6 +635,12 @@ void UpdatePlayModeStart(double deltaTime)
         scriptHost = candidateHost;
         physicsWorld = candidatePhysicsWorld;
         isPlaying = true;
+        viewportRenderer.RemapStaticAssetMeshResources(sceneObjects,
+            candidateScene.MeshInstances);
+        detachedSceneRenderer?.RemapStaticAssetMeshResources(sceneObjects,
+            candidateScene.MeshInstances);
+        detachedGameRenderer?.RemapStaticAssetMeshResources(sceneObjects,
+            candidateScene.MeshInstances);
         viewportRenderer.SetSceneObjects(candidateScene.MeshInstances);
         hierarchyTree.SetRoots(candidateScene.Root.Children);
         inspector.RefreshScriptSchemas();
@@ -633,10 +648,13 @@ void UpdatePlayModeStart(double deltaTime)
         viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
         foreach (var assetMesh in candidateScene.MeshInstances)
         {
-            LoadAssetMeshResources(assetMesh);
-            if (detachedSceneRenderer is not null)
+            if (!viewportRenderer.HasAssetMeshResource(assetMesh))
+                LoadAssetMeshResources(assetMesh);
+            if (detachedSceneRenderer is not null &&
+                !detachedSceneRenderer.HasAssetMeshResource(assetMesh))
                 LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
-            if (detachedGameRenderer is not null)
+            if (detachedGameRenderer is not null &&
+                !detachedGameRenderer.HasAssetMeshResource(assetMesh))
                 LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
         }
         MountPlayHud(candidateScene.Root);
@@ -773,6 +791,13 @@ void StopPlayMode()
         logger.LogError(exception, "A script failed while leaving play mode");
     }
     UnmountPlayHud();
+    var runtimeObjects = playScene?.MeshInstances;
+    if (runtimeObjects is not null)
+    {
+        viewportRenderer.RemapStaticAssetMeshResources(runtimeObjects, sceneObjects);
+        detachedSceneRenderer?.RemapStaticAssetMeshResources(runtimeObjects, sceneObjects);
+        detachedGameRenderer?.RemapStaticAssetMeshResources(runtimeObjects, sceneObjects);
+    }
     scriptHost = null;
     physicsWorld?.Dispose();
     physicsWorld = null;
@@ -788,15 +813,19 @@ void StopPlayMode()
     viewportRenderer.SetGameScene(gameCamera, sceneObjects);
     foreach (var assetMesh in sceneObjects)
     {
-        LoadAssetMeshResources(assetMesh);
-        if (detachedSceneRenderer is not null)
+        if (!viewportRenderer.HasAssetMeshResource(assetMesh))
+            LoadAssetMeshResources(assetMesh);
+        if (detachedSceneRenderer is not null &&
+            !detachedSceneRenderer.HasAssetMeshResource(assetMesh))
             LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
-        if (detachedGameRenderer is not null)
+        if (detachedGameRenderer is not null &&
+            !detachedGameRenderer.HasAssetMeshResource(assetMesh))
             LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
     }
     editorView.PlayButtonIcon.Kind = IconKind.Play;
     logger.LogInformation("Exited play mode");
     StartScriptSchemaBuild();
+    OpenDockPanel(EditorDockWorkspace.SceneId, EditorDockWorkspace.GameId);
     RefreshVertices();
 }
 
@@ -835,6 +864,47 @@ void OpenDockPanel(string panelId, string anchorId)
     ResizeEditor(width, height);
     ResizeViewportTargets();
     window.RequestFrame();
+}
+
+/// <summary>Shows or closes one panel selected through the title-bar Window menu.</summary>
+/// <param name="panelId">Stable dock-panel identifier.</param>
+/// <param name="visible">Whether the panel should remain open.</param>
+void SetDockPanelVisible(string panelId, bool visible)
+{
+    var changed = visible
+        ? dockSession.OpenPanel(panelId, GetDockPanelAnchor(panelId))
+        : dockSession.ClosePanel(panelId);
+    if (!changed)
+    {
+        SynchronizeWindowMenuChecks();
+        return;
+    }
+    if (visible && panelId == EditorDockWorkspace.ProfilerId)
+        CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+    ResizeEditor(width, height);
+    ResizeViewportTargets();
+    window.RequestFrame();
+}
+
+/// <summary>Returns the preferred sibling used when restoring one closed panel.</summary>
+/// <param name="panelId">Stable dock-panel identifier.</param>
+/// <returns>Preferred anchor identifier.</returns>
+string GetDockPanelAnchor(string panelId) => panelId switch
+{
+    EditorDockWorkspace.HierarchyId => EditorDockWorkspace.FileSystemId,
+    EditorDockWorkspace.FileSystemId => EditorDockWorkspace.HierarchyId,
+    EditorDockWorkspace.SceneId => EditorDockWorkspace.GameId,
+    EditorDockWorkspace.GameId => EditorDockWorkspace.SceneId,
+    EditorDockWorkspace.InspectorId => EditorDockWorkspace.SceneId,
+    EditorDockWorkspace.ProfilerId => EditorDockWorkspace.GameId,
+    _ => EditorDockWorkspace.SceneId
+};
+
+/// <summary>Synchronizes Window-menu checks with docked and floating panel membership.</summary>
+void SynchronizeWindowMenuChecks()
+{
+    foreach (var panelItem in editorView.WindowPanelItems)
+        panelItem.Value.SetChecked(dockWorkspace.ContainsTab(panelItem.Key));
 }
 
 /// <summary>Toggles live frame recording while retaining captured history.</summary>
@@ -1209,7 +1279,7 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
     }
 }
 
-/// <summary>Treats a dragged GLB source as its primary imported mesh.</summary>
+/// <summary>Instantiates a dragged GLB source as its complete imported node hierarchy.</summary>
 /// <param name="source">Dragged physical GLB file.</param>
 /// <param name="target">Hierarchy parent target, or null for the scene root.</param>
 void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
@@ -1223,17 +1293,66 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
         return;
     }
     var outcome = assetImportPipeline.Import(record, "editor");
-    var primaryMesh = outcome.Artifacts.FirstOrDefault(artifact =>
-        artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
-    if (!outcome.Succeeded || primaryMesh is null)
+    if (!outcome.Succeeded)
     {
-        logger.LogWarning("GLB {FilePath} has no importable primary mesh", source.FullPath);
+        foreach (var diagnostic in outcome.Diagnostics)
+            logger.LogError("GLB import {Code}: {Message}", diagnostic.Code,
+                diagnostic.Message);
         return;
     }
-    var displayName = $"{Path.GetFileNameWithoutExtension(source.FullPath)} [Mesh]";
-    InstantiateImportedMesh(new ImportedSubAssetNode(source.FullPath,
-        new AssetReference(record.Id, primaryMesh.Key), primaryMesh.ContentType, displayName),
-        target);
+    if (isPlaying)
+    {
+        logger.LogWarning("Imported models cannot be added while Play mode is active");
+        return;
+    }
+    var model = GlbSceneInstantiator.Create(source.FullPath, record.Id, outcome);
+    if (model.Meshes.Count == 0)
+    {
+        logger.LogWarning("GLB {FilePath} has no importable mesh nodes", source.FullPath);
+        return;
+    }
+    var destination = target ?? sceneRoot;
+    try
+    {
+        destination.AddChild(model.Root);
+        for (var index = 0; index < model.Meshes.Count; index++)
+        {
+            var mesh = model.Meshes[index];
+            sceneObjects.Add(mesh);
+            LoadAssetMeshResources(mesh, outcome);
+            if (detachedSceneRenderer is not null)
+                LoadAssetMeshResources(mesh, outcome, detachedSceneRenderer);
+            if (detachedGameRenderer is not null)
+                LoadAssetMeshResources(mesh, outcome, detachedGameRenderer);
+        }
+        viewportRenderer.SetSceneObjects(sceneObjects);
+        hierarchyTree.SetRoots(sceneRoot.Children);
+        if (!ReferenceEquals(destination, sceneRoot))
+            hierarchyTree.Expand(destination);
+        hierarchyTree.Expand(model.Root);
+        selection.Select(model.Meshes[0]);
+        FrameSceneCamera(model.Meshes);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        renderScheduler.Invalidate(RenderInvalidation.GameViewport);
+        window.RequestFrame();
+        logger.LogInformation("Instantiated GLB {FilePath} with {MeshCount} mesh primitives",
+            source.FullPath, model.Meshes.Count);
+    }
+    catch
+    {
+        for (var index = 0; index < model.Meshes.Count; index++)
+            sceneObjects.Remove(model.Meshes[index]);
+        model.Root.Parent?.RemoveChild(model.Root);
+        viewportRenderer.SetSceneObjects(sceneObjects);
+        throw;
+    }
+}
+
+/// <summary>Frames a newly imported model and expands clipping for its world bounds.</summary>
+/// <param name="meshes">Imported model mesh instances.</param>
+void FrameSceneCamera(IReadOnlyList<MeshInstance3D> meshes)
+{
+    SceneCameraFraming.TryFrame(sceneCamera, meshes);
 }
 
 /// <summary>Imports and binds runtime resources for one persistent model instance.</summary>
@@ -1904,11 +2023,28 @@ void AddColliderComponent(Node target)
     if (target is not Node3D node || node.GetComponent<ColliderComponent>() is not null)
         return;
     var mesh = node is MeshInstance3D meshInstance ? meshInstance.Mesh : (AssetReference?)null;
-    node.AddComponent(CreatePrimitiveCollider(mesh));
+    if (mesh is null && HasDescendantMesh(node))
+        node.AddComponent(new ColliderComponent { Shape = ColliderShape.Mesh });
+    else
+        node.AddComponent(CreatePrimitiveCollider(mesh));
     if (physicsWorld is not null)
         physicsWorld.Attach(GetActiveSceneRoot());
     CloseHierarchyContextMenu();
     InvalidateViewports();
+}
+
+/// <summary>Returns whether a hierarchy contains an imported mesh below its root.</summary>
+/// <param name="node">Hierarchy root to inspect.</param>
+/// <returns>True when a descendant mesh instance exists.</returns>
+bool HasDescendantMesh(Node node)
+{
+    var children = node.Children;
+    for (var index = 0; index < children.Count; index++)
+    {
+        if (children[index] is MeshInstance3D || HasDescendantMesh(children[index]))
+            return true;
+    }
+    return false;
 }
 
 /// <summary>Adds a dynamic rigid body to one selected scene node.</summary>
@@ -2020,10 +2156,12 @@ void ShowHierarchyContextMenu()
     hierarchyTree.Select(ReferenceEquals(target, activeRoot) ? null : target);
 
     const float menuWidth = 180f;
-    const float menuHeight = 84f;
+    const float menuHeight = 136f;
     var menuX = Math.Clamp(lastMousePos.X, 0f, MathF.Max(0f, width - menuWidth));
     var menuY = Math.Clamp(lastMousePos.Y, 0f, MathF.Max(0f, height - menuHeight));
     var menu = new ContextMenu(menuWidth) { Name = "HierarchyContextMenu" };
+    menu.AddItem("Focus", () => FocusHierarchyNode(target),
+        !ReferenceEquals(target, activeRoot) && target is Node3D);
     var objectMenu = new ContextMenu(menuWidth) { Name = "HierarchyAdd3DObjectMenu" };
     objectMenu.AddItem("Add Empty Object", () => AddSceneNode(target, null, "Object"));
     objectMenu.AddItem("Add Cube", () => AddSceneNode(target, BuiltInAssets.CubeMesh, "Cube"));
@@ -2055,6 +2193,18 @@ void ShowHierarchyContextMenu()
     overlay.Add(menu, new Vector2(menuX, menuY));
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
+}
+
+/// <summary>Frames one hierarchy node in the Scene viewport and closes its context menu.</summary>
+/// <param name="target">Hierarchy item requested by the user.</param>
+void FocusHierarchyNode(Node target)
+{
+    if (target is Node3D node && SceneCameraFraming.TryFrame(sceneCamera, node))
+    {
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        flyInputWindow.RequestFrame();
+    }
+    CloseHierarchyContextMenu();
 }
 
 void AttachHierarchy(TreeView tree)

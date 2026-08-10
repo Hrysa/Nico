@@ -6,6 +6,73 @@ namespace Editor.Tests;
 /// <summary>Verifies renderer-local decoded text-run caching.</summary>
 public sealed class SilkTextRunCacheTests
 {
+    /// <summary>Verifies Windows system text selects the native hinted rasterization backend.</summary>
+    [Fact]
+    public void Rasterizer_WindowsLatin_UsesDirectWrite()
+    {
+        using var rasterizer = new TrueTypeFontRasterizer();
+
+        Assert.Equal(OperatingSystem.IsWindows(), rasterizer.UsesDirectWriteFor("Hierarchy"));
+        Assert.Equal(OperatingSystem.IsWindows(), rasterizer.UsesRgbSubpixelCoverage);
+    }
+
+    /// <summary>Verifies Windows preserves distinct RGB subpixel coverage in atlas pixels.</summary>
+    [Fact]
+    public void Atlas_WindowsLatin_PreservesRgbSubpixelCoverage()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        using var rasterizer = new TrueTypeFontRasterizer();
+        using var vertices = new NativeBuffer<VertexT>();
+        var command = new UIDrawCommand(
+            0f, 0f, 0f, 0f, Color.White,
+            UIDrawCommandType.Text, "A", 16f, Color.Black);
+
+        rasterizer.AppendVertices(vertices, command, 1f);
+
+        Assert.True(rasterizer.TryTakeAtlasUpdate(out var update));
+        var foundSubpixel = false;
+        for (var pixel = 0; pixel < update.Pixels.Length; pixel += 4)
+        {
+            var red = update.Pixels[pixel];
+            var green = update.Pixels[pixel + 1];
+            var blue = update.Pixels[pixel + 2];
+            foundSubpixel |= update.Pixels[pixel + 3] is > 0 and < byte.MaxValue &&
+                (red != green || green != blue);
+        }
+        Assert.True(foundSubpixel);
+    }
+
+    /// <summary>Verifies a sparse ClearType glyph does not bake an opaque background rectangle.</summary>
+    [Fact]
+    public void Atlas_WindowsSlash_KeepsUncoveredPixelsTransparent()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        using var rasterizer = new TrueTypeFontRasterizer();
+        using var vertices = new NativeBuffer<VertexT>();
+        var command = new UIDrawCommand(
+            0f, 0f, 0f, 0f, Color.White,
+            UIDrawCommandType.Text, "/", 20f, Color.FromSrgb(0x19, 0x1A, 0x1C));
+
+        rasterizer.AppendVertices(vertices, command, 1f);
+
+        Assert.True(rasterizer.TryTakeAtlasUpdate(out var update));
+        var foundTransparentInterior = false;
+        var foundCoveredInterior = false;
+        for (var y = 2; y < update.Height - 2; y++)
+        {
+            for (var x = 2; x < update.Width - 2; x++)
+            {
+                var alpha = update.Pixels[(y * update.Width + x) * 4 + 3];
+                foundTransparentInterior |= alpha == 0;
+                foundCoveredInterior |= alpha != 0;
+            }
+        }
+        Assert.True(foundTransparentInterior);
+        Assert.True(foundCoveredInterior);
+    }
+
     /// <summary>Verifies system fonts shape Arabic without emitting missing glyphs.</summary>
     [Fact]
     public void ShapeText_Arabic_SelectsFallbackFace()

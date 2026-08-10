@@ -80,11 +80,12 @@ internal unsafe sealed class FontAtlasTexture
             }
         };
         Check(_vk.CreateImageView(_device, &viewInfo, null, out _view), "create font atlas view");
+        var filter = rasterizer.UsesRgbSubpixelCoverage ? Filter.Nearest : Filter.Linear;
         var samplerInfo = new SamplerCreateInfo
         {
             SType = StructureType.SamplerCreateInfo,
-            MagFilter = Filter.Linear,
-            MinFilter = Filter.Linear,
+            MagFilter = filter,
+            MinFilter = filter,
             AddressModeU = SamplerAddressMode.ClampToEdge,
             AddressModeV = SamplerAddressMode.ClampToEdge,
             AddressModeW = SamplerAddressMode.ClampToEdge,

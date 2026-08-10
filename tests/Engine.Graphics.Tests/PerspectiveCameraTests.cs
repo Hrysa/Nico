@@ -94,6 +94,21 @@ public class PerspectiveCameraTests
         Assert.NotEqual(before, camera.GetViewMatrix());
     }
 
+    /// <summary>Preserves explicit orbit yaw beyond ninety degrees without Euler decomposition.</summary>
+    [Fact]
+    public void Rotation_YawBeyondNinety_PreservesForwardDirection()
+    {
+        var yaw = 135f * MathF.PI / 180f;
+        var pitch = -30f * MathF.PI / 180f;
+        var camera = new PerspectiveCamera { Rotation = new Vector3(pitch, yaw, 0f) };
+        var expected = new Vector3(
+            MathF.Sin(yaw) * MathF.Cos(pitch),
+            MathF.Sin(pitch),
+            -MathF.Cos(yaw) * MathF.Cos(pitch));
+
+        AssertVectorClose(expected, camera.GetForwardVector());
+    }
+
     /// <summary>
     /// Verifies that aiming at the camera's own position preserves its orientation.
     /// </summary>

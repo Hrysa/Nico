@@ -312,6 +312,34 @@ public sealed class DockWorkspaceTests
         Assert.Equal("profiler", group.SelectedId);
     }
 
+    /// <summary>Verifies panel visibility operations update membership and notify menu-style observers.</summary>
+    [Fact]
+    public void DockSession_CloseAndReopenPanel_UpdatesMembershipAndNotifies()
+    {
+        var workspace = new DockWorkspace
+        {
+            Root = new DockTabGroup([
+                new DockTab("scene", "Scene"),
+                new DockTab("inspector", "Inspector")
+            ])
+        };
+        var registry = new DockPanelRegistry();
+        registry.Register("scene", "Scene",
+            () => new Panel(Engine.Graphics.Color.Black, 10f, 10f));
+        registry.Register("inspector", "Inspector",
+            () => new Panel(Engine.Graphics.Color.Gray, 10f, 10f));
+        using var session = new DockSession(workspace, registry, new FakeFloatingWindowFactory());
+        var changes = 0;
+        session.WorkspaceChanged += () => changes++;
+
+        Assert.True(workspace.ContainsTab("inspector"));
+        Assert.True(session.ClosePanel("inspector"));
+        Assert.False(workspace.ContainsTab("inspector"));
+        Assert.True(session.OpenPanel("inspector", "scene"));
+        Assert.True(workspace.ContainsTab("inspector"));
+        Assert.Equal(2, changes);
+    }
+
     /// <summary>Verifies panel registry factories run once and retain identity.</summary>
     [Fact]
     public void PanelRegistry_Resolve_CreatesContentOnce()

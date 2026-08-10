@@ -1,3 +1,4 @@
+using System.Numerics;
 using Engine.Core;
 
 namespace Engine.Assets;
@@ -36,12 +37,16 @@ public sealed record AssetArtifact(string Key, string ContentType, string Relati
 /// <param name="Kind">Stable object category such as node, skeleton, or animation.</param>
 /// <param name="ParentKey">Optional parent object key within the same category.</param>
 /// <param name="ArtifactKey">Optional runtime artifact represented by this object.</param>
+/// <param name="LocalTransform">Optional parent-relative transform for scene objects.</param>
+/// <param name="ArtifactKeys">Optional runtime artifacts attached to this scene object.</param>
 public sealed record AssetImportObject(
     string Key,
     string Name,
     string Kind,
     string? ParentKey = null,
-    string? ArtifactKey = null);
+    string? ArtifactKey = null,
+    Matrix4x4? LocalTransform = null,
+    IReadOnlyList<string>? ArtifactKeys = null);
 
 /// <summary>Contains the declared outputs of one importer execution.</summary>
 /// <param name="Artifacts">Generated artifact descriptions.</param>

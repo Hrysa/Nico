@@ -25,7 +25,9 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     private readonly Dictionary<ShapedRunKey, ShapedLine> _shapedRuns = [];
     private readonly Queue<ShapedRunKey> _shapedRunOrder = [];
     private readonly BidiResolver _bidiResolver = new();
+    private readonly WindowsDirectWriteRasterizer? _directWrite;
     private readonly int _codiconFontIndex;
+    private bool _usesRgbSubpixelCoverage;
     private int _nextX = AtlasPadding;
     private int _nextY = AtlasPadding;
     private int _rowHeight;
@@ -43,6 +45,9 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
 
     /// <summary>Gets the number of renderer-local decoded and kerned text runs.</summary>
     internal int ShapedRunCount => _shapedRuns.Count;
+
+    /// <summary>Gets whether this renderer can emit RGB subpixel glyph coverage.</summary>
+    internal bool UsesRgbSubpixelCoverage => _usesRgbSubpixelCoverage;
 
     /// <summary>Copies and clears the smallest atlas rectangle containing new glyph pixels.</summary>
     /// <param name="update">Packed RGBA update when dirty pixels exist.</param>
@@ -78,6 +83,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <summary>Loads the operating system's ordered UI font fallback chain.</summary>
     internal TrueTypeFontRasterizer()
     {
+        _directWrite = WindowsDirectWriteRasterizer.TryCreate();
         var sources = SystemFontResolver.Resolve();
         for (var index = 0; index < sources.Length; index++)
         {
@@ -94,11 +100,17 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <summary>Creates one rasterization and shaping face from a system font source.</summary>
     /// <param name="source">System font file and collection index.</param>
     /// <returns>Owned face, or null when the file is not a supported TrueType/OpenType face.</returns>
-    private static FontFace? CreateFace(SystemFontSource source)
+    private FontFace? CreateFace(SystemFontSource source)
     {
         try
         {
-            return CreateFace(File.ReadAllBytes(source.Path), source.FaceIndex);
+            var face = CreateFace(File.ReadAllBytes(source.Path), source.FaceIndex);
+            if (face is not null)
+            {
+                face.DirectWriteFace = _directWrite?.TryCreateFontFace(source.Path, source.FaceIndex);
+                _usesRgbSubpixelCoverage |= face.DirectWriteFace is not null;
+            }
+            return face;
         }
         catch (IOException)
         {
@@ -459,14 +471,16 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
                 glyphFont, pixelHeight * GlyphOversampling);
             var glyph = GetGlyph(
                 shapedGlyph.FontIndex, shapedGlyph.Codepoint, pixelHeight,
-                glyphLayoutScale, rasterScale, command.Color);
+                glyphLayoutScale, rasterScale, command.Color, command.BackgroundColor);
             if (glyph.Width > 0 && glyph.Height > 0)
             {
-                var glyphPixelScale = framebufferScale * GlyphOversampling;
-                var left = cursor + shapedGlyph.XOffset / framebufferScale +
-                    glyph.XOffset / glyphPixelScale;
-                var top = baseline - shapedGlyph.YOffset / framebufferScale +
-                    glyph.YOffset / glyphPixelScale;
+                var glyphPixelScale = framebufferScale * glyph.RasterDensity;
+                var left = SnapToPhysicalPixel(
+                    cursor + shapedGlyph.XOffset / framebufferScale +
+                    glyph.XOffset / glyphPixelScale, framebufferScale);
+                var top = SnapToPhysicalPixel(
+                    baseline - shapedGlyph.YOffset / framebufferScale +
+                    glyph.YOffset / glyphPixelScale, framebufferScale);
                 var right = left + glyph.Width / glyphPixelScale;
                 var bottom = top + glyph.Height / glyphPixelScale;
                 AppendQuad(vertices, left, top, right, bottom, glyph, command.Opacity);
@@ -475,6 +489,13 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         }
         return caretLeft;
     }
+
+    /// <summary>Aligns a logical coordinate with the nearest physical framebuffer pixel.</summary>
+    /// <param name="value">Logical coordinate.</param>
+    /// <param name="framebufferScale">Physical pixels per logical UI pixel.</param>
+    /// <returns>Pixel-aligned logical coordinate.</returns>
+    private static float SnapToPhysicalPixel(float value, float framebufferScale) =>
+        MathF.Round(value * framebufferScale) / framebufferScale;
 
     /// <summary>Prepares and caches one text run without rasterizing its glyph bitmaps.</summary>
     /// <param name="text">Text to decode and kern.</param>
@@ -519,6 +540,16 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     {
         ArgumentNullException.ThrowIfNull(text);
         return SelectFont(text.AsSpan());
+    }
+
+    /// <summary>Reports whether a text sample selects a native DirectWrite rasterization face.</summary>
+    /// <param name="text">Text whose selected face is inspected.</param>
+    /// <returns>True when the selected face uses DirectWrite.</returns>
+    internal bool UsesDirectWriteFor(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var fontIndex = SelectFont(text.AsSpan());
+        return fontIndex >= 0 && _fonts[fontIndex].DirectWriteFace is not null;
     }
 
     /// <summary>Returns the font face used by the shaped glyph at one logical text index.</summary>
@@ -613,6 +644,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         for (var index = 0; index < _fonts.Count; index++)
             _fonts[index].Dispose();
         _fonts.Clear();
+        _directWrite?.Dispose();
     }
 
     /// <summary>Gets or creates a bounded decoded glyph run with scaled advances and kerning.</summary>
@@ -839,6 +871,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="layoutScale">Font scale used for layout metrics.</param>
     /// <param name="rasterScale">Oversampled font scale used for atlas pixels.</param>
     /// <param name="color">Glyph foreground color.</param>
+    /// <param name="backgroundColor">Known solid color behind the glyph.</param>
     /// <returns>Atlas placement and metrics.</returns>
     private AtlasGlyph GetGlyph(
         int fontIndex,
@@ -846,9 +879,10 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         int pixelHeight,
         float layoutScale,
         float rasterScale,
-        Color color)
+        Color color,
+        Color backgroundColor)
     {
-        var key = new GlyphKey(fontIndex, codepoint, pixelHeight, color);
+        var key = new GlyphKey(fontIndex, codepoint, pixelHeight, color, backgroundColor);
         if (_glyphs.TryGetValue(key, out var cached))
             return cached;
 
@@ -857,7 +891,8 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         if (rasterized.Width == 0 || rasterized.Height == 0)
         {
             var empty = new AtlasGlyph(
-                0, 0, rasterized.XOffset, rasterized.YOffset, rasterized.Advance, 0, 0);
+                0, 0, rasterized.XOffset, rasterized.YOffset, rasterized.Advance,
+                rasterized.RasterDensity, 0, 0);
             _glyphs.Add(key, empty);
             return empty;
         }
@@ -871,24 +906,46 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         if (_nextY + rasterized.Height + AtlasPadding > AtlasHeight)
             throw new InvalidOperationException("Inter glyph atlas is full.");
 
-        var red = ToByte(color.R);
-        var green = ToByte(color.G);
-        var blue = ToByte(color.B);
+        var foregroundRed = ToByte(color.R);
+        var foregroundGreen = ToByte(color.G);
+        var foregroundBlue = ToByte(color.B);
+        var backgroundRed = ToByte(backgroundColor.R);
+        var backgroundGreen = ToByte(backgroundColor.G);
+        var backgroundBlue = ToByte(backgroundColor.B);
         for (var row = 0; row < rasterized.Height; row++)
         {
             for (var column = 0; column < rasterized.Width; column++)
             {
                 var destination = ((_nextY + row) * (int)AtlasWidth + _nextX + column) * 4;
-                AtlasPixels[destination] = red;
-                AtlasPixels[destination + 1] = green;
-                AtlasPixels[destination + 2] = blue;
-                AtlasPixels[destination + 3] =
-                    rasterized.Coverage[row * rasterized.Width + column];
+                var coverageIndex = row * rasterized.Width + column;
+                if (rasterized.Coverage.Format == GlyphCoverageFormat.RgbSubpixel)
+                {
+                    var source = coverageIndex * 3;
+                    var redCoverage = rasterized.Coverage.Pixels[source];
+                    var greenCoverage = rasterized.Coverage.Pixels[source + 1];
+                    var blueCoverage = rasterized.Coverage.Pixels[source + 2];
+                    var alphaCoverage = Math.Max(redCoverage,
+                        Math.Max(greenCoverage, blueCoverage));
+                    AtlasPixels[destination] = EncodeSubpixelSource(
+                        backgroundRed, foregroundRed, redCoverage, alphaCoverage);
+                    AtlasPixels[destination + 1] = EncodeSubpixelSource(
+                        backgroundGreen, foregroundGreen, greenCoverage, alphaCoverage);
+                    AtlasPixels[destination + 2] = EncodeSubpixelSource(
+                        backgroundBlue, foregroundBlue, blueCoverage, alphaCoverage);
+                    AtlasPixels[destination + 3] = alphaCoverage;
+                }
+                else
+                {
+                    AtlasPixels[destination] = foregroundRed;
+                    AtlasPixels[destination + 1] = foregroundGreen;
+                    AtlasPixels[destination + 2] = foregroundBlue;
+                    AtlasPixels[destination + 3] = rasterized.Coverage.Pixels[coverageIndex];
+                }
             }
         }
         var glyph = new AtlasGlyph(
             rasterized.Width, rasterized.Height, rasterized.XOffset, rasterized.YOffset,
-            rasterized.Advance, _nextX, _nextY);
+            rasterized.Advance, rasterized.RasterDensity, _nextX, _nextY);
         _glyphs.Add(key, glyph);
         _nextX += rasterized.Width + AtlasPadding;
         _rowHeight = Math.Max(_rowHeight, rasterized.Height);
@@ -914,7 +971,9 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         float layoutScale,
         float rasterScale)
     {
-        var key = new GlyphShapeKey(fontIndex, codepoint, pixelHeight);
+        var face = _fonts[fontIndex];
+        var usesDirectWrite = face.DirectWriteFace is not null;
+        var key = new GlyphShapeKey(fontIndex, codepoint, pixelHeight, usesDirectWrite);
         lock (SharedGlyphLock)
         {
             if (SharedGlyphs.TryGetValue(key, out var cached))
@@ -923,12 +982,22 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
             int height;
             int xOffset;
             int yOffset;
-            var font = GetFont(fontIndex);
+            var font = face.RasterFont;
+            if (face.DirectWriteFace is not null &&
+                _directWrite!.TryRasterize(face.DirectWriteFace, codepoint,
+                    pixelHeight, out var nativeGlyph))
+            {
+                var native = new RasterizedGlyph(
+                    nativeGlyph.Width, nativeGlyph.Height,
+                    nativeGlyph.XOffset, nativeGlyph.YOffset,
+                    GetAdvance(font, codepoint, layoutScale), 1f, nativeGlyph.Coverage);
+                SharedGlyphs.Add(key, native);
+                return native;
+            }
             var bitmap = stbtt_GetGlyphBitmap(
                 font, rasterScale, rasterScale, codepoint,
                 &width, &height, &xOffset, &yOffset);
-            int advance;
-            stbtt_GetGlyphHMetrics(font, codepoint, &advance, null);
+            var scaledAdvance = GetAdvance(font, codepoint, layoutScale);
             var coverage = new byte[Math.Max(0, width * height)];
             if (bitmap != null)
             {
@@ -936,16 +1005,47 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
                 stbtt_FreeBitmap(bitmap, null);
             }
             var glyph = new RasterizedGlyph(
-                width, height, xOffset, yOffset, advance * layoutScale, coverage);
+                width, height, xOffset, yOffset, scaledAdvance, GlyphOversampling,
+                new GlyphCoverage(GlyphCoverageFormat.Grayscale, coverage));
             SharedGlyphs.Add(key, glyph);
             return glyph;
         }
+    }
+
+    /// <summary>Gets one glyph's stb horizontal advance at the requested layout scale.</summary>
+    /// <param name="font">stb font face.</param>
+    /// <param name="codepoint">Glyph identifier.</param>
+    /// <param name="layoutScale">Layout scale.</param>
+    /// <returns>Scaled horizontal advance.</returns>
+    private static float GetAdvance(stbtt_fontinfo font, int codepoint, float layoutScale)
+    {
+        int advance;
+        stbtt_GetGlyphHMetrics(font, codepoint, &advance, null);
+        return advance * layoutScale;
     }
 
     /// <summary>Converts a normalized linear component to an atlas byte.</summary>
     /// <param name="component">Color component.</param>
     /// <returns>Clamped byte.</returns>
     private static byte ToByte(float component) => (byte)MathF.Round(Math.Clamp(component, 0f, 1f) * 255f);
+
+    /// <summary>Encodes one subpixel channel for ordinary source-over alpha blending.</summary>
+    /// <param name="background">Background component.</param>
+    /// <param name="foreground">Foreground component.</param>
+    /// <param name="coverage">Channel-specific subpixel coverage.</param>
+    /// <param name="alphaCoverage">Maximum coverage used by fixed-function blending.</param>
+    /// <returns>Source component that reconstructs the requested channel coverage.</returns>
+    private static byte EncodeSubpixelSource(
+        byte background,
+        byte foreground,
+        byte coverage,
+        byte alphaCoverage)
+    {
+        if (alphaCoverage == 0)
+            return foreground;
+        var source = background + (foreground - background) * coverage / (float)alphaCoverage;
+        return (byte)MathF.Round(Math.Clamp(source, 0f, 255f));
+    }
 
     /// <summary>Appends a textured glyph quad.</summary>
     /// <param name="vertices">Destination vertices.</param>
@@ -981,14 +1081,17 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="Codepoint">Unicode codepoint.</param>
     /// <param name="PixelHeight">Physical pixel height.</param>
     /// <param name="Color">Baked foreground color.</param>
+    /// <param name="BackgroundColor">Baked RGB subpixel background color.</param>
     private readonly record struct GlyphKey(
-        int FontIndex, int Codepoint, int PixelHeight, Color Color);
+        int FontIndex, int Codepoint, int PixelHeight, Color Color, Color BackgroundColor);
 
     /// <summary>Keys immutable glyph shapes shared across renderer windows.</summary>
     /// <param name="FontIndex">Fallback-chain face index.</param>
     /// <param name="Codepoint">Unicode codepoint.</param>
     /// <param name="PixelHeight">Physical pixel height.</param>
-    private readonly record struct GlyphShapeKey(int FontIndex, int Codepoint, int PixelHeight);
+    /// <param name="UsesDirectWrite">Whether native Windows hinting produced the shape.</param>
+    private readonly record struct GlyphShapeKey(
+        int FontIndex, int Codepoint, int PixelHeight, bool UsesDirectWrite);
 
     /// <summary>Keys renderer-local shaped lines by text, height, direction, and typeface.</summary>
     /// <param name="Text">Run text.</param>
@@ -1062,9 +1165,13 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         Face ShapingFace,
         HarfBuzzFont ShapingFont) : IDisposable
     {
+        /// <summary>Gets or sets the optional native Windows rasterization face.</summary>
+        public WindowsDirectWriteRasterizer.FontFace? DirectWriteFace { get; set; }
+
         /// <summary>Releases native shaping and rasterization resources.</summary>
         public void Dispose()
         {
+            DirectWriteFace?.Dispose();
             ShapingFont.Dispose();
             ShapingFace.Dispose();
             ShapingBlob.Dispose();
@@ -1078,14 +1185,16 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="XOffset">Horizontal bearing.</param>
     /// <param name="YOffset">Vertical bearing.</param>
     /// <param name="Advance">Scaled horizontal advance.</param>
-    /// <param name="Coverage">Oversampled alpha coverage.</param>
+    /// <param name="RasterDensity">Bitmap pixels per physical output pixel.</param>
+    /// <param name="Coverage">Format-tagged coverage pixels.</param>
     private sealed record RasterizedGlyph(
         int Width,
         int Height,
         int XOffset,
         int YOffset,
         float Advance,
-        byte[] Coverage);
+        float RasterDensity,
+        GlyphCoverage Coverage);
 
     /// <summary>Stores glyph metrics and atlas placement.</summary>
     /// <param name="Width">Bitmap width.</param>
@@ -1093,6 +1202,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
     /// <param name="XOffset">Horizontal bearing.</param>
     /// <param name="YOffset">Vertical bearing.</param>
     /// <param name="Advance">Scaled horizontal advance.</param>
+    /// <param name="RasterDensity">Bitmap pixels per physical output pixel.</param>
     /// <param name="AtlasX">Atlas left coordinate.</param>
     /// <param name="AtlasY">Atlas top coordinate.</param>
     private sealed record AtlasGlyph(
@@ -1101,6 +1211,7 @@ internal unsafe sealed class TrueTypeFontRasterizer : IDisposable
         int XOffset,
         int YOffset,
         float Advance,
+        float RasterDensity,
         int AtlasX,
         int AtlasY);
 

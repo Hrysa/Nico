@@ -139,6 +139,7 @@ public class SceneScriptRuntimeTests
         runtime.Update(1d / 60d);
 
         Assert.True(script.SecondaryPointerHeld);
+        Assert.True(input.MouseCaptured);
         Assert.Equal(new System.Numerics.Vector2(14f, 25f), script.PointerPosition);
         Assert.Equal(new System.Numerics.Vector2(7f, 3f), script.PointerDelta);
 
@@ -149,6 +150,7 @@ public class SceneScriptRuntimeTests
         input.SetPointerButton(InputPointerButton.Secondary, false);
         runtime.Update(1d / 60d);
         Assert.False(script.SecondaryPointerHeld);
+        Assert.False(input.MouseCaptured);
     }
 
     private sealed class TestScriptCatalog(AssetId id, Type type) : IScriptTypeCatalog
@@ -249,6 +251,7 @@ public class SceneScriptRuntimeTests
             Pressed = Scene.Input.WasKeyPressed(InputKey.W);
             Released = Scene.Input.WasKeyReleased(InputKey.W);
             SecondaryPointerHeld = Scene.Input.IsPointerButtonDown(InputPointerButton.Secondary);
+            Scene.Input.SetPointerCaptured(SecondaryPointerHeld);
             PointerPosition = Scene.Input.PointerPosition;
             PointerDelta = Scene.Input.PointerDelta;
         }
@@ -257,6 +260,9 @@ public class SceneScriptRuntimeTests
     /// <summary>Raises device-neutral input events for runtime tests.</summary>
     private sealed class TestInputSource : IInputSourceV2
     {
+        /// <summary>Gets the latest requested pointer capture state.</summary>
+        public bool MouseCaptured { get; private set; }
+
         public event Action<KeyInputEvent>? KeyChanged;
 
 #pragma warning disable CS0067
@@ -314,6 +320,7 @@ public class SceneScriptRuntimeTests
         /// <inheritdoc/>
         public void SetMouseCaptured(bool captured)
         {
+            MouseCaptured = captured;
         }
     }
 }

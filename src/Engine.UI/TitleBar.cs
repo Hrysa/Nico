@@ -90,15 +90,25 @@ public sealed class TitleBar : Surface
         }
         else
         {
-            minimize = new Button(36f, height, "−", resolvedTheme)
-                { Name = "WindowMinimize", PaddingLeft = 13f, CornerRadius = 0f };
-            maximize = new Button(36f, height, "□", resolvedTheme)
-                { Name = "WindowMaximize", PaddingLeft = 12f, CornerRadius = 0f };
-            close = new Button(36f, height, "×", resolvedTheme)
-                { Name = "WindowClose", PaddingLeft = 12f, CornerRadius = 0f,
+            const float WindowControlGlyphSize = 30f;
+            var minimizeButton = new Button(36f, height, resolvedTheme)
+                { Name = "WindowMinimize", Padding = new Thickness(3f, 0f), CornerRadius = 0f };
+            var maximizeButton = new Button(36f, height, resolvedTheme)
+                { Name = "WindowMaximize", Padding = new Thickness(3f, 0f), CornerRadius = 0f };
+            var closeButton = new Button(36f, height, resolvedTheme)
+                { Name = "WindowClose", Padding = new Thickness(3f, 0f), CornerRadius = 0f,
                     ForegroundColor = Color.White,
                     HoverColor = Color.FromSrgb(0xE8, 0x11, 0x23),
                     PressedColor = Color.FromSrgb(0xC5, 0x0F, 0x1F) };
+            minimizeButton.Content = new WindowsWindowGlyph(
+                WindowControlGlyph.Minimize, WindowControlGlyphSize, resolvedTheme.TextPrimary);
+            maximizeButton.Content = new WindowsWindowGlyph(
+                WindowControlGlyph.Maximize, WindowControlGlyphSize, resolvedTheme.TextPrimary);
+            closeButton.Content = new WindowsWindowGlyph(
+                WindowControlGlyph.Close, WindowControlGlyphSize, Color.White);
+            minimize = minimizeButton;
+            maximize = maximizeButton;
+            close = closeButton;
         }
         minimize.Click += () => MinimizeRequested?.Invoke();
         maximize.Click += () =>
@@ -124,6 +134,65 @@ public sealed class TitleBar : Surface
         }
         Measure(new System.Numerics.Vector2(width, height));
         Arrange(System.Numerics.Vector2.Zero, new System.Numerics.Vector2(width, height));
+    }
+
+    /// <summary>Identifies a Windows caption-button symbol.</summary>
+    private enum WindowControlGlyph
+    {
+        Minimize,
+        Maximize,
+        Close
+    }
+
+    /// <summary>Paints a Windows caption symbol from centered vector strokes.</summary>
+    private sealed class WindowsWindowGlyph : UIElement
+    {
+        private readonly WindowControlGlyph _glyph;
+        private readonly Color _color;
+
+        /// <summary>Creates a fixed-size, non-interactive caption symbol.</summary>
+        /// <param name="glyph">Symbol to paint.</param>
+        /// <param name="size">Square content size.</param>
+        /// <param name="color">Stroke color.</param>
+        public WindowsWindowGlyph(WindowControlGlyph glyph, float size, Color color)
+            : base(size, size)
+        {
+            _glyph = glyph;
+            _color = color;
+            IsHitTestVisible = false;
+        }
+
+        /// <inheritdoc/>
+        protected override void Paint(UIDrawList drawList)
+        {
+            const float HalfExtent = 5f;
+            const float StrokeWidth = 1.25f;
+            var centerX = Left + Width * 0.5f;
+            var centerY = Top + Height * 0.5f;
+            switch (_glyph)
+            {
+                case WindowControlGlyph.Minimize:
+                    drawList.AddLine(centerX - HalfExtent, centerY,
+                        centerX + HalfExtent, centerY, StrokeWidth, _color);
+                    break;
+                case WindowControlGlyph.Maximize:
+                    drawList.AddLine(centerX - HalfExtent, centerY - HalfExtent,
+                        centerX + HalfExtent, centerY - HalfExtent, StrokeWidth, _color);
+                    drawList.AddLine(centerX + HalfExtent, centerY - HalfExtent,
+                        centerX + HalfExtent, centerY + HalfExtent, StrokeWidth, _color);
+                    drawList.AddLine(centerX + HalfExtent, centerY + HalfExtent,
+                        centerX - HalfExtent, centerY + HalfExtent, StrokeWidth, _color);
+                    drawList.AddLine(centerX - HalfExtent, centerY + HalfExtent,
+                        centerX - HalfExtent, centerY - HalfExtent, StrokeWidth, _color);
+                    break;
+                case WindowControlGlyph.Close:
+                    drawList.AddLine(centerX - HalfExtent, centerY - HalfExtent,
+                        centerX + HalfExtent, centerY + HalfExtent, StrokeWidth, _color);
+                    drawList.AddLine(centerX + HalfExtent, centerY - HalfExtent,
+                        centerX - HalfExtent, centerY + HalfExtent, StrokeWidth, _color);
+                    break;
+            }
+        }
     }
 
     /// <inheritdoc/>

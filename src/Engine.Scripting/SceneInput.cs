@@ -81,6 +81,13 @@ public sealed class SceneInput : IDisposable
         return (uint)index < (uint)_pointerDown.Length && _pointerDown[index];
     }
 
+    /// <summary>Captures or releases the runtime pointer for unbounded relative movement.</summary>
+    /// <param name="captured">True to hide and capture the pointer; false to restore it.</param>
+    public void SetPointerCaptured(bool captured)
+    {
+        _source?.SetMouseCaptured(captured);
+    }
+
     /// <summary>Clears one-update transitions after every script has observed them.</summary>
     internal void EndUpdate()
     {

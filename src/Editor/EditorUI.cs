@@ -34,6 +34,28 @@ public static class EditorUI
             ForegroundColor = theme.TextSecondary,
             PaddingLeft = 0f
         };
+        var windowMenu = new ContextMenu(180f, theme) { Name = "WindowMenu" };
+        var windowPanelItems = new Dictionary<string, ContextMenuItem>(StringComparer.Ordinal)
+        {
+            [EditorDockWorkspace.HierarchyId] =
+                windowMenu.AddCheckItem("Hierarchy", isChecked: true, _ => { }),
+            [EditorDockWorkspace.FileSystemId] =
+                windowMenu.AddCheckItem("File System", isChecked: true, _ => { }),
+            [EditorDockWorkspace.SceneId] =
+                windowMenu.AddCheckItem("Scene", isChecked: true, _ => { }),
+            [EditorDockWorkspace.GameId] =
+                windowMenu.AddCheckItem("Game", isChecked: true, _ => { }),
+            [EditorDockWorkspace.InspectorId] =
+                windowMenu.AddCheckItem("Inspector", isChecked: true, _ => { }),
+            [EditorDockWorkspace.ProfilerId] =
+                windowMenu.AddCheckItem("Profiler", isChecked: true, _ => { })
+        };
+        var titleMenuBar = new MenuBar(72f, titleBarHeight, theme)
+        {
+            Name = "TitleMenuBar",
+            BackgroundColor = theme.Canvas
+        };
+        titleMenuBar.AddMenu("Window", windowMenu);
         var playButtonIcon = new Icon(IconKind.Play, 16f)
         {
             ForegroundColor = theme.Accent
@@ -49,7 +71,7 @@ public static class EditorUI
             FlexShrink = 0f
         }.Configure(bar =>
         {
-            bar.LeftZone.WithChildren(projectLabel);
+            bar.LeftZone.WithChildren(titleMenuBar, projectLabel);
             bar.CenterZone.WithChildren(playButton);
         });
 
@@ -223,7 +245,7 @@ public static class EditorUI
             sceneSlot, gameSlot, sceneTools, initialDockHost, workspaceHost,
             profilerLayout, profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
             inspectorButton, profilerButton,
-            profilerPauseButton, profilerPauseLabel);
+            profilerPauseButton, profilerPauseLabel, titleMenuBar, windowMenu, windowPanelItems);
     }
 
     /// <summary>
@@ -288,6 +310,9 @@ public static class EditorUI
 /// <param name="ProfilerButton">Bottom-dock button that toggles the Profiler.</param>
 /// <param name="ProfilerPauseButton">Profiler toolbar pause/record toggle.</param>
 /// <param name="ProfilerPauseLabel">Text showing the current pause/record action.</param>
+/// <param name="TitleMenuBar">Title-bar application menu strip.</param>
+/// <param name="WindowMenu">Window menu containing panel visibility actions.</param>
+/// <param name="WindowPanelItems">Check rows keyed by stable dock-panel identifier.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
@@ -314,4 +339,7 @@ public sealed record EditorView(
     Button InspectorButton,
     Button ProfilerButton,
     Button ProfilerPauseButton,
-    Label ProfilerPauseLabel);
+    Label ProfilerPauseLabel,
+    MenuBar TitleMenuBar,
+    ContextMenu WindowMenu,
+    IReadOnlyDictionary<string, ContextMenuItem> WindowPanelItems);

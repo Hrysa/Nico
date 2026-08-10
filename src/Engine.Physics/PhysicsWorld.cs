@@ -176,11 +176,88 @@ public sealed class PhysicsWorld : IDisposable
                     rigidBody ??= foundRigidBody;
             }
             if (collider is not null)
-                AddBody(node3D, rigidBody, collider);
+            {
+                if (collider.Shape == ColliderShape.Mesh && collider.Mesh is null)
+                    AddDescendantMeshBodies(node3D, rigidBody, collider);
+                else
+                    AddBody(node3D, rigidBody, collider);
+            }
         }
         var children = node.Children;
         for (var index = 0; index < children.Count; index++)
             AttachNode(children[index]);
+    }
+
+    /// <summary>Adds static triangle colliders for imported meshes below a model root.</summary>
+    /// <param name="root">Model root owning the compound collider.</param>
+    /// <param name="rigidBody">Optional root motion settings.</param>
+    /// <param name="source">Authored compound collider settings.</param>
+    private void AddDescendantMeshBodies(
+        Node3D root,
+        RigidBodyComponent? rigidBody,
+        ColliderComponent source)
+    {
+        if (rigidBody is { MotionType: not RigidBodyMotionType.Static })
+            throw new InvalidOperationException("Compound triangle mesh colliders must be static.");
+        var added = 0;
+        AddDescendantMeshBodies(root, source, ref added);
+        if (added == 0)
+        {
+            throw new InvalidOperationException(
+                $"Compound mesh collider '{root.Name}' has no descendant mesh instances.");
+        }
+    }
+
+    /// <summary>Recursively adds one static body for each descendant mesh instance.</summary>
+    /// <param name="node">Current hierarchy node.</param>
+    /// <param name="source">Authored compound collider settings.</param>
+    /// <param name="added">Number of mesh bodies created.</param>
+    private void AddDescendantMeshBodies(
+        Node node,
+        ColliderComponent source,
+        ref int added)
+    {
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            var child = children[index];
+            if (child is MeshInstance3D mesh &&
+                (mesh.Mesh.SubAsset?.StartsWith("model-batch/", StringComparison.Ordinal) == true ||
+                 !HasModelBatchDescendant(node)))
+            {
+                var collider = new ColliderComponent
+                {
+                    Shape = ColliderShape.Mesh,
+                    Mesh = mesh.Mesh,
+                    Center = source.Center,
+                    Friction = source.Friction,
+                    Restitution = source.Restitution,
+                    IsTrigger = source.IsTrigger
+                };
+                AddBody(mesh, null, collider);
+                added++;
+            }
+            AddDescendantMeshBodies(child, source, ref added);
+        }
+    }
+
+    /// <summary>Returns whether a hierarchy contains an optimized model batch.</summary>
+    /// <param name="node">Hierarchy root.</param>
+    /// <returns>True when a batch mesh exists below the node.</returns>
+    private static bool HasModelBatchDescendant(Node node)
+    {
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (children[index] is MeshInstance3D mesh &&
+                mesh.Mesh.SubAsset?.StartsWith("model-batch/", StringComparison.Ordinal) == true)
+            {
+                return true;
+            }
+            if (HasModelBatchDescendant(children[index]))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Creates one scaled Bepu primitive and registers its engine mapping.</summary>

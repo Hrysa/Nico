@@ -48,13 +48,16 @@ public sealed class ViewportPresentationTracker
         var visible = _viewport.IsEffectivelyVisible;
         var ownershipChanged = !_synchronized || !ReferenceEquals(_renderer, renderer) ||
             _renderView != renderView;
-        if (visible && (ownershipChanged || !_visible))
+        var bounds = new UIClipRect(
+            _viewport.Left, _viewport.Top, _viewport.Right, _viewport.Bottom);
+        var sizeChanged = !_synchronized ||
+            bounds.Right - bounds.Left != _bounds.Right - _bounds.Left ||
+            bounds.Bottom - bounds.Top != _bounds.Bottom - _bounds.Top;
+        if (visible && (ownershipChanged || !_visible || sizeChanged))
         {
             renderer.ResizeRenderView(renderView, _viewport.Width, _viewport.Height);
             renderTargetResized = true;
         }
-        var bounds = new UIClipRect(
-            _viewport.Left, _viewport.Top, _viewport.Right, _viewport.Bottom);
         if (_synchronized && ReferenceEquals(_renderer, renderer) &&
             _renderView == renderView && _bounds == bounds && _visible == visible)
             return false;

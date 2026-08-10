@@ -71,6 +71,42 @@ public sealed class PhysicsWorldTests
         Assert.InRange(MathF.Abs(rigidBody.LinearVelocity.Y), 0f, 0.001f);
     }
 
+    /// <summary>Expands a model-root mesh collider across optimized descendant batches.</summary>
+    [Fact]
+    public void Attach_ModelRootMeshCollider_UsesDescendantBatchGeometry()
+    {
+        var meshReference = new AssetReference(AssetId.New(), "model-batch/0");
+        var mesh = new StaticMeshResource(
+        [
+            new ModelVertex(new Vector3(-5f, 0f, -5f), Vector3.UnitY, Vector2.Zero,
+                Vector4.UnitX),
+            new ModelVertex(new Vector3(5f, 0f, -5f), Vector3.UnitY, Vector2.Zero,
+                Vector4.UnitX),
+            new ModelVertex(new Vector3(5f, 0f, 5f), Vector3.UnitY, Vector2.Zero,
+                Vector4.UnitX),
+            new ModelVertex(new Vector3(-5f, 0f, 5f), Vector3.UnitY, Vector2.Zero,
+                Vector4.UnitX)
+        ], [0, 2, 1, 0, 3, 2], [new Submesh(0, 6, 0)]);
+        var root = new Node3D();
+        var model = new Node3D { Position = new Vector3(0f, -1f, 0f) };
+        model.AddComponent(new ColliderComponent { Shape = ColliderShape.Mesh });
+        model.AddChild(new MeshInstance3D { Mesh = meshReference });
+        var box = new Node3D { Position = new Vector3(0f, 3f, 0f) };
+        box.AddComponent(new ColliderComponent());
+        box.AddComponent(new RigidBodyComponent { LinearDamping = 0f });
+        root.AddChild(model);
+        root.AddChild(box);
+        using var world = new PhysicsWorld(reference =>
+            reference == meshReference ? mesh : null);
+
+        world.Attach(root);
+        for (var step = 0; step < 180; step++)
+            world.Update(1d / 60d);
+
+        Assert.Equal(2, world.BodyCount);
+        Assert.InRange(box.Position.Y, -0.501f, -0.499f);
+    }
+
     /// <summary>Verifies triggers report overlap without moving either body.</summary>
     [Fact]
     public void Update_TriggerOverlap_ReportsWithoutResponse()

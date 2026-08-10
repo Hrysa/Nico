@@ -10,12 +10,12 @@ public sealed partial class ThirdPersonController : SceneScript
 {
     private const float DegreesToRadians = MathF.PI / 180f;
     private const float MinimumPitch = -80f * DegreesToRadians;
-    private const float MaximumPitch = -10f * DegreesToRadians;
+    private const float MaximumPitch = 80f * DegreesToRadians;
     private RigidBodyComponent _body = null!;
     private PerspectiveCamera? _camera;
-    private Node3D? _cameraRig;
     private float _cameraYaw;
     private float _cameraPitch = -45f * DegreesToRadians;
+    private bool _cameraOrbitActive;
     private int _stableVerticalFrames;
 
     /// <summary>Gets or sets horizontal movement speed in world units per second.</summary>
@@ -49,12 +49,17 @@ public sealed partial class ThirdPersonController : SceneScript
             AddDefaultCollider();
 
         _camera = Scene.FindNode<PerspectiveCamera>("GameCamera");
-        _cameraRig = _camera?.Parent as Node3D;
-        if (_camera is not null)
+        if (_camera is not null && Owner is Node3D owner3D)
         {
-            var initialRotation = _camera.GetWorldRotation();
-            _cameraYaw = initialRotation.Y;
-            _cameraPitch = Math.Clamp(initialRotation.X, MinimumPitch, MaximumPitch);
+            var target = owner3D.GetWorldPosition() + Vector3.UnitY * CameraTargetHeight;
+            var direction = target - _camera.GetWorldPosition();
+            if (direction.LengthSquared() > float.Epsilon)
+            {
+                direction = Vector3.Normalize(direction);
+                _cameraYaw = MathF.Atan2(direction.X, -direction.Z);
+                _cameraPitch = Math.Clamp(MathF.Asin(direction.Y),
+                    MinimumPitch, MaximumPitch);
+            }
         }
         UpdateCameraRig();
     }
@@ -89,6 +94,14 @@ public sealed partial class ThirdPersonController : SceneScript
         UpdateCameraRig();
     }
 
+    /// <inheritdoc />
+    public override void OnDestroy()
+    {
+        if (_cameraOrbitActive)
+            Scene.Input.SetPointerCaptured(false);
+        _cameraOrbitActive = false;
+    }
+
     /// <summary>Reads normalized camera-relative WASD movement.</summary>
     /// <returns>Horizontal world-space movement direction.</returns>
     private Vector3 ReadMovement()
@@ -120,28 +133,40 @@ public sealed partial class ThirdPersonController : SceneScript
     /// <summary>Applies right-pointer drag to the independent camera orbit.</summary>
     private void UpdateCameraOrbit()
     {
-        if (!Scene.Input.IsPointerButtonDown(InputPointerButton.Secondary))
+        var secondaryDown = Scene.Input.IsPointerButtonDown(InputPointerButton.Secondary);
+        if (secondaryDown != _cameraOrbitActive)
+        {
+            _cameraOrbitActive = secondaryDown;
+            Scene.Input.SetPointerCaptured(secondaryDown);
+        }
+        if (!secondaryDown)
             return;
         var delta = Scene.Input.PointerDelta;
         if (delta == Vector2.Zero || !float.IsFinite(CameraOrbitSensitivity))
             return;
         var sensitivity = CameraOrbitSensitivity * DegreesToRadians;
-        _cameraYaw = MathF.IEEERemainder(_cameraYaw - delta.X * sensitivity, MathF.Tau);
+        _cameraYaw = MathF.IEEERemainder(_cameraYaw + delta.X * sensitivity, MathF.Tau);
         _cameraPitch = Math.Clamp(
             _cameraPitch - delta.Y * sensitivity,
             MinimumPitch,
             MaximumPitch);
     }
 
-    /// <summary>Places the orbit pivot at the player and the camera behind that pivot.</summary>
+    /// <summary>Places only the camera on a spherical world-space orbit around the player.</summary>
     private void UpdateCameraRig()
     {
-        if (_cameraRig is null || _camera is null || Owner is not Node3D owner3D)
+        if (_camera is null || Owner is not Node3D owner3D)
             return;
         var target = owner3D.GetWorldPosition() + Vector3.UnitY * CameraTargetHeight;
-        _cameraRig.SetWorldTransform(target, new Vector3(_cameraPitch, _cameraYaw, 0f));
-        _camera.Position = new Vector3(0f, 0f, MathF.Max(0.1f, CameraDistance));
-        _camera.Rotation = Vector3.Zero;
+        var horizontal = MathF.Cos(_cameraPitch);
+        var forward = new Vector3(
+            MathF.Sin(_cameraYaw) * horizontal,
+            MathF.Sin(_cameraPitch),
+            -MathF.Cos(_cameraYaw) * horizontal);
+        var distance = MathF.Max(0.1f, CameraDistance);
+        var cameraPosition = target - forward * distance;
+        _camera.Position = cameraPosition;
+        _camera.Rotation = new Vector3(_cameraPitch, _cameraYaw, 0f);
     }
 
     /// <summary>Tracks consecutive vertically settled frames without assuming a ground height.</summary>

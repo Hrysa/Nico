@@ -61,8 +61,6 @@ internal unsafe sealed class PersistentIndexedMeshStore
         };
         _resources.Add(handle, resource);
         _pendingUploads.Add(resource);
-        _logger.LogDebug("Created indexed mesh with {VertexCount} vertices and {IndexCount} indices",
-            vertices.Length, indices.Length);
     }
 
     /// <summary>Gets whether a handle belongs to the indexed model store.</summary>
@@ -103,9 +101,17 @@ internal unsafe sealed class PersistentIndexedMeshStore
     {
         if (_pendingUploads.Count == 0)
             return;
-        var byteCount = checked((uint)_pendingUploads.Sum(resource =>
-            (long)resource.Vertices.Length * ForwardModelVertex.Stride +
-            (long)resource.Indices.Length * sizeof(uint)));
+        long totalBytes = 0;
+        for (var index = 0; index < _pendingUploads.Count; index++)
+        {
+            var resource = _pendingUploads[index];
+            totalBytes = checked(totalBytes +
+                (long)resource.Vertices.Length * ForwardModelVertex.Stride +
+                (long)resource.Indices.Length * sizeof(uint));
+        }
+        var byteCount = checked((uint)totalBytes);
+        _logger.LogDebug("Uploading {MeshCount} indexed meshes ({ByteCount} bytes)",
+            _pendingUploads.Count, byteCount);
         var staging = transientArena.Allocate(frameIndex, byteCount);
         var offset = 0UL;
         foreach (var resource in _pendingUploads)

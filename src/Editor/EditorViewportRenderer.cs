@@ -78,6 +78,40 @@ public sealed class EditorViewportRenderer : IDisposable
         ReleaseUnusedMeshes();
     }
 
+    /// <summary>Transfers reusable static GPU resources between corresponding scene copies.</summary>
+    /// <param name="source">Current scene instances.</param>
+    /// <param name="destination">Replacement scene instances in matching clone order.</param>
+    public void RemapStaticAssetMeshResources(
+        IReadOnlyList<MeshInstance3D> source,
+        IReadOnlyList<MeshInstance3D> destination)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        var count = Math.Min(source.Count, destination.Count);
+        for (var index = 0; index < count; index++)
+        {
+            var previous = source[index];
+            var replacement = destination[index];
+            if (previous.Mesh != replacement.Mesh ||
+                !_assetMeshes.TryGetValue(previous, out var resource) ||
+                resource.Palette.IsValid || _assetMeshes.ContainsKey(replacement))
+            {
+                continue;
+            }
+            _assetMeshes.Remove(previous);
+            _assetMeshes.Add(replacement, resource);
+        }
+    }
+
+    /// <summary>Gets whether one instance already owns a renderer-local mesh resource.</summary>
+    /// <param name="instance">Scene mesh instance.</param>
+    /// <returns>True when no GPU upload is required.</returns>
+    public bool HasAssetMeshResource(MeshInstance3D instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        return _assetMeshes.ContainsKey(instance);
+    }
+
     /// <summary>Changes the renderer-local target used by the Scene viewport.</summary>
     /// <param name="view">New Scene render view.</param>
     public void SetSceneRenderView(RenderViewHandle view)

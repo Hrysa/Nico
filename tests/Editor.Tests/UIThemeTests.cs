@@ -560,6 +560,11 @@ public class UIThemeTests
         Assert.Equal(640f, view.PlayButton.Left + view.PlayButton.Width / 2f);
         Assert.Equal(view.TitleBar.Top + (view.TitleBar.Height - view.PlayButton.Height) / 2f,
             view.PlayButton.Top);
+        Assert.Same(view.TitleMenuBar, view.TitleBar.LeftZone.Children[0]);
+        Assert.Same(view.ProjectLabel, view.TitleBar.LeftZone.Children[1]);
+        Assert.Equal("WindowMenu", view.WindowMenu.Name);
+        Assert.Equal(6, view.WindowPanelItems.Count);
+        Assert.All(view.WindowPanelItems.Values, item => Assert.True(item.IsChecked));
     }
 
     /// <summary>Verifies title-bar drag regions and window buttons dispatch separate actions.</summary>
@@ -628,6 +633,9 @@ public class UIThemeTests
         Assert.Equal(Color.FromSrgb(0xC5, 0x0F, 0x1F), close.PressedColor);
         Assert.All(titleBar.RightZone.Children.OfType<Button>(),
             button => Assert.Equal(0f, button.CornerRadius));
+        Assert.All(titleBar.RightZone.Children.OfType<Button>(),
+            button => Assert.Equal(new System.Numerics.Vector2(30f, 30f),
+                Assert.IsAssignableFrom<UIElement>(button.Content).DesiredSize));
         Assert.DoesNotContain(titleBar.LeftZone.Children,
             child => child.Name.StartsWith("Window", StringComparison.Ordinal));
     }

@@ -17,30 +17,48 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 6;
+    public int Version => 8;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ModelRoot model;
-        using (var validationSource = context.OpenSource())
-            model = ModelRoot.ReadGLB(validationSource);
         using var source = context.OpenSource();
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
         var (document, binary) = ReadContainer(reader);
         using (document)
         {
             var hasMeshes = document.RootElement.TryGetProperty("meshes", out _);
+            ModelRoot? model = null;
+            if (!hasMeshes || HasSkinnedMeshNode(document.RootElement))
+            {
+                using var animationSource = context.OpenSource();
+                model = ModelRoot.ReadGLB(animationSource);
+            }
             var artifacts = ImportMeshes(context, document.RootElement, binary, model).ToList();
             if (!hasMeshes)
                 artifacts.AddRange(ImportStandaloneAnimations(
-                    context, document.RootElement, binary, model));
+                    context, document.RootElement, binary, model!));
             artifacts.AddRange(ImportMaterials(context, document.RootElement));
             artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
             var objects = ImportObjects(document.RootElement, animationsAreArtifacts: !hasMeshes);
             return new AssetImportResult(artifacts, [], [], objects);
         }
+    }
+
+    /// <summary>Returns whether any mesh node is bound to a skin.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <returns>True when skeletal evaluation is required.</returns>
+    private static bool HasSkinnedMeshNode(JsonElement root)
+    {
+        if (!root.TryGetProperty("nodes", out var nodes))
+            return false;
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (node.TryGetProperty("mesh", out _) && node.TryGetProperty("skin", out _))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Describes browsable nodes, skeletons, and animations contained in a GLB.</summary>
@@ -64,7 +82,9 @@ public sealed class GlbModelImporter : IAssetImporter
                     $"node/{nodeIndex}",
                     string.IsNullOrWhiteSpace(name) ? $"Node {nodeIndex}" : name,
                     "node",
-                    parents[nodeIndex] < 0 ? null : $"node/{parents[nodeIndex]}"));
+                    parents[nodeIndex] < 0 ? null : $"node/{parents[nodeIndex]}",
+                    LocalTransform: ReadNodeLocalMatrix(node),
+                    ArtifactKeys: GetNodeMeshArtifactKeys(root, node)));
             }
         }
         if (root.TryGetProperty("skins", out var skins))
@@ -96,6 +116,32 @@ public sealed class GlbModelImporter : IAssetImporter
             }
         }
         return objects;
+    }
+
+    /// <summary>Gets mesh artifacts attached to one source node.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="node">Source node.</param>
+    /// <returns>Mesh artifact keys in primitive order, or null for a non-mesh node.</returns>
+    private static IReadOnlyList<string>? GetNodeMeshArtifactKeys(
+        JsonElement root,
+        JsonElement node)
+    {
+        if (!node.TryGetProperty("mesh", out var meshElement) ||
+            !root.TryGetProperty("meshes", out var meshes))
+        {
+            return null;
+        }
+        var meshIndex = meshElement.GetInt32();
+        if ((uint)meshIndex >= meshes.GetArrayLength())
+            throw new InvalidDataException("GLB node mesh index is out of range.");
+        var mesh = meshes[meshIndex];
+        var meshName = mesh.TryGetProperty("name", out var name)
+            ? Sanitize(name.GetString(), $"mesh-{meshIndex}") : $"mesh-{meshIndex}";
+        var primitives = mesh.GetProperty("primitives");
+        var keys = new string[primitives.GetArrayLength()];
+        for (var primitiveIndex = 0; primitiveIndex < keys.Length; primitiveIndex++)
+            keys[primitiveIndex] = $"mesh/{meshName}/{primitiveIndex}";
+        return keys;
     }
 
     /// <summary>Reads and validates the GLB header and required chunks.</summary>
@@ -137,7 +183,7 @@ public sealed class GlbModelImporter : IAssetImporter
         AssetImportContext context,
         JsonElement root,
         byte[] binary,
-        ModelRoot model)
+        ModelRoot? model)
     {
         if (!root.TryGetProperty("asset", out var asset) ||
             !asset.TryGetProperty("version", out var version) ||
@@ -148,6 +194,8 @@ public sealed class GlbModelImporter : IAssetImporter
         if (!root.TryGetProperty("meshes", out var meshes))
             return [];
         var artifacts = new List<AssetArtifact>();
+        var staticBatches = new Dictionary<int, StaticMeshBatch>();
+        var staticInstances = BuildStaticMeshInstances(root, meshes.GetArrayLength());
         var meshIndex = 0;
         foreach (var mesh in meshes.EnumerateArray())
         {
@@ -159,7 +207,8 @@ public sealed class GlbModelImporter : IAssetImporter
                 ? null : ImportSkeleton(root, binary, skin.Value.Skin,
                     skin.Value.MeshNodeIndex);
             var animations = skeleton is null
-                ? [] : ImportAnimations(model, skeleton.Value);
+                ? [] : ImportAnimations(model ?? throw new InvalidDataException(
+                    "GLB skinned mesh validation model is unavailable."), skeleton.Value);
             var primitiveIndex = 0;
             foreach (var primitive in mesh.GetProperty("primitives").EnumerateArray())
             {
@@ -194,14 +243,13 @@ public sealed class GlbModelImporter : IAssetImporter
                     throw new InvalidDataException("GLB primitive contains invalid triangle indices.");
                 if (!attributes.TryGetProperty("NORMAL", out _))
                     GenerateNormals(positions, indices, normals);
-                if (skeleton is null)
-                {
-                    var nodeTransform = FindStaticMeshNodeTransform(root, meshIndex);
-                    ApplyStaticMeshTransform(
-                        positions, normals, tangents, indices, nodeTransform);
-                }
                 var materialSlot = primitive.TryGetProperty("material", out var materialElement)
                     ? materialElement.GetInt32() : -1;
+                if (skeleton is null)
+                {
+                    AppendStaticBatch(staticBatches, materialSlot, positions, normals,
+                        texCoords, tangents, colors, indices, staticInstances[meshIndex]);
+                }
                 var relativePath = skeleton is null
                     ? $"meshes/{meshName}-{primitiveIndex}.nmesh"
                     : $"meshes/{meshName}-{primitiveIndex}.nskin";
@@ -240,7 +288,108 @@ public sealed class GlbModelImporter : IAssetImporter
         }
         if (artifacts.Count == 0)
             throw new InvalidDataException("GLB contains no mesh primitives.");
+        foreach (var pair in staticBatches)
+        {
+            var materialSlot = pair.Key;
+            var batch = pair.Value;
+            var slotName = materialSlot < 0 ? "default" : materialSlot.ToString();
+            var relativePath = $"meshes/model-batch-{slotName}.nmesh";
+            using (var output = context.CreateArtifact(relativePath))
+            {
+                WriteMesh(output, batch.Positions.ToArray(), batch.Normals.ToArray(),
+                    batch.TexCoords.ToArray(), batch.Tangents.ToArray(),
+                    batch.Colors.ToArray(), batch.Indices.ToArray(), materialSlot);
+            }
+            artifacts.Add(new AssetArtifact($"model-batch/{slotName}",
+                "nico/static-mesh", relativePath));
+        }
         return artifacts;
+    }
+
+    /// <summary>Builds world transforms of static nodes grouped by logical mesh index.</summary>
+    /// <param name="root">glTF JSON root.</param>
+    /// <param name="meshCount">Logical mesh count.</param>
+    /// <returns>Static instance transforms for each logical mesh.</returns>
+    private static IReadOnlyList<Matrix4x4>[] BuildStaticMeshInstances(
+        JsonElement root,
+        int meshCount)
+    {
+        var result = new IReadOnlyList<Matrix4x4>[meshCount];
+        var mutable = new List<Matrix4x4>[meshCount];
+        for (var index = 0; index < meshCount; index++)
+            mutable[index] = [];
+        if (root.TryGetProperty("nodes", out var nodes))
+        {
+            var parents = BuildNodeParents(nodes);
+            var cache = new Matrix4x4[nodes.GetArrayLength()];
+            var states = new byte[nodes.GetArrayLength()];
+            for (var nodeIndex = 0; nodeIndex < nodes.GetArrayLength(); nodeIndex++)
+            {
+                var node = nodes[nodeIndex];
+                if (!node.TryGetProperty("mesh", out var meshElement) ||
+                    node.TryGetProperty("skin", out _))
+                {
+                    continue;
+                }
+                var meshIndex = meshElement.GetInt32();
+                if ((uint)meshIndex >= mutable.Length)
+                    throw new InvalidDataException("GLB node mesh index is out of range.");
+                mutable[meshIndex].Add(ComputeNodeWorldMatrix(
+                    nodes, parents, nodeIndex, cache, states));
+            }
+        }
+        for (var index = 0; index < result.Length; index++)
+        {
+            if (mutable[index].Count == 0)
+                mutable[index].Add(Matrix4x4.Identity);
+            result[index] = mutable[index];
+        }
+        return result;
+    }
+
+    /// <summary>Appends every transformed static instance to its material batch.</summary>
+    /// <param name="batches">Material-indexed destination batches.</param>
+    /// <param name="materialSlot">Source material slot.</param>
+    /// <param name="positions">Primitive positions.</param>
+    /// <param name="normals">Primitive normals.</param>
+    /// <param name="texCoords">Primitive texture coordinates.</param>
+    /// <param name="tangents">Primitive tangents.</param>
+    /// <param name="colors">Primitive colors.</param>
+    /// <param name="indices">Primitive indices.</param>
+    /// <param name="instances">World transforms of nodes instantiating the mesh.</param>
+    private static void AppendStaticBatch(
+        Dictionary<int, StaticMeshBatch> batches,
+        int materialSlot,
+        Vector3[] positions,
+        Vector3[] normals,
+        Vector2[] texCoords,
+        Vector4[] tangents,
+        Vector4[] colors,
+        uint[] indices,
+        IReadOnlyList<Matrix4x4> instances)
+    {
+        if (!batches.TryGetValue(materialSlot, out var batch))
+        {
+            batch = new StaticMeshBatch();
+            batches.Add(materialSlot, batch);
+        }
+        for (var instanceIndex = 0; instanceIndex < instances.Count; instanceIndex++)
+        {
+            var transformedPositions = positions.ToArray();
+            var transformedNormals = normals.ToArray();
+            var transformedTangents = tangents.ToArray();
+            var transformedIndices = indices.ToArray();
+            ApplyStaticMeshTransform(transformedPositions, transformedNormals,
+                transformedTangents, transformedIndices, instances[instanceIndex]);
+            var vertexOffset = checked((uint)batch.Positions.Count);
+            batch.Positions.AddRange(transformedPositions);
+            batch.Normals.AddRange(transformedNormals);
+            batch.TexCoords.AddRange(texCoords);
+            batch.Tangents.AddRange(transformedTangents);
+            batch.Colors.AddRange(colors);
+            for (var index = 0; index < transformedIndices.Length; index++)
+                batch.Indices.Add(checked(transformedIndices[index] + vertexOffset));
+        }
     }
 
     /// <summary>Imports clips from a GLB that intentionally contains no geometry.</summary>
@@ -1444,6 +1593,17 @@ public sealed class GlbModelImporter : IAssetImporter
 
     /// <summary>Resolved binary accessor range.</summary>
     private readonly record struct AccessorView(int Offset, int Count, int Stride);
+
+    /// <summary>Accumulates world-baked static geometry sharing one material.</summary>
+    private sealed class StaticMeshBatch
+    {
+        public List<Vector3> Positions { get; } = [];
+        public List<Vector3> Normals { get; } = [];
+        public List<Vector2> TexCoords { get; } = [];
+        public List<Vector4> Tangents { get; } = [];
+        public List<Vector4> Colors { get; } = [];
+        public List<uint> Indices { get; } = [];
+    }
 
     /// <summary>Four remapped joint indices.</summary>
     private readonly record struct JointIndices(uint X, uint Y, uint Z, uint W);

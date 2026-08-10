@@ -1317,8 +1317,28 @@ public sealed class UIEventRouter
     /// <param name="inheritedClip">Clip inherited from ancestors.</param>
     /// <returns>The topmost hit element, or null.</returns>
     private static UIElement? HitTest(UIElement element, Vector2 position, UIClipRect? inheritedClip)
+        => HitTestLayer(element, position, inheritedClip, overlayOnly: true, inheritedOverlay: false) ??
+            HitTestLayer(element, position, inheritedClip, overlayOnly: false, inheritedOverlay: false);
+
+    /// <summary>Finds the topmost visible element in one composition layer.</summary>
+    /// <param name="element">Subtree root.</param>
+    /// <param name="position">Point in window pixels.</param>
+    /// <param name="inheritedClip">Clip inherited from ancestors.</param>
+    /// <param name="overlayOnly">Whether to consider the overlay layer instead of ordinary content.</param>
+    /// <param name="inheritedOverlay">Whether an ancestor establishes overlay composition.</param>
+    /// <returns>The topmost hit element in the requested layer, or null.</returns>
+    private static UIElement? HitTestLayer(
+        UIElement element,
+        Vector2 position,
+        UIClipRect? inheritedClip,
+        bool overlayOnly,
+        bool inheritedOverlay)
     {
         if (!element.IsVisible || !element.IsEnabled)
+            return null;
+
+        var overlay = inheritedOverlay || element.IsOverlay;
+        if (!overlayOnly && overlay)
             return null;
 
         var bounds = new UIClipRect(element.Left, element.Top, element.Right, element.Bottom);
@@ -1333,11 +1353,13 @@ public sealed class UIEventRouter
         for (var index = element.Children.Count - 1; index >= 0; index--)
         {
             if (element.Children[index] is UIElement child &&
-                HitTest(child, position, effectiveClip) is { } childHit)
+                HitTestLayer(child, position, effectiveClip, overlayOnly, overlay) is { } childHit)
                 return childHit;
         }
 
-        return element.IsHitTestVisible && element.ContainsPoint(position) ? element : null;
+        return overlay == overlayOnly && element.IsHitTestVisible && element.ContainsPoint(position)
+            ? element
+            : null;
     }
 
     /// <summary>Owns allocation-reused route and event storage for one reentrancy depth.</summary>

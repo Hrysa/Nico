@@ -8,6 +8,32 @@ namespace Editor.Tests;
 
 public class UIEventRouterTests
 {
+    /// <summary>Verifies overlay descendants receive input ahead of later ordinary-content branches.</summary>
+    [Fact]
+    public void PointerClick_OverlayDescendant_WinsAcrossSiblingBranches()
+    {
+        var root = new Panel(Color.Black, 200f, 100f);
+        var titleBarBranch = new Panel(Color.Gray, 100f, 30f);
+        var overlayItem = new Button(100f, 30f, "Window item") { IsOverlay = true };
+        var underlyingItem = new Button(100f, 30f, "Hierarchy item");
+        titleBarBranch.AddChild(overlayItem);
+        root.AddChild(titleBarBranch);
+        root.AddChild(underlyingItem);
+        root.BuildDrawList();
+        var overlayClicks = 0;
+        var underlyingClicks = 0;
+        overlayItem.Click += () => overlayClicks++;
+        underlyingItem.Click += () => underlyingClicks++;
+        var router = new UIEventRouter(root, () => { });
+
+        router.MovePointer(new Vector2(20f, 20f));
+        router.Press();
+        router.Release(invokeClick: true);
+
+        Assert.Equal(1, overlayClicks);
+        Assert.Equal(0, underlyingClicks);
+    }
+
     /// <summary>Verifies pointer routing to an unchanged hover target allocates no managed memory.</summary>
     [Fact]
     public void PointerMove_UnchangedTarget_DoesNotAllocate()

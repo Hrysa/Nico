@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Engine.Core;
@@ -10,6 +11,39 @@ namespace Engine.Assets.Tests;
 public sealed class GlbModelImporterTests : IDisposable
 {
     private readonly string _directory = Directory.CreateTempSubdirectory("nico-glb-").FullName;
+
+    /// <summary>Imports the MMO valley model with every node and mesh primitive preserved.</summary>
+    [Fact]
+    public void Import_MmoValley_PreservesCompleteModelComposition()
+    {
+        var sourcePath = Path.GetFullPath("../../example_game/models/mmo_valley_phase5.glb",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        Assert.True(File.Exists(sourcePath), $"Required regression asset is missing: {sourcePath}");
+        var staging = Path.Combine(_directory, "valley-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var context = new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None);
+
+        var result = new GlbModelImporter().Import(context);
+
+        Assert.Equal(243, result.Artifacts.Count(item =>
+            item.Key.StartsWith("mesh/", StringComparison.Ordinal) &&
+            item.ContentType is "nico/static-mesh" or "nico/skinned-mesh"));
+        Assert.Equal(21, result.Artifacts.Count(item =>
+            item.Key.StartsWith("model-batch/", StringComparison.Ordinal)));
+        var nodes = result.Objects!.Where(item => item.Kind == "node").ToArray();
+        Assert.Equal(557, nodes.Length);
+        var firstMeshNode = Assert.Single(nodes, item => item.Name == "Aether_Crystal");
+        Assert.Equal(new Vector3(1650f, 556.3811f, -40f),
+            firstMeshNode.LocalTransform!.Value.Translation);
+        Assert.Equal("mesh/Cone/0", Assert.Single(firstMeshNode.ArtifactKeys!));
+    }
+
+    /// <summary>Gets this test source path independently of the test host working directory.</summary>
+    /// <param name="path">Compiler-provided source path.</param>
+    /// <returns>Absolute test source path.</returns>
+    private static string GetSourceFilePath([CallerFilePath] string path = "") => path;
 
     /// <summary>Imports indexed geometry and generates missing normals.</summary>
     [Fact]
@@ -25,8 +59,9 @@ public sealed class GlbModelImporterTests : IDisposable
 
         var result = new GlbModelImporter().Import(context);
 
-        Assert.Equal(3, result.Artifacts.Count);
+        Assert.Equal(4, result.Artifacts.Count);
         var artifact = Assert.Single(result.Artifacts, item =>
+            item.Key.StartsWith("mesh/", StringComparison.Ordinal) &&
             item.ContentType == "nico/static-mesh");
         Assert.Equal("mesh/Triangle/0", artifact.Key);
         Assert.Equal("nico/static-mesh", artifact.ContentType);
@@ -37,11 +72,15 @@ public sealed class GlbModelImporterTests : IDisposable
         Assert.Equal(3u, reader.ReadUInt32());
         Assert.Equal(3u, reader.ReadUInt32());
         Assert.Equal(0, reader.ReadInt32());
-        Assert.Equal(new Vector3(5f, 6f, 7f), ReadVector3(reader));
+        Assert.Equal(Vector3.Zero, ReadVector3(reader));
         Assert.Equal(Vector3.UnitZ, ReadVector3(reader));
         reader.BaseStream.Position += sizeof(float) * 6;
         Assert.Equal(new Vector4(0.2f, 0.4f, 0.6f, 1f), ReadVector4(reader));
-        Assert.Equal(new Vector3(7f, 6f, 7f), ReadVector3(reader));
+        Assert.Equal(new Vector3(1f, 0f, 0f), ReadVector3(reader));
+        var meshNode = Assert.Single(result.Objects!, item =>
+            item.Kind == "node" && item.ArtifactKeys is { Count: > 0 });
+        Assert.Equal(new Vector3(5f, 6f, 7f), meshNode.LocalTransform!.Value.Translation);
+        Assert.Equal(artifact.Key, Assert.Single(meshNode.ArtifactKeys!));
         var materialArtifact = Assert.Single(result.Artifacts, item =>
             item.ContentType == "nico/standard-material");
         using var materialReader = new BinaryReader(File.OpenRead(Path.Combine(staging,

@@ -264,6 +264,22 @@ public sealed class DockWorkspace
         return false;
     }
 
+    /// <summary>Gets whether a panel exists in the main tree or any floating root.</summary>
+    /// <param name="tabId">Stable panel identifier.</param>
+    /// <returns>True when the panel is currently open.</returns>
+    public bool ContainsTab(string tabId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tabId);
+        if (FindGroup(Root, tabId) is not null)
+            return true;
+        for (var index = 0; index < FloatingRoots.Count; index++)
+        {
+            if (FindGroup(FloatingRoots[index].Root, tabId) is not null)
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>Opens or selects a panel beside a stable anchor panel.</summary>
     /// <param name="tabId">Stable panel identifier.</param>
     /// <param name="title">Displayed tab title.</param>
