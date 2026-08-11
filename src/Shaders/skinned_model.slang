@@ -3,6 +3,8 @@ struct PushConstants
     row_major float4x4 model;
     row_major float4x4 view;
     row_major float4x4 projection;
+    float4 lightDirectionIntensity;
+    float4 lightColorAmbient;
 };
 
 [[vk::push_constant]]
@@ -60,9 +62,10 @@ VertexOutput vertexMain(VertexInput input)
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
     float3 normal = normalize(input.worldNormal);
-    float3 lightDirection = normalize(float3(0.35, 0.8, 0.45));
+    float3 lightDirection = normalize(pc.lightDirectionIntensity.xyz);
     float diffuse = max(dot(normal, lightDirection), 0.0);
-    float lighting = 0.2 + diffuse * 0.8;
+    float3 lighting = pc.lightColorAmbient.rgb *
+        (pc.lightColorAmbient.w + diffuse * pc.lightDirectionIntensity.w);
     float4 sampledColor = baseColorTexture.Sample(input.texCoord);
     float4 surfaceColor = input.baseColor * sampledColor;
     return float4(surfaceColor.rgb * lighting, surfaceColor.a);

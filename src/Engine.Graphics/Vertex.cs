@@ -89,3 +89,59 @@ public struct PushConstants
     /// <summary>Projection transform.</summary>
     public Matrix4x4 Projection;
 }
+
+/// <summary>Stores model transforms and basic forward-lighting parameters.</summary>
+public struct ModelPushConstants
+{
+    /// <summary>Object-to-world transform.</summary>
+    public Matrix4x4 Model;
+    /// <summary>World-to-camera transform.</summary>
+    public Matrix4x4 View;
+    /// <summary>Camera projection transform.</summary>
+    public Matrix4x4 Projection;
+    /// <summary>XYZ direction toward light and W direct intensity.</summary>
+    public Vector4 LightDirectionIntensity;
+    /// <summary>RGB linear light color and W ambient intensity.</summary>
+    public Vector4 LightColorAmbient;
+
+    /// <summary>Combines camera/object constants with one queue's lighting.</summary>
+    /// <param name="transforms">Object and camera transforms.</param>
+    /// <param name="lighting">Resolved scene lighting.</param>
+    /// <returns>Constants consumed by static and skinned forward shaders.</returns>
+    public static ModelPushConstants Create(PushConstants transforms, SceneLighting lighting) =>
+        new()
+        {
+            Model = transforms.Model,
+            View = transforms.View,
+            Projection = transforms.Projection,
+            LightDirectionIntensity = new Vector4(lighting.DirectionToLight, lighting.Intensity),
+            LightColorAmbient = new Vector4(lighting.Color, lighting.AmbientIntensity)
+        };
+}
+
+/// <summary>Stores texture transforms and presentation-effect parameters.</summary>
+public struct TexturePushConstants
+{
+    /// <summary>Object-to-world transform.</summary>
+    public Matrix4x4 Model;
+    /// <summary>World-to-camera transform.</summary>
+    public Matrix4x4 View;
+    /// <summary>Camera projection transform.</summary>
+    public Matrix4x4 Projection;
+    /// <summary>X stores grayscale strength; remaining channels are reserved.</summary>
+    public Vector4 OutputEffects;
+
+    /// <summary>Combines texture transforms with one render view's output settings.</summary>
+    /// <param name="transforms">Texture geometry transforms.</param>
+    /// <param name="output">Presentation effects for the sampled render view.</param>
+    /// <returns>Constants consumed by the texture shader.</returns>
+    public static TexturePushConstants Create(
+        PushConstants transforms,
+        RenderOutputSettings output) => new()
+        {
+            Model = transforms.Model,
+            View = transforms.View,
+            Projection = transforms.Projection,
+            OutputEffects = new Vector4(output.GrayscaleStrength, 0f, 0f, 0f)
+        };
+}

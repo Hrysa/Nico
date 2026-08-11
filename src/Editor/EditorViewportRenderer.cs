@@ -9,7 +9,7 @@ namespace Editor;
 /// <summary>
 /// Builds and submits the Scene and Game viewport render queues for each frame.
 /// </summary>
-public sealed class EditorViewportRenderer : IDisposable
+public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
 {
     private readonly IRenderer _renderer;
     private RenderViewHandle _sceneViewport;
@@ -25,6 +25,8 @@ public sealed class EditorViewportRenderer : IDisposable
     private readonly OriginAxesMesh _originAxes = new();
     private readonly RenderQueue _sceneQueue = new();
     private readonly RenderQueue _gameQueue = new();
+    private RenderPipeline _sceneRenderPipeline;
+    private RenderPipeline _gameRenderPipeline;
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
     private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
@@ -36,6 +38,20 @@ public sealed class EditorViewportRenderer : IDisposable
 
     /// <summary>Gets script-facing controllers owned by this renderer's scene resources.</summary>
     public ISceneAnimationService AnimationService => _animationRegistry;
+
+    /// <summary>Gets or sets the pass composition used by the Scene render view.</summary>
+    public RenderPipeline SceneRenderPipeline
+    {
+        get => _sceneRenderPipeline;
+        set => _sceneRenderPipeline = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>Gets or sets the pass composition used by the Game render view.</summary>
+    public RenderPipeline RenderPipeline
+    {
+        get => _gameRenderPipeline;
+        set => _gameRenderPipeline = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
     /// <summary>Gets whether an owned visible controller needs recurring updates.</summary>
     public bool HasActiveAnimations
@@ -65,6 +81,7 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="selection">Selection and gizmo controller.</param>
     /// <param name="previewMeshResolver">Optional explicit collision-mesh preview resolver.</param>
     /// <param name="previewTerrainResolver">Optional explicit terrain preview resolver.</param>
+    /// <param name="renderPipeline">Optional render-pass composition.</param>
     public EditorViewportRenderer(
         IRenderer renderer,
         RenderViewHandle sceneViewport,
@@ -75,7 +92,8 @@ public sealed class EditorViewportRenderer : IDisposable
         Node sceneRoot,
         SceneSelectionController selection,
         Func<AssetReference, StaticMeshResource?>? previewMeshResolver = null,
-        Func<AssetReference, TerrainResource?>? previewTerrainResolver = null)
+        Func<AssetReference, TerrainResource?>? previewTerrainResolver = null,
+        RenderPipeline? renderPipeline = null)
     {
         _renderer = renderer;
         _sceneViewport = sceneViewport;
@@ -86,6 +104,8 @@ public sealed class EditorViewportRenderer : IDisposable
         _gameObjects = sceneObjects;
         _sceneRoot = sceneRoot;
         _selection = selection;
+        _sceneRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
+        _gameRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
         _previewRegistry = ScenePreviewRegistry.CreateDefault(
             previewMeshResolver, previewTerrainResolver);
     }
@@ -426,6 +446,7 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <summary>Builds and submits the Scene viewport queue.</summary>
     private void RenderSceneViewport()
     {
+        _sceneQueue.Lighting = SceneLighting.Resolve(_sceneRoot);
         var view = _sceneCamera.GetViewMatrix();
         var projection = _sceneCamera.GetProjectionMatrix();
         _renderer.DrawGroundGrid(_sceneViewport, view, projection);
@@ -446,7 +467,7 @@ public sealed class EditorViewportRenderer : IDisposable
         }
         AddDepthTestedPreviews(view, projection);
 
-        _renderer.Submit(_sceneViewport, _sceneQueue);
+        _sceneRenderPipeline.Render(_renderer, _sceneViewport, _sceneQueue);
     }
 
     /// <summary>Queues depth-tested preview lines as cached thin unit-box meshes.</summary>
@@ -526,6 +547,7 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="height">Game viewport height.</param>
     private void RenderGameViewport(float width, float height)
     {
+        _gameQueue.Lighting = SceneLighting.Resolve(_sceneRoot);
         _gameCamera.UpdateViewport(width, height);
         for (var index = 0; index < _gameObjects.Count; index++)
         {
@@ -536,7 +558,7 @@ public sealed class EditorViewportRenderer : IDisposable
                     _gameCamera.GetPushConstants(instance.GetModelMatrix()));
             }
         }
-        _renderer.Submit(_gameViewport, _gameQueue);
+        _gameRenderPipeline.Render(_renderer, _gameViewport, _gameQueue);
     }
 
     /// <summary>Gets or creates the retained renderer resource for a mesh.</summary>

@@ -5,7 +5,7 @@ namespace Engine.Graphics;
 /// <summary>
 /// Accepts editor UI and viewport rendering work independently of window lifecycle.
 /// </summary>
-public interface IRenderer
+public interface IRenderer : IRenderQueueSubmitter
 {
     /// <summary>Creates a retained mesh resource.</summary>
     /// <param name="description">Mesh data and lifetime policy.</param>
@@ -93,11 +93,6 @@ public interface IRenderer
     /// <param name="view">Render view to describe.</param>
     /// <returns>The viewport context.</returns>
     ViewportRenderContext CreateRenderContext(RenderViewHandle view);
-
-    /// <summary>Submits an ordered render queue to a viewport.</summary>
-    /// <param name="view">Render view receiving the queue.</param>
-    /// <param name="renderQueue">Commands to enqueue for the current frame.</param>
-    void Submit(RenderViewHandle view, RenderQueue renderQueue);
 
     /// <summary>Queues a procedural ground grid in a viewport.</summary>
     /// <param name="renderView">Render view receiving the grid.</param>

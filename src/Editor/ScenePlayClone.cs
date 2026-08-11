@@ -48,6 +48,13 @@ public static class ScenePlayClone
         {
             PerspectiveCamera camera => new PerspectiveCamera(
                 camera.Fov, near: camera.Near, far: camera.Far),
+            DirectionalLight3D light => new DirectionalLight3D
+            {
+                Color = light.Color,
+                Intensity = light.Intensity,
+                AmbientIntensity = light.AmbientIntensity,
+                IsEnabled = light.IsEnabled
+            },
             MeshInstance3D => new MeshInstance3D(),
             HudRoot => new HudRoot(),
             Node3D when source.GetType() == typeof(Node3D) => new Node3D(),

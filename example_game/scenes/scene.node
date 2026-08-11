@@ -1,14 +1,14 @@
 {
-  "formatVersion": 9,
-  "gameCameraId": "d4c6bda96e57436bab1f7826bad183b4",
+  "formatVersion": 11,
+  "gameCameraId": "95bb391ce6d04cbdb4483b434d5c0e0a",
   "nodes": [
     {
-      "id": "eda738dcc11d4b03a660fb66379256a4",
+      "id": "f6502e8436ac42a3b6899c417378fa8f",
       "type": "assetMesh",
       "name": "SceneCube",
       "position": {
         "x": 1.9573392,
-        "y": 0,
+        "y": 1.4202765,
         "z": 0
       },
       "rotation": {
@@ -70,6 +70,7 @@
       ],
       "customType": null,
       "camera": null,
+      "directionalLight": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/cube",
@@ -79,7 +80,7 @@
       "children": []
     },
     {
-      "id": "ec5d46a1c424497c9cfbae30c06140ea",
+      "id": "7e478fa5e1c54113af358c40a6fa0edf",
       "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
@@ -111,10 +112,16 @@
               "asset": "019fe17c-33cb-7db4-bfa8-4d3f24803e02",
               "subAsset": "animation/0"
             },
-            "clip": null,
+            "clip": "Idle",
             "playAutomatically": true,
             "loop": true,
-            "speed": 1
+            "speed": 1,
+            "defaultFadeDuration": 0.2,
+            "defaultClip": "Idle",
+            "animationSet": {
+              "asset": "019ff038-6e1e-7a7d-bd1d-01a67bb65285",
+              "subAsset": "main"
+            }
           }
         },
         {
@@ -147,13 +154,13 @@
             "shape": null,
             "center": {
               "x": 0,
-              "y": 0,
+              "y": 0.85,
               "z": 0
             },
             "size": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 0.5,
+              "y": 1.75,
+              "z": 0.5
             },
             "radius": 0.5,
             "height": 1,
@@ -175,6 +182,7 @@
       ],
       "customType": null,
       "camera": null,
+      "directionalLight": null,
       "model": {
         "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
         "subAsset": "mesh/Mesh/0",
@@ -189,7 +197,7 @@
       "children": []
     },
     {
-      "id": "d4c6bda96e57436bab1f7826bad183b4",
+      "id": "95bb391ce6d04cbdb4483b434d5c0e0a",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -215,12 +223,13 @@
         "near": 0.1,
         "far": 1000
       },
+      "directionalLight": null,
       "model": null,
       "materialOverride": null,
       "children": []
     },
     {
-      "id": "32b3a3015bc04ea7b76c9d084a9f820c",
+      "id": "8442cf43e8e64f0cade6c7c201e5c276",
       "type": "custom",
       "name": "HUD",
       "position": {
@@ -252,12 +261,13 @@
       ],
       "customType": "nico/hud-root",
       "camera": null,
+      "directionalLight": null,
       "model": null,
       "materialOverride": null,
       "children": []
     },
     {
-      "id": "fccba5f3ae03471e8466727fac0eab82",
+      "id": "88717dd05c584b03b208c312a8d6a1ba",
       "type": "assetMesh",
       "name": "Plane 1",
       "position": {
@@ -315,11 +325,49 @@
       ],
       "customType": null,
       "camera": null,
+      "directionalLight": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/plane",
         "materials": []
       },
+      "materialOverride": null,
+      "children": []
+    },
+    {
+      "id": "fdfaf73aeda4486bb3a855ed5ad197e9",
+      "type": "directionalLight",
+      "name": "Directional Light 1",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": -0.7853982,
+        "y": 0.61086524,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [],
+      "customType": null,
+      "camera": null,
+      "directionalLight": {
+        "color": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "intensity": 1,
+        "ambientIntensity": 0.2,
+        "isEnabled": true
+      },
+      "model": null,
       "materialOverride": null,
       "children": []
     }

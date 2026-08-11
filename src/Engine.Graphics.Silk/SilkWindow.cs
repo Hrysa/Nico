@@ -139,6 +139,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private readonly Dictionary<uint, ulong[]> _uploadedViewportQuadGenerations = new();
     private readonly Dictionary<uint, VertexT[][]> _uploadedViewportQuadVertices = new();
     private readonly Dictionary<uint, List<RenderCommand>> _pendingViewportDraws = new();
+    private readonly Dictionary<uint, SceneLighting> _pendingViewportLighting = new();
+    private readonly Dictionary<uint, RenderOutputSettings> _pendingViewportOutput = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private readonly HashSet<uint> _pendingViewportRenders = [];
     private uint _nextViewportId = 1;
@@ -2159,8 +2161,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 $"Failed to create model texture descriptor pool: {descriptorResult}");
         var pushConstantRange = new PushConstantRange
         {
-            StageFlags = ShaderStageFlags.VertexBit,
-            Size = (uint)sizeof(PushConstants)
+            StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+            Size = (uint)sizeof(ModelPushConstants)
         };
         var descriptorLayout = _pipelines.ModelTextureDescriptorSetLayout;
         var modelLayoutInfo = new PipelineLayoutCreateInfo
@@ -2361,8 +2363,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         };
         var pushConstantRange = new PushConstantRange
         {
-            StageFlags = ShaderStageFlags.VertexBit,
-            Size = (uint)sizeof(PushConstants)
+            StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+            Size = (uint)sizeof(ModelPushConstants)
         };
         var pipelineLayoutInfo = new PipelineLayoutCreateInfo
         {
@@ -2975,9 +2977,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
                 var pushConstantRange = new PushConstantRange
                 {
-                    StageFlags = ShaderStageFlags.VertexBit,
+                    StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
                     Offset = 0,
-                    Size = (uint)sizeof(PushConstants)
+                    Size = (uint)sizeof(TexturePushConstants)
                 };
 
                 var pipelineLayoutInfo = new PipelineLayoutCreateInfo
@@ -3072,6 +3074,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _uploadedViewportQuadVertices.Remove(viewportId);
 
         _pendingViewportDraws.Remove(viewportId);
+        _pendingViewportLighting.Remove(viewportId);
+        _pendingViewportOutput.Remove(viewportId);
         _pendingGridDraws.Remove(viewportId);
         _pendingViewportRenders.Remove(viewportId);
 
@@ -3142,6 +3146,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         if (!_pendingViewportDraws.ContainsKey(viewportId))
             _pendingViewportDraws[viewportId] = [];
+        _pendingViewportLighting[viewportId] = renderQueue.Lighting;
+        _pendingViewportOutput[viewportId] = renderQueue.Output;
 
         foreach (var command in renderQueue.CommandSpan)
         {
@@ -3937,6 +3943,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             // Replay pending draws
             if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
             {
+                var lighting = _pendingViewportLighting.TryGetValue(viewportId,
+                    out var submittedLighting) ? submittedLighting : SceneLighting.None;
                 _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.ViewportPipeline);
 
                 foreach (var draw in draws)
@@ -3964,9 +3972,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                             _pipelines.SkinnedModelLayout, 0, 2,
                             skinnedDescriptorSets, 0, null);
-                        var skinnedConstants = draw.PushConstants;
+                        var skinnedConstants = ModelPushConstants.Create(
+                            draw.PushConstants, lighting);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
-                            ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants),
+                            ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                            0, (uint)sizeof(ModelPushConstants),
                             &skinnedConstants);
                         _vk.CmdDrawIndexed(commandBuffer, skinned.IndexCount, 1, 0, 0, 0);
                         continue;
@@ -3987,9 +3997,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                         var modelDescriptor = _persistentTextures.GetDescriptor(indexed.Texture);
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                             _pipelines.ModelLayout, 0, 1, &modelDescriptor, 0, null);
-                        var indexedConstants = draw.PushConstants;
+                        var indexedConstants = ModelPushConstants.Create(
+                            draw.PushConstants, lighting);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
-                            ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants),
+                            ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                            0, (uint)sizeof(ModelPushConstants),
                             &indexedConstants);
                         _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
                         continue;
@@ -4146,8 +4158,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 ulong texOffset = 0;
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &texVb, &texOffset);
 
+                var output = _pendingViewportOutput.TryGetValue(viewportId,
+                    out var submittedOutput) ? submittedOutput : RenderOutputSettings.None;
+                var textureConstants = TexturePushConstants.Create(pushConstants, output);
                 _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout,
-                    ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pushConstants);
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0, (uint)sizeof(TexturePushConstants), &textureConstants);
 
                 _vk.CmdDraw(commandBuffer, vertexCount, 1, 0, 0);
             }
@@ -4230,8 +4246,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                     _pipelines.TextureLayout, 0, 1, &descriptorSet, 0, null);
                 _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &textBuffer, &offset);
-                _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout, ShaderStageFlags.VertexBit,
-                    0, (uint)sizeof(PushConstants), &pushConstants);
+                var textureConstants = TexturePushConstants.Create(
+                    pushConstants, RenderOutputSettings.None);
+                _vk.CmdPushConstants(commandBuffer, _pipelines.TextureLayout,
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0, (uint)sizeof(TexturePushConstants), &textureConstants);
             }
             _vk.CmdDraw(commandBuffer, batch.VertexCount, 1, batch.FirstVertex, 0);
         }

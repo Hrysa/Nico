@@ -181,6 +181,28 @@ public class SceneScriptRuntimeTests
         Assert.Equal("Idle", controller.Current?.Key);
     }
 
+    /// <summary>Provides the active game pipeline service before script readiness.</summary>
+    [Fact]
+    public void Runtime_RenderingService_CanBeConfiguredByScript()
+    {
+        var scriptId = AssetId.New();
+        var root = new Node3D();
+        var owner = new Node3D();
+        owner.AddComponent(new ScriptComponent(scriptId));
+        root.AddChild(owner);
+        var rendering = new TestRenderingService();
+        using var runtime = new SceneScriptRuntime();
+
+        runtime.Attach(root,
+            new TestScriptCatalog(scriptId, typeof(RenderingRecordingScript)),
+            renderingService: rendering);
+        runtime.Start();
+
+        var script = Assert.IsType<RenderingRecordingScript>(Assert.Single(runtime.Scripts));
+        Assert.Same(rendering, script.Rendering);
+        Assert.NotSame(BasicForwardRenderPipeline.Instance, rendering.RenderPipeline);
+    }
+
     private sealed class TestScriptCatalog(AssetId id, Type type) : IScriptTypeCatalog
     {
         /// <inheritdoc />
@@ -297,6 +319,27 @@ public class SceneScriptRuntimeTests
             Controller = Scene.Animation.GetRequired(Owner);
             Controller.Play("Idle");
         }
+    }
+
+    /// <summary>Replaces the pipeline exposed during readiness.</summary>
+    public sealed class RenderingRecordingScript : SceneScript
+    {
+        /// <summary>Gets the rendering service observed during readiness.</summary>
+        public ISceneRenderingService? Rendering { get; private set; }
+
+        /// <inheritdoc/>
+        public override void OnReady()
+        {
+            Rendering = Scene.Rendering;
+            Rendering.RenderPipeline = new RenderPipeline(new ForwardOpaqueRenderPass());
+        }
+    }
+
+    private sealed class TestRenderingService : ISceneRenderingService
+    {
+        /// <inheritdoc/>
+        public RenderPipeline RenderPipeline { get; set; } =
+            BasicForwardRenderPipeline.Instance;
     }
 
     /// <summary>Raises device-neutral input events for runtime tests.</summary>

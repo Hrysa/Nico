@@ -49,8 +49,16 @@ public class ScenePlayCloneTests
         };
         cube.AddComponent(authoredAnimator);
         var camera = new PerspectiveCamera { Name = "Camera" };
+        var light = new DirectionalLight3D
+        {
+            Color = new Vector3(0.8f, 0.7f, 0.6f),
+            Intensity = 1.5f,
+            AmbientIntensity = 0.12f,
+            IsEnabled = false
+        };
         root.AddChild(cube);
         root.AddChild(camera);
+        root.AddChild(light);
 
         var playScene = ScenePlayClone.Create(root, camera);
         playScene.MeshInstances[0].Position = new Vector3(20f, 0f, 0f);
@@ -87,6 +95,12 @@ public class ScenePlayCloneTests
         Assert.Equal(0.4f, clonedAnimator.DefaultFadeDuration);
         Assert.Equal(material, Assert.Single(playScene.MeshInstances[0].Materials));
         Assert.NotSame(camera, playScene.GameCamera);
+        var clonedLight = Assert.IsType<DirectionalLight3D>(playScene.Root.Children[2]);
+        Assert.NotSame(light, clonedLight);
+        Assert.Equal(light.Color, clonedLight.Color);
+        Assert.Equal(light.Intensity, clonedLight.Intensity);
+        Assert.Equal(light.AmbientIntensity, clonedLight.AmbientIntensity);
+        Assert.False(clonedLight.IsEnabled);
     }
 
     /// <summary>Verifies play mode rejects an active camera outside the authored scene.</summary>

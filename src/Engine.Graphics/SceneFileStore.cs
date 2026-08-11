@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 10;
+    private const int CurrentFormatVersion = 11;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -106,12 +106,14 @@ public static class SceneFileStore
         var type = node switch
         {
             PerspectiveCamera => SceneNodeType.PerspectiveCamera,
+            DirectionalLight3D => SceneNodeType.DirectionalLight,
             MeshInstance3D => SceneNodeType.AssetMesh,
             Node3D when node.GetType() == typeof(Node3D) => SceneNodeType.Node3D,
             ICustomSceneNode => SceneNodeType.Custom,
             _ => throw new NotSupportedException($"Scene node type '{node.GetType().Name}' cannot be saved.")
         };
         var camera = node as PerspectiveCamera;
+        var light = node as DirectionalLight3D;
         var children = node.Children.Select(child => EncodeNode(child, context)).ToList();
         return new SceneNodeData(
             id,
@@ -124,6 +126,9 @@ public static class SceneFileStore
             EncodeComponents(node),
             (node as ICustomSceneNode)?.SceneTypeId,
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
+            light is null ? null : new DirectionalLightData(
+                SceneVector3.From(light.Color), light.Intensity,
+                light.AmbientIntensity, light.IsEnabled),
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
                     meshInstance.Materials.ToList()) : null,
@@ -155,6 +160,7 @@ public static class SceneFileStore
             SceneNodeType.Cube => new MeshInstance3D(),
             SceneNodeType.ImportedModel or SceneNodeType.AssetMesh => CreateAssetMesh(data.Model),
             SceneNodeType.PerspectiveCamera => CreateCamera(data.Camera),
+            SceneNodeType.DirectionalLight => CreateDirectionalLight(data.DirectionalLight),
             SceneNodeType.Custom => CreateCustomNode(data.CustomType, nodeFactory),
             _ => throw new InvalidDataException($"Unsupported scene node type '{data.Type}'.")
         };
@@ -457,6 +463,22 @@ public static class SceneFileStore
         return new PerspectiveCamera(data.Fov, near: data.Near, far: data.Far);
     }
 
+    /// <summary>Creates a directional light from serialized settings.</summary>
+    /// <param name="data">Serialized directional-light settings.</param>
+    /// <returns>A configured scene light.</returns>
+    private static DirectionalLight3D CreateDirectionalLight(DirectionalLightData? data)
+    {
+        if (data is null)
+            throw new InvalidDataException("A directional light node is missing light settings.");
+        return new DirectionalLight3D
+        {
+            Color = data.Color.ToVector3(),
+            Intensity = data.Intensity,
+            AmbientIntensity = data.AmbientIntensity,
+            IsEnabled = data.IsEnabled
+        };
+    }
+
     /// <summary>Creates a mesh node from its persistent resource references.</summary>
     /// <param name="model">Serialized imported mesh reference.</param>
     /// <returns>The reconstructed mesh node.</returns>
@@ -486,6 +508,7 @@ public static class SceneFileStore
         List<SceneComponentData>? Components,
         string? CustomType,
         CameraData? Camera,
+        DirectionalLightData? DirectionalLight,
         ModelData? Model,
         MaterialOverrideData? MaterialOverride,
         List<SceneNodeData> Children);
@@ -506,6 +529,12 @@ public static class SceneFileStore
         bool UseGravity,
         float GravityScale,
         float LinearDamping);
+
+    private sealed record DirectionalLightData(
+        SceneVector3 Color,
+        float Intensity,
+        float AmbientIntensity,
+        bool IsEnabled);
 
     private sealed record ColliderData(
         LegacyColliderShape? Shape = null,
@@ -696,6 +725,7 @@ public static class SceneFileStore
         ImportedModel,
         AssetMesh,
         PerspectiveCamera,
+        DirectionalLight,
         Custom
     }
 

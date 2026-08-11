@@ -31,6 +31,23 @@ public class ScenePreviewRegistryTests
         Assert.Single(previews.Frustums);
     }
 
+    /// <summary>Builds a selectable light icon and illumination-direction marker.</summary>
+    [Fact]
+    public void Build_DirectionalLight_ProducesLightPreview()
+    {
+        var root = new Node3D();
+        var light = new DirectionalLight3D();
+        root.AddChild(light);
+        var registry = ScenePreviewRegistry.CreateDefault();
+        var previews = new ScenePreviewList();
+
+        registry.Build(root, light, previews);
+
+        Assert.Contains(previews.Icons, icon => icon.Kind == ScenePreviewIconKind.Light &&
+            ReferenceEquals(icon.PickingId.Node, light));
+        Assert.Contains(previews.Lines, line => ReferenceEquals(line.PickingId.Node, light));
+    }
+
     /// <summary>Verifies preview picking identities survive hierarchy insertion and rebuilds.</summary>
     [Fact]
     public void Build_HierarchyChanges_PreservesExistingPickingIdentity()

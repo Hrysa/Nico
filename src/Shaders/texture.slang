@@ -3,6 +3,7 @@ struct PushConstants
     row_major float4x4 model;
     row_major float4x4 view;
     row_major float4x4 projection;
+    float4 outputEffects;
 };
 
 [[vk::push_constant]]
@@ -41,6 +42,8 @@ VertexOutput vertexMain(VertexInput input)
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
     float4 color = textureSampler.Sample(input.textureCoordinate);
+    float luminance = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
+    color.rgb = lerp(color.rgb, luminance.xxx, saturate(pc.outputEffects.x));
     color.a *= input.opacity;
     return color;
 }

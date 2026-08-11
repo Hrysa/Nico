@@ -20,6 +20,12 @@ public sealed class RenderQueue
 {
     private readonly List<RenderCommand> _commands = [];
 
+    /// <summary>Gets or sets lighting applied to model submissions in this queue.</summary>
+    public SceneLighting Lighting { get; set; } = SceneLighting.None;
+
+    /// <summary>Gets or sets presentation effects applied to this rendered view.</summary>
+    public RenderOutputSettings Output { get; set; } = RenderOutputSettings.None;
+
     /// <summary>Gets the ordered commands in this queue.</summary>
     public IReadOnlyList<RenderCommand> Commands => _commands;
 
@@ -56,5 +62,6 @@ public sealed class RenderQueue
     public void Clear()
     {
         _commands.Clear();
+        Output = RenderOutputSettings.None;
     }
 }

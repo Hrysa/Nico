@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "entries": [
+    {
+      "alias": "Idle",
+      "source": {
+        "asset": "019fe17c-33cb-7db4-bfa8-4d3f24803e02",
+        "subAsset": "animation/0"
+      }
+    },
+    {
+      "alias": "Run",
+      "source": {
+        "asset": "019fefe0-0061-792f-ba2d-27e40bd50f64",
+        "subAsset": "animation/0"
+      },
+      "inPlace": true,
+      "rootMotionJoint": "mixamorig:Hips"
+    }
+  ]
+}

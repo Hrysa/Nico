@@ -1,12 +1,42 @@
 using Engine.Core;
 using Engine.Graphics;
 using System.Numerics;
+using System.Text;
 using Xunit;
 
 namespace Engine.Graphics.Tests;
 
 public sealed class AnimationSetResourceTests
 {
+    /// <summary>Verifies readable project sources decode into explicit aliased references.</summary>
+    [Fact]
+    public void Load_JsonSource_DecodesEntries()
+    {
+        var asset = AssetId.New();
+        var json = $$"""
+            {
+              "version": 1,
+              "entries": [
+                {
+                  "alias": "Run",
+                  "source": {
+                    "asset": "{{asset}}",
+                    "subAsset": "animation/0"
+                  }
+                }
+              ]
+            }
+            """;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+
+        var resource = AnimationSetResource.Load(stream);
+
+        var entry = Assert.Single(resource.Entries);
+        Assert.Equal("Run", entry.Alias);
+        Assert.Equal(new AssetReference(asset, "animation/0"), entry.Source);
+        Assert.Null(entry.Clip);
+    }
+
     /// <summary>Round-trips stable aliases and explicit source clip references.</summary>
     [Fact]
     public void SaveLoad_ValidSet_PreservesEntries()
@@ -14,7 +44,7 @@ public sealed class AnimationSetResourceTests
         var source = new AssetReference(AssetId.New(), "animation/Run");
         var expected = new AnimationSetResource(
         [
-            new AnimationSetEntry("Run", source, "Sprint"),
+            new AnimationSetEntry("Run", source, "Sprint", true, "Root"),
             new AnimationSetEntry("Idle", source)
         ]);
         using var stream = new MemoryStream();
@@ -24,6 +54,91 @@ public sealed class AnimationSetResourceTests
         var actual = AnimationSetResource.Load(stream);
 
         Assert.Equal(expected.Entries, actual.Entries);
+    }
+
+    /// <summary>Loads version-one binary sets as entries with in-place processing disabled.</summary>
+    [Fact]
+    public void Load_VersionOneBinary_PreservesCompatibility()
+    {
+        var asset = AssetId.New();
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(Encoding.ASCII.GetBytes("NASET001"));
+            writer.Write(1u);
+            writer.Write(1u);
+            writer.Write("Idle");
+            writer.Write(asset.Value.ToByteArray());
+            writer.Write("animation/0");
+            writer.Write(false);
+        }
+        stream.Position = 0;
+
+        var resource = AnimationSetResource.Load(stream);
+
+        var entry = Assert.Single(resource.Entries);
+        Assert.False(entry.InPlace);
+        Assert.Null(entry.RootMotionJoint);
+    }
+
+    /// <summary>Removes X/Z travel while retaining authored vertical root motion.</summary>
+    [Fact]
+    public void BindTo_InPlaceEntry_StripsHorizontalRootTravel()
+    {
+        var reference = new AssetReference(AssetId.New(), "animation/Run");
+        var skeleton = new SkeletonResource(
+        [
+            new SkeletonJoint("Armature", -1, JointTransform.Identity, Matrix4x4.Identity),
+            new SkeletonJoint("mixamorig:Hips", 0, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var hipsTranslation = new Vector3AnimationTrack(
+            [0f, 0.5f, 1f],
+            [new Vector3(2f, 3f, 4f), new Vector3(6f, 5f, 8f), new Vector3(10f, 7f, 12f)],
+            AnimationInterpolation.Linear);
+        var source = new SkeletalAnimationResource(skeleton,
+        [
+            new AnimationClipResource("ImportedRun", 1f,
+            [
+                null,
+                new JointAnimationTrack(hipsTranslation, null, null)
+            ])
+        ]);
+        var set = new AnimationSetResource(
+        [
+            new AnimationSetEntry("Run", reference, null, true, "mixamorig:Hips")
+        ]);
+
+        var clip = Assert.Single(set.BindTo(skeleton, candidate =>
+            candidate == reference ? source : null));
+
+        Assert.Equal(
+        [
+            new Vector3(2f, 3f, 4f),
+            new Vector3(2f, 5f, 4f),
+            new Vector3(2f, 7f, 4f)
+        ], clip.Tracks[1]!.Translation!.Values);
+        Assert.Equal("Run", clip.Name);
+    }
+
+    /// <summary>Rejects an explicit in-place joint that cannot supply root translation.</summary>
+    [Fact]
+    public void BindTo_InPlaceMissingJoint_ThrowsDiagnostic()
+    {
+        var reference = new AssetReference(AssetId.New(), "animation/Run");
+        var skeleton = new SkeletonResource(
+        [
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var source = CreateSource(skeleton, "ImportedRun", Vector3.UnitX);
+        var set = new AnimationSetResource(
+        [
+            new AnimationSetEntry("Run", reference, null, true, "MissingHips")
+        ]);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            set.BindTo(skeleton, _ => source));
+
+        Assert.Contains("MissingHips", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>Rejects aliases whose dictionary identity would be ambiguous.</summary>

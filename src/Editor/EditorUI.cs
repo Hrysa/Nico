@@ -55,6 +55,7 @@ public static class EditorUI
         {
             [ScenePreviewCategory.Nodes] = previewMenu.AddCheckItem("Invisible Nodes", true, _ => { }),
             [ScenePreviewCategory.Cameras] = previewMenu.AddCheckItem("Cameras", true, _ => { }),
+            [ScenePreviewCategory.Lights] = previewMenu.AddCheckItem("Lights", true, _ => { }),
             [ScenePreviewCategory.Colliders] = previewMenu.AddCheckItem("Colliders", true, _ => { })
         };
         var viewMenu = new ContextMenu(180f, theme) { Name = "ViewMenu" };

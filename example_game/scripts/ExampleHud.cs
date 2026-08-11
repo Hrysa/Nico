@@ -12,12 +12,25 @@ public sealed class ExampleHud : SceneScript
     private double _fpsElapsedSeconds;
     private int _fpsFrameCount;
     private int _displayedFps = -1;
+    private ISceneRenderingService? _rendering;
+    private RenderPipeline? _previousPipeline;
+    private RenderPipeline? _installedPipeline;
 
     /// <inheritdoc/>
     public override void OnReady()
     {
         if (Owner is not HudRoot hud)
             throw new InvalidOperationException("ExampleHud must be attached to a HUD root.");
+
+        _rendering = Scene.Rendering;
+        _previousPipeline = _rendering.RenderPipeline;
+        var grayscalePass = new GrayscalePostProcessPass();
+        var previousPasses = _previousPipeline.Passes;
+        var passes = new RenderPipelinePass[previousPasses.Length + 1];
+        previousPasses.CopyTo(passes);
+        passes[^1] = grayscalePass;
+        _installedPipeline = new RenderPipeline(passes);
+        _rendering.RenderPipeline = _installedPipeline;
 
         var theme = UITheme.Dark;
         var status = new Label("Third-person demo", 180f, 32f)
@@ -51,14 +64,19 @@ public sealed class ExampleHud : SceneScript
             ForegroundColor = Color.White,
             IsHitTestVisible = false
         };
-        var action = new Button(120f, 32f, "HUD button", theme, ButtonStyle.Primary)
+        var grayscaleToggle = new ToggleButton(
+            120f, 32f, "Grayscale", theme, ButtonStyle.Primary)
         {
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(16f)
         };
-        action.Click += () => status.Text = "HUD button clicked";
-        var root = UI.Overlay([status, _fpsLabel, crosshair, action]);
+        grayscaleToggle.CheckedChanged += enabled =>
+        {
+            grayscalePass.Enabled = enabled;
+            status.Text = enabled ? "Grayscale enabled" : "Third-person demo";
+        };
+        var root = UI.Overlay([status, _fpsLabel, crosshair, grayscaleToggle]);
         root.Name = "ExampleHudContent";
         root.IsHitTestVisible = false;
         hud.Content = root;
@@ -80,5 +98,18 @@ public sealed class ExampleHud : SceneScript
         }
         _fpsElapsedSeconds = 0d;
         _fpsFrameCount = 0;
+    }
+
+    /// <inheritdoc/>
+    public override void OnDestroy()
+    {
+        if (_rendering is not null && _previousPipeline is not null &&
+            ReferenceEquals(_rendering.RenderPipeline, _installedPipeline))
+        {
+            _rendering.RenderPipeline = _previousPipeline;
+        }
+        _installedPipeline = null;
+        _previousPipeline = null;
+        _rendering = null;
     }
 }

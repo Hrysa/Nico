@@ -10,6 +10,8 @@ public enum ScenePreviewCategory
     Nodes,
     /// <summary>Camera icons, directions, and frustums.</summary>
     Cameras,
+    /// <summary>Light origins and illumination directions.</summary>
+    Lights,
     /// <summary>Authored collision geometry.</summary>
     Colliders
 }
@@ -52,6 +54,8 @@ public enum ScenePreviewIconKind
     Origin,
     /// <summary>Perspective camera body.</summary>
     Camera,
+    /// <summary>Directional-light origin.</summary>
+    Light,
     /// <summary>Invalid or unresolved authored data.</summary>
     Warning
 }

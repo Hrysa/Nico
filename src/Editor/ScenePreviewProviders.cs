@@ -4,6 +4,40 @@ using Engine.Graphics;
 
 namespace Editor;
 
+/// <summary>Builds a selectable direction marker for a directional light.</summary>
+internal sealed class DirectionalLightPreviewProvider : IScenePreviewProvider
+{
+    /// <inheritdoc/>
+    public ScenePreviewCategory Category => ScenePreviewCategory.Lights;
+
+    /// <inheritdoc/>
+    public bool Supports(object value) => value is DirectionalLight3D;
+
+    /// <inheritdoc/>
+    public void Build(Node3D node, object value, ScenePreviewPickingId pickingId,
+        bool selected, bool hovered, ScenePreviewList destination)
+    {
+        var light = (DirectionalLight3D)value;
+        var origin = node.GetWorldPosition();
+        var color = selected ? new Vector4(1f, 0.8f, 0.2f, 1f) :
+            hovered ? new Vector4(1f, 0.9f, 0.45f, 1f) :
+            new Vector4(light.Color, 0.9f);
+        destination.AddIcon(new ScenePreviewIcon(origin, 18f,
+            ScenePreviewIconKind.Light, color,
+            ScenePreviewDepthMode.AlwaysVisible, pickingId));
+        var rayDirection = -light.GetDirectionToLight();
+        var end = origin + rayDirection * 1.5f;
+        destination.AddLine(new ScenePreviewLine(origin, end, color,
+            ScenePreviewDepthMode.AlwaysVisible, pickingId));
+        destination.AddLine(new ScenePreviewLine(end,
+            end - rayDirection * 0.3f + Vector3.UnitY * 0.15f,
+            color, ScenePreviewDepthMode.AlwaysVisible, pickingId));
+        destination.AddLine(new ScenePreviewLine(end,
+            end - rayDirection * 0.3f - Vector3.UnitY * 0.15f,
+            color, ScenePreviewDepthMode.AlwaysVisible, pickingId));
+    }
+}
+
 /// <summary>Builds a camera icon, forward ray, and projection frustum.</summary>
 internal sealed class CameraPreviewProvider : IScenePreviewProvider
 {

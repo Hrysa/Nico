@@ -35,7 +35,7 @@ public interface IScenePreviewProvider
 public sealed class ScenePreviewRegistry
 {
     private readonly List<IScenePreviewProvider> _providers = [];
-    private readonly bool[] _categoryVisibility = [true, true, true];
+    private readonly bool[] _categoryVisibility = [true, true, true, true];
     private readonly Dictionary<object, ulong> _pickingIds = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _hiddenValues = new(ReferenceEqualityComparer.Instance);
     private ulong _nextPickingId = 1;
@@ -162,6 +162,7 @@ public sealed class ScenePreviewRegistry
         var registry = new ScenePreviewRegistry();
         registry.Register(new EmptyNodePreviewProvider());
         registry.Register(new CameraPreviewProvider());
+        registry.Register(new DirectionalLightPreviewProvider());
         registry.Register(new ColliderPreviewProvider(meshResolver, terrainResolver));
         return registry;
     }
@@ -174,7 +175,8 @@ internal sealed class EmptyNodePreviewProvider : IScenePreviewProvider
     public ScenePreviewCategory Category => ScenePreviewCategory.Nodes;
 
     /// <inheritdoc/>
-    public bool Supports(object value) => value is Node3D and not MeshInstance3D and not PerspectiveCamera;
+    public bool Supports(object value) => value is Node3D and not MeshInstance3D and
+        not PerspectiveCamera and not DirectionalLight3D;
 
     /// <inheritdoc/>
     public void Build(Node3D node, object value, ScenePreviewPickingId pickingId,

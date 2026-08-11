@@ -11,6 +11,38 @@ namespace Editor.Tests;
 
 public class SceneInspectorTests
 {
+    /// <summary>Edits directional-light color and intensity through authored Inspector fields.</summary>
+    [Fact]
+    public void DirectionalLight_Fields_UpdateAuthoredSettings()
+    {
+        var light = new DirectionalLight3D();
+        var inspector = new SceneInspector(320f, 620f);
+        inspector.Bind(light);
+        var red = Assert.IsType<TextField>(FindByName<TextField>(inspector, "LightColorX"));
+        var intensity = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "LightIntensity"));
+        var enabled = Assert.IsType<ToggleButton>(
+            FindByName<ToggleButton>(inspector, "LightEnabled"));
+
+        red.SetFocus(true);
+        red.InvokeKeyDown((int)InputKey.Backspace);
+        red.InvokeTextInput('0');
+        red.InvokeTextInput('.');
+        red.InvokeTextInput('5');
+        intensity.SetFocus(true);
+        intensity.InvokeKeyDown((int)InputKey.Backspace);
+        intensity.InvokeTextInput('2');
+        intensity.InvokeTextInput('.');
+        intensity.InvokeTextInput('2');
+        intensity.InvokeTextInput('5');
+        Assert.True(inspector.EditForm.CommitAll());
+        enabled.InvokeClick();
+
+        Assert.Equal(0.5f, light.Color.X);
+        Assert.Equal(2.25f, light.Intensity);
+        Assert.False(light.IsEnabled);
+    }
+
     /// <summary>Verifies an empty Inspector has no obsolete property-filter input.</summary>
     [Fact]
     public void EmptyInspector_DoesNotContainFilterField()

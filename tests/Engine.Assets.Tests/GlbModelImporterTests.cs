@@ -12,6 +12,61 @@ public sealed class GlbModelImporterTests : IDisposable
 {
     private readonly string _directory = Directory.CreateTempSubdirectory("nico-glb-").FullName;
 
+    /// <summary>Imports the example character and Run clip and verifies in-place hips binding.</summary>
+    [Fact]
+    public void Import_ExampleRun_InPlaceBindingRemovesHorizontalHipsTravel()
+    {
+        var models = Path.GetFullPath("../../example_game/models",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var characterStaging = Path.Combine(_directory, "character-staging");
+        var runStaging = Path.Combine(_directory, "run-staging");
+        var characterResult = new GlbModelImporter().Import(new AssetImportContext(
+            Path.Combine(models, "Ch03_nonPBR.glb"),
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", characterStaging, CancellationToken.None));
+        var runResult = new GlbModelImporter().Import(new AssetImportContext(
+            Path.Combine(models, "Running.glb"),
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", runStaging, CancellationToken.None));
+        var characterArtifact = Assert.Single(characterResult.Artifacts,
+            item => item.Key == "mesh/Mesh/0" && item.ContentType == "nico/skinned-mesh");
+        var runArtifact = Assert.Single(runResult.Artifacts,
+            item => item.Key == "animation/0" &&
+                item.ContentType == "nico/skeletal-animation");
+        using var characterStream = File.OpenRead(Path.Combine(
+            characterStaging, characterArtifact.RelativePath));
+        using var runStream = File.OpenRead(Path.Combine(runStaging, runArtifact.RelativePath));
+        var character = SkinnedMeshResource.Load(characterStream);
+        var run = SkeletalAnimationResource.Load(runStream);
+        var reference = new AssetReference(AssetId.New(), "animation/0");
+        var set = new AnimationSetResource(
+        [
+            new AnimationSetEntry(
+                "Run", reference, null, true, "mixamorig:Hips")
+        ]);
+
+        var clip = Assert.Single(set.BindTo(
+            character.Skeleton, _ => run, character.MeshNodeTransform));
+
+        var hips = character.Skeleton.FindJoint("mixamorig:Hips");
+        Assert.True(hips >= 0);
+        var values = clip.Tracks[hips]!.Translation!.Values;
+        Assert.True(values.Length > 1);
+        var pose = new SkeletonPose(character.Skeleton);
+        pose.Evaluate(character.Skeleton, clip, 0f);
+        var initialWorld = pose.WorldTransforms[hips].Translation;
+        var initialRendered = Vector3.Transform(initialWorld, character.MeshNodeTransform);
+        for (var sample = 1; sample <= 20; sample++)
+        {
+            pose.Evaluate(character.Skeleton, clip, clip.Duration * sample / 20f);
+            var world = pose.WorldTransforms[hips].Translation;
+            var rendered = Vector3.Transform(world, character.MeshNodeTransform);
+            Assert.Equal(initialRendered.X, rendered.X, 4);
+            Assert.Equal(initialRendered.Z, rendered.Z, 4);
+        }
+    }
+
     /// <summary>Imports the MMO valley model with every node and mesh primitive preserved.</summary>
     [Fact]
     public void Import_MmoValley_PreservesCompleteModelComposition()

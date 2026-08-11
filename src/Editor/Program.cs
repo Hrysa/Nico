@@ -258,6 +258,7 @@ using var sceneInputContext = new SceneViewportInputContext(sceneViewport, flyCa
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, sceneRoot,
     selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+var gameRenderingService = new EditorGameRenderingService(viewportRenderer);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
 inspector.ResolveAnimationController = instance =>
@@ -542,6 +543,7 @@ void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
         detachedWindow, gameViewportId, gameViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot(),
         selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+    gameRenderingService.SetDetachedRenderer(detachedGameRenderer);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
     detachedWindow.Resized += (_, _) =>
@@ -566,6 +568,7 @@ void CloseFloatingGameViewport(DetachedToolWindow toolWindow)
     if (!ReferenceEquals(detachedGameWindow, toolWindow))
         return;
     detachedGameRenderer?.Dispose();
+    gameRenderingService.SetDetachedRenderer(null);
     detachedGameRenderer = null;
     toolWindow.Window.DestroyRenderView(gameViewportId);
     gameViewportPresentation.Reset();
@@ -679,7 +682,7 @@ void UpdatePlayModeStart(double deltaTime)
             }
         }
         candidateHost.LoadScene(candidateScene.Root, window,
-            viewportRenderer.AnimationService);
+            viewportRenderer.AnimationService, gameRenderingService);
         candidatePhysicsWorld = new PhysicsWorld(
             ResolveCollisionMeshResource, ResolveTerrainResource);
         candidatePhysicsWorld.EnableInterpolation = true;
@@ -1546,8 +1549,19 @@ AnimationClipResource[]? ResolveAnimationClips(MeshInstance3D instance,
     {
         if (animator?.AnimationSet is { } setReference)
         {
+            var setRecord = assetDatabase.Find(setReference.Asset)
+                ?? throw new FileNotFoundException(
+                    $"Animation set asset '{setReference.Asset}' is missing.");
+            var setOutcome = assetImportPipeline.Import(setRecord, "editor");
+            if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
+                    candidate.Key == setReference.SubAsset &&
+                    candidate.ContentType == "nico/animation-set"))
+            {
+                throw new InvalidDataException(
+                    $"Animation set sub-asset '{setReference}' is missing.");
+            }
             var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
-            return set.BindTo(skin.Skeleton, LoadAnimationSource);
+            return set.BindTo(skin.Skeleton, LoadAnimationSource, skin.MeshNodeTransform);
         }
         return animator?.AnimationSource is { } source
             ? BindAnimationSource(source, skin.Skeleton) : null;
@@ -2051,6 +2065,26 @@ void AddSceneNode(Node parent, AssetReference? mesh, string displayName)
     CloseFileContextMenu();
 }
 
+/// <summary>Adds an editable directional light below one hierarchy node.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+void AddDirectionalLight(Node parent)
+{
+    var activeRoot = GetActiveSceneRoot();
+    var light = new DirectionalLight3D
+    {
+        Name = $"Directional Light {createdObjectIndex++}",
+        Rotation = new Vector3(-45f, 35f, 0f) * (MathF.PI / 180f)
+    };
+    parent.AddChild(light);
+    if (ReferenceEquals(parent, activeRoot))
+        hierarchyTree.SetRoots(activeRoot.Children);
+    else
+        hierarchyTree.Expand(parent);
+    hierarchyTree.Select(light);
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
 /// <summary>Adds the scene's single screen-space HUD root.</summary>
 void AddHudRoot()
 {
@@ -2243,6 +2277,7 @@ void ShowHierarchyContextMenu()
     objectMenu.AddItem("Add Sphere", () => AddSceneNode(target, BuiltInAssets.SphereMesh, "Sphere"));
     objectMenu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
     objectMenu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
+    objectMenu.AddItem("Add Directional Light", () => AddDirectionalLight(target));
     menu.AddSubmenu("Add 3D Object", objectMenu);
 
     HudRoot? existingHud = null;

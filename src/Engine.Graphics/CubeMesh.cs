@@ -25,10 +25,10 @@ public class CubeMesh : Mesh
             new(new Vector3(-0.5f, -0.5f,  0.5f), new Vector3(1, 0, 0)),
             // Back face (z = -0.5) — green
             new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
-            new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
-            new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
-            new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
             new(new Vector3(-0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+            new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+            new(new Vector3( 0.5f,  0.5f, -0.5f), new Vector3(0, 1, 0)),
+            new(new Vector3( 0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
             new(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0, 1, 0)),
             // Top face (y = +0.5) — blue
             new(new Vector3(-0.5f,  0.5f,  0.5f), new Vector3(0, 0, 1)),

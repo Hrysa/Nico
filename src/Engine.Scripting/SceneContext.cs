@@ -17,11 +17,14 @@ public sealed class SceneContext
     /// <summary>Gets runtime skeletal-animation controllers for the active scene.</summary>
     public ISceneAnimationService Animation { get; }
 
+    /// <summary>Gets control of the active game-view render pipeline.</summary>
+    public ISceneRenderingService Rendering { get; }
+
     /// <summary>
     /// Creates a scene context for a root node.
     /// </summary>
     /// <param name="root">Synthetic scene root.</param>
-    public SceneContext(Node root) : this(root, null, null)
+    public SceneContext(Node root) : this(root, null, null, null)
     {
     }
 
@@ -29,13 +32,16 @@ public sealed class SceneContext
     /// <param name="root">Synthetic scene root.</param>
     /// <param name="inputSource">Runtime input source, or null for headless use.</param>
     /// <param name="animationService">Runtime animation service, or null when unavailable.</param>
+    /// <param name="renderingService">Runtime game-view pipeline service, or null when unavailable.</param>
     internal SceneContext(Node root, IInputSource? inputSource,
-        ISceneAnimationService? animationService)
+        ISceneAnimationService? animationService,
+        ISceneRenderingService? renderingService)
     {
         ArgumentNullException.ThrowIfNull(root);
         Root = root;
         Input = new SceneInput(inputSource);
         Animation = animationService ?? EmptySceneAnimationService.Instance;
+        Rendering = renderingService ?? new DetachedSceneRenderingService();
     }
 
     /// <summary>
@@ -84,5 +90,13 @@ public sealed class SceneContext
         foreach (var child in root.Children)
         foreach (var descendant in Enumerate(child))
             yield return descendant;
+    }
+
+    /// <summary>Stores pipeline changes for scene contexts without an attached renderer.</summary>
+    private sealed class DetachedSceneRenderingService : ISceneRenderingService
+    {
+        /// <inheritdoc/>
+        public RenderPipeline RenderPipeline { get; set; } =
+            BasicForwardRenderPipeline.Instance;
     }
 }

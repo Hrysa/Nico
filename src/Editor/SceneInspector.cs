@@ -150,6 +150,8 @@ public sealed class SceneInspector : Panel
             value => node.Scale = value, radiansAsDegrees: false);
 
         var scriptY = 236f;
+        if (node is DirectionalLight3D directionalLight)
+            scriptY = AddDirectionalLightSection(directionalLight, scriptY);
         if (node is MeshInstance3D meshInstance)
         {
             AddMaterialSection(meshInstance, 236f);
@@ -162,6 +164,68 @@ public sealed class SceneInspector : Panel
         AddScriptSections(node, scriptY);
         CacheCurrentView(node);
         SubscribeToNode(node);
+    }
+
+    /// <summary>Adds editable color, strength, ambient, and enabled light settings.</summary>
+    /// <param name="light">Inspected directional light.</param>
+    /// <param name="y">Available section top.</param>
+    /// <returns>Top available for following sections.</returns>
+    private float AddDirectionalLightSection(DirectionalLight3D light, float y)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+            "Directional Light", _theme.TextPrimary));
+        AddVectorRow("Color", "LightColor", y + 30f, () => light.Color,
+            value => light.Color = value, radiansAsDegrees: false, nonnegative: true);
+        AddLightFloatField("Intensity", "LightIntensity", y + 68f,
+            () => light.Intensity, value => light.Intensity = value);
+        AddLightFloatField("Ambient", "LightAmbientIntensity", y + 106f,
+            () => light.AmbientIntensity, value => light.AmbientIntensity = value);
+        var enabled = new ToggleButton(Width - 24f, 30f, "Enabled", _theme)
+        {
+            Name = "LightEnabled",
+            IsChecked = light.IsEnabled,
+            Margin = new Thickness(12f, y + 144f, 0f, 0f)
+        };
+        enabled.CheckedChanged += value =>
+        {
+            light.IsEnabled = value;
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        AddChild(enabled);
+        return y + 186f;
+    }
+
+    /// <summary>Adds one nonnegative directional-light scalar field.</summary>
+    /// <param name="label">Displayed field label.</param>
+    /// <param name="name">Stable UI element name.</param>
+    /// <param name="y">Field row position.</param>
+    /// <param name="read">Current value reader.</param>
+    /// <param name="apply">Validated value writer.</param>
+    private void AddLightFloatField(string label, string name, float y,
+        Func<float> read, Action<float> apply)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var field = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = name,
+            Text = Format(read()),
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = text => ValidateConstrainedFloat(text, false, true),
+            Margin = new Thickness(78f, y, 0f, 0f)
+        };
+        field.ValueUpdateRequested += text =>
+        {
+            if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
+                    out var value) || value < 0f)
+                return;
+            apply(value);
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        RegisterRefresh(field, () => Format(read()));
+        _editForm.Register(field);
+        AddChild(field);
     }
 
     /// <summary>Adds concrete rigid-body and collider fields in authored component order.</summary>
@@ -1228,6 +1292,7 @@ public sealed class SceneInspector : Panel
     /// <param name="apply">Validated vector writer.</param>
     /// <param name="radiansAsDegrees">Whether display values use degrees.</param>
     /// <param name="positive">Whether each component must be greater than zero.</param>
+    /// <param name="nonnegative">Whether each component must be zero or greater.</param>
     private void AddVectorRow(
         string label,
         string namePrefix,
@@ -1235,7 +1300,8 @@ public sealed class SceneInspector : Panel
         Func<Vector3> read,
         Action<Vector3> apply,
         bool radiansAsDegrees,
-        bool positive = false)
+        bool positive = false,
+        bool nonnegative = false)
     {
         const float labelWidth = 66f;
         const float spacing = 4f;
@@ -1255,8 +1321,8 @@ public sealed class SceneInspector : Panel
                 Name = $"{namePrefix}{"XYZ"[index]}",
                 Text = Format(GetComponent(displayValue, index)),
                 UpdateTrigger = TextUpdateTrigger.Commit,
-                Validator = text => positive
-                    ? ValidateConstrainedFloat(text, true, false)
+                Validator = text => positive || nonnegative
+                    ? ValidateConstrainedFloat(text, positive, nonnegative)
                     : ValidateFloat(text),
                 Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing),
                     y, 0f, 0f)
@@ -1264,7 +1330,8 @@ public sealed class SceneInspector : Panel
             field.ValueUpdateRequested += text =>
             {
                 if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
-                        out var component) || positive && component <= 0f)
+                        out var component) || positive && component <= 0f ||
+                    nonnegative && component < 0f)
                     return;
                 var edited = read();
                 var internalComponent = radiansAsDegrees

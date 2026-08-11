@@ -32,14 +32,16 @@ public static class EngineHost
 /// <summary>
 /// Owns the runtime services needed to run a game application.
 /// </summary>
-public sealed class EngineApplication : IDisposable
+public sealed class EngineApplication : IDisposable, ISceneRenderingService
 {
     private readonly SilkWindow _window;
     private int _width;
     private int _height;
     private RenderViewHandle _renderView;
     private PerspectiveCamera? _camera;
+    private Node3D? _sceneRoot;
     private readonly RenderQueue _renderQueue = new();
+    private RenderPipeline _renderPipeline = BasicForwardRenderPipeline.Instance;
     private readonly List<RuntimeRenderable> _renderables = [];
     private CompiledScriptCatalog? _scriptCatalog;
     private SceneScriptRuntime? _scriptRuntime;
@@ -54,6 +56,13 @@ public sealed class EngineApplication : IDisposable
     private UIInputContextMode _prePauseInputContext = UIInputContextMode.GameplayOnly;
     private double _simulationTimeScale = 1d;
     private double _runningSimulationTimeScale = 1d;
+
+    /// <summary>Gets or sets the pass composition used to render the game scene.</summary>
+    public RenderPipeline RenderPipeline
+    {
+        get => _renderPipeline;
+        set => _renderPipeline = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
     /// <summary>
     /// Creates an application around an initialized window.
@@ -89,6 +98,7 @@ public sealed class EngineApplication : IDisposable
         _runtimeResources = CreateRuntimeResourceManager(database, pipeline);
 
         _camera = scene.GameCamera;
+        _sceneRoot = scene.Root;
         _renderView = _window.CreateRenderView(_width, _height);
         ConfigurePresentation(_width, _height);
         _window.SetViewportClearColor(_renderView, 0.05f, 0.05f, 0.12f);
@@ -424,9 +434,20 @@ public sealed class EngineApplication : IDisposable
         var animator = instance.GetComponent<AnimatorComponent>();
         if (animator?.AnimationSet is { } setReference)
         {
+            var setRecord = database.Find(setReference.Asset) ?? throw new FileNotFoundException(
+                $"Animation set asset '{setReference.Asset}' is missing.");
+            var setOutcome = pipeline.Import(setRecord, "player");
+            if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
+                    candidate.Key == setReference.SubAsset &&
+                    candidate.ContentType == "nico/animation-set"))
+            {
+                throw new InvalidDataException(
+                    $"Animation set sub-asset '{setReference}' is missing.");
+            }
             var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
             var clips = set.BindTo(skin.Skeleton,
-                source => ResolveAnimationSource(database, pipeline, source));
+                source => ResolveAnimationSource(database, pipeline, source),
+                skin.MeshNodeTransform);
             return new SkinnedMeshResource(skin.Mesh, skin.Influences, skin.Skeleton,
                 clips, skin.MeshNodeTransform);
         }
@@ -642,6 +663,8 @@ public sealed class EngineApplication : IDisposable
         if (_camera is null)
             return;
         _renderQueue.Clear();
+        _renderQueue.Lighting = _sceneRoot is null
+            ? SceneLighting.None : SceneLighting.Resolve(_sceneRoot);
         _camera.UpdateViewport(_width, _height);
         if (_worldSpaceUI is not null && _uiHost is not null)
         {
@@ -665,7 +688,7 @@ public sealed class EngineApplication : IDisposable
                     _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
             }
         }
-        _window.Submit(_renderView, _renderQueue);
+        RenderPipeline.Render(_window, _renderView, _renderQueue);
     }
 
     /// <summary>Advances active controllers and uploads only changed skin palettes.</summary>
@@ -817,7 +840,7 @@ public sealed class EngineApplication : IDisposable
         _scriptRuntime = new SceneScriptRuntime();
         try
         {
-            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window, _animationService);
+            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window, _animationService, this);
             _scriptRuntime.Start();
         }
         catch

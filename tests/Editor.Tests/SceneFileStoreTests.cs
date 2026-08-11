@@ -9,6 +9,43 @@ namespace Editor.Tests;
 
 public class SceneFileStoreTests
 {
+    /// <summary>Round-trips authored directional-light settings and transforms.</summary>
+    [Fact]
+    public void SaveAndLoad_DirectionalLight_PreservesSettings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"light-scene-{Guid.NewGuid():N}.node");
+        var root = new Node3D();
+        var camera = new PerspectiveCamera();
+        var light = new DirectionalLight3D
+        {
+            Name = "Sun",
+            Rotation = new Vector3(0.1f, 0.2f, 0.3f),
+            Color = new Vector3(1f, 0.75f, 0.5f),
+            Intensity = 2.5f,
+            AmbientIntensity = 0.15f,
+            IsEnabled = false
+        };
+        root.AddChild(light);
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+            var loaded = SceneFileStore.Load(path);
+
+            var actual = Assert.IsType<DirectionalLight3D>(loaded.Root.Children[0]);
+            Assert.Equal(light.Name, actual.Name);
+            Assert.Equal(light.Rotation, actual.Rotation);
+            Assert.Equal(light.Color, actual.Color);
+            Assert.Equal(light.Intensity, actual.Intensity);
+            Assert.Equal(light.AmbientIntensity, actual.AmbientIntensity);
+            Assert.False(actual.IsEnabled);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>Verifies higher-level HUD roots survive scene persistence through their factory.</summary>
     [Fact]
     public void SaveAndLoad_HudRoot_PreservesCustomNodeAndComponents()
