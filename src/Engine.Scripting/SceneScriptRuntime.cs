@@ -40,7 +40,9 @@ public sealed class SceneScriptRuntime : IDisposable
     /// <param name="root">Synthetic scene root.</param>
     /// <param name="catalog">Catalog resolving persistent script assets to compiled types.</param>
     /// <param name="inputSource">Optional renderer-independent gameplay input source.</param>
-    public void Attach(Node root, IScriptTypeCatalog catalog, IInputSource? inputSource = null)
+    /// <param name="animationService">Optional runtime animation-controller service.</param>
+    public void Attach(Node root, IScriptTypeCatalog catalog, IInputSource? inputSource = null,
+        ISceneAnimationService? animationService = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(root);
@@ -48,7 +50,7 @@ public sealed class SceneScriptRuntime : IDisposable
         if (_scripts.Count != 0 || _started)
             throw new InvalidOperationException("The runtime already has an attached scene.");
 
-        var context = new SceneContext(root, inputSource);
+        var context = new SceneContext(root, inputSource, animationService);
         _context = context;
         foreach (var node in SceneContext.Enumerate(root))
         {

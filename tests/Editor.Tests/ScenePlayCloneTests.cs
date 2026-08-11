@@ -37,12 +37,15 @@ public class ScenePlayCloneTests
         cube.AddComponent(authoredCollider);
         cube.AddComponent(authoredBody);
         var animationReference = new AssetReference(AssetId.New(), "animation/0");
+        var animationSetReference = new AssetReference(AssetId.New(), "main");
         var authoredAnimator = new AnimatorComponent
         {
             AnimationSource = animationReference,
-            Clip = "Walk",
+            AnimationSet = animationSetReference,
+            DefaultClip = "Walk",
             Loop = false,
-            Speed = 0.75f
+            Speed = 0.75f,
+            DefaultFadeDuration = 0.4f
         };
         cube.AddComponent(authoredAnimator);
         var camera = new PerspectiveCamera { Name = "Camera" };
@@ -77,9 +80,11 @@ public class ScenePlayCloneTests
             playScene.MeshInstances[0].Components[4]);
         Assert.NotSame(authoredAnimator, clonedAnimator);
         Assert.Equal(animationReference, clonedAnimator.AnimationSource);
-        Assert.Equal("Walk", clonedAnimator.Clip);
+        Assert.Equal(animationSetReference, clonedAnimator.AnimationSet);
+        Assert.Equal("Walk", clonedAnimator.DefaultClip);
         Assert.False(clonedAnimator.Loop);
         Assert.Equal(0.75f, clonedAnimator.Speed);
+        Assert.Equal(0.4f, clonedAnimator.DefaultFadeDuration);
         Assert.Equal(material, Assert.Single(playScene.MeshInstances[0].Materials));
         Assert.NotSame(camera, playScene.GameCamera);
     }

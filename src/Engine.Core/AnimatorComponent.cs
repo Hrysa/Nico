@@ -4,10 +4,12 @@ namespace Engine.Core;
 public sealed class AnimatorComponent : Component
 {
     private AssetReference? _animationSource;
+    private AssetReference? _animationSet;
     private string? _clip;
     private bool _playAutomatically = true;
     private bool _loop = true;
     private float _speed = 1f;
+    private float _defaultFadeDuration = 0.2f;
 
     /// <summary>Gets or sets an optional standalone skeletal-animation artifact.</summary>
     public AssetReference? AnimationSource
@@ -18,6 +20,19 @@ public sealed class AnimatorComponent : Component
             if (_animationSource == value)
                 return;
             _animationSource = value;
+            Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
+        }
+    }
+
+    /// <summary>Gets or sets an optional project-owned animation-set artifact.</summary>
+    public AssetReference? AnimationSet
+    {
+        get => _animationSet;
+        set
+        {
+            if (_animationSet == value)
+                return;
+            _animationSet = value;
             Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
         }
     }
@@ -35,6 +50,13 @@ public sealed class AnimatorComponent : Component
             _clip = value;
             Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
         }
+    }
+
+    /// <summary>Gets or sets the default imported clip name, or null for the first clip.</summary>
+    public string? DefaultClip
+    {
+        get => Clip;
+        set => Clip = value;
     }
 
     /// <summary>Gets or sets whether playback begins when the runtime scene is attached.</summary>
@@ -74,6 +96,21 @@ public sealed class AnimatorComponent : Component
             if (_speed == value)
                 return;
             _speed = value;
+            Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
+        }
+    }
+
+    /// <summary>Gets or sets the default script-driven cross-fade duration in seconds.</summary>
+    public float DefaultFadeDuration
+    {
+        get => _defaultFadeDuration;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (_defaultFadeDuration == value)
+                return;
+            _defaultFadeDuration = value;
             Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
         }
     }

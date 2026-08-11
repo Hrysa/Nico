@@ -791,6 +791,21 @@ public sealed class SkeletonPose
         ArgumentNullException.ThrowIfNull(skeleton);
         if (skeleton.JointCount != _localTransforms.Length)
             throw new ArgumentException("Skeleton does not match this pose.", nameof(skeleton));
+        SampleLocalTransforms(skeleton, clip, time, _localTransforms);
+        ApplyLocalTransforms(skeleton, _localTransforms);
+    }
+
+    /// <summary>Samples a clip or bind pose into caller-owned local-transform storage.</summary>
+    /// <param name="skeleton">Skeleton defining bind transforms.</param>
+    /// <param name="clip">Optional matching animation clip.</param>
+    /// <param name="time">Clip-local sample time.</param>
+    /// <param name="destination">Storage containing one transform per joint.</param>
+    public static void SampleLocalTransforms(SkeletonResource skeleton,
+        AnimationClipResource? clip, float time, Span<JointTransform> destination)
+    {
+        ArgumentNullException.ThrowIfNull(skeleton);
+        if (destination.Length != skeleton.JointCount)
+            throw new ArgumentException("Pose storage must match the skeleton.", nameof(destination));
         if (clip is not null && clip.Tracks.Count != skeleton.JointCount)
             throw new ArgumentException("Animation does not match this skeleton.", nameof(clip));
         for (var index = 0; index < skeleton.JointCount; index++)
@@ -805,6 +820,24 @@ public sealed class SkeletonPose
                     track.Rotation?.Sample(time) ?? transform.Rotation,
                     track.Scale?.Sample(time) ?? transform.Scale);
             }
+            destination[index] = transform;
+        }
+    }
+
+    /// <summary>Composes caller-provided local transforms into world and skin matrices.</summary>
+    /// <param name="skeleton">Skeleton matching this pose.</param>
+    /// <param name="transforms">One local transform per joint.</param>
+    public void ApplyLocalTransforms(SkeletonResource skeleton,
+        ReadOnlySpan<JointTransform> transforms)
+    {
+        ArgumentNullException.ThrowIfNull(skeleton);
+        if (skeleton.JointCount != _localTransforms.Length ||
+            transforms.Length != skeleton.JointCount)
+            throw new ArgumentException("Local transforms must match this pose.", nameof(transforms));
+        for (var index = 0; index < skeleton.JointCount; index++)
+        {
+            var joint = skeleton.Joints[index];
+            var transform = transforms[index];
             _localTransforms[index] = transform;
             var local = transform.ToMatrix();
             _worldTransforms[index] = joint.ParentIndex >= 0

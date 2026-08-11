@@ -40,6 +40,7 @@ var assetImporterRegistry = new AssetImporterRegistry();
 assetImporterRegistry.Register(new GlbModelImporter());
 assetImporterRegistry.Register(new CollisionMeshAssetImporter());
 assetImporterRegistry.Register(new TerrainAssetImporter());
+assetImporterRegistry.Register(new AnimationSetAssetImporter());
 var assetImportPipeline = new AssetImportPipeline(assetDatabase, assetImporterRegistry);
 using var runtimeResources = new RuntimeResourceManager(
     new PublishedArtifactResolver(assetDatabase, assetImportPipeline, "editor"),
@@ -53,6 +54,8 @@ runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshRes
     "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
     "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<AnimationSetResource>(
+    "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
     "nico/standard-material", (stream, _, _) =>
     {
@@ -257,6 +260,15 @@ using var viewportRenderer = new EditorViewportRenderer(
     selection, ResolveCollisionMeshResource, ResolveTerrainResource);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
+inspector.ResolveAnimationController = instance =>
+    viewportRenderer.AnimationService.Get(instance);
+inspector.AnimationPreviewChanged += _ =>
+{
+    viewportRenderer.UpdateAnimations(0d);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    renderScheduler.Invalidate(RenderInvalidation.GameViewport);
+    window.RequestFrame();
+};
 foreach (var assetMesh in sceneObjects)
     LoadAssetMeshResources(assetMesh);
 DetachedToolWindow? detachedSceneWindow = null;
@@ -367,7 +379,7 @@ void ConfigureSceneViewportInput(UIHost host, IWindow inputWindow, bool includeP
     host.PreviewTextInput = _ => sceneInputContext.RoutesText(host.InputRouter);
     host.PreviewTextComposition = _ => sceneInputContext.RoutesText(host.InputRouter);
     host.PreviewPointerWheel = pointerEvent =>
-        ApplySceneTwoFingerGesture(pointerEvent, inputWindow);
+        ApplySceneWheelOrTrackpadGesture(pointerEvent, inputWindow);
     host.PreviewPointerMagnify = pointerEvent =>
         ApplyScenePinchGesture(pointerEvent, inputWindow);
     if (!includePointerLook)
@@ -378,18 +390,25 @@ void ConfigureSceneViewportInput(UIHost host, IWindow inputWindow, bool includeP
         : UIHostPointerRouting.Route;
 }
 
-/// <summary>Rotates or pans the Scene camera from a two-finger trackpad gesture.</summary>
-/// <param name="pointerEvent">Two-axis wheel event produced by trackpad scrolling.</param>
+/// <summary>Routes desktop wheel zoom or a macOS two-finger Scene camera gesture.</summary>
+/// <param name="pointerEvent">Wheel-compatible pointer gesture.</param>
 /// <param name="inputWindow">Window to wake after changing the camera.</param>
 /// <returns>True when the Scene viewport consumed the gesture.</returns>
-bool ApplySceneTwoFingerGesture(PointerWheelEvent pointerEvent, IWindow inputWindow)
+bool ApplySceneWheelOrTrackpadGesture(PointerWheelEvent pointerEvent, IWindow inputWindow)
 {
     if (flyCamera.IsActive)
         return true;
     if (!IsInsideSceneViewport(pointerEvent.Position))
         return false;
-    flyCamera.ApplyTwoFingerGesture(pointerEvent.Delta,
-        (pointerEvent.Modifiers & InputModifiers.Shift) != 0);
+    if (OperatingSystem.IsMacOS())
+    {
+        flyCamera.ApplyTwoFingerGesture(pointerEvent.Delta,
+            (pointerEvent.Modifiers & InputModifiers.Shift) != 0);
+    }
+    else
+    {
+        flyCamera.ApplyMouseWheelZoom(pointerEvent.Delta.Y);
+    }
     renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
     inputWindow.RequestFrame();
     return true;
@@ -649,7 +668,18 @@ void UpdatePlayModeStart(double deltaTime)
         candidateHost = build.GetAwaiter().GetResult();
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
-        candidateHost.LoadScene(candidateScene.Root, window);
+        viewportRenderer.SetGameScene(candidateScene.GameCamera,
+            candidateScene.MeshInstances);
+        foreach (var assetMesh in candidateScene.MeshInstances)
+        {
+            if (assetMesh.GetComponent<AnimatorComponent>() is not null &&
+                !viewportRenderer.HasAssetMeshResource(assetMesh))
+            {
+                LoadAssetMeshResources(assetMesh);
+            }
+        }
+        candidateHost.LoadScene(candidateScene.Root, window,
+            viewportRenderer.AnimationService);
         candidatePhysicsWorld = new PhysicsWorld(
             ResolveCollisionMeshResource, ResolveTerrainResource);
         candidatePhysicsWorld.EnableInterpolation = true;
@@ -691,6 +721,7 @@ void UpdatePlayModeStart(double deltaTime)
     catch (Exception exception)
     {
         UnmountPlayHud();
+        viewportRenderer.SetGameScene(gameCamera, sceneObjects);
         candidatePhysicsWorld?.Dispose();
         try
         {
@@ -1150,7 +1181,8 @@ void AddImportedSubAssets(FileSystemNode node)
 bool IsVisibleImportedArtifact(string contentType)
 {
     return contentType is "nico/static-mesh" or "nico/skinned-mesh" or
-        "nico/standard-material" or "nico/texture2d";
+        "nico/standard-material" or "nico/texture2d" or
+        "nico/skeletal-animation" or "nico/animation-set";
 }
 
 /// <summary>Builds a concise typed label for one imported artifact.</summary>
@@ -1164,6 +1196,8 @@ string GetImportedArtifactDisplayName(AssetArtifact artifact)
         "nico/skinned-mesh" => "Skinned Mesh",
         "nico/standard-material" => "Material",
         "nico/texture2d" => "Texture",
+        "nico/skeletal-animation" => "Animation",
+        "nico/animation-set" => "Animation Set",
         _ => "Asset"
     };
     var keyParts = artifact.Key.Split('/');
@@ -1491,46 +1525,74 @@ void LoadAssetMeshResources(
     }
     else
     {
-        AnimationClipResource[]? externalAnimations = null;
-        if (instance.GetComponent<AnimatorComponent>()?.AnimationSource is { } animationReference)
-        {
-            var animationRecord = assetDatabase.Find(animationReference.Asset);
-            if (animationRecord is null)
-            {
-                logger.LogError("Animation asset {AssetId} is missing", animationReference.Asset);
-            }
-            else
-            {
-                var animationOutcome = assetImportPipeline.Import(animationRecord, "editor");
-                var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
-                    artifact.Key == animationReference.SubAsset &&
-                    artifact.ContentType == "nico/skeletal-animation");
-                if (animationOutcome.Succeeded && animationArtifact is not null)
-                {
-                    var animation = LoadRuntimeResource(animationReference,
-                        new SkeletalAnimationResource(new SkeletonResource([]), []));
-                    try
-                    {
-                        externalAnimations = animation.BindTo(importedSkin.Skeleton);
-                    }
-                    catch (InvalidOperationException exception)
-                    {
-                        logger.LogError(exception,
-                            "Animation {Reference} is incompatible with mesh {Mesh}",
-                            animationReference, meshReference);
-                    }
-                }
-                else
-                {
-                    logger.LogError(
-                        "Animation sub-asset {Reference} has no valid artifact",
-                        animationReference);
-                }
-            }
-        }
+        var externalAnimations = ResolveAnimationClips(instance, importedSkin, meshReference);
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
-            instance, importedSkin, material, textureResource, externalAnimations);
+            instance, importedSkin, material, textureResource, externalAnimations,
+            targetRenderer is null
+                ? null : viewportRenderer.AnimationService.Get(instance));
     }
+}
+
+/// <summary>Resolves standalone or animation-set clips for one Editor mesh instance.</summary>
+/// <param name="instance">Animated scene mesh.</param>
+/// <param name="skin">Target skinned resource.</param>
+/// <param name="meshReference">Reference used for diagnostics.</param>
+/// <returns>Bound clips, or null to use clips embedded in the mesh.</returns>
+AnimationClipResource[]? ResolveAnimationClips(MeshInstance3D instance,
+    SkinnedMeshResource skin, AssetReference meshReference)
+{
+    var animator = instance.GetComponent<AnimatorComponent>();
+    try
+    {
+        if (animator?.AnimationSet is { } setReference)
+        {
+            var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
+            return set.BindTo(skin.Skeleton, LoadAnimationSource);
+        }
+        return animator?.AnimationSource is { } source
+            ? BindAnimationSource(source, skin.Skeleton) : null;
+    }
+    catch (Exception exception) when (exception is InvalidOperationException or
+        InvalidDataException or FileNotFoundException)
+    {
+        logger.LogError(exception,
+            "Animation binding is invalid for mesh {Mesh}", meshReference);
+        return [];
+    }
+}
+
+/// <summary>Loads and binds one standalone or skinned animation artifact.</summary>
+/// <param name="source">Explicit animation artifact.</param>
+/// <param name="target">Target mesh skeleton.</param>
+/// <returns>Clips aligned to the target skeleton.</returns>
+AnimationClipResource[] BindAnimationSource(AssetReference source, SkeletonResource target)
+{
+    return LoadAnimationSource(source).BindTo(target);
+}
+
+/// <summary>Loads one standalone or skinned animation artifact without target binding.</summary>
+/// <param name="source">Explicit animation artifact.</param>
+/// <returns>The decoded source skeleton and clips.</returns>
+SkeletalAnimationResource LoadAnimationSource(AssetReference source)
+{
+    var record = assetDatabase.Find(source.Asset)
+        ?? throw new FileNotFoundException($"Animation asset '{source.Asset}' is missing.");
+    var outcome = assetImportPipeline.Import(record, "editor");
+    var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+        candidate.Key == source.SubAsset &&
+        candidate.ContentType is "nico/skeletal-animation" or "nico/skinned-mesh");
+    if (!outcome.Succeeded || artifact is null)
+        throw new InvalidDataException($"Animation sub-asset '{source}' is missing.");
+    if (artifact.ContentType == "nico/skeletal-animation")
+    {
+        var animation = LoadRuntimeResource(source,
+            new SkeletalAnimationResource(new SkeletonResource([]), []));
+        return animation;
+    }
+    var skin = LoadRuntimeResource(source,
+        new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
+            new SkeletonResource([]), []));
+    return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray());
 }
 
 /// <summary>Loads one imported texture reference for a material override.</summary>
@@ -2471,6 +2533,7 @@ bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
         "nico/standard-material" => inspector.AssignMaterial(source.Reference),
         "nico/texture2d" => inspector.AssignBaseColorTexture(source.Reference),
         "nico/skeletal-animation" => inspector.AssignAnimation(source.Reference),
+        "nico/animation-set" => inspector.AssignAnimationSet(source.Reference),
         _ => false
     };
 }
@@ -2479,6 +2542,7 @@ Node? pendingDragItem = null;
 var pendingDragStart = Vector2.Zero;
 var pendingDragFromHierarchy = false;
 var primaryPointerDown = false;
+var sceneMouseNavigation = PointerButtons.None;
 var dragActive = false;
 
 mainUIHost.PreviewPointerMove = pointerEvent =>
@@ -2487,6 +2551,20 @@ mainUIHost.PreviewPointerMove = pointerEvent =>
     window.UpdateWindowDrag(pointerEvent.Position);
     Debug.Input(LogLevel.Trace, "Mouse: ({X:F0}, {Y:F0})",
         pointerEvent.Position.X, pointerEvent.Position.Y);
+    if ((sceneMouseNavigation & PointerButtons.Secondary) != 0)
+    {
+        flyCamera.ApplyMouseLook(pointerEvent.Delta);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        return true;
+    }
+    if ((sceneMouseNavigation & PointerButtons.Middle) != 0)
+    {
+        flyCamera.ApplyMousePan(pointerEvent.Delta);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        return true;
+    }
     return flyCamera.MovePointer(pointerEvent.Position);
 };
 
@@ -2537,6 +2615,10 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
         return flyCamera.IsActive ? UIHostPointerRouting.Consume : UIHostPointerRouting.Route;
     if (!pointerEvent.IsPressed)
     {
+        if (pointerEvent.Button == InputPointerButton.Secondary)
+            sceneMouseNavigation &= ~PointerButtons.Secondary;
+        else if (pointerEvent.Button == InputPointerButton.Middle)
+            sceneMouseNavigation &= ~PointerButtons.Middle;
         window.EndWindowDrag();
         if (flyCamera.IsActive || pointerEvent.Button != InputPointerButton.Primary)
             return UIHostPointerRouting.Consume;
@@ -2588,6 +2670,19 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
     }
     if (flyCamera.IsActive)
         return UIHostPointerRouting.Consume;
+    var inSceneViewport = IsInsideSceneViewport(pointerEvent.Position);
+    if (inSceneViewport && pointerEvent.Button == InputPointerButton.Secondary)
+    {
+        sceneMouseNavigation |= PointerButtons.Secondary;
+        selection.CancelInteraction();
+        return UIHostPointerRouting.Consume;
+    }
+    if (inSceneViewport && pointerEvent.Button == InputPointerButton.Middle)
+    {
+        sceneMouseNavigation |= PointerButtons.Middle;
+        selection.CancelInteraction();
+        return UIHostPointerRouting.Consume;
+    }
     if (pointerEvent.Button == InputPointerButton.Secondary)
     {
         if (!ShowFileSystemContextMenu())
@@ -2640,7 +2735,7 @@ mainUIHost.PreviewPointerWheel = pointerEvent =>
 {
     Debug.Input(LogLevel.Debug, "Scroll: offset=({OffsetX:F1}, {OffsetY:F1})",
         pointerEvent.Delta.X, pointerEvent.Delta.Y);
-    return ApplySceneTwoFingerGesture(pointerEvent, window);
+    return ApplySceneWheelOrTrackpadGesture(pointerEvent, window);
 };
 mainUIHost.PreviewPointerMagnify = pointerEvent =>
     ApplyScenePinchGesture(pointerEvent, window);
@@ -2697,9 +2792,6 @@ window.Update += delta =>
             scriptHost.Update(delta);
             physicsWorld?.Update(delta);
             scriptHost.LateUpdate(delta);
-            viewportRenderer.UpdateAnimations(delta);
-            detachedSceneRenderer?.UpdateAnimations(delta);
-            detachedGameRenderer?.UpdateAnimations(delta);
         }
         catch (Exception exception)
         {
@@ -2707,6 +2799,9 @@ window.Update += delta =>
             StopPlayMode();
         }
     }
+    viewportRenderer.UpdateAnimations(delta);
+    detachedSceneRenderer?.UpdateAnimations(delta);
+    detachedGameRenderer?.UpdateAnimations(delta);
     var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
     var gameContinuous = scriptHost is not null;
     var sceneVisible = sceneViewport.IsEffectivelyVisible;
@@ -2732,7 +2827,8 @@ window.Update += delta =>
         viewportRenderer.RenderGame(gameViewport);
     dockSession.SynchronizeFloatingWindows();
     window.SetContinuousRendering(
-        flyCamera.IsActive || scriptHost is not null || playBuildTask is not null
+        flyCamera.IsActive || scriptHost is not null || viewportRenderer.HasActiveAnimations ||
+            playBuildTask is not null
             || scriptSchemaBuildTask is not null
             || pendingResizeTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates

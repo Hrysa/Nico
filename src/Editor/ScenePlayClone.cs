@@ -146,10 +146,12 @@ public static class ScenePlayClone
                 {
                     Enabled = sourceAnimator.Enabled,
                     AnimationSource = sourceAnimator.AnimationSource,
-                    Clip = sourceAnimator.Clip,
+                    AnimationSet = sourceAnimator.AnimationSet,
+                    DefaultClip = sourceAnimator.DefaultClip,
                     PlayAutomatically = sourceAnimator.PlayAutomatically,
                     Loop = sourceAnimator.Loop,
-                    Speed = sourceAnimator.Speed
+                    Speed = sourceAnimator.Speed,
+                    DefaultFadeDuration = sourceAnimator.DefaultFadeDuration
                 };
             default:
                 throw new NotSupportedException(

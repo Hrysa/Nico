@@ -153,6 +153,34 @@ public class SceneScriptRuntimeTests
         Assert.False(input.MouseCaptured);
     }
 
+    /// <summary>Verifies scripts can directly play a controller supplied by the active scene.</summary>
+    [Fact]
+    public void Runtime_AnimationService_ProvidesOwnerControllerBeforeReady()
+    {
+        var scriptId = AssetId.New();
+        var root = new Node3D();
+        var owner = new Node3D { Name = "Animated" };
+        owner.AddComponent(new ScriptComponent(scriptId));
+        root.AddChild(owner);
+        var skeleton = new SkeletonResource([]);
+        var clip = new AnimationClipResource("Idle", 1f, []);
+        var resource = new SkinnedMeshResource(
+            new StaticMeshResource([], [], []), [], skeleton, [clip]);
+        using var animations = new SceneAnimationRegistry();
+        var controller = new AnimationController(resource);
+        animations.Register(owner, controller);
+        using var runtime = new SceneScriptRuntime();
+
+        runtime.Attach(root,
+            new TestScriptCatalog(scriptId, typeof(AnimationRecordingScript)),
+            animationService: animations);
+        runtime.Start();
+
+        var script = Assert.IsType<AnimationRecordingScript>(Assert.Single(runtime.Scripts));
+        Assert.Same(controller, script.Controller);
+        Assert.Equal("Idle", controller.Current?.Key);
+    }
+
     private sealed class TestScriptCatalog(AssetId id, Type type) : IScriptTypeCatalog
     {
         /// <inheritdoc />
@@ -254,6 +282,20 @@ public class SceneScriptRuntimeTests
             Scene.Input.SetPointerCaptured(SecondaryPointerHeld);
             PointerPosition = Scene.Input.PointerPosition;
             PointerDelta = Scene.Input.PointerDelta;
+        }
+    }
+
+    /// <summary>Obtains and starts its owner's animation controller during readiness.</summary>
+    public sealed class AnimationRecordingScript : SceneScript
+    {
+        /// <summary>Gets the controller resolved during readiness.</summary>
+        public AnimationController? Controller { get; private set; }
+
+        /// <inheritdoc/>
+        public override void OnReady()
+        {
+            Controller = Scene.Animation.GetRequired(Owner);
+            Controller.Play("Idle");
         }
     }
 

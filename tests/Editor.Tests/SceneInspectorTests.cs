@@ -189,6 +189,60 @@ public class SceneInspectorTests
         Assert.Equal("Breathing Idle", source.Text);
     }
 
+    /// <summary>Exposes live state, scrub, and pause controls when a controller is bound.</summary>
+    [Fact]
+    public void Animator_LiveController_ShowsPreviewControls()
+    {
+        var mesh = new MeshInstance3D();
+        mesh.AddComponent(new AnimatorComponent { DefaultClip = "Idle" });
+        var resource = new SkinnedMeshResource(
+            new StaticMeshResource([], [], []), [], new SkeletonResource([]),
+            [new AnimationClipResource("Idle", 1f, [])]);
+        using var controller = new AnimationController(resource);
+        var state = controller.PlayFromStart("Idle");
+        var previewChanges = 0;
+        var inspector = new SceneInspector(320f, 800f)
+        {
+            ResolveAnimationController = _ => controller
+        };
+        inspector.AnimationPreviewChanged += _ => previewChanges++;
+
+        inspector.Bind(mesh);
+        var stateName = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "AnimatorRuntimeState"));
+        var clip = Assert.IsType<ComboBox>(
+            FindByName<ComboBox>(inspector, "AnimatorClip"));
+        var time = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "AnimatorPreviewNormalizedTime"));
+        var playing = Assert.IsType<ToggleButton>(
+            FindByName<ToggleButton>(inspector, "AnimatorPreviewPlaying"));
+        playing.InvokeClick();
+
+        Assert.Equal("Idle", stateName.Text);
+        Assert.Equal("Idle", clip.SelectedItem);
+        Assert.False(time.IsReadOnly);
+        Assert.False(state.IsPlaying);
+        Assert.Equal(1, previewChanges);
+    }
+
+    /// <summary>Assigning an animation set clears the mutually exclusive standalone source.</summary>
+    [Fact]
+    public void Animator_SetAssignment_ReplacesStandaloneSource()
+    {
+        var mesh = new MeshInstance3D();
+        var source = new AssetReference(AssetId.New(), "animation/Idle");
+        var set = new AssetReference(AssetId.New(), "main");
+        var inspector = new SceneInspector(320f, 700f);
+        inspector.Bind(mesh);
+        Assert.True(inspector.AssignAnimation(source));
+
+        Assert.True(inspector.AssignAnimationSet(set));
+
+        var animator = Assert.IsType<AnimatorComponent>(Assert.Single(mesh.Components));
+        Assert.Null(animator.AnimationSource);
+        Assert.Equal(set, animator.AnimationSet);
+    }
+
     /// <summary>Resolves an imported material once when binding instead of during each refresh.</summary>
     [Fact]
     public void Material_RefreshValues_DoesNotRepeatedlyResolveImportedMaterial()

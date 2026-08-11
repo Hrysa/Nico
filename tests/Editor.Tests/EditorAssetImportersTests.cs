@@ -22,6 +22,7 @@ public class EditorAssetImportersTests
     [Theory]
     [InlineData("map.ncollision", "collision-mesh")]
     [InlineData("height.nterrain", "terrain")]
+    [InlineData("character.nanimset", "animation-set")]
     public void Select_CollisionSources_ReturnsTypedImporter(string path, string importer)
     {
         Assert.Equal(importer, EditorAssetImporters.Select(path));

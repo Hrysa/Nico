@@ -91,13 +91,16 @@ public class SceneFileStoreTests
                 LinearDamping = 0.1f
             });
             var animationReference = new AssetReference(AssetId.New(), "animation/0");
+            var animationSetReference = new AssetReference(AssetId.New(), "main");
             cube.AddComponent(new AnimatorComponent
             {
                 AnimationSource = animationReference,
-                Clip = "Run",
+                AnimationSet = animationSetReference,
+                DefaultClip = "Run",
                 PlayAutomatically = false,
                 Loop = false,
-                Speed = 1.5f
+                Speed = 1.5f,
+                DefaultFadeDuration = 0.35f
             });
             var camera = new PerspectiveCamera(0.9f, near: 0.25f, far: 500f)
             {
@@ -153,10 +156,12 @@ public class SceneFileStoreTests
             Assert.Equal(0.1f, loadedBody.LinearDamping);
             var loadedAnimator = Assert.IsType<AnimatorComponent>(loadedCube.Components[4]);
             Assert.Equal(animationReference, loadedAnimator.AnimationSource);
-            Assert.Equal("Run", loadedAnimator.Clip);
+            Assert.Equal(animationSetReference, loadedAnimator.AnimationSet);
+            Assert.Equal("Run", loadedAnimator.DefaultClip);
             Assert.False(loadedAnimator.PlayAutomatically);
             Assert.False(loadedAnimator.Loop);
             Assert.Equal(1.5f, loadedAnimator.Speed);
+            Assert.Equal(0.35f, loadedAnimator.DefaultFadeDuration);
             Assert.Equal(cube.MaterialOverride.BaseColor, loadedCube.MaterialOverride?.BaseColor);
             Assert.Equal(cube.MaterialOverride.Metallic, loadedCube.MaterialOverride?.Metallic);
             Assert.Equal(2, loaded.MeshInstances.Count);
@@ -340,6 +345,69 @@ public class SceneFileStoreTests
             Assert.Equal(0.4f, collider.Restitution);
             Assert.Equal(8u, collider.CollisionLayer);
             Assert.Equal(5u, collider.CollisionMask);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Loads format-nine animator fields into the state-driven defaults.</summary>
+    [Fact]
+    public void Load_FormatNineAnimator_MigratesClipAndFadeDefault()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"legacy-animator-{Guid.NewGuid():N}.node");
+        File.WriteAllText(path, """
+            {
+              "formatVersion": 9,
+              "gameCameraId": "camera",
+              "nodes": [
+                {
+                  "id": "animated",
+                  "type": "node3D",
+                  "name": "Animated",
+                  "position": { "x": 0, "y": 0, "z": 0 },
+                  "rotation": { "x": 0, "y": 0, "z": 0 },
+                  "scale": { "x": 1, "y": 1, "z": 1 },
+                  "components": [
+                    {
+                      "type": "animator",
+                      "enabled": true,
+                      "animator": {
+                        "animationSource": null,
+                        "clip": "LegacyRun",
+                        "playAutomatically": true,
+                        "loop": false,
+                        "speed": 1.25
+                      }
+                    }
+                  ],
+                  "children": []
+                },
+                {
+                  "id": "camera",
+                  "type": "perspectiveCamera",
+                  "name": "Camera",
+                  "position": { "x": 0, "y": 0, "z": 5 },
+                  "rotation": { "x": 0, "y": 0, "z": 0 },
+                  "scale": { "x": 1, "y": 1, "z": 1 },
+                  "camera": { "fov": 0.8, "near": 0.1, "far": 100 },
+                  "components": [],
+                  "children": []
+                }
+              ]
+            }
+            """);
+        try
+        {
+            var loaded = SceneFileStore.Load(path);
+            var animated = Assert.IsType<Node3D>(loaded.Root.Children[0]);
+            var animator = Assert.IsType<AnimatorComponent>(Assert.Single(animated.Components));
+
+            Assert.Equal("LegacyRun", animator.DefaultClip);
+            Assert.Equal(0.2f, animator.DefaultFadeDuration);
+            Assert.False(animator.Loop);
+            Assert.Equal(1.25f, animator.Speed);
         }
         finally
         {

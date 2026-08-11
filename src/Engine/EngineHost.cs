@@ -45,6 +45,7 @@ public sealed class EngineApplication : IDisposable
     private SceneScriptRuntime? _scriptRuntime;
     private PhysicsWorld? _physicsWorld;
     private RuntimeResourceManager? _runtimeResources;
+    private SceneAnimationRegistry? _animationService;
     private UIHost? _uiHost;
     private IUIViewportPolicy? _uiViewportPolicy;
     private WorldSpaceUIHost? _worldSpaceUI;
@@ -83,6 +84,7 @@ public sealed class EngineApplication : IDisposable
         registry.Register(new GlbModelImporter());
         registry.Register(new CollisionMeshAssetImporter());
         registry.Register(new TerrainAssetImporter());
+        registry.Register(new AnimationSetAssetImporter());
         var pipeline = new AssetImportPipeline(database, registry);
         _runtimeResources = CreateRuntimeResourceManager(database, pipeline);
 
@@ -93,6 +95,7 @@ public sealed class EngineApplication : IDisposable
         MountSceneHud(scene.Root);
         if (_sceneHud is null)
             _window.SubmitUI(new UIDrawList());
+        _animationService = new SceneAnimationRegistry();
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
@@ -272,6 +275,8 @@ public sealed class EngineApplication : IDisposable
         DetachSceneHud();
         _scriptRuntime?.Dispose();
         _scriptRuntime = null;
+        _animationService?.Dispose();
+        _animationService = null;
         _physicsWorld?.Dispose();
         _physicsWorld = null;
         _scriptCatalog?.Dispose();
@@ -388,34 +393,15 @@ public sealed class EngineApplication : IDisposable
             }
             else
             {
-                var playbackResource = skin;
-                if (instance.GetComponent<AnimatorComponent>()?.AnimationSource is
-                    { } animationReference)
-                {
-                    var animationRecord = database.Find(animationReference.Asset)
-                        ?? throw new FileNotFoundException(
-                            $"Animation asset '{animationReference.Asset}' is missing.");
-                    var animationOutcome = pipeline.Import(animationRecord, "player");
-                    var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
-                        artifact.Key == animationReference.SubAsset &&
-                        artifact.ContentType == "nico/skeletal-animation");
-                    if (!animationOutcome.Succeeded || animationArtifact is null)
-                    {
-                        throw new InvalidDataException(
-                            $"Animation sub-asset '{animationReference}' is missing.");
-                    }
-                    var animation = LoadRuntimeResource(animationReference,
-                        new SkeletalAnimationResource(new SkeletonResource([]), []));
-                    var clips = animation.BindTo(skin.Skeleton);
-                    playbackResource = new SkinnedMeshResource(
-                        skin.Mesh, skin.Influences, skin.Skeleton, clips,
-                        skin.MeshNodeTransform);
-                }
-                var player = CreateAnimationPlayer(instance, playbackResource);
+                var playbackResource = ResolvePlaybackResource(
+                    database, pipeline, instance, skin);
+                var controller = CreateAnimationController(instance, playbackResource);
                 var handles = _window.CreateSkinnedMesh(skin, material);
-                _window.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
+                _window.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
+                _animationService!.Register(instance, controller);
                 _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
-                    textureHandle, handles.Palette, player));
+                    textureHandle, handles.Palette, controller)
+                    { UploadedPoseRevision = controller.PoseRevision });
             }
         }
         catch
@@ -424,6 +410,71 @@ public sealed class EngineApplication : IDisposable
                 _window.DestroyTexture(textureHandle);
             throw;
         }
+    }
+
+    /// <summary>Resolves embedded, standalone, or aliased animation-set clips for one mesh.</summary>
+    /// <param name="database">Project asset database.</param>
+    /// <param name="pipeline">Player import pipeline.</param>
+    /// <param name="instance">Animated scene mesh.</param>
+    /// <param name="skin">Target skinned resource.</param>
+    /// <returns>A playback resource whose clip names are stable script-facing keys.</returns>
+    private SkinnedMeshResource ResolvePlaybackResource(AssetDatabase database,
+        AssetImportPipeline pipeline, MeshInstance3D instance, SkinnedMeshResource skin)
+    {
+        var animator = instance.GetComponent<AnimatorComponent>();
+        if (animator?.AnimationSet is { } setReference)
+        {
+            var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
+            var clips = set.BindTo(skin.Skeleton,
+                source => ResolveAnimationSource(database, pipeline, source));
+            return new SkinnedMeshResource(skin.Mesh, skin.Influences, skin.Skeleton,
+                clips, skin.MeshNodeTransform);
+        }
+        if (animator?.AnimationSource is not { } animationReference)
+            return skin;
+        var animationRecord = database.Find(animationReference.Asset)
+            ?? throw new FileNotFoundException(
+                $"Animation asset '{animationReference.Asset}' is missing.");
+        var animationOutcome = pipeline.Import(animationRecord, "player");
+        var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
+            artifact.Key == animationReference.SubAsset &&
+            artifact.ContentType == "nico/skeletal-animation");
+        if (!animationOutcome.Succeeded || animationArtifact is null)
+            throw new InvalidDataException(
+                $"Animation sub-asset '{animationReference}' is missing.");
+        var animation = LoadRuntimeResource(animationReference,
+            new SkeletalAnimationResource(new SkeletonResource([]), []));
+        var standaloneClips = animation.BindTo(skin.Skeleton);
+        return new SkinnedMeshResource(skin.Mesh, skin.Influences, skin.Skeleton,
+            standaloneClips, skin.MeshNodeTransform);
+    }
+
+    /// <summary>Loads one standalone or skinned animation artifact for set binding.</summary>
+    /// <param name="database">Project asset database.</param>
+    /// <param name="pipeline">Player import pipeline.</param>
+    /// <param name="source">Explicit source artifact.</param>
+    /// <returns>The decoded source skeleton and clips.</returns>
+    private SkeletalAnimationResource ResolveAnimationSource(AssetDatabase database,
+        AssetImportPipeline pipeline, AssetReference source)
+    {
+        var sourceRecord = database.Find(source.Asset) ?? throw new FileNotFoundException(
+            $"Animation source asset '{source.Asset}' is missing.");
+        var outcome = pipeline.Import(sourceRecord, "player");
+        var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+            candidate.Key == source.SubAsset &&
+            candidate.ContentType is "nico/skeletal-animation" or "nico/skinned-mesh");
+        if (!outcome.Succeeded || artifact is null)
+            throw new InvalidDataException(
+                $"Animation source sub-asset '{source}' is missing.");
+        if (artifact.ContentType == "nico/skeletal-animation")
+        {
+            return LoadRuntimeResource(source,
+                new SkeletalAnimationResource(new SkeletonResource([]), []));
+        }
+        var skin = LoadRuntimeResource(source,
+            new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
+                new SkeletonResource([]), []));
+        return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray());
     }
 
     /// <summary>Mounts the single authored HUD found in a loaded scene.</summary>
@@ -483,6 +534,8 @@ public sealed class EngineApplication : IDisposable
             "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
             "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<AnimationSetResource>(
+            "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
             "nico/standard-material", (stream, _, _) =>
             {
@@ -556,19 +609,25 @@ public sealed class EngineApplication : IDisposable
     /// <summary>Creates and configures playback for one runtime skinned instance.</summary>
     /// <param name="instance">Scene instance owning authored animator settings.</param>
     /// <param name="mesh">Skinned resource.</param>
-    /// <returns>Configured animation player in bind pose or selected clip.</returns>
-    private static AnimationPlayer CreateAnimationPlayer(
+    /// <returns>Configured animation controller in bind pose or selected clip.</returns>
+    private static AnimationController CreateAnimationController(
         MeshInstance3D instance,
         SkinnedMeshResource mesh)
     {
-        var player = new AnimationPlayer(mesh);
+        var controller = new AnimationController(mesh);
         var animator = instance.GetComponent<AnimatorComponent>();
         if (animator is not { Enabled: true })
-            return player;
-        player.Speed = animator.Speed;
-        player.Loop = animator.Loop;
-        player.Play(animator.Clip, animator.PlayAutomatically);
-        return player;
+            return controller;
+        controller.DefaultFadeDuration = animator.DefaultFadeDuration;
+        var clip = mesh.FindAnimation(animator.DefaultClip);
+        if (clip is null)
+            return controller;
+        var state = controller.GetOrCreate(clip.Name);
+        state.Speed = animator.Speed;
+        state.Loop = animator.Loop;
+        if (animator.PlayAutomatically)
+            controller.PlayFromStart(clip.Name);
+        return controller;
     }
 
     /// <summary>Submits the loaded scene through its game camera.</summary>
@@ -579,6 +638,7 @@ public sealed class EngineApplication : IDisposable
         _scriptRuntime?.Update(simulationDelta);
         _physicsWorld?.Update(simulationDelta);
         _scriptRuntime?.LateUpdate(simulationDelta);
+        UpdateAnimations(simulationDelta);
         if (_camera is null)
             return;
         _renderQueue.Clear();
@@ -595,31 +655,6 @@ public sealed class EngineApplication : IDisposable
         {
             if (renderable.Animation is not null && renderable.Palette.IsValid)
             {
-                var animator = renderable.Instance.GetComponent<AnimatorComponent>();
-                if (animator is { Enabled: true })
-                {
-                    renderable.Animation.Speed = animator.Speed;
-                    renderable.Animation.Loop = animator.Loop;
-                    var desiredClip = renderable.Animation.Resource.FindAnimation(animator.Clip);
-                    var poseChanged = false;
-                    if (!ReferenceEquals(renderable.Animation.Clip, desiredClip))
-                    {
-                        renderable.Animation.Play(
-                            animator.Clip, animator.PlayAutomatically);
-                        poseChanged = true;
-                    }
-                    if (renderable.Animation.IsPlaying && renderable.Animation.Speed != 0f &&
-                        simulationDelta > 0d)
-                    {
-                        renderable.Animation.Update(simulationDelta);
-                        poseChanged = true;
-                    }
-                    if (poseChanged)
-                    {
-                        _window.UpdateSkinPalette(renderable.Palette,
-                            renderable.Animation.Pose.SkinMatrices);
-                    }
-                }
                 _renderQueue.AddSkinned(renderable.Mesh, renderable.Palette,
                     _camera.GetPushConstants(renderable.Animation.Resource.ComposeModelTransform(
                         renderable.Instance.GetModelMatrix())));
@@ -631,6 +666,32 @@ public sealed class EngineApplication : IDisposable
             }
         }
         _window.Submit(_renderView, _renderQueue);
+    }
+
+    /// <summary>Advances active controllers and uploads only changed skin palettes.</summary>
+    /// <param name="deltaTime">Elapsed scaled simulation time.</param>
+    private void UpdateAnimations(double deltaTime)
+    {
+        for (var index = 0; index < _renderables.Count; index++)
+        {
+            var renderable = _renderables[index];
+            if (renderable.Animation is not { } controller || !renderable.Palette.IsValid)
+                continue;
+            var animator = renderable.Instance.GetComponent<AnimatorComponent>();
+            if (animator is null || animator.Enabled)
+                controller.Advance(deltaTime);
+        }
+        for (var index = 0; index < _renderables.Count; index++)
+        {
+            var renderable = _renderables[index];
+            if (renderable.Animation is not { } controller || !renderable.Palette.IsValid)
+                continue;
+            controller.DispatchEvents();
+            if (renderable.UploadedPoseRevision == controller.PoseRevision)
+                continue;
+            _window.UpdateSkinPalette(renderable.Palette, controller.Pose.SkinMatrices);
+            renderable.UploadedPoseRevision = controller.PoseRevision;
+        }
     }
 
     /// <summary>Resizes the Player render target and presentation quad.</summary>
@@ -676,13 +737,43 @@ public sealed class EngineApplication : IDisposable
     /// <param name="Mesh">Static or skinned mesh handle.</param>
     /// <param name="Texture">Optional texture handle.</param>
     /// <param name="Palette">Optional joint palette.</param>
-    /// <param name="Animation">Optional animation player.</param>
-    private readonly record struct RuntimeRenderable(
-        MeshInstance3D Instance,
-        MeshHandle Mesh,
-        TextureHandle Texture,
-        SkinPaletteHandle Palette,
-        AnimationPlayer? Animation);
+    /// <param name="Animation">Optional animation controller.</param>
+    private sealed class RuntimeRenderable
+    {
+        /// <summary>Gets the scene mesh instance.</summary>
+        internal MeshInstance3D Instance { get; }
+
+        /// <summary>Gets the static or skinned mesh handle.</summary>
+        internal MeshHandle Mesh { get; }
+
+        /// <summary>Gets the optional texture handle.</summary>
+        internal TextureHandle Texture { get; }
+
+        /// <summary>Gets the optional joint-palette handle.</summary>
+        internal SkinPaletteHandle Palette { get; }
+
+        /// <summary>Gets the optional runtime animation controller.</summary>
+        internal AnimationController? Animation { get; }
+
+        /// <summary>Gets or sets the pose revision most recently uploaded to the palette.</summary>
+        internal ulong UploadedPoseRevision { get; set; }
+
+        /// <summary>Creates retained resources for one scene mesh instance.</summary>
+        /// <param name="instance">Scene mesh instance.</param>
+        /// <param name="mesh">Static or skinned mesh handle.</param>
+        /// <param name="texture">Optional texture handle.</param>
+        /// <param name="palette">Optional joint-palette handle.</param>
+        /// <param name="animation">Optional runtime animation controller.</param>
+        internal RuntimeRenderable(MeshInstance3D instance, MeshHandle mesh,
+            TextureHandle texture, SkinPaletteHandle palette, AnimationController? animation)
+        {
+            Instance = instance;
+            Mesh = mesh;
+            Texture = texture;
+            Palette = palette;
+            Animation = animation;
+        }
+    }
 
     /// <summary>Selects importers needed by loose Player scene loading.</summary>
     /// <param name="path">Project-relative source path.</param>
@@ -695,6 +786,7 @@ public sealed class EngineApplication : IDisposable
             ".cs" => "csharp-script",
             ".ncollision" => "collision-mesh",
             ".nterrain" => "terrain",
+            ".nanimset" => "animation-set",
             _ => null
         };
     }
@@ -725,7 +817,7 @@ public sealed class EngineApplication : IDisposable
         _scriptRuntime = new SceneScriptRuntime();
         try
         {
-            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window);
+            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window, _animationService);
             _scriptRuntime.Start();
         }
         catch

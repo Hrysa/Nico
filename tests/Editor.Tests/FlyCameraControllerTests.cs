@@ -143,4 +143,48 @@ public class FlyCameraControllerTests
 
         Assert.True(Vector3.Dot(camera.Position - before, camera.GetForwardVector()) > 0f);
     }
+
+    /// <summary>Verifies a positive desktop mouse-wheel step dollies toward the scene.</summary>
+    [Fact]
+    public void ApplyMouseWheelZoom_PositiveDelta_MovesForwardWithoutRotating()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var beforePosition = camera.Position;
+        var beforeRotation = camera.Rotation;
+
+        controller.ApplyMouseWheelZoom(1f);
+
+        Assert.True(Vector3.Dot(camera.Position - beforePosition,
+            camera.GetForwardVector()) > 0f);
+        Assert.Equal(beforeRotation, camera.Rotation);
+    }
+
+    /// <summary>Verifies desktop secondary-button motion rotates without translating.</summary>
+    [Fact]
+    public void ApplyMouseLook_PointerDelta_RotatesWithoutMoving()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var position = camera.Position;
+
+        controller.ApplyMouseLook(new Vector2(10f, -5f));
+
+        Assert.NotEqual(Vector3.Zero, camera.Rotation);
+        Assert.Equal(position, camera.Position);
+    }
+
+    /// <summary>Verifies desktop middle-button motion pans without rotating.</summary>
+    [Fact]
+    public void ApplyMousePan_PointerDelta_MovesWithoutRotating()
+    {
+        var camera = new PerspectiveCamera();
+        var controller = new FlyCameraController(camera, _ => { }, () => { });
+        var rotation = camera.Rotation;
+
+        controller.ApplyMousePan(new Vector2(10f, -5f));
+
+        Assert.NotEqual(Vector3.Zero, camera.Position);
+        Assert.Equal(rotation, camera.Rotation);
+    }
 }

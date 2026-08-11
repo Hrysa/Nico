@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 9;
+    private const int CurrentFormatVersion = 10;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -232,7 +232,10 @@ public static class SceneFileStore
                             animator.Clip,
                             animator.PlayAutomatically,
                             animator.Loop,
-                            animator.Speed)));
+                            animator.Speed,
+                            animator.DefaultFadeDuration,
+                            animator.DefaultClip,
+                            animator.AnimationSet)));
                     break;
                 default:
                     throw new NotSupportedException(
@@ -339,10 +342,12 @@ public static class SceneFileStore
                     component = new AnimatorComponent
                     {
                         AnimationSource = animator.AnimationSource,
-                        Clip = animator.Clip,
+                        DefaultClip = animator.DefaultClip ?? animator.Clip,
                         PlayAutomatically = animator.PlayAutomatically,
                         Loop = animator.Loop,
-                        Speed = animator.Speed
+                        Speed = animator.Speed,
+                        DefaultFadeDuration = animator.DefaultFadeDuration,
+                        AnimationSet = animator.AnimationSet
                     };
                     break;
                 default:
@@ -523,7 +528,10 @@ public static class SceneFileStore
         string? Clip,
         bool PlayAutomatically,
         bool Loop,
-        float Speed);
+        float Speed,
+        float DefaultFadeDuration = 0.2f,
+        string? DefaultClip = null,
+        AssetReference? AnimationSet = null);
 
     private sealed record PropertyOverrideData(
         int PropertyId,

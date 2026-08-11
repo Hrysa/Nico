@@ -88,6 +88,180 @@ public sealed class AnimationResourceTests
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
     }
 
+    /// <summary>Reuses one state and does not restart it when repeatedly played.</summary>
+    [Fact]
+    public void AnimationController_PlayCurrent_ReusesStateWithoutRestarting()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var first = controller.Play("Forward");
+        controller.Update(0.4d);
+
+        var second = controller.Play("Forward");
+
+        Assert.Same(first, second);
+        Assert.Equal(0.4f, second.Time, 5);
+        Assert.True(second.IsCurrent);
+    }
+
+    /// <summary>Blends sampled local transforms instead of final skin matrices.</summary>
+    [Fact]
+    public void AnimationController_CrossFade_BlendsLocalPose()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        controller.Play("Forward");
+        var backward = controller.PlayFromStart("Backward", 1f);
+
+        controller.Update(0.5d);
+
+        Assert.Equal(0.5f, backward.Weight, 5);
+        Assert.Equal(0f, controller.Pose.LocalTransforms[0].Translation.X, 5);
+    }
+
+    /// <summary>Starts an interrupted fade from current weights without snapping.</summary>
+    [Fact]
+    public void AnimationController_InterruptedFade_PreservesCurrentWeights()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var forward = controller.Play("Forward");
+        var backward = controller.Play("Backward", 1f);
+        controller.Update(0.25d);
+        var forwardBefore = forward.Weight;
+        var backwardBefore = backward.Weight;
+
+        controller.Play("Forward", 1f);
+        controller.Update(0d);
+
+        Assert.Equal(forwardBefore, forward.Weight, 5);
+        Assert.Equal(backwardBefore, backward.Weight, 5);
+    }
+
+    /// <summary>Raises completion exactly once for reverse non-looping playback.</summary>
+    [Fact]
+    public void AnimationController_ReverseNonLooping_RaisesEndedOnce()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var state = controller.GetOrCreate("Forward");
+        state.Speed = -1f;
+        state.Loop = false;
+        var endings = 0;
+        state.Ended += _ => endings++;
+        controller.PlayFromStart("Forward");
+
+        controller.Update(2d);
+        controller.Update(2d);
+
+        Assert.Equal(0f, state.Time);
+        Assert.False(state.IsPlaying);
+        Assert.Equal(1, endings);
+    }
+
+    /// <summary>Raises completion exactly once for forward non-looping playback.</summary>
+    [Fact]
+    public void AnimationController_ForwardNonLooping_RaisesEndedOnce()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var state = controller.GetOrCreate("Forward");
+        state.Loop = false;
+        var endings = 0;
+        state.Ended += _ => endings++;
+        controller.PlayFromStart("Forward");
+
+        controller.Update(2d);
+        controller.Update(2d);
+
+        Assert.Equal(1f, state.Time);
+        Assert.False(state.IsPlaying);
+        Assert.Equal(1, endings);
+    }
+
+    /// <summary>Defers completion callbacks until the runtime's explicit dispatch phase.</summary>
+    [Fact]
+    public void AnimationController_Advance_DefersEndedUntilDispatch()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var state = controller.GetOrCreate("Forward");
+        state.Loop = false;
+        var endings = 0;
+        state.Ended += _ => endings++;
+        controller.PlayFromStart("Forward");
+
+        controller.Advance(2d);
+        Assert.Equal(0, endings);
+
+        controller.DispatchEvents();
+        Assert.Equal(1, endings);
+    }
+
+    /// <summary>Ensures warmed two-state cross-fading remains allocation-free.</summary>
+    [Fact]
+    public void AnimationController_CrossFadeUpdate_DoesNotAllocate()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        controller.Play("Forward");
+        controller.Play("Backward", 10f);
+        controller.Update(0.016d);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var index = 0; index < 100; index++)
+            controller.Update(0.016d);
+
+        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+    }
+
+    /// <summary>Uses the configured default fade for the convenience Play overload.</summary>
+    [Fact]
+    public void AnimationController_Play_UsesConfiguredDefaultFade()
+    {
+        using var controller = new AnimationController(CreateBlendResource())
+            { DefaultFadeDuration = 1f };
+        controller.PlayFromStart("Forward");
+
+        var backward = controller.Play("Backward");
+        controller.Update(0.25d);
+
+        Assert.Equal(0.25f, backward.Weight, 5);
+    }
+
+    /// <summary>Fades a stopped state smoothly back to bind pose.</summary>
+    [Fact]
+    public void AnimationController_StopWithFade_BlendsTowardBindPose()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        controller.PlayFromStart("Forward");
+
+        controller.Stop(1f);
+        controller.Update(0.5d);
+
+        Assert.Equal(0.5f, controller.Pose.LocalTransforms[0].Translation.X, 5);
+        Assert.Null(controller.Current);
+        Assert.True(controller.RequiresUpdate);
+    }
+
+    /// <summary>Offers a non-throwing path for optional gameplay clips.</summary>
+    [Fact]
+    public void AnimationController_TryPlay_UnknownClip_ReturnsFalse()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+
+        Assert.False(controller.TryPlay("Missing", out var state));
+        Assert.Null(state);
+        Assert.Null(controller.Current);
+    }
+
+    /// <summary>Invalidates retained state mutation when its runtime scene is destroyed.</summary>
+    [Fact]
+    public void AnimationController_Dispose_InvalidatesRetainedState()
+    {
+        var controller = new AnimationController(CreateBlendResource());
+        var state = controller.GetOrCreate("Forward");
+
+        controller.Dispose();
+
+        Assert.False(controller.IsValid);
+        Assert.Throws<ObjectDisposedException>(() => state.Time = 0.5f);
+        Assert.Throws<ObjectDisposedException>(() => state.Speed = 2f);
+    }
+
     /// <summary>Creates a two-joint animated triangle resource.</summary>
     /// <returns>Reusable test resource.</returns>
     private static SkinnedMeshResource CreateResource()
@@ -122,5 +296,31 @@ public sealed class AnimationResourceTests
             new SkinInfluence(1, 0, 0, 0, Vector4.UnitX),
             new SkinInfluence(1, 0, 0, 0, Vector4.UnitX)
         ], skeleton, [clip], meshNodeTransform);
+    }
+
+    /// <summary>Creates one-joint clips translating in opposite directions.</summary>
+    /// <returns>Reusable blend-test resource.</returns>
+    private static SkinnedMeshResource CreateBlendResource()
+    {
+        var skeleton = new SkeletonResource(
+        [
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var forward = new AnimationClipResource("Forward", 1f,
+        [
+            new JointAnimationTrack(
+                new Vector3AnimationTrack([0f, 1f],
+                    [Vector3.UnitX, Vector3.UnitX], AnimationInterpolation.Linear),
+                null, null)
+        ]);
+        var backward = new AnimationClipResource("Backward", 1f,
+        [
+            new JointAnimationTrack(
+                new Vector3AnimationTrack([0f, 1f],
+                    [-Vector3.UnitX, -Vector3.UnitX], AnimationInterpolation.Linear),
+                null, null)
+        ]);
+        return new SkinnedMeshResource(
+            new StaticMeshResource([], [], []), [], skeleton, [forward, backward]);
     }
 }

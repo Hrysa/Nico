@@ -14,22 +14,28 @@ public sealed class SceneContext
     /// <summary>Gets frame-stable keyboard and pointer input for the active scene.</summary>
     public SceneInput Input { get; }
 
+    /// <summary>Gets runtime skeletal-animation controllers for the active scene.</summary>
+    public ISceneAnimationService Animation { get; }
+
     /// <summary>
     /// Creates a scene context for a root node.
     /// </summary>
     /// <param name="root">Synthetic scene root.</param>
-    public SceneContext(Node root) : this(root, null)
+    public SceneContext(Node root) : this(root, null, null)
     {
     }
 
     /// <summary>Creates a scene context backed by an optional input source.</summary>
     /// <param name="root">Synthetic scene root.</param>
     /// <param name="inputSource">Runtime input source, or null for headless use.</param>
-    internal SceneContext(Node root, IInputSource? inputSource)
+    /// <param name="animationService">Runtime animation service, or null when unavailable.</param>
+    internal SceneContext(Node root, IInputSource? inputSource,
+        ISceneAnimationService? animationService)
     {
         ArgumentNullException.ThrowIfNull(root);
         Root = root;
         Input = new SceneInput(inputSource);
+        Animation = animationService ?? EmptySceneAnimationService.Instance;
     }
 
     /// <summary>

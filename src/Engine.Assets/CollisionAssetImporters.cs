@@ -47,3 +47,21 @@ public sealed class TerrainAssetImporter : IAssetImporter
         return CollisionMeshAssetImporter.Copy(context, "terrain.nterrain", "nico/terrain");
     }
 }
+
+/// <summary>Publishes a project-authored animation-set source with its runtime content type.</summary>
+public sealed class AnimationSetAssetImporter : IAssetImporter
+{
+    /// <inheritdoc/>
+    public string Id => "animation-set";
+
+    /// <inheritdoc/>
+    public int Version => 1;
+
+    /// <inheritdoc/>
+    public AssetImportResult Import(AssetImportContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return CollisionMeshAssetImporter.Copy(
+            context, "animation-set.nanimset", "nico/animation-set");
+    }
+}

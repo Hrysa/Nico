@@ -1,6 +1,7 @@
 using System.Numerics;
 using Engine.Core;
 using Engine.Graphics;
+using Engine.Scripting;
 using Engine.UI;
 
 namespace Editor;
@@ -27,10 +28,29 @@ public sealed class EditorViewportRenderer : IDisposable
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
     private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
+    private readonly SceneAnimationRegistry _animationRegistry = new();
     private GizmoViewport _lastSceneViewport;
     private ScenePreviewPickingId? _hoveredPreview;
     private bool _hasSubmittedSceneOverlay;
     private bool _disposed;
+
+    /// <summary>Gets script-facing controllers owned by this renderer's scene resources.</summary>
+    public ISceneAnimationService AnimationService => _animationRegistry;
+
+    /// <summary>Gets whether an owned visible controller needs recurring updates.</summary>
+    public bool HasActiveAnimations
+    {
+        get
+        {
+            for (var index = 0; index < _gameObjects.Count; index++)
+            {
+                if (_assetMeshes.TryGetValue(_gameObjects[index], out var resource) &&
+                    resource.OwnsAnimation && resource.Animation?.RequiresUpdate == true)
+                    return true;
+            }
+            return false;
+        }
+    }
 
     /// <summary>
     /// Creates the editor viewport renderer.
@@ -173,6 +193,7 @@ public sealed class EditorViewportRenderer : IDisposable
             DestroyAssetMeshResource(resource);
         foreach (var handle in _previewLineMeshes.Values)
             _renderer.DestroyMesh(handle);
+        _animationRegistry.Dispose();
         _assetMeshes.Clear();
         _meshHandles.Clear();
         _previewLineMeshes.Clear();
@@ -213,7 +234,7 @@ public sealed class EditorViewportRenderer : IDisposable
             material.BaseColorTexture = textureHandle;
             var meshHandle = _renderer.CreateStaticMesh(mesh, material);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
-                meshHandle, textureHandle, default, null));
+                instance, meshHandle, textureHandle, default, null));
         }
         catch
         {
@@ -229,12 +250,14 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="material">Imported standard material.</param>
     /// <param name="texture">Optional imported base-color texture.</param>
     /// <param name="animations">Optional standalone clips already bound to this skeleton.</param>
+    /// <param name="sharedController">Optional controller owned by another viewport renderer.</param>
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         SkinnedMeshResource mesh,
         StandardMaterialResource material,
         TextureResource? texture = null,
-        AnimationClipResource[]? animations = null)
+        AnimationClipResource[]? animations = null,
+        AnimationController? sharedController = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(mesh);
@@ -250,11 +273,17 @@ public sealed class EditorViewportRenderer : IDisposable
                 ? mesh
                 : new SkinnedMeshResource(mesh.Mesh, mesh.Influences, mesh.Skeleton,
                     animations, mesh.MeshNodeTransform);
-            var player = new AnimationPlayer(playbackResource);
-            ConfigureAnimationPlayer(instance, player);
-            _renderer.UpdateSkinPalette(handles.Palette, player.Pose.SkinMatrices);
+            var controller = sharedController ?? new AnimationController(playbackResource);
+            var ownsController = sharedController is null;
+            if (ownsController)
+                ConfigureAnimationController(instance, controller);
+            _renderer.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
+            if (ownsController)
+                _animationRegistry.Register(instance, controller);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
-                handles.Mesh, textureHandle, handles.Palette, player));
+                instance, handles.Mesh, textureHandle, handles.Palette, controller,
+                ownsController)
+                { UploadedPoseRevision = controller.PoseRevision });
         }
         catch
         {
@@ -277,28 +306,22 @@ public sealed class EditorViewportRenderer : IDisposable
                 continue;
             }
             var animator = instance.GetComponent<AnimatorComponent>();
-            if (animator is null || !animator.Enabled)
+            if (resource.OwnsAnimation && (animator is null || animator.Enabled))
+                resource.Animation.Advance(deltaTime);
+        }
+        for (var index = 0; index < _gameObjects.Count; index++)
+        {
+            var instance = _gameObjects[index];
+            if (!_assetMeshes.TryGetValue(instance, out var resource) ||
+                resource.Animation is null || !resource.Palette.IsValid)
                 continue;
-            resource.Animation.Speed = animator.Speed;
-            resource.Animation.Loop = animator.Loop;
-            var desiredClip = resource.Animation.Resource.FindAnimation(animator.Clip);
-            var poseChanged = false;
-            if (!ReferenceEquals(resource.Animation.Clip, desiredClip))
-            {
-                resource.Animation.Play(animator.Clip, animator.PlayAutomatically);
-                poseChanged = true;
-            }
-            if (resource.Animation.IsPlaying && resource.Animation.Speed != 0f &&
-                deltaTime > 0d)
-            {
-                resource.Animation.Update(deltaTime);
-                poseChanged = true;
-            }
-            if (poseChanged)
-            {
-                _renderer.UpdateSkinPalette(resource.Palette,
-                    resource.Animation.Pose.SkinMatrices);
-            }
+            if (resource.OwnsAnimation)
+                resource.Animation.DispatchEvents();
+            if (resource.UploadedPoseRevision == resource.Animation.PoseRevision)
+                continue;
+            _renderer.UpdateSkinPalette(resource.Palette,
+                resource.Animation.Pose.SkinMatrices);
+            resource.UploadedPoseRevision = resource.Animation.PoseRevision;
         }
     }
 
@@ -552,6 +575,11 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="resource">Imported GPU resource pair.</param>
     private void DestroyAssetMeshResource(AssetMeshGpuResource resource)
     {
+        if (resource.Animation is not null && resource.OwnsAnimation)
+        {
+            _animationRegistry.Unregister(resource.Instance);
+            resource.Animation.Dispose();
+        }
         if (resource.Palette.IsValid)
             _renderer.DestroySkinPalette(resource.Palette);
         _renderer.DestroyMesh(resource.Mesh);
@@ -561,17 +589,23 @@ public sealed class EditorViewportRenderer : IDisposable
 
     /// <summary>Configures initial playback from the instance animator component.</summary>
     /// <param name="instance">Scene instance owning the animator.</param>
-    /// <param name="player">New animation player.</param>
-    private static void ConfigureAnimationPlayer(
+    /// <param name="controller">New animation controller.</param>
+    private static void ConfigureAnimationController(
         MeshInstance3D instance,
-        AnimationPlayer player)
+        AnimationController controller)
     {
         var animator = instance.GetComponent<AnimatorComponent>();
         if (animator is null || !animator.Enabled)
             return;
-        player.Speed = animator.Speed;
-        player.Loop = animator.Loop;
-        player.Play(animator.Clip, animator.PlayAutomatically);
+        controller.DefaultFadeDuration = animator.DefaultFadeDuration;
+        var clip = controller.Resource.FindAnimation(animator.DefaultClip);
+        if (clip is null)
+            return;
+        var state = controller.GetOrCreate(clip.Name);
+        state.Speed = animator.Speed;
+        state.Loop = animator.Loop;
+        if (animator.PlayAutomatically)
+            controller.PlayFromStart(clip.Name);
     }
 
     /// <summary>Adds static or skinned imported geometry to one queue.</summary>
@@ -597,10 +631,46 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="Mesh">Indexed mesh handle.</param>
     /// <param name="Texture">Optional sampled texture handle.</param>
     /// <param name="Palette">Optional joint-palette handle.</param>
-    /// <param name="Animation">Optional runtime animation player.</param>
-    private readonly record struct AssetMeshGpuResource(
-        MeshHandle Mesh,
-        TextureHandle Texture,
-        SkinPaletteHandle Palette,
-        AnimationPlayer? Animation);
+    private sealed class AssetMeshGpuResource
+    {
+        /// <summary>Gets the owning scene mesh instance.</summary>
+        internal MeshInstance3D Instance { get; }
+
+        /// <summary>Gets the indexed mesh handle.</summary>
+        internal MeshHandle Mesh { get; }
+
+        /// <summary>Gets the optional sampled texture handle.</summary>
+        internal TextureHandle Texture { get; }
+
+        /// <summary>Gets the optional joint-palette handle.</summary>
+        internal SkinPaletteHandle Palette { get; }
+
+        /// <summary>Gets the optional runtime animation controller.</summary>
+        internal AnimationController? Animation { get; }
+
+        /// <summary>Gets whether this renderer advances and disposes the controller.</summary>
+        internal bool OwnsAnimation { get; }
+
+        /// <summary>Gets or sets the pose revision most recently uploaded.</summary>
+        internal ulong UploadedPoseRevision { get; set; }
+
+        /// <summary>Creates renderer resources for one scene mesh instance.</summary>
+        /// <param name="mesh">Indexed mesh handle.</param>
+        /// <param name="texture">Optional sampled texture handle.</param>
+        /// <param name="palette">Optional joint-palette handle.</param>
+        /// <param name="animation">Optional runtime animation controller.</param>
+        /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
+        /// <param name="instance">Owning scene mesh instance.</param>
+        internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
+            TextureHandle texture, SkinPaletteHandle palette,
+            AnimationController? animation, bool ownsAnimation = false)
+        {
+            Instance = instance;
+            Mesh = mesh;
+            Texture = texture;
+            Palette = palette;
+            Animation = animation;
+            OwnsAnimation = ownsAnimation;
+        }
+    }
 }

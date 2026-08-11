@@ -14,6 +14,7 @@ public sealed class FlyCameraController
     private const float GestureRotateSensitivity = 0.01f;
     private const float GestureMoveSensitivity = 0.025f;
     private const float GestureZoomSensitivity = 12f;
+    private const float MouseWheelZoomSensitivity = 1f;
 
     private readonly PerspectiveCamera _camera;
     private readonly Action<bool> _setMouseCaptured;
@@ -83,6 +84,34 @@ public sealed class FlyCameraController
         if (!float.IsFinite(magnification))
             return;
         _camera.MoveForward(magnification * GestureZoomSensitivity);
+    }
+
+    /// <summary>Moves the camera along its viewing direction for a mouse-wheel step.</summary>
+    /// <param name="wheelDelta">Vertical wheel delta; positive values move forward.</param>
+    public void ApplyMouseWheelZoom(float wheelDelta)
+    {
+        if (!float.IsFinite(wheelDelta))
+            return;
+        _camera.MoveForward(wheelDelta * MouseWheelZoomSensitivity);
+    }
+
+    /// <summary>Rotates the camera from a desktop secondary-button drag.</summary>
+    /// <param name="delta">Pointer movement in logical pixels.</param>
+    public void ApplyMouseLook(Vector2 delta)
+    {
+        if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y))
+            return;
+        _camera.Rotate(delta.X * LookSensitivity, -delta.Y * LookSensitivity);
+    }
+
+    /// <summary>Moves the camera in its view plane from a desktop middle-button drag.</summary>
+    /// <param name="delta">Pointer movement in logical pixels.</param>
+    public void ApplyMousePan(Vector2 delta)
+    {
+        if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y))
+            return;
+        _camera.MoveRight(-delta.X * GestureMoveSensitivity);
+        _camera.MoveUp(delta.Y * GestureMoveSensitivity);
     }
 
     /// <summary>Handles a key press and mode toggling.</summary>

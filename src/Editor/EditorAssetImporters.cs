@@ -20,6 +20,7 @@ public static class EditorAssetImporters
             ".glb" => "gltf-model",
             ".ncollision" => "collision-mesh",
             ".nterrain" => "terrain",
+            ".nanimset" => "animation-set",
             _ => null
         };
     }

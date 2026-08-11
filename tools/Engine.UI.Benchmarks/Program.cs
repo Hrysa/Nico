@@ -107,9 +107,60 @@ internal static class Program
             BenchmarkChangedPointerMove(sampleCount),
             BenchmarkCachedComposition(sampleCount),
             BenchmarkDirtySubtree(sampleCount),
-            BenchmarkVirtualizedScroll(sampleCount)
+            BenchmarkVirtualizedScroll(sampleCount),
+            BenchmarkAnimationControllers(sampleCount)
         ];
     }
+
+    /// <summary>Measures 100 independently blended two-state poses over 80-joint skeletons.</summary>
+    /// <param name="sampleCount">Measured sample count.</param>
+    /// <returns>Timing and allocation statistics.</returns>
+    private static UIBenchmarkResult BenchmarkAnimationControllers(int sampleCount)
+    {
+        const int characterCount = 100;
+        const int jointCount = 80;
+        var joints = new SkeletonJoint[jointCount];
+        var firstTracks = new JointAnimationTrack?[jointCount];
+        var secondTracks = new JointAnimationTrack?[jointCount];
+        for (var index = 0; index < jointCount; index++)
+        {
+            joints[index] = new SkeletonJoint($"Joint{index}", index - 1,
+                JointTransform.Identity, Matrix4x4.Identity);
+            firstTracks[index] = CreateBenchmarkTrack(Vector3.Zero, Vector3.UnitX);
+            secondTracks[index] = CreateBenchmarkTrack(Vector3.Zero, Vector3.UnitY);
+        }
+        var resource = new SkinnedMeshResource(
+            new StaticMeshResource([], [], []), [], new SkeletonResource(joints),
+            [new AnimationClipResource("First", 1f, firstTracks),
+             new AnimationClipResource("Second", 1f, secondTracks)]);
+        var controllers = new AnimationController[characterCount];
+        for (var index = 0; index < controllers.Length; index++)
+        {
+            controllers[index] = new AnimationController(resource);
+            controllers[index].Play("First", 0f);
+            controllers[index].Play("Second", 1f);
+        }
+        return Measure(
+            "animation-100x80x2",
+            "Advance 100 characters with 80 joints and two active blended states each.",
+            5.00d,
+            0,
+            10,
+            sampleCount,
+            () =>
+            {
+                for (var index = 0; index < controllers.Length; index++)
+                    controllers[index].Advance(1d / 600d);
+            });
+    }
+
+    /// <summary>Creates one two-key translation track used by the animation benchmark.</summary>
+    /// <param name="start">Translation at time zero.</param>
+    /// <param name="end">Translation at time one.</param>
+    /// <returns>A joint track with linear translation keys.</returns>
+    private static JointAnimationTrack CreateBenchmarkTrack(Vector3 start, Vector3 end) =>
+        new(new Vector3AnimationTrack([0f, 1f], [start, end],
+            AnimationInterpolation.Linear), null, null);
 
     /// <summary>Measures an unchanged continuous-style update over 2,000 retained elements.</summary>
     /// <param name="sampleCount">Measured sample count.</param>
