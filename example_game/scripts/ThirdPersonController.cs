@@ -8,6 +8,8 @@ namespace ExampleGame;
 /// <summary>Moves a dynamic character relative to an independently orbiting third-person camera.</summary>
 public sealed partial class ThirdPersonController : SceneScript
 {
+    private static readonly AnimationSet LocomotionAnimations = new(new AssetReference(
+        new AssetId(Guid.Parse("019ff038-6e1e-7a7d-bd1d-01a67bb65285")), "main"));
     private const float DegreesToRadians = MathF.PI / 180f;
     private const float MinimumPitch = -80f * DegreesToRadians;
     private const float MaximumPitch = 80f * DegreesToRadians;
@@ -49,7 +51,7 @@ public sealed partial class ThirdPersonController : SceneScript
         _body.LinearDamping = 0.1f;
         if (Owner.GetComponent<ColliderComponent>() is null)
             AddDefaultCollider();
-        _animation = Scene.Animation.GetRequired(Owner);
+        _animation = Scene.Animation.Bind(Owner, LocomotionAnimations);
         _animation.TryPlay("Idle", out _, 0f);
 
         _camera = Scene.FindNode<PerspectiveCamera>("GameCamera");

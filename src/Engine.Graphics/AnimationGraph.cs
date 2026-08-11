@@ -426,12 +426,22 @@ public sealed class AnimationController : IDisposable
         Pose = new SkeletonPose(resource.Skeleton);
         _blendedLocals = new JointTransform[resource.Skeleton.JointCount];
         BaseLayer = new AnimationLayer(this);
-        for (var index = 0; index < resource.Animations.Count; index++)
+        RegisterClips(resource.Animations);
+    }
+
+    /// <summary>Registers script-selected clips under their stable names.</summary>
+    /// <param name="clips">Skeleton-bound clips to make available for playback.</param>
+    public void RegisterClips(IReadOnlyList<AnimationClipResource> clips)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(clips);
+        for (var index = 0; index < clips.Count; index++)
         {
-            var clip = resource.Animations[index];
+            var clip = clips[index];
+            ArgumentNullException.ThrowIfNull(clip);
             if (!_states.TryAdd(clip.Name, new AnimationState(this, clip.Name, clip)))
                 throw new ArgumentException(
-                    $"Animation clip name '{clip.Name}' is duplicated.", nameof(resource));
+                    $"Animation clip name '{clip.Name}' is already registered.", nameof(clips));
         }
     }
 

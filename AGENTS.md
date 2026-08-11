@@ -120,11 +120,17 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 - Private fields: `_camelCase`
 - GPU resources: implement `IDisposable`, use disposed-guard pattern
 - `null!` for uninitialized nullable properties
+- **Property storage**: prefer auto-properties when no accessor logic is required. When a property
+  needs validation, equality checks, invalidation, or change notification, use the C# 14 `field`
+  keyword instead of declaring a manual `_camelCase` backing field. Use an explicit backing field
+  only when storage must be accessed outside the property, shared by multiple properties, passed by
+  `ref`, used with `Interlocked`/`volatile`, or has a lifecycle distinct from the property.
 - **XML documentation**: every public/private method must have `/// <summary>` doc comment with `<param>` tags for each parameter and `<returns>` for non-void methods
 - **GC-free enumeration**: every loop in frame, render, update, paint, and input hot paths must be allocation-free.
   - Prefer direct `foreach` for arrays, spans, and variables statically typed as a concrete `List<T>`; these enumerators are value types and do not allocate.
   - Do not use `foreach` through `IEnumerable<T>`, `ICollection<T>`, or `IReadOnlyList<T>` in hot paths because a value-type enumerator may be boxed behind the interface.
   - Do not use LINQ in hot paths; operators such as `Where`, `Select`, and `OfType` create iterator objects or delegates.
+  - Do not call `ToArray()` unless ownership or an external API strictly requires an array and no reusable buffer, span, or existing collection can satisfy the contract. In hot paths, treat `ToArray()` as a last resort because it always allocates and copies.
   - Use an indexed `for` loop or expose a `ReadOnlySpan<T>` when a hot-path collection is interface-typed.
   - A `for` loop over `List<T>` can be marginally faster by avoiding the enumerator version check, but prefer the clearer direct `foreach` unless profiling proves loop overhead matters.
   - Consider `CollectionsMarshal.AsSpan(list)` only for a proven bottleneck where the list cannot change during traversal.

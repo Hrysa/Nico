@@ -363,6 +363,33 @@ public class UIHostTests
         Assert.Equal(requests + 1, services.RequestFrameCount);
     }
 
+    /// <summary>Verifies high-frequency touchpad deltas share one retained snapshot rebuild.</summary>
+    [Fact]
+    public void Host_PointerWheel_CoalescesSnapshotUntilNextFrame()
+    {
+        var services = new VersionedHostServices();
+        var viewer = new ScrollViewer(100f, 100f)
+        {
+            Content = new Panel(Color.Red, 100f, 300f)
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            }
+        };
+        using var host = new UIHost(services, services, services, viewer, 100f, 100f);
+        services.PumpFrame(0d);
+        var submissions = services.SubmitCount;
+
+        services.RaiseWheel(new Vector2(20f, 20f), new Vector2(0f, -0.25f));
+        services.RaiseWheel(new Vector2(20f, 20f), new Vector2(0f, -0.25f));
+        services.RaiseWheel(new Vector2(20f, 20f), new Vector2(0f, -0.25f));
+
+        Assert.Equal(24f, viewer.VerticalOffset);
+        Assert.Equal(submissions, services.SubmitCount);
+        services.PumpFrame(0d);
+        Assert.Equal(submissions + 1, services.SubmitCount);
+    }
+
     /// <summary>Verifies rebuilding a hosted dock tree paints on the next tick without new input.</summary>
     [Fact]
     public void Host_DockRefresh_SubmitsNextFrameWithoutInput()
@@ -1683,7 +1710,7 @@ public class UIHostTests
         public event Action<PointerButtonEvent>? PointerButtonChanged;
 
         /// <inheritdoc/>
-        public event Action<PointerWheelEvent>? PointerWheelChanged { add { } remove { } }
+        public event Action<PointerWheelEvent>? PointerWheelChanged;
 
         /// <inheritdoc/>
         public event Action<KeyInputEvent>? KeyChanged;
@@ -1715,6 +1742,13 @@ public class UIHostTests
             PointerMoved?.Invoke(new PointerMoveEvent(
                 0, position, Vector2.Zero, PointerDeviceKind.Mouse,
                 InputModifiers.None, PointerButtons.Primary));
+
+        /// <summary>Raises one versioned pointer-wheel delta.</summary>
+        /// <param name="position">Logical pointer position.</param>
+        /// <param name="delta">Fine-grained wheel movement.</param>
+        internal void RaiseWheel(Vector2 position, Vector2 delta) =>
+            PointerWheelChanged?.Invoke(new PointerWheelEvent(
+                0, position, delta, InputModifiers.None));
 
         /// <summary>Raises a versioned primary-button press.</summary>
         /// <param name="position">Logical pointer position.</param>

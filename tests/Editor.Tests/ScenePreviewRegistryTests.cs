@@ -138,4 +138,30 @@ public class ScenePreviewRegistryTests
 
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
     }
+
+    /// <summary>Verifies overlay tessellation reuses its retained vertex destination after warmup.</summary>
+    [Fact]
+    public void OverlayBuild_AfterWarmup_DoesNotAllocate()
+    {
+        var previews = new ScenePreviewList();
+        var node = new Node3D();
+        previews.AddLine(new ScenePreviewLine(
+            new Vector3(-0.5f, 0f, 0f),
+            new Vector3(0.5f, 0f, 0f),
+            Vector4.One,
+            ScenePreviewDepthMode.AlwaysVisible,
+            new ScenePreviewPickingId(1, node)));
+        var viewport = new GizmoViewport(0f, 0f, 640f, 480f);
+        var gizmo = Array.Empty<Vertex>();
+        var destination = Array.Empty<Vertex>();
+        ScenePreviewOverlayBuilder.Build(previews, Matrix4x4.Identity,
+            Matrix4x4.Identity, viewport, gizmo, ref destination);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var frame = 0; frame < 100; frame++)
+            ScenePreviewOverlayBuilder.Build(previews, Matrix4x4.Identity,
+                Matrix4x4.Identity, viewport, gizmo, ref destination);
+
+        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+    }
 }

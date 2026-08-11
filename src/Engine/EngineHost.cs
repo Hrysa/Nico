@@ -105,7 +105,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         MountSceneHud(scene.Root);
         if (_sceneHud is null)
             _window.SubmitUI(new UIDrawList());
-        _animationService = new SceneAnimationRegistry();
+        _animationService = new SceneAnimationRegistry((_, animationSet, controller) =>
+            BindAnimationSet(database, pipeline, animationSet, controller));
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
@@ -403,9 +404,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             }
             else
             {
-                var playbackResource = ResolvePlaybackResource(
-                    database, pipeline, instance, skin);
-                var controller = CreateAnimationController(instance, playbackResource);
+                var controller = new AnimationController(skin);
                 var handles = _window.CreateSkinnedMesh(skin, material);
                 _window.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
                 _animationService!.Register(instance, controller);
@@ -422,52 +421,33 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         }
     }
 
-    /// <summary>Resolves embedded, standalone, or aliased animation-set clips for one mesh.</summary>
+    /// <summary>Resolves and registers a script-selected animation set.</summary>
     /// <param name="database">Project asset database.</param>
     /// <param name="pipeline">Player import pipeline.</param>
-    /// <param name="instance">Animated scene mesh.</param>
-    /// <param name="skin">Target skinned resource.</param>
-    /// <returns>A playback resource whose clip names are stable script-facing keys.</returns>
-    private SkinnedMeshResource ResolvePlaybackResource(AssetDatabase database,
-        AssetImportPipeline pipeline, MeshInstance3D instance, SkinnedMeshResource skin)
+    /// <param name="animationSet">Script-facing animation-set reference.</param>
+    /// <param name="controller">Target runtime controller.</param>
+    private void BindAnimationSet(
+        AssetDatabase database,
+        AssetImportPipeline pipeline,
+        AnimationSet animationSet,
+        AnimationController controller)
     {
-        var animator = instance.GetComponent<AnimatorComponent>();
-        if (animator?.AnimationSet is { } setReference)
+        var setReference = animationSet.Reference;
+        var setRecord = database.Find(setReference.Asset) ?? throw new FileNotFoundException(
+            $"Animation set asset '{setReference.Asset}' is missing.");
+        var setOutcome = pipeline.Import(setRecord, "player");
+        if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
+                candidate.Key == setReference.SubAsset &&
+                candidate.ContentType == "nico/animation-set"))
         {
-            var setRecord = database.Find(setReference.Asset) ?? throw new FileNotFoundException(
-                $"Animation set asset '{setReference.Asset}' is missing.");
-            var setOutcome = pipeline.Import(setRecord, "player");
-            if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
-                    candidate.Key == setReference.SubAsset &&
-                    candidate.ContentType == "nico/animation-set"))
-            {
-                throw new InvalidDataException(
-                    $"Animation set sub-asset '{setReference}' is missing.");
-            }
-            var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
-            var clips = set.BindTo(skin.Skeleton,
-                source => ResolveAnimationSource(database, pipeline, source),
-                skin.MeshNodeTransform);
-            return new SkinnedMeshResource(skin.Mesh, skin.Influences, skin.Skeleton,
-                clips, skin.MeshNodeTransform);
-        }
-        if (animator?.AnimationSource is not { } animationReference)
-            return skin;
-        var animationRecord = database.Find(animationReference.Asset)
-            ?? throw new FileNotFoundException(
-                $"Animation asset '{animationReference.Asset}' is missing.");
-        var animationOutcome = pipeline.Import(animationRecord, "player");
-        var animationArtifact = animationOutcome.Artifacts.FirstOrDefault(artifact =>
-            artifact.Key == animationReference.SubAsset &&
-            artifact.ContentType == "nico/skeletal-animation");
-        if (!animationOutcome.Succeeded || animationArtifact is null)
             throw new InvalidDataException(
-                $"Animation sub-asset '{animationReference}' is missing.");
-        var animation = LoadRuntimeResource(animationReference,
-            new SkeletalAnimationResource(new SkeletonResource([]), []));
-        var standaloneClips = animation.BindTo(skin.Skeleton);
-        return new SkinnedMeshResource(skin.Mesh, skin.Influences, skin.Skeleton,
-            standaloneClips, skin.MeshNodeTransform);
+                $"Animation set sub-asset '{setReference}' is missing.");
+        }
+        var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
+        var clips = set.BindTo(controller.Skeleton,
+            source => ResolveAnimationSource(database, pipeline, source),
+            controller.Resource.MeshNodeTransform);
+        controller.RegisterClips(clips);
     }
 
     /// <summary>Loads one standalone or skinned animation artifact for set binding.</summary>
@@ -627,30 +607,6 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         };
     }
 
-    /// <summary>Creates and configures playback for one runtime skinned instance.</summary>
-    /// <param name="instance">Scene instance owning authored animator settings.</param>
-    /// <param name="mesh">Skinned resource.</param>
-    /// <returns>Configured animation controller in bind pose or selected clip.</returns>
-    private static AnimationController CreateAnimationController(
-        MeshInstance3D instance,
-        SkinnedMeshResource mesh)
-    {
-        var controller = new AnimationController(mesh);
-        var animator = instance.GetComponent<AnimatorComponent>();
-        if (animator is not { Enabled: true })
-            return controller;
-        controller.DefaultFadeDuration = animator.DefaultFadeDuration;
-        var clip = mesh.FindAnimation(animator.DefaultClip);
-        if (clip is null)
-            return controller;
-        var state = controller.GetOrCreate(clip.Name);
-        state.Speed = animator.Speed;
-        state.Loop = animator.Loop;
-        if (animator.PlayAutomatically)
-            controller.PlayFromStart(clip.Name);
-        return controller;
-    }
-
     /// <summary>Submits the loaded scene through its game camera.</summary>
     /// <param name="delta">Elapsed frame time.</param>
     private void RenderScene(double delta)
@@ -700,9 +656,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             var renderable = _renderables[index];
             if (renderable.Animation is not { } controller || !renderable.Palette.IsValid)
                 continue;
-            var animator = renderable.Instance.GetComponent<AnimatorComponent>();
-            if (animator is null || animator.Enabled)
-                controller.Advance(deltaTime);
+            controller.Advance(deltaTime);
         }
         for (var index = 0; index < _renderables.Count; index++)
         {

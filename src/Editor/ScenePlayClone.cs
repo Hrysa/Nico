@@ -148,18 +148,6 @@ public static class ScenePlayClone
                 collider.CollisionLayer = sourceCollider.CollisionLayer;
                 collider.CollisionMask = sourceCollider.CollisionMask;
                 return collider;
-            case AnimatorComponent sourceAnimator:
-                return new AnimatorComponent
-                {
-                    Enabled = sourceAnimator.Enabled,
-                    AnimationSource = sourceAnimator.AnimationSource,
-                    AnimationSet = sourceAnimator.AnimationSet,
-                    DefaultClip = sourceAnimator.DefaultClip,
-                    PlayAutomatically = sourceAnimator.PlayAutomatically,
-                    Loop = sourceAnimator.Loop,
-                    Speed = sourceAnimator.Speed,
-                    DefaultFadeDuration = sourceAnimator.DefaultFadeDuration
-                };
             default:
                 throw new NotSupportedException(
                     $"Component type '{source.GetType().Name}' cannot enter play mode.");

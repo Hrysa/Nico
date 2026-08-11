@@ -148,6 +148,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
+    private int _overlayVertexCount;
     private UIClipRect? _overlayClip;
     private uint _activeFrameIndex;
     private Vector4 _swapchainClearColor = new(0f, 0f, 0f, 1f);
@@ -3305,6 +3306,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     {
         ArgumentNullException.ThrowIfNull(geometry.Vertices);
         _overlayVertices = geometry.Vertices;
+        _overlayVertexCount = geometry.VertexCount;
         _overlayClip = geometry.Clip;
     }
 
@@ -4170,12 +4172,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         }
 
         // Draw 2D overlay (gizmo lines, etc.)
-        if (_overlayVertices.Length > 0)
+        if (_overlayVertexCount > 0)
         {
             SetUiScissor(commandBuffer, _overlayClip);
             _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.UiPipeline);
 
-            var ovSize = checked((uint)(_overlayVertices.Length * Vertex.Stride));
+            var ovSize = checked((uint)(_overlayVertexCount * Vertex.Stride));
             var overlayAllocation = _transientArena!.Allocate(_activeFrameIndex, ovSize);
             fixed (Vertex* pVerts = _overlayVertices)
             {
@@ -4189,7 +4191,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _vk.CmdPushConstants(commandBuffer, _pipelines.UiLayout, ShaderStageFlags.VertexBit,
                 0, (uint)sizeof(PushConstants), &pushConstants);
 
-            _vk.CmdDraw(commandBuffer, (uint)_overlayVertices.Length, 1, 0, 0);
+            _vk.CmdDraw(commandBuffer, (uint)_overlayVertexCount, 1, 0, 0);
         }
 
         // Draw floating UI last so menus and dialogs cover viewport textures and gizmos.

@@ -229,20 +229,6 @@ public static class SceneFileStore
                 case ColliderComponent collider:
                     result.Add(EncodeCollider(collider));
                     break;
-                case AnimatorComponent animator:
-                    result.Add(new SceneComponentData(
-                        SceneComponentType.Animator,
-                        animator.Enabled,
-                        Animator: new AnimatorData(
-                            animator.AnimationSource,
-                            animator.Clip,
-                            animator.PlayAutomatically,
-                            animator.Loop,
-                            animator.Speed,
-                            animator.DefaultFadeDuration,
-                            animator.DefaultClip,
-                            animator.AnimationSet)));
-                    break;
                 default:
                     throw new NotSupportedException(
                         $"Component type '{components[index].GetType().Name}' cannot be saved.");
@@ -343,18 +329,6 @@ public static class SceneFileStore
                         HorizontalSize = terrain.PlaneSize.ToVector2(),
                         HeightScale = terrain.HeightScale
                     }, terrain);
-                    break;
-                case SceneComponentType.Animator when componentData.Animator is { } animator:
-                    component = new AnimatorComponent
-                    {
-                        AnimationSource = animator.AnimationSource,
-                        DefaultClip = animator.DefaultClip ?? animator.Clip,
-                        PlayAutomatically = animator.PlayAutomatically,
-                        Loop = animator.Loop,
-                        Speed = animator.Speed,
-                        DefaultFadeDuration = animator.DefaultFadeDuration,
-                        AnimationSet = animator.AnimationSet
-                    };
                     break;
                 default:
                     throw new InvalidDataException(
@@ -519,8 +493,7 @@ public static class SceneFileStore
         AssetId? ScriptId = null,
         List<PropertyOverrideData>? Properties = null,
         RigidBodyData? RigidBody = null,
-        ColliderData? Collider = null,
-        AnimatorData? Animator = null);
+        ColliderData? Collider = null);
 
     private sealed record RigidBodyData(
         RigidBodyMotionType MotionType,
@@ -551,16 +524,6 @@ public static class SceneFileStore
         SceneVector2 PlaneSize = default,
         AssetReference? TerrainData = null,
         float HeightScale = 1f);
-
-    private sealed record AnimatorData(
-        AssetReference? AnimationSource,
-        string? Clip,
-        bool PlayAutomatically,
-        bool Loop,
-        float Speed,
-        float DefaultFadeDuration = 0.2f,
-        string? DefaultClip = null,
-        AssetReference? AnimationSet = null);
 
     private sealed record PropertyOverrideData(
         int PropertyId,
@@ -740,8 +703,7 @@ public static class SceneFileStore
         CylinderCollider,
         PlaneCollider,
         MeshCollider,
-        TerrainCollider,
-        Animator
+        TerrainCollider
     }
 
     /// <summary>Shape discriminator retained only for loading scene format version 8.</summary>

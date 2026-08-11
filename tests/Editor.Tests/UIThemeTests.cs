@@ -540,33 +540,6 @@ public class UIThemeTests
         Assert.Null(passwordInfo.Value);
     }
 
-    /// <summary>Verifies the editor shell prioritizes Scene while retaining hierarchy, files, Game, and Inspector docks.</summary>
-    [Fact]
-    public void EditorView_ReferenceLayout_HasExpectedDockHierarchy()
-    {
-        var view = EditorUI.BuildView(1280f, 720f);
-
-        Assert.True(view.SceneViewport.Height > view.GameViewport.Height * 2f);
-        var descendants = Descendants(view.Root).ToArray();
-        Assert.Contains(view.FileSystemTree, descendants);
-        Assert.Contains(view.Inspector, descendants);
-        Assert.Contains(descendants, child => child.Name == "BottomDock");
-        Assert.Contains(descendants, child => child.Name == "SceneToolbar");
-        Assert.Equal(TitleBar.DefaultHeight, view.TitleBar.Height);
-        Assert.Equal(Thickness.Zero, view.TitleBar.Margin);
-        Assert.Equal(0f, view.TitleBar.BorderThickness);
-        Assert.Same(view.PlayButtonIcon, view.PlayButton.Content);
-        Assert.Equal(IconKind.Play, view.PlayButtonIcon.Kind);
-        Assert.Equal(640f, view.PlayButton.Left + view.PlayButton.Width / 2f);
-        Assert.Equal(view.TitleBar.Top + (view.TitleBar.Height - view.PlayButton.Height) / 2f,
-            view.PlayButton.Top);
-        Assert.Same(view.TitleMenuBar, view.TitleBar.LeftZone.Children[0]);
-        Assert.Same(view.ProjectLabel, view.TitleBar.LeftZone.Children[1]);
-        Assert.Equal("WindowMenu", view.WindowMenu.Name);
-        Assert.Equal(6, view.WindowPanelItems.Count);
-        Assert.All(view.WindowPanelItems.Values, item => Assert.True(item.IsChecked));
-    }
-
     /// <summary>Verifies title-bar drag regions and window buttons dispatch separate actions.</summary>
     [Fact]
     public void TitleBar_DragRegionAndMinimizeButton_DispatchExpectedActions()

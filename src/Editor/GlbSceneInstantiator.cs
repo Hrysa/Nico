@@ -149,7 +149,6 @@ public static class GlbSceneInstantiator
             };
             if (artifact.ContentType == "nico/skinned-mesh")
             {
-                mesh.AddComponent(new AnimatorComponent());
                 // The skinned resource already contains its source mesh world transform so
                 // inheriting the imported visual-node chain would apply it twice.
                 modelRoot.AddChild(mesh);

@@ -14,12 +14,15 @@ internal static class ScenePreviewOverlayBuilder
     /// <param name="projection">Scene camera projection matrix.</param>
     /// <param name="viewport">Scene viewport bounds.</param>
     /// <param name="gizmo">Existing transform-gizmo vertices.</param>
-    /// <returns>Combined screen-space triangle vertices.</returns>
-    internal static Vertex[] Build(ScenePreviewList previews, Matrix4x4 view,
-        Matrix4x4 projection, GizmoViewport viewport, Vertex[] gizmo)
+    /// <param name="destination">Reusable destination array, grown only when capacity is insufficient.</param>
+    /// <returns>Number of combined screen-space triangle vertices written.</returns>
+    internal static int Build(ScenePreviewList previews, Matrix4x4 view,
+        Matrix4x4 projection, GizmoViewport viewport, Vertex[] gizmo,
+        ref Vertex[] destination)
     {
         var lines = previews.Lines;
-        var vertices = new List<Vertex>(lines.Count * 6 + gizmo.Length);
+        EnsureCapacity(ref destination, checked(lines.Count * 6 + gizmo.Length));
+        var vertexCount = 0;
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index];
@@ -28,11 +31,23 @@ internal static class ScenePreviewOverlayBuilder
             if (!TryProject(line.Start, view, projection, viewport, out var start) ||
                 !TryProject(line.End, view, projection, viewport, out var end))
                 continue;
-            AddScreenLine(vertices, start, end, line.Color);
+            AddScreenLine(destination, ref vertexCount, start, end, line.Color);
         }
-        for (var index = 0; index < gizmo.Length; index++)
-            vertices.Add(gizmo[index]);
-        return vertices.ToArray();
+        gizmo.AsSpan().CopyTo(destination.AsSpan(vertexCount));
+        return vertexCount + gizmo.Length;
+    }
+
+    /// <summary>Grows a retained vertex array geometrically when the current capacity is insufficient.</summary>
+    /// <param name="destination">Reusable array to validate or replace.</param>
+    /// <param name="requiredCapacity">Minimum vertex capacity.</param>
+    private static void EnsureCapacity(ref Vertex[] destination, int requiredCapacity)
+    {
+        if (destination.Length >= requiredCapacity)
+            return;
+        var capacity = Math.Max(16, destination.Length);
+        while (capacity < requiredCapacity)
+            capacity = checked(capacity * 2);
+        Array.Resize(ref destination, capacity);
     }
 
     /// <summary>Projects a visible world point to logical editor coordinates.</summary>
@@ -58,9 +73,10 @@ internal static class ScenePreviewOverlayBuilder
     }
 
     /// <summary>Adds a fixed-width screen-space line as two triangles.</summary>
-    /// <param name="vertices">Triangle destination.</param><param name="start">Line start.</param>
+    /// <param name="vertices">Triangle destination.</param><param name="vertexCount">Next writable vertex index.</param><param name="start">Line start.</param>
     /// <param name="end">Line end.</param><param name="color">RGBA color.</param>
-    private static void AddScreenLine(List<Vertex> vertices, Vector2 start, Vector2 end, Vector4 color)
+    private static void AddScreenLine(Vertex[] vertices, ref int vertexCount,
+        Vector2 start, Vector2 end, Vector4 color)
     {
         var direction = end - start;
         var lengthSquared = direction.LengthSquared();
@@ -72,11 +88,11 @@ internal static class ScenePreviewOverlayBuilder
         var b = start + normal;
         var c = end + normal;
         var d = end - normal;
-        vertices.Add(new Vertex(new Vector3(a, 0f), color));
-        vertices.Add(new Vertex(new Vector3(b, 0f), color));
-        vertices.Add(new Vertex(new Vector3(c, 0f), color));
-        vertices.Add(new Vertex(new Vector3(a, 0f), color));
-        vertices.Add(new Vertex(new Vector3(c, 0f), color));
-        vertices.Add(new Vertex(new Vector3(d, 0f), color));
+        vertices[vertexCount++] = new Vertex(new Vector3(a, 0f), color);
+        vertices[vertexCount++] = new Vertex(new Vector3(b, 0f), color);
+        vertices[vertexCount++] = new Vertex(new Vector3(c, 0f), color);
+        vertices[vertexCount++] = new Vertex(new Vector3(a, 0f), color);
+        vertices[vertexCount++] = new Vertex(new Vector3(c, 0f), color);
+        vertices[vertexCount++] = new Vertex(new Vector3(d, 0f), color);
     }
 }

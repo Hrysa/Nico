@@ -4,6 +4,7 @@ using Engine.Assets;
 using Engine.Core;
 using Engine.Graphics;
 using Engine.Physics;
+using Engine.Scripting;
 using Engine.UI;
 using Microsoft.Extensions.Logging;
 
@@ -198,9 +199,6 @@ var inspector = editorView.Inspector;
 inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
 inspector.ResolveMaterial = ResolveMaterialProperties;
 inspector.ResolveMaterialName = ResolveMaterialDisplayName;
-inspector.ResolveAnimationName = reference => reference is null
-    ? "Embedded in mesh"
-    : assetDatabase.Find(reference.Value.Asset)?.ProjectPath ?? reference.Value.ToString();
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
@@ -257,19 +255,11 @@ var flyCamera = new FlyCameraController(
 using var sceneInputContext = new SceneViewportInputContext(sceneViewport, flyCamera);
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, sceneRoot,
-    selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+    selection, ResolveCollisionMeshResource, ResolveTerrainResource,
+    ResolveAnimationSetClips);
 var gameRenderingService = new EditorGameRenderingService(viewportRenderer);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
-inspector.ResolveAnimationController = instance =>
-    viewportRenderer.AnimationService.Get(instance);
-inspector.AnimationPreviewChanged += _ =>
-{
-    viewportRenderer.UpdateAnimations(0d);
-    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
-    renderScheduler.Invalidate(RenderInvalidation.GameViewport);
-    window.RequestFrame();
-};
 foreach (var assetMesh in sceneObjects)
     LoadAssetMeshResources(assetMesh);
 DetachedToolWindow? detachedSceneWindow = null;
@@ -675,11 +665,8 @@ void UpdatePlayModeStart(double deltaTime)
             candidateScene.MeshInstances);
         foreach (var assetMesh in candidateScene.MeshInstances)
         {
-            if (assetMesh.GetComponent<AnimatorComponent>() is not null &&
-                !viewportRenderer.HasAssetMeshResource(assetMesh))
-            {
+            if (!viewportRenderer.HasAssetMeshResource(assetMesh))
                 LoadAssetMeshResources(assetMesh);
-            }
         }
         candidateHost.LoadScene(candidateScene.Root, window,
             viewportRenderer.AnimationService, gameRenderingService);
@@ -1315,8 +1302,6 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
         Mesh = source.Reference,
         Name = source.Name[..source.Name.LastIndexOf(" [", StringComparison.Ordinal)]
     };
-    if (source.ContentType == "nico/skinned-mesh")
-        instance.AddComponent(new AnimatorComponent());
     var destination = target ?? sceneRoot;
     try
     {
@@ -1528,60 +1513,36 @@ void LoadAssetMeshResources(
     }
     else
     {
-        var externalAnimations = ResolveAnimationClips(instance, importedSkin, meshReference);
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
-            instance, importedSkin, material, textureResource, externalAnimations,
-            targetRenderer is null
+            instance, importedSkin, material, textureResource,
+            animations: null,
+            sharedController: targetRenderer is null
                 ? null : viewportRenderer.AnimationService.Get(instance));
     }
 }
 
-/// <summary>Resolves standalone or animation-set clips for one Editor mesh instance.</summary>
-/// <param name="instance">Animated scene mesh.</param>
+/// <summary>Resolves one script-selected animation set for an animated mesh.</summary>
+/// <param name="animationSet">Script-facing animation-set reference.</param>
 /// <param name="skin">Target skinned resource.</param>
-/// <param name="meshReference">Reference used for diagnostics.</param>
-/// <returns>Bound clips, or null to use clips embedded in the mesh.</returns>
-AnimationClipResource[]? ResolveAnimationClips(MeshInstance3D instance,
-    SkinnedMeshResource skin, AssetReference meshReference)
+/// <returns>Stable aliased clips bound to the target skeleton.</returns>
+AnimationClipResource[] ResolveAnimationSetClips(
+    AnimationSet animationSet,
+    SkinnedMeshResource skin)
 {
-    var animator = instance.GetComponent<AnimatorComponent>();
-    try
+    var setReference = animationSet.Reference;
+    var setRecord = assetDatabase.Find(setReference.Asset)
+        ?? throw new FileNotFoundException(
+            $"Animation set asset '{setReference.Asset}' is missing.");
+    var setOutcome = assetImportPipeline.Import(setRecord, "editor");
+    if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
+            candidate.Key == setReference.SubAsset &&
+            candidate.ContentType == "nico/animation-set"))
     {
-        if (animator?.AnimationSet is { } setReference)
-        {
-            var setRecord = assetDatabase.Find(setReference.Asset)
-                ?? throw new FileNotFoundException(
-                    $"Animation set asset '{setReference.Asset}' is missing.");
-            var setOutcome = assetImportPipeline.Import(setRecord, "editor");
-            if (!setOutcome.Succeeded || !setOutcome.Artifacts.Any(candidate =>
-                    candidate.Key == setReference.SubAsset &&
-                    candidate.ContentType == "nico/animation-set"))
-            {
-                throw new InvalidDataException(
-                    $"Animation set sub-asset '{setReference}' is missing.");
-            }
-            var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
-            return set.BindTo(skin.Skeleton, LoadAnimationSource, skin.MeshNodeTransform);
-        }
-        return animator?.AnimationSource is { } source
-            ? BindAnimationSource(source, skin.Skeleton) : null;
+        throw new InvalidDataException(
+            $"Animation set sub-asset '{setReference}' is missing.");
     }
-    catch (Exception exception) when (exception is InvalidOperationException or
-        InvalidDataException or FileNotFoundException)
-    {
-        logger.LogError(exception,
-            "Animation binding is invalid for mesh {Mesh}", meshReference);
-        return [];
-    }
-}
-
-/// <summary>Loads and binds one standalone or skinned animation artifact.</summary>
-/// <param name="source">Explicit animation artifact.</param>
-/// <param name="target">Target mesh skeleton.</param>
-/// <returns>Clips aligned to the target skeleton.</returns>
-AnimationClipResource[] BindAnimationSource(AssetReference source, SkeletonResource target)
-{
-    return LoadAnimationSource(source).BindTo(target);
+    var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
+    return set.BindTo(skin.Skeleton, LoadAnimationSource, skin.MeshNodeTransform);
 }
 
 /// <summary>Loads one standalone or skinned animation artifact without target binding.</summary>
@@ -2167,17 +2128,6 @@ void AddRigidBodyComponent(Node target)
     InvalidateViewports();
 }
 
-/// <summary>Adds skeletal animation playback settings to one mesh instance.</summary>
-/// <param name="target">Selected hierarchy node.</param>
-void AddAnimatorComponent(Node target)
-{
-    if (target is not MeshInstance3D node || node.GetComponent<AnimatorComponent>() is not null)
-        return;
-    node.AddComponent(new AnimatorComponent());
-    CloseHierarchyContextMenu();
-    InvalidateViewports();
-}
-
 /// <summary>Deletes one hierarchy subtree from the active authored or runtime scene.</summary>
 /// <param name="target">Root of the subtree to remove.</param>
 void DeleteSceneNode(Node target)
@@ -2306,8 +2256,6 @@ void ShowHierarchyContextMenu()
     physicsMenu.AddItem("Terrain Collider",
         () => AddColliderComponent(target, ColliderAuthoringKind.Terrain), canAddToTarget);
     componentMenu.AddSubmenu("Physics", physicsMenu);
-    componentMenu.AddItem("Add Animator", () => AddAnimatorComponent(target),
-        target is MeshInstance3D && target.GetComponent<AnimatorComponent>() is null);
     menu.AddSubmenu("Add Component", componentMenu);
     menu.AddItem("Delete", () => DeleteSceneNode(target),
         !ReferenceEquals(target, activeRoot) && target.Parent is not null &&
@@ -2567,8 +2515,6 @@ bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
     {
         "nico/standard-material" => inspector.AssignMaterial(source.Reference),
         "nico/texture2d" => inspector.AssignBaseColorTexture(source.Reference),
-        "nico/skeletal-animation" => inspector.AssignAnimation(source.Reference),
-        "nico/animation-set" => inspector.AssignAnimationSet(source.Reference),
         _ => false
     };
 }
@@ -2867,9 +2813,7 @@ window.Update += delta =>
             || scriptSchemaBuildTask is not null
             || pendingResizeTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates
-            || dockSession.RequiresContinuousUpdates
-            || dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId) &&
-               !editorView.Profiler.IsPaused);
+            || dockSession.RequiresContinuousUpdates);
 };
 
 logger.LogInformation("Running main loop...");

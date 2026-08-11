@@ -37,6 +37,31 @@ public sealed class SceneAnimationRegistryTests
         Assert.Throws<ObjectDisposedException>(() => controller.Play("Idle"));
     }
 
+    /// <summary>Binds a script-selected set through the active scene resolver.</summary>
+    [Fact]
+    public void Bind_AnimationSet_RegistersResolvedAliasesOnController()
+    {
+        var node = new MeshInstance3D { Name = "Body" };
+        var reference = new AssetReference(AssetId.New(), "main");
+        var animationSet = new AnimationSet(reference);
+        var callbackCount = 0;
+        using var registry = new SceneAnimationRegistry((boundNode, boundSet, controller) =>
+        {
+            Assert.Same(node, boundNode);
+            Assert.Equal(animationSet, boundSet);
+            controller.RegisterClips([new AnimationClipResource("Run", 1f, [])]);
+            callbackCount++;
+        });
+        var controller = CreateController();
+        registry.Register(node, controller);
+
+        var bound = registry.Bind(node, animationSet);
+
+        Assert.Same(controller, bound);
+        Assert.True(controller.TryGet("Run", out _));
+        Assert.Equal(1, callbackCount);
+    }
+
     /// <summary>Creates one empty-skeleton controller suitable for registry identity tests.</summary>
     /// <returns>A controller containing one Idle state.</returns>
     private static AnimationController CreateController()

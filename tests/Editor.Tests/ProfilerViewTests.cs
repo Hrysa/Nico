@@ -176,6 +176,45 @@ public sealed class ProfilerViewTests
         Assert.Equal(1, child.Depth);
     }
 
+    /// <summary>Verifies metric columns shrink instead of painting beyond a narrow profiler panel.</summary>
+    [Fact]
+    public void Layout_NarrowPanel_KeepsCallTreeColumnsWithinViewport()
+    {
+        var profiler = new ProfilerView { Width = 360f, Height = 390f };
+
+        Layout(profiler);
+
+        var fixedWidth = profiler.CallTree.Columns.Skip(1).Sum(column => column.Width);
+        Assert.True(profiler.ClipToBounds);
+        Assert.True(fixedWidth <= profiler.CallTree.Width);
+        Assert.True(profiler.CallTree.Columns[0].Width <= 0f);
+    }
+
+    /// <summary>Verifies one wheel unit advances the dense profiler call tree by one row.</summary>
+    [Fact]
+    public void InvokeScroll_CallTree_UsesOneRowPerWheelUnit()
+    {
+        var profiler = new ProfilerView { Width = 800f, Height = 390f };
+        var markers = Enumerable.Range(0, 20)
+            .Select(index => new CpuProfileMarker(
+                $"Method{index}", index - 1, index, 1d, 1d, 0L, 0L, 1))
+            .ToArray();
+        profiler.AddSample(new FrameProfileSample(1, 5d, 2d, 3d, 0L, markers));
+        profiler.SetPaused(true);
+        Layout(profiler);
+        var router = new UIEventRouter(profiler, () => { });
+
+        router.Scroll(new PointerWheelEvent(
+            0,
+            new System.Numerics.Vector2(
+                profiler.CallTreeScroller.Left + 10f,
+                profiler.CallTreeScroller.Top + 30f),
+            new System.Numerics.Vector2(0f, -1f),
+            InputModifiers.None));
+
+        Assert.Equal(profiler.CallTree.RowHeight, profiler.CallTreeScroller.VerticalOffset);
+    }
+
     /// <summary>Verifies the mouse wheel reveals instrumented call-tree rows below the viewport.</summary>
     [Fact]
     public void InvokeScroll_LongCallTree_RevealsLaterRows()

@@ -70,6 +70,7 @@ public sealed class UIHost : IDisposable
     private int _heldNavigationDevice;
     private double _navigationRepeatElapsed;
     private bool _navigationRepeatStarted;
+    private bool _deferSnapshotRefresh;
     private readonly UIKeyRepeatController _keyRepeat = new();
     private readonly Action<KeyInputEvent> _routeRepeatedKey;
     private UIHostSchedulingMode _schedulingMode;
@@ -308,8 +309,14 @@ public sealed class UIHost : IDisposable
     /// <summary>Refreshes routed visual state unless a synchronous event disposed this host.</summary>
     private void RefreshIfActive()
     {
-        if (!_disposed)
-            Refresh();
+        if (_disposed)
+            return;
+        if (_deferSnapshotRefresh)
+        {
+            Dispatcher.RequestFrame();
+            return;
+        }
+        Refresh();
     }
 
     /// <summary>Measures, arranges, and submits the root at a new logical size.</summary>
@@ -562,8 +569,16 @@ public sealed class UIHost : IDisposable
             Position = _viewportLayout.ToLogical(pointerEvent.Position)
         };
         PointerPosition = logicalEvent.Position;
-        if (PreviewPointerWheel?.Invoke(logicalEvent) != true)
-            InputRouter.Scroll(logicalEvent);
+        _deferSnapshotRefresh = true;
+        try
+        {
+            if (PreviewPointerWheel?.Invoke(logicalEvent) != true)
+                InputRouter.Scroll(logicalEvent);
+        }
+        finally
+        {
+            _deferSnapshotRefresh = false;
+        }
     }
 
     /// <summary>Relays one native trackpad magnification gesture.</summary>
@@ -761,7 +776,18 @@ public sealed class UIHost : IDisposable
 
     /// <summary>Relays pointer scrolling.</summary>
     /// <param name="offset">Wheel offset.</param>
-    private void OnMouseScroll(float offset) => InputRouter.Scroll(offset);
+    private void OnMouseScroll(float offset)
+    {
+        _deferSnapshotRefresh = true;
+        try
+        {
+            InputRouter.Scroll(offset);
+        }
+        finally
+        {
+            _deferSnapshotRefresh = false;
+        }
+    }
 
     /// <summary>Relays keyboard press.</summary>
     /// <param name="key">Engine key.</param>

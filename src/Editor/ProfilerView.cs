@@ -19,6 +19,8 @@ public sealed class ProfilerView : Panel
     private const float GraphHeight = 45f;
     private const float GraphGap = 8f;
     private const float CallTreeHeaderHeight = 20f;
+    private const float PreferredMethodColumnWidth = 120f;
+    private const float PreferredMetricColumnWidth = 75f;
     private static readonly Color CpuColor = Color.FromSrgb(0x68, 0x9C, 0xF8);
     private static readonly Color GcColor = Color.FromSrgb(0xF2, 0xA6, 0x5A);
     private static readonly Color SampledFrameColor = Color.FromSrgb(0x86, 0xD9, 0x8B);
@@ -33,6 +35,7 @@ public sealed class ProfilerView : Panel
     private int _nextSample;
     private int _sampleCount;
     private int _samplesSinceRefresh;
+    private float _callTreeMetricColumnWidth = PreferredMetricColumnWidth;
     private string _summary = "Waiting for frame samples...";
     private string _cpuCaption = "Frame Time";
     private string _gcCaption = "GC Alloc";
@@ -66,6 +69,7 @@ public sealed class ProfilerView : Panel
     {
         _theme = theme ?? UITheme.Dark;
         ForegroundColor = _theme.TextPrimary;
+        ClipToBounds = true;
         _callTree = new TreeView(0f, 0f, _theme)
         {
             RowHeight = 19f,
@@ -75,14 +79,18 @@ public sealed class ProfilerView : Panel
         _callTree.SetColumns(
         [
             new TreeViewColumn("Method", 0f, FormatMethodName),
-            new TreeViewColumn("Elapsed", 75f, FormatTotalTime, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Self", 75f, FormatSelfTime, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Wait", 75f, FormatWaitTime, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Calls", 75f, FormatCallCount, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("GC", 75f, FormatGcAllocation, TreeViewColumnAlignment.Right),
-            new TreeViewColumn("Self GC", 75f, FormatSelfGcAllocation, TreeViewColumnAlignment.Right)
+            CreateMetricColumn("Elapsed", FormatTotalTime),
+            CreateMetricColumn("Self", FormatSelfTime),
+            CreateMetricColumn("Wait", FormatWaitTime),
+            CreateMetricColumn("Calls", FormatCallCount),
+            CreateMetricColumn("GC", FormatGcAllocation),
+            CreateMetricColumn("Self GC", FormatSelfGcAllocation)
         ]);
-        _callTreeScroller = new ScrollViewer(theme: _theme) { Content = _callTree };
+        _callTreeScroller = new ScrollViewer(theme: _theme)
+        {
+            Content = _callTree,
+            WheelStep = _callTree.RowHeight
+        };
         AddChild(_callTreeScroller);
     }
 
@@ -209,8 +217,39 @@ public sealed class ProfilerView : Panel
         var treeSize = new Vector2(
             MathF.Max(0f, contentSize.X - GraphInset * 2f),
             MathF.Max(0f, contentSize.Y - treeTop));
+        ResizeCallTreeColumns(treeSize.X);
         _callTreeScroller.Measure(treeSize);
         _callTreeScroller.Arrange(new Vector2(GraphInset, treeTop), treeSize);
+    }
+
+    /// <summary>Creates one right-aligned profiler metric column that may shrink with its panel.</summary>
+    /// <param name="header">Column header.</param>
+    /// <param name="value">Cell formatter.</param>
+    /// <returns>Configured metric column.</returns>
+    private static TreeViewColumn CreateMetricColumn(string header, Func<Node, string> value)
+    {
+        return new TreeViewColumn(
+            header, PreferredMetricColumnWidth, value, TreeViewColumnAlignment.Right)
+        {
+            MinWidth = 0f
+        };
+    }
+
+    /// <summary>Keeps fixed profiler metrics inside the available call-tree width.</summary>
+    /// <param name="availableWidth">Current call-tree viewport width.</param>
+    private void ResizeCallTreeColumns(float availableWidth)
+    {
+        if (availableWidth <= 0f)
+            return;
+        var methodWidth = MathF.Min(PreferredMethodColumnWidth, availableWidth * 0.4f);
+        var metricWidth = MathF.Min(
+            PreferredMetricColumnWidth,
+            MathF.Max(0f, availableWidth - methodWidth) / 6f);
+        if (MathF.Abs(metricWidth - _callTreeMetricColumnWidth) < 0.01f)
+            return;
+        _callTreeMetricColumnWidth = metricWidth;
+        for (var index = 1; index < _callTree.Columns.Count; index++)
+            _callTree.ResizeColumn(index, metricWidth);
     }
 
     /// <summary>Paints the label above the expandable call tree.</summary>

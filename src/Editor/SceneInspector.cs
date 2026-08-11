@@ -38,12 +38,6 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets or sets the display-name resolver for a mesh material assignment.</summary>
     public Func<MeshInstance3D, string>? ResolveMaterialName { get; set; }
 
-    /// <summary>Gets or sets the display-name resolver for standalone animation assignments.</summary>
-    public Func<AssetReference?, string>? ResolveAnimationName { get; set; }
-
-    /// <summary>Gets or sets the resolver for a mesh's live preview/play animation controller.</summary>
-    public Func<MeshInstance3D, AnimationController?>? ResolveAnimationController { get; set; }
-
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
 
@@ -58,9 +52,6 @@ public sealed class SceneInspector : Panel
 
     /// <summary>Occurs after the Inspector changes the selected node's displayed name.</summary>
     public event Action<Node>? NodeNameChanged;
-
-    /// <summary>Occurs after live animation preview state changes without authored data changes.</summary>
-    public event Action<MeshInstance3D>? AnimationPreviewChanged;
 
     /// <summary>
     /// Creates an empty scene Inspector.
@@ -156,8 +147,6 @@ public sealed class SceneInspector : Panel
         {
             AddMaterialSection(meshInstance, 236f);
             scriptY = 464f;
-            if (meshInstance.GetComponent<AnimatorComponent>() is { } animator)
-                scriptY = AddAnimatorSection(meshInstance, animator, scriptY);
         }
 
         scriptY = AddPhysicsSections(node, scriptY);
@@ -385,243 +374,6 @@ public sealed class SceneInspector : Panel
         _ => "Collider"
     };
 
-    /// <summary>Adds editable playback settings for one animator component.</summary>
-    /// <param name="instance">Animated mesh instance.</param>
-    /// <param name="animator">Animator component to edit.</param>
-    /// <param name="y">Section top.</param>
-    /// <returns>Top position available for the following section.</returns>
-    private float AddAnimatorSection(MeshInstance3D instance, AnimatorComponent animator, float y)
-    {
-        var liveController = ResolveAnimationController?.Invoke(instance);
-        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
-            "Animator", _theme.TextPrimary));
-        AddChild(CreateLabel(12f, y + 30f, 66f, 30f,
-            "Set", _theme.TextSecondary));
-        var source = new TextField(Width - 90f, 30f, _theme)
-        {
-            Name = "AnimatorSource",
-            Text = ResolveAnimationName?.Invoke(
-                animator.AnimationSet ?? animator.AnimationSource) ??
-                (animator.AnimationSet ?? animator.AnimationSource)?.ToString() ??
-                "Embedded in mesh",
-            IsReadOnly = true,
-            Margin = new Thickness(78f, y + 30f, 0f, 0f)
-        };
-        AddChild(source);
-        AddChild(CreateLabel(12f, y + 68f, 66f, 30f,
-            "Clip", _theme.TextSecondary));
-        if (liveController is not null && liveController.Resource.Animations.Count > 0)
-        {
-            var choices = new string[liveController.Resource.Animations.Count + 1];
-            choices[0] = "(First Clip)";
-            var selectedIndex = 0;
-            for (var index = 0; index < liveController.Resource.Animations.Count; index++)
-            {
-                choices[index + 1] = liveController.Resource.Animations[index].Name;
-                if (string.Equals(animator.DefaultClip, choices[index + 1],
-                        StringComparison.Ordinal))
-                    selectedIndex = index + 1;
-            }
-            var clipSelector = new ComboBox(Width - 90f, 30f, _theme)
-            {
-                Name = "AnimatorClip",
-                Margin = new Thickness(78f, y + 68f, 0f, 0f)
-            };
-            clipSelector.SetItems(choices);
-            clipSelector.Select(selectedIndex);
-            clipSelector.SelectionChanged += (index, value) =>
-            {
-                animator.DefaultClip = index <= 0 ? null : value;
-                if (InspectedNode is { } node)
-                    NodeChanged?.Invoke(node);
-            };
-            AddChild(clipSelector);
-        }
-        else
-        {
-            var clip = new TextField(Width - 90f, 30f, _theme)
-            {
-                Name = "AnimatorClip",
-                Text = animator.DefaultClip ?? string.Empty,
-                Placeholder = "First imported clip",
-                UpdateTrigger = TextUpdateTrigger.Commit,
-                Margin = new Thickness(78f, y + 68f, 0f, 0f)
-            };
-            clip.ValueUpdateRequested += value =>
-            {
-                animator.DefaultClip = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-                if (InspectedNode is { } node)
-                    NodeChanged?.Invoke(node);
-            };
-            RegisterRefresh(clip, () => animator.DefaultClip ?? string.Empty);
-            _editForm.Register(clip);
-            AddChild(clip);
-        }
-        AddChild(CreateLabel(12f, y + 106f, 66f, 30f,
-            "Speed", _theme.TextSecondary));
-        var speed = new TextField(Width - 90f, 30f, _theme)
-        {
-            Name = "AnimatorSpeed",
-            Text = Format(animator.Speed),
-            UpdateTrigger = TextUpdateTrigger.Commit,
-            Validator = ValidateFloat,
-            Margin = new Thickness(78f, y + 106f, 0f, 0f)
-        };
-        speed.ValueUpdateRequested += value =>
-        {
-            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
-                    out var parsed))
-                return;
-            animator.Speed = parsed;
-            if (InspectedNode is { } node)
-                NodeChanged?.Invoke(node);
-        };
-        RegisterRefresh(speed, () => Format(animator.Speed));
-        _editForm.Register(speed);
-        AddChild(speed);
-        AddChild(CreateLabel(12f, y + 144f, 66f, 30f,
-            "Fade", _theme.TextSecondary));
-        var fade = new TextField(Width - 90f, 30f, _theme)
-        {
-            Name = "AnimatorDefaultFadeDuration",
-            Text = Format(animator.DefaultFadeDuration),
-            UpdateTrigger = TextUpdateTrigger.Commit,
-            Validator = text => ValidateConstrainedFloat(text, false, true),
-            Margin = new Thickness(78f, y + 144f, 0f, 0f)
-        };
-        fade.ValueUpdateRequested += value =>
-        {
-            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
-                    out var parsed) || parsed < 0f)
-                return;
-            animator.DefaultFadeDuration = parsed;
-            if (InspectedNode is { } node)
-                NodeChanged?.Invoke(node);
-        };
-        RegisterRefresh(fade, () => Format(animator.DefaultFadeDuration));
-        _editForm.Register(fade);
-        AddChild(fade);
-        var play = new ToggleButton((Width - 28f) * 0.5f, 30f,
-            "Play Automatically", _theme)
-        {
-            Name = "AnimatorPlayAutomatically",
-            IsChecked = animator.PlayAutomatically,
-            Margin = new Thickness(12f, y + 182f, 0f, 0f)
-        };
-        play.CheckedChanged += value =>
-        {
-            animator.PlayAutomatically = value;
-            if (InspectedNode is { } node)
-                NodeChanged?.Invoke(node);
-        };
-        AddChild(play);
-        var loop = new ToggleButton((Width - 28f) * 0.5f, 30f,
-            "Loop", _theme)
-        {
-            Name = "AnimatorLoop",
-            IsChecked = animator.Loop,
-            Margin = new Thickness(16f + (Width - 28f) * 0.5f, y + 182f, 0f, 0f)
-        };
-        loop.CheckedChanged += value =>
-        {
-            animator.Loop = value;
-            if (InspectedNode is { } node)
-                NodeChanged?.Invoke(node);
-        };
-        AddChild(loop);
-        var bottom = y + 224f;
-        var controller = liveController;
-        var previewState = ResolvePreviewState(controller, animator.DefaultClip);
-        if (controller is null || previewState is null)
-            return bottom;
-        AddChild(CreateLabel(12f, y + 220f, 66f, 30f,
-            "State", _theme.TextSecondary));
-        var stateName = new TextField(Width - 90f, 30f, _theme)
-        {
-            Name = "AnimatorRuntimeState",
-            Text = controller.Current?.Key ?? previewState.Key,
-            IsReadOnly = true,
-            Margin = new Thickness(78f, y + 220f, 0f, 0f)
-        };
-        RegisterRefresh(stateName, () => controller.Current?.Key ?? previewState.Key);
-        AddChild(stateName);
-        AddChild(CreateLabel(12f, y + 258f, 66f, 30f,
-            "Time", _theme.TextSecondary));
-        var previewTime = new TextField(Width - 164f, 30f, _theme)
-        {
-            Name = "AnimatorPreviewNormalizedTime",
-            Text = Format(previewState.NormalizedTime),
-            UpdateTrigger = TextUpdateTrigger.Commit,
-            Validator = text => ValidateConstrainedFloat(text, false, true),
-            Margin = new Thickness(78f, y + 258f, 0f, 0f)
-        };
-        previewTime.ValueUpdateRequested += value =>
-        {
-            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
-                    out var parsed) || parsed < 0f)
-                return;
-            if (!previewState.IsCurrent)
-            {
-                controller.Play(previewState.Key, 0f);
-                previewState.IsPlaying = false;
-            }
-            previewState.NormalizedTime = Math.Clamp(parsed, 0f, 1f);
-            AnimationPreviewChanged?.Invoke(instance);
-        };
-        RegisterRefresh(previewTime, () => Format(previewState.NormalizedTime));
-        _editForm.Register(previewTime);
-        AddChild(previewTime);
-        var previewPlaying = new ToggleButton(66f, 30f, "Play", _theme)
-        {
-            Name = "AnimatorPreviewPlaying",
-            IsChecked = previewState.IsPlaying,
-            Margin = new Thickness(Width - 78f, y + 258f, 0f, 0f)
-        };
-        previewPlaying.CheckedChanged += value =>
-        {
-            if (value && !previewState.IsCurrent)
-                controller.Play(previewState.Key, 0f);
-            previewState.IsPlaying = value;
-            AnimationPreviewChanged?.Invoke(instance);
-        };
-        AddChild(previewPlaying);
-        AddChild(CreateLabel(12f, y + 296f, 66f, 30f,
-            "Blend", _theme.TextSecondary));
-        var blendStatus = new TextField(Width - 90f, 30f, _theme)
-        {
-            Name = "AnimatorRuntimeBlend",
-            Text = FormatAnimationState(previewState),
-            IsReadOnly = true,
-            Margin = new Thickness(78f, y + 296f, 0f, 0f)
-        };
-        RegisterRefresh(blendStatus, () => FormatAnimationState(previewState));
-        AddChild(blendStatus);
-        return y + 338f;
-    }
-
-    /// <summary>Formats live playback and cross-fade diagnostics without changing authored data.</summary>
-    /// <param name="state">Runtime state displayed by the Inspector.</param>
-    /// <returns>Compact speed, weight, target, and remaining-fade details.</returns>
-    private static string FormatAnimationState(AnimationState state) =>
-        $"x{Format(state.Speed)}  {Format(state.Weight)}→{Format(state.TargetWeight)}  " +
-        $"{Format(state.FadeRemaining)}s";
-
-    /// <summary>Resolves the current or authored-default state for live Inspector preview.</summary>
-    /// <param name="controller">Optional live controller.</param>
-    /// <param name="defaultClip">Optional authored default key.</param>
-    /// <returns>A reusable preview state, or null when no clip exists.</returns>
-    private static AnimationState? ResolvePreviewState(
-        AnimationController? controller, string? defaultClip)
-    {
-        if (controller is null)
-            return null;
-        if (controller.Current is { } current)
-            return current;
-        if (defaultClip is not null && controller.TryGet(defaultClip, out var authored))
-            return authored;
-        return controller.Resource.Animations.Count > 0
-            ? controller.GetOrCreate(controller.Resource.Animations[0].Name) : null;
-    }
 
     /// <summary>Resolves material values associated with the currently bound node.</summary>
     /// <param name="node">Node being bound, or null.</param>
@@ -1055,51 +807,6 @@ public sealed class SceneInspector : Panel
         return true;
     }
 
-    /// <summary>Assigns a standalone skeletal-animation artifact to the inspected mesh.</summary>
-    /// <param name="animation">Standalone animation sub-asset.</param>
-    /// <returns>True when an inspected mesh received the assignment.</returns>
-    public bool AssignAnimation(AssetReference animation)
-    {
-        if (InspectedNode is not MeshInstance3D instance)
-            return false;
-        var animator = instance.GetComponent<AnimatorComponent>();
-        if (animator is null)
-        {
-            animator = new AnimatorComponent();
-            instance.AddComponent(animator);
-        }
-        animator.AnimationSet = null;
-        animator.AnimationSource = animation;
-        animator.DefaultClip = null;
-        NodeChanged?.Invoke(instance);
-        _cachedViews.Remove(instance);
-        InspectedNode = null;
-        Bind(instance);
-        return true;
-    }
-
-    /// <summary>Assigns a project-owned animation set to the inspected mesh.</summary>
-    /// <param name="animationSet">Animation-set artifact.</param>
-    /// <returns>True when an inspected mesh received the assignment.</returns>
-    public bool AssignAnimationSet(AssetReference animationSet)
-    {
-        if (InspectedNode is not MeshInstance3D instance)
-            return false;
-        var animator = instance.GetComponent<AnimatorComponent>();
-        if (animator is null)
-        {
-            animator = new AnimatorComponent();
-            instance.AddComponent(animator);
-        }
-        animator.AnimationSource = null;
-        animator.AnimationSet = animationSet;
-        animator.DefaultClip = null;
-        NodeChanged?.Invoke(instance);
-        _cachedViews.Remove(instance);
-        InspectedNode = null;
-        Bind(instance);
-        return true;
-    }
 
     /// <summary>Formats one optional script asset for the read-only Inspector field.</summary>
     /// <param name="scriptId">Optional persistent script asset identity.</param>

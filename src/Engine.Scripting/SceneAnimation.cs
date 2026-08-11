@@ -3,6 +3,23 @@ using Engine.Graphics;
 
 namespace Engine.Scripting;
 
+/// <summary>References one imported animation-set asset selected by game script.</summary>
+public readonly record struct AnimationSet
+{
+    /// <summary>Gets the imported animation-set artifact reference.</summary>
+    public AssetReference Reference { get; }
+
+    /// <summary>Creates a validated script-facing animation-set reference.</summary>
+    /// <param name="reference">Animation-set artifact reference.</param>
+    public AnimationSet(AssetReference reference)
+    {
+        if (reference.Asset.Value == Guid.Empty || string.IsNullOrWhiteSpace(reference.SubAsset))
+            throw new ArgumentException(
+                "Animation sets require an asset and explicit sub-asset.", nameof(reference));
+        Reference = reference;
+    }
+}
+
 /// <summary>Resolves runtime animation controllers owned by an active scene.</summary>
 public interface ISceneAnimationService
 {
@@ -15,6 +32,12 @@ public interface ISceneAnimationService
     /// <param name="node">Scene node used as the lookup origin.</param>
     /// <returns>The bound controller.</returns>
     AnimationController GetRequired(Node node);
+
+    /// <summary>Binds a script-selected animation set and returns the target controller.</summary>
+    /// <param name="node">Scene node used as the lookup origin.</param>
+    /// <param name="animationSet">Imported animation set to bind.</param>
+    /// <returns>The controller containing the newly registered aliases.</returns>
+    AnimationController Bind(Node node, AnimationSet animationSet);
 }
 
 /// <summary>Provides the empty animation service used by headless or unbound script contexts.</summary>
@@ -37,6 +60,13 @@ internal sealed class EmptySceneAnimationService : ISceneAnimationService
         throw new InvalidOperationException(
             $"Node '{node.Name}' has no runtime animation controller.");
     }
+
+    /// <inheritdoc/>
+    public AnimationController Bind(Node node, AnimationSet animationSet)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        throw new InvalidOperationException("The active scene cannot resolve animation sets.");
+    }
 }
 
 /// <summary>Maps active scene nodes to runtime animation controllers.</summary>
@@ -44,7 +74,16 @@ public sealed class SceneAnimationRegistry : ISceneAnimationService, IDisposable
 {
     private readonly Dictionary<Node, AnimationController> _controllers =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Action<Node, AnimationSet, AnimationController>? _bindAnimationSet;
     private bool _disposed;
+
+    /// <summary>Creates a registry with optional animation-set binding support.</summary>
+    /// <param name="bindAnimationSet">Resolver that registers one set on a controller.</param>
+    public SceneAnimationRegistry(
+        Action<Node, AnimationSet, AnimationController>? bindAnimationSet = null)
+    {
+        _bindAnimationSet = bindAnimationSet;
+    }
 
     /// <inheritdoc/>
     public AnimationController? Get(Node node)
@@ -61,6 +100,18 @@ public sealed class SceneAnimationRegistry : ISceneAnimationService, IDisposable
     {
         return Get(node) ?? throw new InvalidOperationException(
             $"Node '{node.Name}' has no runtime animation controller.");
+    }
+
+    /// <inheritdoc/>
+    public AnimationController Bind(Node node, AnimationSet animationSet)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(node);
+        var controller = GetRequired(node);
+        if (_bindAnimationSet is null)
+            throw new InvalidOperationException("The active scene cannot resolve animation sets.");
+        _bindAnimationSet(node, animationSet, controller);
+        return controller;
     }
 
     /// <summary>Registers one controller under its animated mesh node.</summary>

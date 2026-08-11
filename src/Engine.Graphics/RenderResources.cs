@@ -48,6 +48,36 @@ public sealed record MeshDescription(Vertex[] Vertices, ResourceUsage Usage = Re
 public sealed record MeshUpdate(uint FirstVertex, Vertex[] Vertices);
 
 /// <summary>Describes colored screen-space geometry valid only for the current frame.</summary>
-/// <param name="Vertices">One-frame vertices.</param>
-/// <param name="Clip">Optional logical UI bounds containing the geometry.</param>
-public readonly record struct TransientGeometry(Vertex[] Vertices, UIClipRect? Clip = null);
+public readonly record struct TransientGeometry
+{
+    /// <summary>Creates geometry using every vertex in an exact-sized array.</summary>
+    /// <param name="vertices">One-frame vertices.</param>
+    /// <param name="clip">Optional logical UI bounds containing the geometry.</param>
+    public TransientGeometry(Vertex[] vertices, UIClipRect? clip = null)
+        : this(vertices, vertices?.Length ?? 0, clip)
+    {
+    }
+
+    /// <summary>Creates geometry over the populated prefix of a reusable array.</summary>
+    /// <param name="vertices">Reusable vertex storage.</param>
+    /// <param name="vertexCount">Number of populated vertices at the start of the array.</param>
+    /// <param name="clip">Optional logical UI bounds containing the geometry.</param>
+    public TransientGeometry(Vertex[] vertices, int vertexCount, UIClipRect? clip = null)
+    {
+        ArgumentNullException.ThrowIfNull(vertices);
+        if ((uint)vertexCount > (uint)vertices.Length)
+            throw new ArgumentOutOfRangeException(nameof(vertexCount));
+        Vertices = vertices;
+        VertexCount = vertexCount;
+        Clip = clip;
+    }
+
+    /// <summary>Gets reusable vertex storage.</summary>
+    public Vertex[] Vertices { get; }
+
+    /// <summary>Gets the populated vertex count.</summary>
+    public int VertexCount { get; }
+
+    /// <summary>Gets optional logical UI bounds containing the geometry.</summary>
+    public UIClipRect? Clip { get; }
+}

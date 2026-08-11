@@ -26,9 +26,12 @@ Constant baked channels collapse to one key. Static GLB primitives continue to u
 
 ## Runtime
 
-Attach `AnimatorComponent` to a `MeshInstance3D` that references a skinned-mesh artifact.
-Its `Clip` selects an exact imported name; null selects the first clip. `PlayAutomatically`,
-`Loop`, and `Speed` configure initial playback.
+A `MeshInstance3D` that references a skinned-mesh artifact automatically receives a runtime
+`AnimationController`. Animation ownership stays in game scripts rather than in an authored
+scene component. A script can retrieve the controller with `Scene.Animation.GetRequired(Owner)`
+when it only needs clips embedded in the model, or bind a separate imported animation set with
+`Scene.Animation.Bind(Owner, animationSet)`. Scripts then select clips and configure looping,
+speed, transitions, and playback through the controller.
 
 `AnimationPlayer` advances and samples a preallocated `SkeletonPose` without per-frame managed
 allocations. The resulting skin matrices are uploaded to a renderer-owned, double-buffered
@@ -38,9 +41,10 @@ The source mesh-node world transform is applied after the skin palette and befor
 instance transform. This preserves glTF armature unit and axis conversions without exposing
 their inverse as an oversized or rotated bind pose.
 
-Animator settings are persisted in scene format 5 and cloned into Editor play mode. Both the
-Player and the Editor's Game viewport advance animation using simulation time, so pausing the
-game also pauses skeletal playback.
+Animation playback state is runtime-only and is not serialized into scene nodes. Both the Player
+and the Editor's Game viewport advance controllers using simulation time, so pausing the game
+also pauses skeletal playback. The Editor does not automatically play animations outside play
+mode.
 
 ## Current boundaries
 

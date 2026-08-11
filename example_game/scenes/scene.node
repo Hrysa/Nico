@@ -29,8 +29,7 @@
           "scriptId": "019fcbdc-bff3-7205-80fc-add216624bc2",
           "properties": [],
           "rigidBody": null,
-          "collider": null,
-          "animator": null
+          "collider": null
         },
         {
           "type": "boxCollider",
@@ -64,8 +63,7 @@
             },
             "terrainData": null,
             "heightScale": 1
-          },
-          "animator": null
+          }
         }
       ],
       "customType": null,
@@ -101,30 +99,6 @@
       "scriptId": null,
       "components": [
         {
-          "type": "animator",
-          "enabled": true,
-          "scriptId": null,
-          "properties": null,
-          "rigidBody": null,
-          "collider": null,
-          "animator": {
-            "animationSource": {
-              "asset": "019fe17c-33cb-7db4-bfa8-4d3f24803e02",
-              "subAsset": "animation/0"
-            },
-            "clip": "Idle",
-            "playAutomatically": true,
-            "loop": true,
-            "speed": 1,
-            "defaultFadeDuration": 0.2,
-            "defaultClip": "Idle",
-            "animationSet": {
-              "asset": "019ff038-6e1e-7a7d-bd1d-01a67bb65285",
-              "subAsset": "main"
-            }
-          }
-        },
-        {
           "type": "script",
           "enabled": true,
           "scriptId": "3fcb96d4-931c-410b-a6e8-7f9ea3f99aad",
@@ -141,8 +115,7 @@
             }
           ],
           "rigidBody": null,
-          "collider": null,
-          "animator": null
+          "collider": null
         },
         {
           "type": "boxCollider",
@@ -176,8 +149,7 @@
             },
             "terrainData": null,
             "heightScale": 1
-          },
-          "animator": null
+          }
         }
       ],
       "customType": null,
@@ -255,8 +227,7 @@
           "scriptId": "6a25f266-31b2-4e90-b4fc-91753a70b3ad",
           "properties": [],
           "rigidBody": null,
-          "collider": null,
-          "animator": null
+          "collider": null
         }
       ],
       "customType": "nico/hud-root",
@@ -319,8 +290,7 @@
             },
             "terrainData": null,
             "heightScale": 1
-          },
-          "animator": null
+          }
         }
       ],
       "customType": null,

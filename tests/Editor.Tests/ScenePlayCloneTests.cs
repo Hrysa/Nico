@@ -36,18 +36,6 @@ public class ScenePlayCloneTests
         };
         cube.AddComponent(authoredCollider);
         cube.AddComponent(authoredBody);
-        var animationReference = new AssetReference(AssetId.New(), "animation/0");
-        var animationSetReference = new AssetReference(AssetId.New(), "main");
-        var authoredAnimator = new AnimatorComponent
-        {
-            AnimationSource = animationReference,
-            AnimationSet = animationSetReference,
-            DefaultClip = "Walk",
-            Loop = false,
-            Speed = 0.75f,
-            DefaultFadeDuration = 0.4f
-        };
-        cube.AddComponent(authoredAnimator);
         var camera = new PerspectiveCamera { Name = "Camera" };
         var light = new DirectionalLight3D
         {
@@ -67,7 +55,7 @@ public class ScenePlayCloneTests
         Assert.Equal(cube.Mesh, playScene.MeshInstances[0].Mesh);
         Assert.Equal(new Vector3(2f, 0f, 0f), cube.Position);
         Assert.Equal(cube.ScriptId, playScene.MeshInstances[0].ScriptId);
-        Assert.Equal(5, playScene.MeshInstances[0].Components.Count);
+        Assert.Equal(4, playScene.MeshInstances[0].Components.Count);
         var clonedScript = Assert.IsType<ScriptComponent>(
             playScene.MeshInstances[0].Components[0]);
         Assert.NotSame(authoredScript, clonedScript);
@@ -84,15 +72,6 @@ public class ScenePlayCloneTests
         Assert.NotSame(authoredBody, clonedBody);
         Assert.Equal(2f, clonedBody.Mass);
         Assert.Equal(Vector3.UnitX, clonedBody.LinearVelocity);
-        var clonedAnimator = Assert.IsType<AnimatorComponent>(
-            playScene.MeshInstances[0].Components[4]);
-        Assert.NotSame(authoredAnimator, clonedAnimator);
-        Assert.Equal(animationReference, clonedAnimator.AnimationSource);
-        Assert.Equal(animationSetReference, clonedAnimator.AnimationSet);
-        Assert.Equal("Walk", clonedAnimator.DefaultClip);
-        Assert.False(clonedAnimator.Loop);
-        Assert.Equal(0.75f, clonedAnimator.Speed);
-        Assert.Equal(0.4f, clonedAnimator.DefaultFadeDuration);
         Assert.Equal(material, Assert.Single(playScene.MeshInstances[0].Materials));
         Assert.NotSame(camera, playScene.GameCamera);
         var clonedLight = Assert.IsType<DirectionalLight3D>(playScene.Root.Children[2]);

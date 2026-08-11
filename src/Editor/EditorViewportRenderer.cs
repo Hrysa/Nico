@@ -30,9 +30,10 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
     private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
-    private readonly SceneAnimationRegistry _animationRegistry = new();
+    private readonly SceneAnimationRegistry _animationRegistry;
     private GizmoViewport _lastSceneViewport;
     private ScenePreviewPickingId? _hoveredPreview;
+    private Vertex[] _sceneOverlayVertices = [];
     private bool _hasSubmittedSceneOverlay;
     private bool _disposed;
 
@@ -81,6 +82,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="selection">Selection and gizmo controller.</param>
     /// <param name="previewMeshResolver">Optional explicit collision-mesh preview resolver.</param>
     /// <param name="previewTerrainResolver">Optional explicit terrain preview resolver.</param>
+    /// <param name="animationSetResolver">Optional script-selected animation-set resolver.</param>
     /// <param name="renderPipeline">Optional render-pass composition.</param>
     public EditorViewportRenderer(
         IRenderer renderer,
@@ -93,6 +95,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         SceneSelectionController selection,
         Func<AssetReference, StaticMeshResource?>? previewMeshResolver = null,
         Func<AssetReference, TerrainResource?>? previewTerrainResolver = null,
+        Func<AnimationSet, SkinnedMeshResource, AnimationClipResource[]>?
+            animationSetResolver = null,
         RenderPipeline? renderPipeline = null)
     {
         _renderer = renderer;
@@ -108,6 +112,13 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _gameRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
         _previewRegistry = ScenePreviewRegistry.CreateDefault(
             previewMeshResolver, previewTerrainResolver);
+        _animationRegistry = new SceneAnimationRegistry((_, animationSet, controller) =>
+        {
+            if (animationSetResolver is null)
+                throw new InvalidOperationException(
+                    "This viewport cannot resolve script animation sets.");
+            controller.RegisterClips(animationSetResolver(animationSet, controller.Resource));
+        });
     }
 
     /// <summary>Changes the camera and objects rendered in the Game viewport.</summary>
@@ -295,8 +306,6 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
                     animations, mesh.MeshNodeTransform);
             var controller = sharedController ?? new AnimationController(playbackResource);
             var ownsController = sharedController is null;
-            if (ownsController)
-                ConfigureAnimationController(instance, controller);
             _renderer.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
             if (ownsController)
                 _animationRegistry.Register(instance, controller);
@@ -325,8 +334,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             {
                 continue;
             }
-            var animator = instance.GetComponent<AnimatorComponent>();
-            if (resource.OwnsAnimation && (animator is null || animator.Enabled))
+            if (resource.OwnsAnimation)
                 resource.Animation.Advance(deltaTime);
         }
         for (var index = 0; index < _gameObjects.Count; index++)
@@ -363,16 +371,17 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _previewRegistry.Build(_sceneRoot, _selection.SelectedNode, _previews, _hoveredPreview);
         _hoveredPreview = PickPreview(pointerPosition);
         RenderSceneViewport();
-        var overlay = ScenePreviewOverlayBuilder.Build(
+        var overlayVertexCount = ScenePreviewOverlayBuilder.Build(
             _previews, _sceneCamera.GetViewMatrix(), _sceneCamera.GetProjectionMatrix(),
-            _lastSceneViewport, _selection.BuildOverlay());
+            _lastSceneViewport, _selection.BuildOverlay(), ref _sceneOverlayVertices);
         var clip = new UIClipRect(
             sceneViewport.Left,
             sceneViewport.Top,
             sceneViewport.Right,
             sceneViewport.Bottom);
-        _renderer.SubmitTransient(new TransientGeometry(overlay, clip));
-        _hasSubmittedSceneOverlay = overlay.Length > 0;
+        _renderer.SubmitTransient(new TransientGeometry(
+            _sceneOverlayVertices, overlayVertexCount, clip));
+        _hasSubmittedSceneOverlay = overlayVertexCount > 0;
     }
 
     /// <summary>Finds the closest selectable preview line near one pointer position.</summary>
@@ -607,27 +616,6 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _renderer.DestroyMesh(resource.Mesh);
         if (resource.Texture.IsValid)
             _renderer.DestroyTexture(resource.Texture);
-    }
-
-    /// <summary>Configures initial playback from the instance animator component.</summary>
-    /// <param name="instance">Scene instance owning the animator.</param>
-    /// <param name="controller">New animation controller.</param>
-    private static void ConfigureAnimationController(
-        MeshInstance3D instance,
-        AnimationController controller)
-    {
-        var animator = instance.GetComponent<AnimatorComponent>();
-        if (animator is null || !animator.Enabled)
-            return;
-        controller.DefaultFadeDuration = animator.DefaultFadeDuration;
-        var clip = controller.Resource.FindAnimation(animator.DefaultClip);
-        if (clip is null)
-            return;
-        var state = controller.GetOrCreate(clip.Name);
-        state.Speed = animator.Speed;
-        state.Loop = animator.Loop;
-        if (animator.PlayAutomatically)
-            controller.PlayFromStart(clip.Name);
     }
 
     /// <summary>Adds static or skinned imported geometry to one queue.</summary>
