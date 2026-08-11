@@ -85,6 +85,32 @@ public class StaticMeshResourceTests
         Assert.Equal(new Submesh(0, 3, 2), Assert.Single(mesh.Submeshes));
     }
 
+    /// <summary>Round-trips generated collision geometry through the public artifact writer.</summary>
+    [Fact]
+    public void SaveAndLoad_GeneratedMesh_PreservesVersionTwoVertexData()
+    {
+        var vertices = new[]
+        {
+            new ModelVertex(Vector3.Zero, Vector3.UnitY, Vector2.Zero,
+                Vector4.UnitX, new Vector4(.2f, .3f, .4f, 1f)),
+            new ModelVertex(Vector3.UnitX, Vector3.UnitY, Vector2.UnitX,
+                Vector4.UnitX, Vector4.One),
+            new ModelVertex(Vector3.UnitZ, Vector3.UnitY, Vector2.UnitY,
+                Vector4.UnitX, Vector4.One)
+        };
+        var source = new StaticMeshResource(vertices, [0, 1, 2], [new Submesh(0, 3, -1)]);
+        using var stream = new MemoryStream();
+
+        source.Save(stream);
+        stream.Position = 0;
+        var loaded = StaticMeshResource.Load(stream);
+
+        Assert.Equal(vertices[0].Color, loaded.Vertices[0].Color);
+        Assert.Equal(vertices[1].TexCoord, loaded.Vertices[1].TexCoord);
+        Assert.Equal(source.Indices, loaded.Indices);
+        Assert.Equal(-1, Assert.Single(loaded.Submeshes).MaterialSlot);
+    }
+
     /// <summary>Writes one complete artifact vertex.</summary>
     /// <param name="writer">Artifact writer.</param>
     /// <param name="position">Vertex position.</param>

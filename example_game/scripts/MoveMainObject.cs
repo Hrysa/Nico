@@ -22,9 +22,8 @@ public  sealed partial class MoveMainObject : SceneScript
             Mass = 1f
         });
 
-        Owner.AddComponent(new ColliderComponent
+        Owner.AddComponent(new BoxColliderComponent
         {
-            Shape = ColliderShape.Box,
             Size = Vector3.One
         });
     }

@@ -31,7 +31,7 @@ public static class GlbSceneInstantiator
         var sourceNodes = new List<AssetImportObject>();
         for (var index = 0; index < objects.Count; index++)
         {
-            if (objects[index].Kind == "node")
+            if (objects[index].Kind is "node" or "collision")
                 sourceNodes.Add(objects[index]);
         }
         var sceneNodes = new Dictionary<string, Node3D>(sourceNodes.Count, StringComparer.Ordinal);
@@ -128,6 +128,16 @@ public static class GlbSceneInstantiator
             if (artifact is null ||
                 artifact.ContentType is not "nico/static-mesh" and not "nico/skinned-mesh")
             {
+                continue;
+            }
+            if (source.Kind == "collision")
+            {
+                if (artifact.ContentType != "nico/static-mesh")
+                    throw new InvalidDataException("Collision source nodes must use static triangle meshes.");
+                parent.AddComponent(new MeshColliderComponent
+                {
+                    Mesh = new AssetReference(assetId, artifact.Key)
+                });
                 continue;
             }
             if (!includeStaticMeshes && artifact.ContentType == "nico/static-mesh")

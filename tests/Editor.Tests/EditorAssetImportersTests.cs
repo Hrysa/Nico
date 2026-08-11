@@ -17,4 +17,13 @@ public class EditorAssetImportersTests
     {
         Assert.Equal(importer, EditorAssetImporters.Select(path));
     }
+
+    /// <summary>Recognizes generated collision and terrain project source extensions.</summary>
+    [Theory]
+    [InlineData("map.ncollision", "collision-mesh")]
+    [InlineData("height.nterrain", "terrain")]
+    public void Select_CollisionSources_ReturnsTypedImporter(string path, string importer)
+    {
+        Assert.Equal(importer, EditorAssetImporters.Select(path));
+    }
 }

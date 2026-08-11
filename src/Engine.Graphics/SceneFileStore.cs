@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 8;
+    private const int CurrentFormatVersion = 9;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -221,19 +221,7 @@ public static class SceneFileStore
                             rigidBody.LinearDamping)));
                     break;
                 case ColliderComponent collider:
-                    result.Add(new SceneComponentData(
-                        SceneComponentType.Collider,
-                        collider.Enabled,
-                        Collider: new ColliderData(
-                            collider.Shape,
-                            SceneVector3.From(collider.Center),
-                            SceneVector3.From(collider.Size),
-                            collider.Radius,
-                            collider.Height,
-                            collider.IsTrigger,
-                            collider.Friction,
-                            collider.Restitution,
-                            collider.Mesh)));
+                    result.Add(EncodeCollider(collider));
                     break;
                 case AnimatorComponent animator:
                     result.Add(new SceneComponentData(
@@ -298,19 +286,54 @@ public static class SceneFileStore
                         LinearDamping = body.LinearDamping
                     };
                     break;
-                case SceneComponentType.Collider when componentData.Collider is { } collider:
-                    component = new ColliderComponent
+                case SceneComponentType.Collider when componentData.Collider is { } legacy:
+                    component = DecodeLegacyCollider(legacy);
+                    break;
+                case SceneComponentType.BoxCollider when componentData.Collider is { } box:
+                    component = ApplyColliderProperties(new BoxColliderComponent
                     {
-                        Shape = collider.Shape,
-                        Center = collider.Center.ToVector3(),
-                        Size = collider.Size.ToVector3(),
-                        Radius = collider.Radius,
-                        Height = collider.Height,
-                        IsTrigger = collider.IsTrigger,
-                        Friction = collider.Friction,
-                        Restitution = collider.Restitution,
-                        Mesh = collider.Mesh
-                    };
+                        Size = box.Size.ToVector3()
+                    }, box);
+                    break;
+                case SceneComponentType.SphereCollider when componentData.Collider is { } sphere:
+                    component = ApplyColliderProperties(new SphereColliderComponent
+                    {
+                        Radius = sphere.Radius
+                    }, sphere);
+                    break;
+                case SceneComponentType.CapsuleCollider when componentData.Collider is { } capsule:
+                    component = ApplyColliderProperties(new CapsuleColliderComponent
+                    {
+                        Radius = capsule.Radius,
+                        Height = capsule.Height
+                    }, capsule);
+                    break;
+                case SceneComponentType.CylinderCollider when componentData.Collider is { } cylinder:
+                    component = ApplyColliderProperties(new CylinderColliderComponent
+                    {
+                        Radius = cylinder.Radius,
+                        Height = cylinder.Height
+                    }, cylinder);
+                    break;
+                case SceneComponentType.PlaneCollider when componentData.Collider is { } plane:
+                    component = ApplyColliderProperties(new PlaneColliderComponent
+                    {
+                        Size = plane.PlaneSize.ToVector2()
+                    }, plane);
+                    break;
+                case SceneComponentType.MeshCollider when componentData.Collider is { } mesh:
+                    component = ApplyColliderProperties(new MeshColliderComponent
+                    {
+                        Mesh = mesh.Mesh
+                    }, mesh);
+                    break;
+                case SceneComponentType.TerrainCollider when componentData.Collider is { } terrain:
+                    component = ApplyColliderProperties(new TerrainColliderComponent
+                    {
+                        TerrainData = terrain.TerrainData,
+                        HorizontalSize = terrain.PlaneSize.ToVector2(),
+                        HeightScale = terrain.HeightScale
+                    }, terrain);
                     break;
                 case SceneComponentType.Animator when componentData.Animator is { } animator:
                     component = new AnimatorComponent
@@ -329,6 +352,92 @@ public static class SceneFileStore
             component.Enabled = componentData.Enabled;
             node.AddComponent(component);
         }
+    }
+
+    /// <summary>Encodes one concrete collider without a shape discriminator.</summary>
+    /// <param name="collider">Collider to encode.</param>
+    /// <returns>Persistent concrete collider record.</returns>
+    private static SceneComponentData EncodeCollider(ColliderComponent collider)
+    {
+        var type = collider switch
+        {
+            BoxColliderComponent => SceneComponentType.BoxCollider,
+            SphereColliderComponent => SceneComponentType.SphereCollider,
+            CapsuleColliderComponent => SceneComponentType.CapsuleCollider,
+            CylinderColliderComponent => SceneComponentType.CylinderCollider,
+            PlaneColliderComponent => SceneComponentType.PlaneCollider,
+            MeshColliderComponent => SceneComponentType.MeshCollider,
+            TerrainColliderComponent => SceneComponentType.TerrainCollider,
+            _ => throw new NotSupportedException(
+                $"Collider type '{collider.GetType().Name}' cannot be saved.")
+        };
+        var data = new ColliderData(
+            Center: SceneVector3.From(collider.Center),
+            Size: SceneVector3.From((collider as BoxColliderComponent)?.Size ?? Vector3.One),
+            Radius: collider switch
+            {
+                SphereColliderComponent sphere => sphere.Radius,
+                CapsuleColliderComponent capsule => capsule.Radius,
+                CylinderColliderComponent cylinder => cylinder.Radius,
+                _ => 0.5f
+            },
+            Height: collider switch
+            {
+                CapsuleColliderComponent capsule => capsule.Height,
+                CylinderColliderComponent cylinder => cylinder.Height,
+                _ => 1f
+            },
+            IsTrigger: collider.IsTrigger,
+            Friction: collider.Friction,
+            Restitution: collider.Restitution,
+            Mesh: (collider as MeshColliderComponent)?.Mesh,
+            CollisionLayer: collider.CollisionLayer,
+            CollisionMask: collider.CollisionMask,
+            PlaneSize: SceneVector2.From(collider switch
+            {
+                PlaneColliderComponent plane => plane.Size,
+                TerrainColliderComponent terrain => terrain.HorizontalSize,
+                _ => Vector2.One
+            }),
+            TerrainData: (collider as TerrainColliderComponent)?.TerrainData,
+            HeightScale: (collider as TerrainColliderComponent)?.HeightScale ?? 1f);
+        return new SceneComponentData(type, collider.Enabled, Collider: data);
+    }
+
+    /// <summary>Migrates a version 8 shape-switched collider to a concrete component.</summary>
+    /// <param name="data">Legacy collider record.</param>
+    /// <returns>Concrete collider preserving authored values.</returns>
+    private static ColliderComponent DecodeLegacyCollider(ColliderData data)
+    {
+        ColliderComponent collider = data.Shape switch
+        {
+            LegacyColliderShape.Sphere => new SphereColliderComponent { Radius = data.Radius },
+            LegacyColliderShape.Capsule => new CapsuleColliderComponent
+                { Radius = data.Radius, Height = data.Height },
+            LegacyColliderShape.Cylinder => new CylinderColliderComponent
+                { Radius = data.Radius, Height = data.Height },
+            LegacyColliderShape.Plane => new PlaneColliderComponent(),
+            LegacyColliderShape.Mesh => new MeshColliderComponent { Mesh = data.Mesh },
+            _ => new BoxColliderComponent { Size = data.Size.ToVector3() }
+        };
+        return ApplyColliderProperties(collider, data);
+    }
+
+    /// <summary>Applies properties shared by every concrete collider.</summary>
+    /// <typeparam name="T">Concrete collider type.</typeparam>
+    /// <param name="collider">Collider receiving values.</param>
+    /// <param name="data">Persistent collider values.</param>
+    /// <returns>The supplied collider.</returns>
+    private static T ApplyColliderProperties<T>(T collider, ColliderData data)
+        where T : ColliderComponent
+    {
+        collider.Center = data.Center.ToVector3();
+        collider.IsTrigger = data.IsTrigger;
+        collider.Friction = data.Friction;
+        collider.Restitution = data.Restitution;
+        collider.CollisionLayer = data.CollisionLayer;
+        collider.CollisionMask = data.CollisionMask;
+        return collider;
     }
 
     /// <summary>
@@ -394,15 +503,20 @@ public static class SceneFileStore
         float LinearDamping);
 
     private sealed record ColliderData(
-        ColliderShape Shape,
-        SceneVector3 Center,
-        SceneVector3 Size,
-        float Radius,
-        float Height,
-        bool IsTrigger,
-        float Friction,
-        float Restitution,
-        AssetReference? Mesh = null);
+        LegacyColliderShape? Shape = null,
+        SceneVector3 Center = default,
+        SceneVector3 Size = default,
+        float Radius = 0.5f,
+        float Height = 1f,
+        bool IsTrigger = false,
+        float Friction = 0.5f,
+        float Restitution = 0f,
+        AssetReference? Mesh = null,
+        uint CollisionLayer = 1u,
+        uint CollisionMask = uint.MaxValue,
+        SceneVector2 PlaneSize = default,
+        AssetReference? TerrainData = null,
+        float HeightScale = 1f);
 
     private sealed record AnimatorData(
         AssetReference? AnimationSource,
@@ -555,6 +669,18 @@ public static class SceneFileStore
         public Vector4 ToVector4() => new(X, Y, Z, W);
     }
 
+    private readonly record struct SceneVector2(float X, float Y)
+    {
+        /// <summary>Creates serializable vector data.</summary>
+        /// <param name="value">Runtime vector.</param>
+        /// <returns>Serializable vector data.</returns>
+        public static SceneVector2 From(Vector2 value) => new(value.X, value.Y);
+
+        /// <summary>Creates a runtime vector.</summary>
+        /// <returns>Runtime vector.</returns>
+        public Vector2 ToVector2() => new(X, Y);
+    }
+
     private enum SceneNodeType
     {
         Node3D,
@@ -570,7 +696,25 @@ public static class SceneFileStore
         Script,
         RigidBody,
         Collider,
+        BoxCollider,
+        SphereCollider,
+        CapsuleCollider,
+        CylinderCollider,
+        PlaneCollider,
+        MeshCollider,
+        TerrainCollider,
         Animator
+    }
+
+    /// <summary>Shape discriminator retained only for loading scene format version 8.</summary>
+    private enum LegacyColliderShape
+    {
+        Box,
+        Sphere,
+        Capsule,
+        Cylinder,
+        Plane,
+        Mesh
     }
 }
 

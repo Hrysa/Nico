@@ -17,12 +17,18 @@ public sealed class EditorViewportRenderer : IDisposable
     private ICamera _gameCamera;
     private IReadOnlyList<MeshInstance3D> _sceneObjects;
     private IReadOnlyList<MeshInstance3D> _gameObjects;
+    private Node _sceneRoot;
     private readonly SceneSelectionController _selection;
+    private readonly ScenePreviewRegistry _previewRegistry;
+    private readonly ScenePreviewList _previews = new();
     private readonly OriginAxesMesh _originAxes = new();
     private readonly RenderQueue _sceneQueue = new();
     private readonly RenderQueue _gameQueue = new();
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
+    private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
+    private GizmoViewport _lastSceneViewport;
+    private ScenePreviewPickingId? _hoveredPreview;
     private bool _hasSubmittedSceneOverlay;
     private bool _disposed;
 
@@ -35,7 +41,10 @@ public sealed class EditorViewportRenderer : IDisposable
     /// <param name="sceneCamera">Scene camera.</param>
     /// <param name="gameCamera">Scene-owned camera used by the Game viewport.</param>
     /// <param name="sceneObjects">Objects rendered in the Scene viewport.</param>
+    /// <param name="sceneRoot">Root traversed for editor-only Scene previews.</param>
     /// <param name="selection">Selection and gizmo controller.</param>
+    /// <param name="previewMeshResolver">Optional explicit collision-mesh preview resolver.</param>
+    /// <param name="previewTerrainResolver">Optional explicit terrain preview resolver.</param>
     public EditorViewportRenderer(
         IRenderer renderer,
         RenderViewHandle sceneViewport,
@@ -43,7 +52,10 @@ public sealed class EditorViewportRenderer : IDisposable
         PerspectiveCamera sceneCamera,
         ICamera gameCamera,
         IReadOnlyList<MeshInstance3D> sceneObjects,
-        SceneSelectionController selection)
+        Node sceneRoot,
+        SceneSelectionController selection,
+        Func<AssetReference, StaticMeshResource?>? previewMeshResolver = null,
+        Func<AssetReference, TerrainResource?>? previewTerrainResolver = null)
     {
         _renderer = renderer;
         _sceneViewport = sceneViewport;
@@ -52,7 +64,10 @@ public sealed class EditorViewportRenderer : IDisposable
         _gameCamera = gameCamera;
         _sceneObjects = sceneObjects;
         _gameObjects = sceneObjects;
+        _sceneRoot = sceneRoot;
         _selection = selection;
+        _previewRegistry = ScenePreviewRegistry.CreateDefault(
+            previewMeshResolver, previewTerrainResolver);
     }
 
     /// <summary>Changes the camera and objects rendered in the Game viewport.</summary>
@@ -76,6 +91,21 @@ public sealed class EditorViewportRenderer : IDisposable
         ArgumentNullException.ThrowIfNull(sceneObjects);
         _sceneObjects = sceneObjects;
         ReleaseUnusedMeshes();
+    }
+
+    /// <summary>Changes the hierarchy traversed for editor-only Scene previews.</summary>
+    /// <param name="sceneRoot">Active editing scene root.</param>
+    public void SetSceneRoot(Node sceneRoot)
+    {
+        ArgumentNullException.ThrowIfNull(sceneRoot);
+        _sceneRoot = sceneRoot;
+    }
+
+    /// <summary>Changes one Scene diagnostic category without changing scene visibility.</summary>
+    /// <param name="category">Preview category.</param><param name="visible">Desired visibility.</param>
+    public void SetPreviewCategoryVisible(ScenePreviewCategory category, bool visible)
+    {
+        _previewRegistry.SetCategoryVisible(category, visible);
     }
 
     /// <summary>Transfers reusable static GPU resources between corresponding scene copies.</summary>
@@ -141,8 +171,11 @@ public sealed class EditorViewportRenderer : IDisposable
             _renderer.DestroyMesh(handle);
         foreach (var resource in _assetMeshes.Values)
             DestroyAssetMeshResource(resource);
+        foreach (var handle in _previewLineMeshes.Values)
+            _renderer.DestroyMesh(handle);
         _assetMeshes.Clear();
         _meshHandles.Clear();
+        _previewLineMeshes.Clear();
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>
@@ -280,10 +313,16 @@ public sealed class EditorViewportRenderer : IDisposable
             return;
         }
         _sceneQueue.Clear();
+        _lastSceneViewport = new GizmoViewport(sceneViewport.Left, sceneViewport.Top,
+            sceneViewport.Width, sceneViewport.Height);
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
+        _previewRegistry.Build(_sceneRoot, _selection.SelectedNode, _previews, _hoveredPreview);
+        _hoveredPreview = PickPreview(pointerPosition);
         RenderSceneViewport();
-        var overlay = _selection.BuildOverlay();
+        var overlay = ScenePreviewOverlayBuilder.Build(
+            _previews, _sceneCamera.GetViewMatrix(), _sceneCamera.GetProjectionMatrix(),
+            _lastSceneViewport, _selection.BuildOverlay());
         var clip = new UIClipRect(
             sceneViewport.Left,
             sceneViewport.Top,
@@ -291,6 +330,47 @@ public sealed class EditorViewportRenderer : IDisposable
             sceneViewport.Bottom);
         _renderer.SubmitTransient(new TransientGeometry(overlay, clip));
         _hasSubmittedSceneOverlay = overlay.Length > 0;
+    }
+
+    /// <summary>Finds the closest selectable preview line near one pointer position.</summary>
+    /// <param name="pointer">Logical editor pointer position.</param>
+    /// <returns>Owning preview identity, or null when no line is close enough.</returns>
+    public ScenePreviewPickingId? PickPreview(Vector2 pointer)
+    {
+        const float maximumDistanceSquared = 36f;
+        var bestDistance = maximumDistanceSquared;
+        ScenePreviewPickingId? best = null;
+        var view = _sceneCamera.GetViewMatrix();
+        var projection = _sceneCamera.GetProjectionMatrix();
+        var lines = _previews.Lines;
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+            if (!ScenePreviewOverlayBuilder.TryProject(line.Start, view, projection,
+                    _lastSceneViewport, out var start) ||
+                !ScenePreviewOverlayBuilder.TryProject(line.End, view, projection,
+                    _lastSceneViewport, out var end))
+                continue;
+            var distance = DistanceToSegmentSquared(pointer, start, end);
+            if (distance >= bestDistance)
+                continue;
+            bestDistance = distance;
+            best = line.PickingId;
+        }
+        return best;
+    }
+
+    /// <summary>Computes squared distance between a point and a finite segment.</summary>
+    /// <param name="point">Query point.</param><param name="start">Segment start.</param>
+    /// <param name="end">Segment end.</param><returns>Squared distance.</returns>
+    private static float DistanceToSegmentSquared(Vector2 point, Vector2 start, Vector2 end)
+    {
+        var segment = end - start;
+        var lengthSquared = segment.LengthSquared();
+        if (lengthSquared <= float.Epsilon)
+            return Vector2.DistanceSquared(point, start);
+        var amount = Math.Clamp(Vector2.Dot(point - start, segment) / lengthSquared, 0f, 1f);
+        return Vector2.DistanceSquared(point, start + segment * amount);
     }
 
     /// <summary>Clears retained Scene overlay geometry when its viewport is not presented.</summary>
@@ -341,8 +421,81 @@ public sealed class EditorViewportRenderer : IDisposable
                     _sceneCamera.GetPushConstants(instance.GetModelMatrix()));
             }
         }
+        AddDepthTestedPreviews(view, projection);
 
         _renderer.Submit(_sceneViewport, _sceneQueue);
+    }
+
+    /// <summary>Queues depth-tested preview lines as cached thin unit-box meshes.</summary>
+    /// <param name="view">Scene view matrix.</param><param name="projection">Scene projection matrix.</param>
+    private void AddDepthTestedPreviews(Matrix4x4 view, Matrix4x4 projection)
+    {
+        const float thickness = 0.012f;
+        var lines = _previews.Lines;
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+            if (line.DepthMode != ScenePreviewDepthMode.DepthTested)
+                continue;
+            var direction = line.End - line.Start;
+            var length = direction.Length();
+            if (!float.IsFinite(length) || length <= 0.0001f)
+                continue;
+            direction /= length;
+            var rotation = RotationFromUnitZ(direction);
+            var model = Matrix4x4.CreateScale(thickness, thickness, length) *
+                Matrix4x4.CreateFromQuaternion(rotation) *
+                Matrix4x4.CreateTranslation((line.Start + line.End) * .5f);
+            _sceneQueue.Add(GetPreviewLineMesh(line.Color), new PushConstants
+            {
+                Model = model,
+                View = view,
+                Projection = projection
+            });
+        }
+    }
+
+    /// <summary>Gets a cached colored unit-box mesh used for world-space diagnostic lines.</summary>
+    /// <param name="color">Linear line color.</param><returns>Renderer mesh handle.</returns>
+    private MeshHandle GetPreviewLineMesh(Vector4 color)
+    {
+        if (_previewLineMeshes.TryGetValue(color, out var handle))
+            return handle;
+        handle = _renderer.CreateMesh(new MeshDescription(CreatePreviewLineVertices(color)));
+        _previewLineMeshes.Add(color, handle);
+        return handle;
+    }
+
+    /// <summary>Creates a colored unit box extending from minus to plus one half.</summary>
+    /// <param name="color">Linear RGBA vertex color.</param><returns>Triangle vertices.</returns>
+    private static Vertex[] CreatePreviewLineVertices(Vector4 color)
+    {
+        Vector3[] corners =
+        [
+            new(-.5f,-.5f,-.5f), new(.5f,-.5f,-.5f), new(.5f,.5f,-.5f), new(-.5f,.5f,-.5f),
+            new(-.5f,-.5f,.5f), new(.5f,-.5f,.5f), new(.5f,.5f,.5f), new(-.5f,.5f,.5f)
+        ];
+        int[] indices =
+        [
+            0,2,1, 0,3,2, 4,5,6, 4,6,7,
+            0,1,5, 0,5,4, 3,7,6, 3,6,2,
+            1,2,6, 1,6,5, 0,4,7, 0,7,3
+        ];
+        var vertices = new Vertex[indices.Length];
+        for (var index = 0; index < indices.Length; index++)
+            vertices[index] = new Vertex(corners[indices[index]], color);
+        return vertices;
+    }
+
+    /// <summary>Creates a shortest-arc rotation from local positive Z to a direction.</summary>
+    /// <param name="direction">Normalized target direction.</param><returns>Rotation quaternion.</returns>
+    private static Quaternion RotationFromUnitZ(Vector3 direction)
+    {
+        var dot = Math.Clamp(direction.Z, -1f, 1f);
+        if (dot < -0.9999f)
+            return Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
+        var axis = Vector3.Cross(Vector3.UnitZ, direction);
+        return Quaternion.Normalize(new Quaternion(axis, 1f + dot));
     }
 
     /// <summary>Builds and submits the scene through the active Game camera.</summary>

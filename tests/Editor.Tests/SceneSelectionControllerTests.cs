@@ -1,5 +1,6 @@
 using System.Numerics;
 using Editor;
+using Engine.Core;
 using Engine.Graphics;
 using Xunit;
 
@@ -46,5 +47,24 @@ public class SceneSelectionControllerTests
 
         Assert.Null(controller.SelectedNode);
         Assert.Empty(controller.BuildOverlay());
+    }
+
+    /// <summary>Verifies diagnostic picking selects an invisible node and its exact component.</summary>
+    [Fact]
+    public void PrimaryDown_PreviewHit_SelectsOwningComponentBeforeMeshPicking()
+    {
+        var node = new Node3D();
+        var collider = new SphereColliderComponent();
+        node.AddComponent(collider);
+        var controller = new SceneSelectionController([], new PerspectiveCamera(),
+            () => new GizmoViewport(0f, 0f, 200f, 200f))
+        {
+            PreviewPicker = _ => new ScenePreviewPickingId(42, node, collider)
+        };
+
+        controller.PrimaryDown(new Vector2(100f), insideViewport: true);
+
+        Assert.Same(node, controller.SelectedNode);
+        Assert.Same(collider, controller.SelectedComponent);
     }
 }

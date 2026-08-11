@@ -18,6 +18,8 @@ public static class EditorAssetImporters
         {
             ".cs" => "csharp-script",
             ".glb" => "gltf-model",
+            ".ncollision" => "collision-mesh",
+            ".nterrain" => "terrain",
             _ => null
         };
     }

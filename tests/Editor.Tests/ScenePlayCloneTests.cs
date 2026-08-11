@@ -25,9 +25,8 @@ public class ScenePlayCloneTests
         var authoredScript = Assert.IsType<ScriptComponent>(Assert.Single(cube.Components));
         authoredScript.SetPropertyOverride(42, SerializedPropertyValue.From("authored"));
         cube.AddComponent(new ScriptComponent(AssetId.New()) { Enabled = false });
-        var authoredCollider = new ColliderComponent
+        var authoredCollider = new SphereColliderComponent
         {
-            Shape = ColliderShape.Sphere,
             Radius = 0.75f
         };
         var authoredBody = new RigidBodyComponent
@@ -65,10 +64,9 @@ public class ScenePlayCloneTests
         Assert.True(clonedValue.TryGetString(out var text));
         Assert.Equal("authored", text);
         Assert.False(playScene.MeshInstances[0].Components[1].Enabled);
-        var clonedCollider = Assert.IsType<ColliderComponent>(
+        var clonedCollider = Assert.IsType<SphereColliderComponent>(
             playScene.MeshInstances[0].Components[2]);
         Assert.NotSame(authoredCollider, clonedCollider);
-        Assert.Equal(ColliderShape.Sphere, clonedCollider.Shape);
         Assert.Equal(0.75f, clonedCollider.Radius);
         var clonedBody = Assert.IsType<RigidBodyComponent>(
             playScene.MeshInstances[0].Components[3]);

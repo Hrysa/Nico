@@ -12,10 +12,6 @@ public  sealed partial class GroundObject : SceneScript
     /// <inheritdoc />
     public override void OnReady()
     {
-        Owner.AddComponent(new ColliderComponent
-        {
-            Shape = ColliderShape.Plane,
-            Size = Vector3.One
-        });
+        Owner.AddComponent(new PlaneColliderComponent { Size = Vector2.One });
     }
 }

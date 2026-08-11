@@ -245,6 +245,58 @@ public sealed class StaticMeshResource
             [new Submesh(0, indexCount, materialSlot)]);
     }
 
+    /// <summary>Writes one versioned static-mesh artifact for generated collision assets.</summary>
+    /// <param name="stream">Writable artifact or source stream.</param>
+    /// <param name="materialSlot">Diagnostic material slot; collision assets normally use minus one.</param>
+    public void Save(Stream stream, int materialSlot = -1)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes(Magic));
+        writer.Write(2u);
+        writer.Write(checked((uint)Vertices.Length));
+        writer.Write(checked((uint)Indices.Length));
+        writer.Write(materialSlot);
+        for (var index = 0; index < Vertices.Length; index++)
+        {
+            var vertex = Vertices[index];
+            Write(writer, vertex.Position);
+            Write(writer, vertex.Normal);
+            Write(writer, vertex.TexCoord);
+            Write(writer, vertex.Tangent);
+            Write(writer, vertex.Color);
+        }
+        for (var index = 0; index < Indices.Length; index++)
+            writer.Write(Indices[index]);
+    }
+
+    /// <summary>Writes a two-component vector.</summary>
+    /// <param name="writer">Artifact writer.</param><param name="value">Vector value.</param>
+    private static void Write(BinaryWriter writer, Vector2 value)
+    {
+        writer.Write(value.X);
+        writer.Write(value.Y);
+    }
+
+    /// <summary>Writes a three-component vector.</summary>
+    /// <param name="writer">Artifact writer.</param><param name="value">Vector value.</param>
+    private static void Write(BinaryWriter writer, Vector3 value)
+    {
+        writer.Write(value.X);
+        writer.Write(value.Y);
+        writer.Write(value.Z);
+    }
+
+    /// <summary>Writes a four-component vector.</summary>
+    /// <param name="writer">Artifact writer.</param><param name="value">Vector value.</param>
+    private static void Write(BinaryWriter writer, Vector4 value)
+    {
+        writer.Write(value.X);
+        writer.Write(value.Y);
+        writer.Write(value.Z);
+        writer.Write(value.W);
+    }
+
     /// <summary>Reads one two-component vector.</summary>
     /// <param name="reader">Artifact reader.</param>
     /// <returns>The decoded vector.</returns>

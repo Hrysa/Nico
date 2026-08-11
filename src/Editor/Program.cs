@@ -38,6 +38,8 @@ logger.LogInformation("Starting Editor for game project {ProjectRoot}...", proje
 var assetDatabase = new AssetDatabase(project.RootPath, EditorAssetImporters.Select);
 var assetImporterRegistry = new AssetImporterRegistry();
 assetImporterRegistry.Register(new GlbModelImporter());
+assetImporterRegistry.Register(new CollisionMeshAssetImporter());
+assetImporterRegistry.Register(new TerrainAssetImporter());
 var assetImportPipeline = new AssetImportPipeline(assetDatabase, assetImporterRegistry);
 using var runtimeResources = new RuntimeResourceManager(
     new PublishedArtifactResolver(assetDatabase, assetImportPipeline, "editor"),
@@ -45,6 +47,8 @@ using var runtimeResources = new RuntimeResourceManager(
     unusedCapacity: 128);
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
     "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainResource>(
+    "nico/terrain", (stream, _, _) => TerrainResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
     "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
@@ -249,7 +253,9 @@ var flyCamera = new FlyCameraController(
     sceneCamera, captured => flyInputWindow.SetMouseCaptured(captured), selection.CancelInteraction);
 using var sceneInputContext = new SceneViewportInputContext(sceneViewport, flyCamera);
 using var viewportRenderer = new EditorViewportRenderer(
-    window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, selection);
+    window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, sceneRoot,
+    selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
 foreach (var assetMesh in sceneObjects)
     LoadAssetMeshResources(assetMesh);
@@ -257,6 +263,18 @@ DetachedToolWindow? detachedSceneWindow = null;
 DetachedToolWindow? detachedGameWindow = null;
 EditorViewportRenderer? detachedSceneRenderer = null;
 EditorViewportRenderer? detachedGameRenderer = null;
+foreach (var previewItem in editorView.ScenePreviewItems)
+{
+    var category = previewItem.Key;
+    var item = previewItem.Value;
+    item.Click += () =>
+    {
+        viewportRenderer.SetPreviewCategoryVisible(category, item.IsChecked);
+        detachedSceneRenderer?.SetPreviewCategoryVisible(category, item.IsChecked);
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        flyInputWindow.RequestFrame();
+    };
+}
 
 /// <summary>Aligns main-window viewport textures with their latest retained layout bounds.</summary>
 void SynchronizeMainViewportPresentations()
@@ -432,7 +450,11 @@ void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
     }
     detachedSceneRenderer = new EditorViewportRenderer(
         detachedWindow, sceneViewportId, sceneViewportId,
-        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot(),
+        selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+    foreach (var previewItem in editorView.ScenePreviewItems)
+        detachedSceneRenderer.SetPreviewCategoryVisible(
+            previewItem.Key, previewItem.Value.IsChecked);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedSceneRenderer);
     detachedWindow.Resized += (_, _) =>
@@ -444,6 +466,7 @@ void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
     detachedWindow.Update += _ =>
     {
         detachedSceneRenderer?.SetSceneObjects(GetActiveSceneObjects());
+        detachedSceneRenderer?.SetSceneRoot(GetActiveSceneRoot());
         detachedSceneRenderer?.RenderScene(
             sceneViewport, toolWindow.UIHost.PointerPosition);
     };
@@ -498,7 +521,8 @@ void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
     }
     detachedGameRenderer = new EditorViewportRenderer(
         detachedWindow, gameViewportId, gameViewportId,
-        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), selection);
+        sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot(),
+        selection, ResolveCollisionMeshResource, ResolveTerrainResource);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
     detachedWindow.Resized += (_, _) =>
@@ -626,7 +650,8 @@ void UpdatePlayModeStart(double deltaTime)
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
         candidateHost.LoadScene(candidateScene.Root, window);
-        candidatePhysicsWorld = new PhysicsWorld(ResolveCollisionMeshResource);
+        candidatePhysicsWorld = new PhysicsWorld(
+            ResolveCollisionMeshResource, ResolveTerrainResource);
         candidatePhysicsWorld.EnableInterpolation = true;
         candidatePhysicsWorld.Attach(candidateScene.Root);
         editSelectionBeforePlay = selection.SelectedNode;
@@ -642,6 +667,7 @@ void UpdatePlayModeStart(double deltaTime)
         detachedGameRenderer?.RemapStaticAssetMeshResources(sceneObjects,
             candidateScene.MeshInstances);
         viewportRenderer.SetSceneObjects(candidateScene.MeshInstances);
+        viewportRenderer.SetSceneRoot(candidateScene.Root);
         hierarchyTree.SetRoots(candidateScene.Root.Children);
         inspector.RefreshScriptSchemas();
         gameViewport.Camera = candidateScene.GameCamera;
@@ -805,6 +831,7 @@ void StopPlayMode()
     isPlaying = false;
     selection.SetObjects(sceneObjects);
     viewportRenderer.SetSceneObjects(sceneObjects);
+    viewportRenderer.SetSceneRoot(sceneRoot);
     hierarchyTree.SetRoots(sceneRoot.Children);
     selection.Select(editSelectionBeforePlay);
     inspector.RefreshScriptSchemas();
@@ -997,6 +1024,7 @@ bool LoadScene(string scenePath, bool makeActive)
         gameCamera = loadedScene.GameCamera;
         gameViewport.Camera = gameCamera;
         viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
         viewportRenderer.SetGameScene(gameCamera, sceneObjects);
         foreach (var assetMesh in sceneObjects)
         {
@@ -1258,6 +1286,7 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
         destination.AddChild(instance);
         sceneObjects.Add(instance);
         viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
         LoadAssetMeshResources(instance);
         if (detachedSceneRenderer is not null)
             LoadAssetMeshResources(instance, targetRenderer: detachedSceneRenderer);
@@ -1326,6 +1355,7 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
                 LoadAssetMeshResources(mesh, outcome, detachedGameRenderer);
         }
         viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
         hierarchyTree.SetRoots(sceneRoot.Children);
         if (!ReferenceEquals(destination, sceneRoot))
             hierarchyTree.Expand(destination);
@@ -1344,6 +1374,7 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
             sceneObjects.Remove(model.Meshes[index]);
         model.Root.Parent?.RemoveChild(model.Root);
         viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
         throw;
     }
 }
@@ -1552,6 +1583,14 @@ TResource LoadRuntimeResource<TResource>(AssetReference reference, TResource fal
 StaticMeshResource ResolveCollisionMeshResource(AssetReference reference)
 {
     return LoadRuntimeResource(reference, new StaticMeshResource([], [], []));
+}
+
+/// <summary>Loads one explicit terrain grid for physics and Scene preview.</summary>
+/// <param name="reference">Published terrain artifact reference.</param>
+/// <returns>The decoded terrain grid.</returns>
+TerrainResource ResolveTerrainResource(AssetReference reference)
+{
+    return LoadRuntimeResource(reference, new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
 }
 
 /// <summary>Creates mutable renderer-local material values from a shared decoded resource.</summary>
@@ -1988,63 +2027,35 @@ void AddPrimitivePhysics(Node3D node, AssetReference mesh)
 /// <returns>A collider configured for the inferred shape.</returns>
 ColliderComponent CreatePrimitiveCollider(AssetReference? mesh)
 {
-    var collider = new ColliderComponent();
     if (mesh == BuiltInAssets.PlaneMesh)
     {
-        collider.Shape = ColliderShape.Box;
-        collider.Center = new Vector3(0f, -0.01f, 0f);
-        collider.Size = new Vector3(1f, 0.02f, 1f);
-        return collider;
+        return new BoxColliderComponent
+        {
+            Center = new Vector3(0f, -0.01f, 0f),
+            Size = new Vector3(1f, 0.02f, 1f)
+        };
     }
     if (mesh == BuiltInAssets.SphereMesh)
-    {
-        collider.Shape = ColliderShape.Sphere;
-    }
-    else if (mesh == BuiltInAssets.CapsuleMesh)
-    {
-        collider.Shape = ColliderShape.Capsule;
-        collider.Height = 2f;
-    }
-    else if (mesh == BuiltInAssets.CylinderMesh)
-    {
-        collider.Shape = ColliderShape.Cylinder;
-    }
-    else
-    {
-        collider.Shape = ColliderShape.Box;
-    }
-    return collider;
+        return new SphereColliderComponent();
+    if (mesh == BuiltInAssets.CapsuleMesh)
+        return new CapsuleColliderComponent();
+    if (mesh == BuiltInAssets.CylinderMesh)
+        return new CylinderColliderComponent();
+    return new BoxColliderComponent();
 }
 
-/// <summary>Adds an inferred collider to one selected scene node.</summary>
+/// <summary>Adds one explicitly selected, one-time fitted collider to a scene node.</summary>
 /// <param name="target">Selected hierarchy node.</param>
-void AddColliderComponent(Node target)
+/// <param name="kind">Concrete collider type requested by the user.</param>
+void AddColliderComponent(Node target, ColliderAuthoringKind kind)
 {
-    if (target is not Node3D node || node.GetComponent<ColliderComponent>() is not null)
+    if (target is not Node3D node)
         return;
-    var mesh = node is MeshInstance3D meshInstance ? meshInstance.Mesh : (AssetReference?)null;
-    if (mesh is null && HasDescendantMesh(node))
-        node.AddComponent(new ColliderComponent { Shape = ColliderShape.Mesh });
-    else
-        node.AddComponent(CreatePrimitiveCollider(mesh));
+    node.AddComponent(ColliderAuthoring.Create(kind, node));
     if (physicsWorld is not null)
         physicsWorld.Attach(GetActiveSceneRoot());
     CloseHierarchyContextMenu();
     InvalidateViewports();
-}
-
-/// <summary>Returns whether a hierarchy contains an imported mesh below its root.</summary>
-/// <param name="node">Hierarchy root to inspect.</param>
-/// <returns>True when a descendant mesh instance exists.</returns>
-bool HasDescendantMesh(Node node)
-{
-    var children = node.Children;
-    for (var index = 0; index < children.Count; index++)
-    {
-        if (children[index] is MeshInstance3D || HasDescendantMesh(children[index]))
-            return true;
-    }
-    return false;
 }
 
 /// <summary>Adds a dynamic rigid body to one selected scene node.</summary>
@@ -2089,6 +2100,7 @@ void DeleteSceneNode(Node target)
     target.Parent.RemoveChild(target);
     selection.SetObjects(activeObjects);
     viewportRenderer.SetSceneObjects(activeObjects);
+    viewportRenderer.SetSceneRoot(GetActiveSceneRoot());
     viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
     detachedSceneRenderer?.SetSceneObjects(activeObjects);
     detachedGameRenderer?.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
@@ -2179,10 +2191,24 @@ void ShowHierarchyContextMenu()
 
     var componentMenu = new ContextMenu(menuWidth) { Name = "HierarchyAddComponentMenu" };
     var canAddToTarget = !ReferenceEquals(target, activeRoot) && target is Node3D;
-    componentMenu.AddItem("Add Collider", () => AddColliderComponent(target),
-        canAddToTarget && target.GetComponent<ColliderComponent>() is null);
-    componentMenu.AddItem("Add Rigid Body", () => AddRigidBodyComponent(target),
+    var physicsMenu = new ContextMenu(menuWidth) { Name = "HierarchyPhysicsComponentMenu" };
+    physicsMenu.AddItem("Rigid Body", () => AddRigidBodyComponent(target),
         canAddToTarget && target.GetComponent<RigidBodyComponent>() is null);
+    physicsMenu.AddItem("Box Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Box), canAddToTarget);
+    physicsMenu.AddItem("Sphere Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Sphere), canAddToTarget);
+    physicsMenu.AddItem("Capsule Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Capsule), canAddToTarget);
+    physicsMenu.AddItem("Cylinder Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Cylinder), canAddToTarget);
+    physicsMenu.AddItem("Plane Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Plane), canAddToTarget);
+    physicsMenu.AddItem("Mesh Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Mesh), canAddToTarget);
+    physicsMenu.AddItem("Terrain Collider",
+        () => AddColliderComponent(target, ColliderAuthoringKind.Terrain), canAddToTarget);
+    componentMenu.AddSubmenu("Physics", physicsMenu);
     componentMenu.AddItem("Add Animator", () => AddAnimatorComponent(target),
         target is MeshInstance3D && target.GetComponent<AnimatorComponent>() is null);
     menu.AddSubmenu("Add Component", componentMenu);
@@ -2211,7 +2237,7 @@ void AttachHierarchy(TreeView tree)
 {
     tree.SelectionChanged += item =>
     {
-        inspector.Bind(item);
+        inspector.Bind(item, synchronizingSelection ? selection.SelectedComponent : null);
         if (synchronizingSelection)
             return;
         synchronizingSelection = true;

@@ -69,4 +69,29 @@ public sealed class GlbSceneInstantiatorTests
         Assert.Equal("mesh/shared/1", result.Meshes[1].Mesh.SubAsset);
         Assert.Equal("mesh/shared/0", result.Meshes[2].Mesh.SubAsset);
     }
+
+    /// <summary>Creates explicit non-rendering mesh colliders for importer-marked collision nodes.</summary>
+    [Fact]
+    public void Create_CollisionNode_AttachesExplicitColliderWithoutRenderable()
+    {
+        var assetId = AssetId.New();
+        var artifacts = new AssetArtifact[]
+        {
+            new("mesh/collision/0", "nico/static-mesh", "meshes/collision.nmesh")
+        };
+        var objects = new AssetImportObject[]
+        {
+            new("node/0", "UCX_Ground", "collision",
+                ArtifactKeys: ["mesh/collision/0"])
+        };
+        var outcome = new AssetImportOutcome(assetId, "fingerprint", "artifacts",
+            false, true, artifacts, [], [], objects);
+
+        var result = GlbSceneInstantiator.Create("Models/Level.glb", assetId, outcome);
+
+        Assert.Empty(result.Meshes);
+        var node = Assert.IsType<Node3D>(Assert.Single(result.Root.Children));
+        var collider = Assert.IsType<MeshColliderComponent>(Assert.Single(node.Components));
+        Assert.Equal(new AssetReference(assetId, "mesh/collision/0"), collider.Mesh);
+    }
 }

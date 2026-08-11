@@ -78,10 +78,11 @@ public sealed class GlbModelImporter : IAssetImporter
                 var node = nodes[nodeIndex];
                 var name = node.TryGetProperty("name", out var nameElement)
                     ? nameElement.GetString() : null;
+                var kind = IsCollisionNodeName(name) ? "collision" : "node";
                 objects.Add(new AssetImportObject(
                     $"node/{nodeIndex}",
                     string.IsNullOrWhiteSpace(name) ? $"Node {nodeIndex}" : name,
-                    "node",
+                    kind,
                     parents[nodeIndex] < 0 ? null : $"node/{parents[nodeIndex]}",
                     LocalTransform: ReadNodeLocalMatrix(node),
                     ArtifactKeys: GetNodeMeshArtifactKeys(root, node)));
@@ -316,6 +317,7 @@ public sealed class GlbModelImporter : IAssetImporter
     {
         var result = new IReadOnlyList<Matrix4x4>[meshCount];
         var mutable = new List<Matrix4x4>[meshCount];
+        var referenced = new bool[meshCount];
         for (var index = 0; index < meshCount; index++)
             mutable[index] = [];
         if (root.TryGetProperty("nodes", out var nodes))
@@ -334,17 +336,37 @@ public sealed class GlbModelImporter : IAssetImporter
                 var meshIndex = meshElement.GetInt32();
                 if ((uint)meshIndex >= mutable.Length)
                     throw new InvalidDataException("GLB node mesh index is out of range.");
+                referenced[meshIndex] = true;
+                var name = node.TryGetProperty("name", out var nameElement)
+                    ? nameElement.GetString() : null;
+                if (IsCollisionNodeName(name))
+                    continue;
                 mutable[meshIndex].Add(ComputeNodeWorldMatrix(
                     nodes, parents, nodeIndex, cache, states));
             }
         }
         for (var index = 0; index < result.Length; index++)
         {
-            if (mutable[index].Count == 0)
+            if (!referenced[index])
                 mutable[index].Add(Matrix4x4.Identity);
             result[index] = mutable[index];
         }
         return result;
+    }
+
+    /// <summary>Recognizes established collision-only source node naming conventions.</summary>
+    /// <param name="name">Optional glTF node name.</param>
+    /// <returns>True for UCX_, UBX_, USP_, UCP_, COLLIDER_, or COLLISION_ prefixes.</returns>
+    private static bool IsCollisionNodeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+        return name.StartsWith("UCX_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("UBX_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("USP_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("UCP_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("COLLIDER_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("COLLISION_", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Appends every transformed static instance to its material batch.</summary>
@@ -368,6 +390,8 @@ public sealed class GlbModelImporter : IAssetImporter
         uint[] indices,
         IReadOnlyList<Matrix4x4> instances)
     {
+        if (instances.Count == 0)
+            return;
         if (!batches.TryGetValue(materialSlot, out var batch))
         {
             batch = new StaticMeshBatch();

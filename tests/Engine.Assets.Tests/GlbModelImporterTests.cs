@@ -106,6 +106,27 @@ public sealed class GlbModelImporterTests : IDisposable
         Assert.Equal(4, textureReader.ReadBytes(4).Length);
     }
 
+    /// <summary>Recognizes a collision naming convention and excludes it from visual batches.</summary>
+    [Fact]
+    public void Import_UcxNode_MarksCollisionObjectAndOmitsModelBatch()
+    {
+        var sourcePath = Path.Combine(_directory, "collision.glb");
+        WriteMinimalGlb(sourcePath, "UCX_Ground");
+        var staging = Path.Combine(_directory, "collision-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var context = new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None);
+
+        var result = new GlbModelImporter().Import(context);
+
+        var collision = Assert.Single(result.Objects!, item => item.Kind == "collision");
+        Assert.Equal("UCX_Ground", collision.Name);
+        Assert.DoesNotContain(result.Artifacts,
+            item => item.Key.StartsWith("model-batch/", StringComparison.Ordinal));
+        Assert.Single(collision.ArtifactKeys!);
+    }
+
     /// <summary>Imports joint weights, inverse binds, and animation channels.</summary>
     [Fact]
     public void Import_SkinnedTriangle_WritesPlayableSkinnedMesh()
@@ -221,7 +242,7 @@ public sealed class GlbModelImporterTests : IDisposable
 
     /// <summary>Writes a GLB containing one indexed triangle without normals.</summary>
     /// <param name="path">Destination path.</param>
-    private static void WriteMinimalGlb(string path)
+    private static void WriteMinimalGlb(string path, string? nodeName = null)
     {
         using var binaryStream = new MemoryStream();
         using (var binary = new BinaryWriter(binaryStream, Encoding.UTF8, leaveOpen: true))
@@ -263,6 +284,9 @@ public sealed class GlbModelImporterTests : IDisposable
              "meshes":[{"name":"Triangle","primitives":[{"attributes":{"POSITION":0,"COLOR_0":2},
                "indices":1,"material":0}]}]}
             """;
+        if (nodeName is not null)
+            json = json.Replace("\"nodes\":[{\"mesh\":0",
+                $"\"nodes\":[{{\"name\":\"{nodeName}\",\"mesh\":0", StringComparison.Ordinal);
         var jsonBytes = Encoding.UTF8.GetBytes(json);
         Array.Resize(ref jsonBytes, (jsonBytes.Length + 3) & ~3);
         for (var index = Encoding.UTF8.GetByteCount(json); index < jsonBytes.Length; index++)

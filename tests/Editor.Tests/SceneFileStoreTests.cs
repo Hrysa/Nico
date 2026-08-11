@@ -75,9 +75,8 @@ public class SceneFileStoreTests
             secondScript.SetPropertyOverride(202,
                 SerializedPropertyValue.From(new Vector3(1f, 2f, 3f)));
             cube.AddComponent(secondScript);
-            cube.AddComponent(new ColliderComponent
+            cube.AddComponent(new CapsuleColliderComponent
             {
-                Shape = ColliderShape.Capsule,
                 Center = new Vector3(0f, 0.25f, 0f),
                 Radius = 0.75f,
                 Height = 2.5f,
@@ -141,8 +140,7 @@ public class SceneFileStoreTests
             Assert.True(loadedSecondScript.TryGetPropertyOverride(202, out var loadedVector));
             Assert.True(loadedVector.TryGetVector3(out var vector));
             Assert.Equal(new Vector3(1f, 2f, 3f), vector);
-            var loadedCollider = Assert.IsType<ColliderComponent>(loadedCube.Components[2]);
-            Assert.Equal(ColliderShape.Capsule, loadedCollider.Shape);
+            var loadedCollider = Assert.IsType<CapsuleColliderComponent>(loadedCube.Components[2]);
             Assert.Equal(new Vector3(0f, 0.25f, 0f), loadedCollider.Center);
             Assert.Equal(0.75f, loadedCollider.Radius);
             Assert.Equal(2.5f, loadedCollider.Height);
@@ -270,6 +268,135 @@ public class SceneFileStoreTests
             Assert.Equal(references.Length, loaded.MeshInstances.Count);
             for (var index = 0; index < references.Length; index++)
                 Assert.Equal(references[index], loaded.MeshInstances[index].Mesh);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Loads a format-eight shape-switched collider as its concrete replacement.</summary>
+    [Fact]
+    public void Load_FormatEightCollider_MigratesToConcreteComponent()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"legacy-collider-{Guid.NewGuid():N}.node");
+        File.WriteAllText(path, """
+            {
+              "formatVersion": 8,
+              "gameCameraId": "camera",
+              "nodes": [
+                {
+                  "id": "body",
+                  "type": "node3D",
+                  "name": "Body",
+                  "position": { "x": 0, "y": 0, "z": 0 },
+                  "rotation": { "x": 0, "y": 0, "z": 0 },
+                  "scale": { "x": 1, "y": 1, "z": 1 },
+                  "components": [
+                    {
+                      "type": "collider",
+                      "enabled": true,
+                      "collider": {
+                        "shape": "capsule",
+                        "center": { "x": 1, "y": 2, "z": 3 },
+                        "size": { "x": 1, "y": 1, "z": 1 },
+                        "radius": 0.75,
+                        "height": 2.5,
+                        "isTrigger": true,
+                        "friction": 0.25,
+                        "restitution": 0.4,
+                        "collisionLayer": 8,
+                        "collisionMask": 5
+                      }
+                    }
+                  ],
+                  "children": []
+                },
+                {
+                  "id": "camera",
+                  "type": "perspectiveCamera",
+                  "name": "Camera",
+                  "position": { "x": 0, "y": 0, "z": 5 },
+                  "rotation": { "x": 0, "y": 0, "z": 0 },
+                  "scale": { "x": 1, "y": 1, "z": 1 },
+                  "camera": { "fov": 0.8, "near": 0.1, "far": 100 },
+                  "components": [],
+                  "children": []
+                }
+              ]
+            }
+            """);
+        try
+        {
+            var loaded = SceneFileStore.Load(path);
+
+            var body = Assert.IsType<Node3D>(loaded.Root.Children[0]);
+            var collider = Assert.IsType<CapsuleColliderComponent>(Assert.Single(body.Components));
+            Assert.Equal(new Vector3(1f, 2f, 3f), collider.Center);
+            Assert.Equal(0.75f, collider.Radius);
+            Assert.Equal(2.5f, collider.Height);
+            Assert.True(collider.IsTrigger);
+            Assert.Equal(0.25f, collider.Friction);
+            Assert.Equal(0.4f, collider.Restitution);
+            Assert.Equal(8u, collider.CollisionLayer);
+            Assert.Equal(5u, collider.CollisionMask);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Round-trips multiple concrete colliders and their explicit asset references.</summary>
+    [Fact]
+    public void SaveAndLoad_AllConcreteColliders_PreservesAuthoredOrderAndReferences()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"all-colliders-{Guid.NewGuid():N}.node");
+        var meshReference = new AssetReference(AssetId.New(), "mesh/collision/0");
+        var terrainReference = new AssetReference(AssetId.New(), "terrain/0");
+        var root = new Node3D();
+        var node = new Node3D();
+        node.AddComponent(new BoxColliderComponent { Size = new Vector3(1f, 2f, 3f) });
+        node.AddComponent(new SphereColliderComponent { Radius = 2f });
+        node.AddComponent(new CapsuleColliderComponent { Radius = .4f, Height = 3f });
+        node.AddComponent(new CylinderColliderComponent { Radius = .7f, Height = 4f });
+        node.AddComponent(new PlaneColliderComponent { Size = new Vector2(20f, 30f) });
+        node.AddComponent(new MeshColliderComponent { Mesh = meshReference });
+        node.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(100f, 200f),
+            HeightScale = 25f
+        });
+        var camera = new PerspectiveCamera();
+        root.AddChild(node);
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+            var loaded = SceneFileStore.Load(path);
+            var components = loaded.Root.Children[0].Components;
+
+            Assert.Collection(components,
+                component => Assert.Equal(new Vector3(1f, 2f, 3f),
+                    Assert.IsType<BoxColliderComponent>(component).Size),
+                component => Assert.Equal(2f,
+                    Assert.IsType<SphereColliderComponent>(component).Radius),
+                component => Assert.Equal(3f,
+                    Assert.IsType<CapsuleColliderComponent>(component).Height),
+                component => Assert.Equal(4f,
+                    Assert.IsType<CylinderColliderComponent>(component).Height),
+                component => Assert.Equal(new Vector2(20f, 30f),
+                    Assert.IsType<PlaneColliderComponent>(component).Size),
+                component => Assert.Equal(meshReference,
+                    Assert.IsType<MeshColliderComponent>(component).Mesh),
+                component =>
+                {
+                    var terrain = Assert.IsType<TerrainColliderComponent>(component);
+                    Assert.Equal(terrainReference, terrain.TerrainData);
+                    Assert.Equal(new Vector2(100f, 200f), terrain.HorizontalSize);
+                    Assert.Equal(25f, terrain.HeightScale);
+                });
         }
         finally
         {

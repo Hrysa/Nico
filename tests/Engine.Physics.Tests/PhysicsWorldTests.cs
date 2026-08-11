@@ -14,9 +14,9 @@ public sealed class PhysicsWorldTests
     {
         var root = new Node3D();
         var plane = new Node3D();
-        plane.AddComponent(new ColliderComponent { Shape = ColliderShape.Plane });
+        plane.AddComponent(new PlaneColliderComponent());
         var box = new Node3D { Position = new Vector3(0f, 3f, 0f) };
-        box.AddComponent(new ColliderComponent { Shape = ColliderShape.Box });
+        box.AddComponent(new BoxColliderComponent());
         var rigidBody = new RigidBodyComponent { LinearDamping = 0f };
         box.AddComponent(rigidBody);
         root.AddChild(plane);
@@ -49,13 +49,9 @@ public sealed class PhysicsWorldTests
         ], [0, 2, 1, 0, 3, 2], [new Submesh(0, 6, 0)]);
         var root = new Node3D();
         var terrain = new Node3D();
-        terrain.AddComponent(new ColliderComponent
-        {
-            Shape = ColliderShape.Mesh,
-            Mesh = meshReference
-        });
+        terrain.AddComponent(new MeshColliderComponent { Mesh = meshReference });
         var box = new Node3D { Position = new Vector3(0f, 3f, 0f) };
-        box.AddComponent(new ColliderComponent { Shape = ColliderShape.Box });
+        box.AddComponent(new BoxColliderComponent());
         var rigidBody = new RigidBodyComponent { LinearDamping = 0f };
         box.AddComponent(rigidBody);
         root.AddChild(terrain);
@@ -71,9 +67,9 @@ public sealed class PhysicsWorldTests
         Assert.InRange(MathF.Abs(rigidBody.LinearVelocity.Y), 0f, 0.001f);
     }
 
-    /// <summary>Expands a model-root mesh collider across optimized descendant batches.</summary>
+    /// <summary>Verifies a mesh collider never infers collision from descendant render geometry.</summary>
     [Fact]
-    public void Attach_ModelRootMeshCollider_UsesDescendantBatchGeometry()
+    public void Attach_ModelRootMeshColliderWithoutReference_IsInactiveAndDiagnosed()
     {
         var meshReference = new AssetReference(AssetId.New(), "model-batch/0");
         var mesh = new StaticMeshResource(
@@ -89,10 +85,10 @@ public sealed class PhysicsWorldTests
         ], [0, 2, 1, 0, 3, 2], [new Submesh(0, 6, 0)]);
         var root = new Node3D();
         var model = new Node3D { Position = new Vector3(0f, -1f, 0f) };
-        model.AddComponent(new ColliderComponent { Shape = ColliderShape.Mesh });
+        model.AddComponent(new MeshColliderComponent());
         model.AddChild(new MeshInstance3D { Mesh = meshReference });
         var box = new Node3D { Position = new Vector3(0f, 3f, 0f) };
-        box.AddComponent(new ColliderComponent());
+        box.AddComponent(new BoxColliderComponent());
         box.AddComponent(new RigidBodyComponent { LinearDamping = 0f });
         root.AddChild(model);
         root.AddChild(box);
@@ -100,11 +96,11 @@ public sealed class PhysicsWorldTests
             reference == meshReference ? mesh : null);
 
         world.Attach(root);
-        for (var step = 0; step < 180; step++)
-            world.Update(1d / 60d);
 
-        Assert.Equal(2, world.BodyCount);
-        Assert.InRange(box.Position.Y, -0.501f, -0.499f);
+        Assert.Equal(1, world.BodyCount);
+        Assert.Single(world.ValidationIssues);
+        Assert.Contains("explicit collision mesh", world.ValidationIssues[0],
+            StringComparison.Ordinal);
     }
 
     /// <summary>Verifies triggers report overlap without moving either body.</summary>
@@ -113,9 +109,9 @@ public sealed class PhysicsWorldTests
     {
         var root = new Node3D();
         var trigger = new Node3D();
-        trigger.AddComponent(new ColliderComponent { IsTrigger = true });
+        trigger.AddComponent(new BoxColliderComponent { IsTrigger = true });
         var dynamic = new Node3D();
-        dynamic.AddComponent(new ColliderComponent());
+        dynamic.AddComponent(new BoxColliderComponent());
         dynamic.AddComponent(new RigidBodyComponent { UseGravity = false });
         root.AddChild(trigger);
         root.AddChild(dynamic);
@@ -140,9 +136,9 @@ public sealed class PhysicsWorldTests
     {
         var root = new Node3D();
         var trigger = new Node3D();
-        trigger.AddComponent(new ColliderComponent { IsTrigger = true });
+        trigger.AddComponent(new BoxColliderComponent { IsTrigger = true });
         var kinematic = new Node3D();
-        kinematic.AddComponent(new ColliderComponent());
+        kinematic.AddComponent(new BoxColliderComponent());
         kinematic.AddComponent(new RigidBodyComponent
             { MotionType = RigidBodyMotionType.Kinematic });
         root.AddChild(trigger);
@@ -205,6 +201,190 @@ public sealed class PhysicsWorldTests
         Assert.Equal(Vector3.UnitX, body.LinearVelocity);
     }
 
+    /// <summary>Verifies multiple movable colliders form one native body and retain authored count.</summary>
+    [Fact]
+    public void Update_DynamicNodeWithTwoColliders_SimulatesAsCompound()
+    {
+        var root = new Node3D();
+        var ground = new Node3D();
+        ground.AddComponent(new PlaneColliderComponent());
+        var compound = new Node3D { Position = new Vector3(0f, 3f, 0f) };
+        compound.AddComponent(new BoxColliderComponent
+            { Center = new Vector3(-1f, 0f, 0f) });
+        compound.AddComponent(new BoxColliderComponent
+            { Center = new Vector3(1f, 0f, 0f) });
+        var body = new RigidBodyComponent { LinearDamping = 0f };
+        compound.AddComponent(body);
+        root.AddChild(ground);
+        root.AddChild(compound);
+        using var world = new PhysicsWorld();
+
+        world.Attach(root);
+        for (var step = 0; step < 180; step++)
+            world.Update(1d / 60d);
+
+        Assert.Equal(3, world.BodyCount);
+        Assert.InRange(compound.Position.Y, 0.499f, 0.501f);
+        Assert.InRange(MathF.Abs(body.LinearVelocity.Y), 0f, 0.001f);
+    }
+
+    /// <summary>Verifies unsupported nonconvex children fail before creating a partial compound.</summary>
+    [Fact]
+    public void Attach_DynamicCompoundContainingMesh_ThrowsClearValidationError()
+    {
+        var root = new Node3D();
+        var node = new Node3D();
+        node.AddComponent(new BoxColliderComponent());
+        node.AddComponent(new MeshColliderComponent
+            { Mesh = new AssetReference(AssetId.New(), "mesh/collision") });
+        node.AddComponent(new RigidBodyComponent());
+        root.AddChild(node);
+        using var world = new PhysicsWorld();
+
+        var exception = Assert.Throws<InvalidOperationException>(() => world.Attach(root));
+
+        Assert.Contains("must be static", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, world.BodyCount);
+    }
+
+    /// <summary>Verifies explicit terrain data participates in collision and height sampling.</summary>
+    [Fact]
+    public void TerrainCollider_ExplicitHeightGrid_SupportsBodyAndHeightQuery()
+    {
+        var terrainReference = new AssetReference(AssetId.New(), "terrain/height/0");
+        var terrainResource = new TerrainResource(2, 2, [0f, 0f, 0f, 0f]);
+        var root = new Node3D();
+        var terrain = new Node3D();
+        terrain.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(10f),
+            HeightScale = 4f
+        });
+        var box = new Node3D { Position = new Vector3(0f, 3f, 0f) };
+        box.AddComponent(new BoxColliderComponent());
+        box.AddComponent(new RigidBodyComponent { LinearDamping = 0f });
+        root.AddChild(terrain);
+        root.AddChild(box);
+        using var world = new PhysicsWorld(terrainResolver: reference =>
+            reference == terrainReference ? terrainResource : null);
+
+        world.Attach(root);
+        for (var step = 0; step < 180; step++)
+            world.Update(1d / 60d);
+
+        Assert.True(world.TryGetTerrainHeight(Vector3.Zero, out var height));
+        Assert.Equal(0f, height, 5);
+        Assert.InRange(box.Position.Y, 0.499f, 0.501f);
+        Assert.False(world.TryGetTerrainHeight(new Vector3(6f, 0f, 0f), out _));
+    }
+
+    /// <summary>Verifies raycasts return the closest authored collider allowed by the query mask.</summary>
+    [Fact]
+    public void TryRaycast_LayerMask_ReturnsEligibleAuthoredCollider()
+    {
+        var root = new Node3D();
+        var ignored = new Node3D { Position = new Vector3(0f, 0f, 2f) };
+        ignored.AddComponent(new BoxColliderComponent { CollisionLayer = 1u });
+        var accepted = new Node3D { Position = Vector3.Zero };
+        var acceptedCollider = new SphereColliderComponent { CollisionLayer = 4u };
+        accepted.AddComponent(acceptedCollider);
+        root.AddChild(ignored);
+        root.AddChild(accepted);
+        using var world = new PhysicsWorld();
+        world.Attach(root);
+
+        var found = world.TryRaycast(new Vector3(0f, 0f, 5f), -Vector3.UnitZ,
+            10f, 4u, out var hit);
+
+        Assert.True(found);
+        Assert.Same(accepted, hit.Node);
+        Assert.Same(acceptedCollider, hit.Collider);
+        Assert.InRange(hit.Distance, 4.49f, 4.51f);
+    }
+
+    /// <summary>Verifies a trigger child in a mixed compound reports without using the primary child.</summary>
+    [Fact]
+    public void Update_MixedCompoundTrigger_UsesExactChildBehavior()
+    {
+        var root = new Node3D();
+        var target = new Node3D();
+        target.AddComponent(new BoxColliderComponent());
+        var compound = new Node3D();
+        compound.AddComponent(new BoxColliderComponent
+            { Center = new Vector3(10f, 0f, 0f) });
+        compound.AddComponent(new SphereColliderComponent
+            { Center = Vector3.Zero, IsTrigger = true });
+        compound.AddComponent(new RigidBodyComponent { UseGravity = false });
+        root.AddChild(target);
+        root.AddChild(compound);
+        using var world = new PhysicsWorld { Gravity = Vector3.Zero };
+        var triggerContacts = 0;
+        world.Contact += contact => triggerContacts += contact.IsTrigger ? 1 : 0;
+        world.Attach(root);
+
+        world.Update(1d / 60d);
+
+        Assert.True(triggerContacts > 0);
+        Assert.Equal(Vector3.Zero, compound.Position);
+    }
+
+    /// <summary>Replaces only a dirty native terrain chunk and exposes its updated surface.</summary>
+    [Fact]
+    public void RebuildTerrain_DirtyEdgeChunk_UpdatesRaycastAndHeightQuery()
+    {
+        var reference = new AssetReference(AssetId.New(), "terrain/editable");
+        var initial = new TerrainResource(66, 2, new float[132]);
+        var node = new Node3D();
+        node.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = reference,
+            HorizontalSize = new Vector2(10f, 2f),
+            HeightScale = 4f
+        });
+        var root = new Node3D();
+        root.AddChild(node);
+        using var world = new PhysicsWorld(terrainResolver: _ => initial);
+        world.Attach(root);
+        var heights = new float[132];
+        heights[65] = 1f;
+        heights[131] = 1f;
+        var updated = new TerrainResource(66, 2, heights);
+        var dirty = updated.GetDirtyChunkRegions(65, 0, 65, 1);
+
+        world.RebuildTerrain(node, updated, dirty);
+
+        Assert.Single(dirty);
+        Assert.True(world.TryGetTerrainHeight(new Vector3(4.99f, 0f, 0f), out var height));
+        Assert.InRange(height, 3.7f, 4f);
+        Assert.True(world.TryRaycast(new Vector3(4.99f, 10f, 0f), -Vector3.UnitY,
+            20f, uint.MaxValue, out var hit));
+        Assert.Equal(height, hit.Position.Y, 3);
+        Assert.Equal(1, world.BodyCount);
+    }
+
+    /// <summary>Rejects incompatible terrain edits before changing the active query resource.</summary>
+    [Fact]
+    public void RebuildTerrain_IncompatibleDimensions_LeavesAttachedTerrainUnchanged()
+    {
+        var reference = new AssetReference(AssetId.New(), "terrain/editable");
+        var initial = new TerrainResource(2, 2, new float[4]);
+        var node = new Node3D();
+        node.AddComponent(new TerrainColliderComponent { TerrainData = reference });
+        var root = new Node3D();
+        root.AddChild(node);
+        using var world = new PhysicsWorld(terrainResolver: _ => initial);
+        world.Attach(root);
+        var incompatible = new TerrainResource(3, 2,
+            [1f, 1f, 1f, 1f, 1f, 1f]);
+
+        Assert.Throws<ArgumentException>(() => world.RebuildTerrain(node, incompatible,
+            incompatible.GetChunkRegions()));
+
+        Assert.True(world.TryGetTerrainHeight(Vector3.Zero, out var height));
+        Assert.Equal(0f, height);
+    }
+
     /// <summary>Creates an attached world containing one unconstrained dynamic body.</summary>
     /// <returns>The world, body component, and owning node.</returns>
     private static (PhysicsWorld World, RigidBodyComponent Body, Node3D Node)
@@ -212,7 +392,7 @@ public sealed class PhysicsWorldTests
     {
         var root = new Node3D();
         var node = new Node3D();
-        node.AddComponent(new ColliderComponent());
+        node.AddComponent(new BoxColliderComponent());
         var body = new RigidBodyComponent { LinearDamping = 0f };
         node.AddComponent(body);
         root.AddChild(node);

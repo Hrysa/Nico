@@ -81,6 +81,8 @@ public sealed class EngineApplication : IDisposable
         var database = new AssetDatabase(root, SelectImporter);
         var registry = new AssetImporterRegistry();
         registry.Register(new GlbModelImporter());
+        registry.Register(new CollisionMeshAssetImporter());
+        registry.Register(new TerrainAssetImporter());
         var pipeline = new AssetImportPipeline(database, registry);
         _runtimeResources = CreateRuntimeResourceManager(database, pipeline);
 
@@ -94,7 +96,8 @@ public sealed class EngineApplication : IDisposable
         foreach (var instance in scene.MeshInstances)
             LoadAssetMesh(database, pipeline, instance);
         LoadScripts(root, database, scene.Root);
-        _physicsWorld = new PhysicsWorld(ResolveCollisionMeshResource);
+        _physicsWorld = new PhysicsWorld(
+            ResolveCollisionMeshResource, ResolveTerrainResource);
         _physicsWorld.EnableInterpolation = true;
         _physicsWorld.Attach(scene.Root);
         _window.Update += RenderScene;
@@ -474,6 +477,8 @@ public sealed class EngineApplication : IDisposable
             unusedCapacity: 128);
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
             "nico/static-mesh", (stream, _, _) => StaticMeshResource.Load(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainResource>(
+            "nico/terrain", (stream, _, _) => TerrainResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkinnedMeshResource>(
             "nico/skinned-mesh", (stream, _, _) => SkinnedMeshResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimationResource>(
@@ -523,6 +528,15 @@ public sealed class EngineApplication : IDisposable
     private StaticMeshResource ResolveCollisionMeshResource(AssetReference reference)
     {
         return LoadRuntimeResource(reference, new StaticMeshResource([], [], []));
+    }
+
+    /// <summary>Loads one explicit terrain grid for runtime collision.</summary>
+    /// <param name="reference">Published terrain artifact reference.</param>
+    /// <returns>The decoded terrain grid.</returns>
+    private TerrainResource ResolveTerrainResource(AssetReference reference)
+    {
+        return LoadRuntimeResource(reference,
+            new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
     }
 
     /// <summary>Creates renderer-local mutable values from a shared decoded material.</summary>
@@ -675,10 +689,14 @@ public sealed class EngineApplication : IDisposable
     /// <returns>The importer identifier or null.</returns>
     private static string? SelectImporter(string path)
     {
-        return Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase)
-            ? "gltf-model"
-            : Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase)
-                ? "csharp-script" : null;
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".glb" => "gltf-model",
+            ".cs" => "csharp-script",
+            ".ncollision" => "collision-mesh",
+            ".nterrain" => "terrain",
+            _ => null
+        };
     }
 
     /// <summary>Loads and starts scripts attached to the scene, when any are present.</summary>

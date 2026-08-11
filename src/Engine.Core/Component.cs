@@ -22,6 +22,12 @@ public abstract class Component
             Owner?.NotifyComponentChanged(NodeChangeKind.Components);
         }
     }
+
+    /// <summary>Notifies the owning node after one authored component value changes.</summary>
+    protected void NotifyValueChanged()
+    {
+        Owner?.NotifyComponentChanged(NodeChangeKind.ComponentValues);
+    }
 }
 
 /// <summary>Stores one persistent game-script attachment and its authored property overrides.</summary>

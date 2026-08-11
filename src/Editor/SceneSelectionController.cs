@@ -1,4 +1,5 @@
 using System.Numerics;
+using Engine.Core;
 using Engine.Graphics;
 
 namespace Editor;
@@ -16,6 +17,12 @@ public sealed class SceneSelectionController
 
     /// <summary>Gets the currently selected transformable scene node.</summary>
     public Node3D? SelectedNode { get; private set; }
+
+    /// <summary>Gets the exact diagnostic component selected through preview picking.</summary>
+    public Component? SelectedComponent { get; private set; }
+
+    /// <summary>Gets or sets editor-only preview picking performed before mesh picking.</summary>
+    public Func<Vector2, ScenePreviewPickingId?>? PreviewPicker { get; set; }
 
     /// <summary>Gets whether the transform gizmo currently owns a pointer drag.</summary>
     public bool IsDragging => _gizmo.IsDragging;
@@ -74,6 +81,12 @@ public sealed class SceneSelectionController
                 _consumedPrimaryDown = true;
                 return;
             }
+        }
+
+        if (PreviewPicker?.Invoke(position) is { } preview)
+        {
+            SelectPreview(preview);
+            return;
         }
 
         var viewport = _getViewport();
@@ -141,10 +154,24 @@ public sealed class SceneSelectionController
     /// <param name="item">Object to select, or null to clear selection.</param>
     public void Select(Node3D? item)
     {
-        if (ReferenceEquals(item, SelectedNode))
+        if (ReferenceEquals(item, SelectedNode) && SelectedComponent is null)
             return;
         _gizmo.CancelDrag();
         SelectedNode = item;
+        SelectedComponent = null;
         SelectionChanged?.Invoke(item);
+    }
+
+    /// <summary>Selects the exact owner represented by an editor preview hit.</summary>
+    /// <param name="pickingId">Stable preview picking identity.</param>
+    public void SelectPreview(ScenePreviewPickingId pickingId)
+    {
+        if (ReferenceEquals(SelectedNode, pickingId.Node) &&
+            ReferenceEquals(SelectedComponent, pickingId.Component))
+            return;
+        _gizmo.CancelDrag();
+        SelectedNode = pickingId.Node;
+        SelectedComponent = pickingId.Component;
+        SelectionChanged?.Invoke(pickingId.Node);
     }
 }

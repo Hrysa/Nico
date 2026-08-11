@@ -113,19 +113,34 @@ public static class ScenePlayClone
                     LinearDamping = sourceBody.LinearDamping
                 };
             case ColliderComponent sourceCollider:
-                return new ColliderComponent
+                ColliderComponent collider = sourceCollider switch
                 {
-                    Enabled = sourceCollider.Enabled,
-                    Shape = sourceCollider.Shape,
-                    Center = sourceCollider.Center,
-                    Size = sourceCollider.Size,
-                    Radius = sourceCollider.Radius,
-                    Height = sourceCollider.Height,
-                    IsTrigger = sourceCollider.IsTrigger,
-                    Friction = sourceCollider.Friction,
-                    Restitution = sourceCollider.Restitution,
-                    Mesh = sourceCollider.Mesh
+                    BoxColliderComponent box => new BoxColliderComponent { Size = box.Size },
+                    SphereColliderComponent sphere => new SphereColliderComponent
+                        { Radius = sphere.Radius },
+                    CapsuleColliderComponent capsule => new CapsuleColliderComponent
+                        { Radius = capsule.Radius, Height = capsule.Height },
+                    CylinderColliderComponent cylinder => new CylinderColliderComponent
+                        { Radius = cylinder.Radius, Height = cylinder.Height },
+                    PlaneColliderComponent plane => new PlaneColliderComponent { Size = plane.Size },
+                    MeshColliderComponent mesh => new MeshColliderComponent { Mesh = mesh.Mesh },
+                    TerrainColliderComponent terrain => new TerrainColliderComponent
+                    {
+                        TerrainData = terrain.TerrainData,
+                        HorizontalSize = terrain.HorizontalSize,
+                        HeightScale = terrain.HeightScale
+                    },
+                    _ => throw new NotSupportedException(
+                        $"Collider type '{sourceCollider.GetType().Name}' cannot enter play mode.")
                 };
+                collider.Enabled = sourceCollider.Enabled;
+                collider.Center = sourceCollider.Center;
+                collider.IsTrigger = sourceCollider.IsTrigger;
+                collider.Friction = sourceCollider.Friction;
+                collider.Restitution = sourceCollider.Restitution;
+                collider.CollisionLayer = sourceCollider.CollisionLayer;
+                collider.CollisionMask = sourceCollider.CollisionMask;
+                return collider;
             case AnimatorComponent sourceAnimator:
                 return new AnimatorComponent
                 {

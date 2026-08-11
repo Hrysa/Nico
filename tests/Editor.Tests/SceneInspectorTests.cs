@@ -468,6 +468,47 @@ public class SceneInspectorTests
         Assert.Equal("0.8", roughness.Text);
     }
 
+    /// <summary>Exposes concrete collider-only fields and applies validated authored dimensions.</summary>
+    [Fact]
+    public void Bind_BoxCollider_ShowsRelevantEditablePhysicsFields()
+    {
+        var node = new Node3D();
+        var collider = new BoxColliderComponent();
+        node.AddComponent(collider);
+        var inspector = new SceneInspector(320f, 900f);
+        inspector.Bind(node, collider);
+        var sizeX = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "Collider0SizeX"));
+
+        sizeX.SetFocus(true);
+        sizeX.InvokeKeyDown((int)InputKey.Backspace);
+        sizeX.InvokeTextInput('2');
+        Assert.True(inspector.EditForm.CommitAll());
+
+        Assert.Same(collider, inspector.FocusedComponent);
+        Assert.Equal(2f, collider.Size.X);
+        Assert.NotNull(FindByName<TextField>(inspector, "Collider0Friction"));
+        Assert.NotNull(FindByName<TextField>(inspector, "Collider0Layer"));
+        Assert.Null(FindByName<TextField>(inspector, "Collider0Radius"));
+    }
+
+    /// <summary>Exposes an explicit editable mesh reference instead of inferred render geometry.</summary>
+    [Fact]
+    public void Bind_MeshCollider_ShowsExplicitReferenceField()
+    {
+        var node = new MeshInstance3D();
+        var collider = new MeshColliderComponent();
+        node.AddComponent(collider);
+        var inspector = new SceneInspector(320f, 900f);
+
+        inspector.Bind(node, collider);
+
+        var field = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "Collider0Mesh"));
+        Assert.Equal(string.Empty, field.Text);
+        Assert.False(field.IsReadOnly);
+    }
+
     /// <summary>Finds a named UI element recursively.</summary>
     /// <typeparam name="TElement">Required UI element type.</typeparam>
     /// <param name="root">Subtree root.</param>

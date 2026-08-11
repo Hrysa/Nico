@@ -24,6 +24,16 @@ Replace the single shape-switched `ColliderComponent` with explicit collider com
 
 Generation may reuse engine tooling, but generated map collision data belongs to the project and should not be regenerated implicitly at game startup.
 
+### Editor visualization
+
+- Provide a general Scene viewport preview pass for objects and components that have no ordinary visible render geometry.
+- Treat colliders as one preview provider alongside cameras, lights, audio sources, empty nodes, navigation data, joints, and other editor-only diagnostics.
+- Keep previews editor-only; they must not add renderable scene nodes, appear in the Game viewport, or affect scene serialization and runtime behavior.
+- Define renderer-independent preview primitives in `Engine.Graphics`, such as lines, wire meshes, translucent meshes, icons, frustums, and picking identifiers.
+- Let the Editor register preview builders for node and component types instead of adding Editor or graphics dependencies to `Engine.Core` domain objects.
+- Cache reusable preview meshes and loaded referenced assets instead of rebuilding or uploading them every frame.
+- Keep Vulkan preview-pipeline and GPU-resource ownership in `Engine.Graphics.Silk`.
+
 ## Component Model
 
 Introduce an abstract shared component:
@@ -72,6 +82,41 @@ Add Component
 When a primitive collider is added to an object with render geometry, the editor may initialize its dimensions from the object's combined local-space bounds. This is a one-time authoring convenience: the fitted values are stored in the component and are not recomputed by runtime physics.
 
 When a mesh collider is added, the editor may initially select the object's render mesh, but it must save that choice as an explicit asset reference. Missing mesh references should produce an editor validation warning and leave the collider inactive rather than invoking an implicit fallback.
+
+## Scene Viewport Preview System
+
+Scene viewport previews are a common editor facility for objects that are invisible, difficult to select, or need diagnostic geometry. The preview system should support:
+
+- A registry that maps node or component types to allocation-conscious preview builders.
+- World-space line, wire-mesh, translucent-mesh, icon, frustum, and bounds primitives.
+- Stable picking identifiers that map a preview hit back to its owning node and optional component.
+- Selected, hovered, warning, and globally-enabled diagnostic presentation states.
+- Per-preview visibility toggles and category filters without changing scene visibility.
+- Cached static geometry with per-frame transforms and colors, avoiding regenerated vertex arrays in render hot paths.
+- Depth-tested and always-visible modes so each tool can choose the appropriate diagnostic behavior.
+
+Initial common providers should include:
+
+- Empty `Node3D`: origin marker and selectable icon.
+- `PerspectiveCamera`: camera icon, forward direction, and projection frustum.
+- Collider components: exact authored collision geometry.
+- Future light and audio components: influence volumes and direction indicators.
+
+The preview framework is diagnostic rendering only. It must not mutate scene content, serialize preview geometry, register runtime systems, or cause an invisible object to become a normal renderable.
+
+## Collider Preview Provider
+
+The Scene viewport must visualize the collision geometry authored on scene nodes:
+
+- Primitive colliders render their actual box, sphere, capsule, cylinder, or plane dimensions after node and collider transforms are applied.
+- `MeshColliderComponent` renders the triangles from its explicit collision-mesh reference, including the same transform used by physics.
+- `TerrainColliderComponent` renders its heightfield or chunk boundaries from the explicit terrain-data reference.
+- Selected colliders use a prominent translucent or wireframe color; unselected colliders may use a dimmer diagnostic color when the collider preview category is enabled.
+- Invalid or missing collision assets render a distinct warning marker or bounds indicator rather than falling back to render geometry.
+- Multiple colliders on one node are previewed independently so compound collision authoring remains understandable.
+- Preview picking should identify the owning collider component, allowing the Inspector to edit the exact collider that was clicked.
+
+Collider preview builders must read stored collider properties and explicit collision assets directly. They must not ask runtime physics to infer geometry or make render geometry participate in collision implicitly.
 
 ## Mesh Collider Rules
 
@@ -128,9 +173,11 @@ Large map collision should be spatially chunked so loading, broad-phase culling,
 4. Update scene serialization with distinct collider type records and migration for existing `ColliderShape` data.
 5. Update the inspector and Add Component menu for the new component types.
 6. Add one-time bounds fitting for primitive colliders in editor tooling.
-7. Update physics and scene-file tests, including compound colliders and invalid mesh references.
-8. Design the terrain asset format and implement `TerrainColliderComponent` using the best native Bepu heightfield representation available.
-9. Add chunked map-collision generation/import tooling and allocation/performance regression tests.
+7. Add the general Scene viewport preview framework and initial empty-node and camera providers.
+8. Add collider providers for primitive, mesh, compound, and terrain collision geometry.
+9. Update physics and scene-file tests, including compound colliders and invalid mesh references.
+10. Design the terrain asset format and implement `TerrainColliderComponent` using the best native Bepu heightfield representation available.
+11. Add chunked map-collision generation/import tooling and allocation/performance regression tests.
 
 ## Acceptance Criteria
 
@@ -141,4 +188,8 @@ Large map collision should be spatially chunked so loading, broad-phase culling,
 - Mesh collider references are explicit, serialized, and validated.
 - Triangle mesh colliders reject unsupported movable-body configurations clearly.
 - Terrain collision is engine-supported while terrain content remains project-owned.
+- Invisible nodes and diagnostic components use one reusable Scene viewport preview and picking system.
+- Cameras display a selectable icon, facing direction, and accurate projection frustum in the Scene viewport.
+- The Scene viewport previews the exact authored collision geometry without adding it to normal scene rendering.
+- Invalid collision references are visibly diagnosed and never preview render geometry as an implicit substitute.
 - Existing scenes have a documented and tested migration path.

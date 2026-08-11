@@ -50,12 +50,22 @@ public static class EditorUI
             [EditorDockWorkspace.ProfilerId] =
                 windowMenu.AddCheckItem("Profiler", isChecked: true, _ => { })
         };
-        var titleMenuBar = new MenuBar(72f, titleBarHeight, theme)
+        var previewMenu = new ContextMenu(180f, theme) { Name = "ScenePreviewMenu" };
+        var previewItems = new Dictionary<ScenePreviewCategory, ContextMenuItem>
+        {
+            [ScenePreviewCategory.Nodes] = previewMenu.AddCheckItem("Invisible Nodes", true, _ => { }),
+            [ScenePreviewCategory.Cameras] = previewMenu.AddCheckItem("Cameras", true, _ => { }),
+            [ScenePreviewCategory.Colliders] = previewMenu.AddCheckItem("Colliders", true, _ => { })
+        };
+        var viewMenu = new ContextMenu(180f, theme) { Name = "ViewMenu" };
+        viewMenu.AddSubmenu("Scene Previews", previewMenu);
+        var titleMenuBar = new MenuBar(126f, titleBarHeight, theme)
         {
             Name = "TitleMenuBar",
             BackgroundColor = theme.Canvas
         };
         titleMenuBar.AddMenu("Window", windowMenu);
+        titleMenuBar.AddMenu("View", viewMenu);
         var playButtonIcon = new Icon(IconKind.Play, 16f)
         {
             ForegroundColor = theme.Accent
@@ -245,7 +255,8 @@ public static class EditorUI
             sceneSlot, gameSlot, sceneTools, initialDockHost, workspaceHost,
             profilerLayout, profiler, hierarchyButton, fileSystemButton, sceneButton, gameButton,
             inspectorButton, profilerButton,
-            profilerPauseButton, profilerPauseLabel, titleMenuBar, windowMenu, windowPanelItems);
+            profilerPauseButton, profilerPauseLabel, titleMenuBar, windowMenu, windowPanelItems,
+            viewMenu, previewMenu, previewItems);
     }
 
     /// <summary>
@@ -313,6 +324,9 @@ public static class EditorUI
 /// <param name="TitleMenuBar">Title-bar application menu strip.</param>
 /// <param name="WindowMenu">Window menu containing panel visibility actions.</param>
 /// <param name="WindowPanelItems">Check rows keyed by stable dock-panel identifier.</param>
+/// <param name="ViewMenu">View menu containing Scene diagnostic controls.</param>
+/// <param name="ScenePreviewMenu">Submenu containing preview category controls.</param>
+/// <param name="ScenePreviewItems">Check rows keyed by preview category.</param>
 public sealed record EditorView(
     Panel Root,
     ViewportPanel SceneViewport,
@@ -342,4 +356,7 @@ public sealed record EditorView(
     Label ProfilerPauseLabel,
     MenuBar TitleMenuBar,
     ContextMenu WindowMenu,
-    IReadOnlyDictionary<string, ContextMenuItem> WindowPanelItems);
+    IReadOnlyDictionary<string, ContextMenuItem> WindowPanelItems,
+    ContextMenu ViewMenu,
+    ContextMenu ScenePreviewMenu,
+    IReadOnlyDictionary<ScenePreviewCategory, ContextMenuItem> ScenePreviewItems);

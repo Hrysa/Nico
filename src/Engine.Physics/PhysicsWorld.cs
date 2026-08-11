@@ -24,28 +24,43 @@ public readonly record struct PhysicsContact(
     float Penetration,
     bool IsTrigger);
 
+/// <summary>Describes the closest collision ray hit.</summary>
+/// <param name="Node">Owning scene node.</param>
+/// <param name="Collider">Authored collider hit, including a compound child.</param>
+/// <param name="Position">World-space hit position.</param>
+/// <param name="Normal">World-space surface normal.</param>
+/// <param name="Distance">Distance from the ray origin.</param>
+public readonly record struct PhysicsRayHit(Node3D Node, ColliderComponent Collider,
+    Vector3 Position, Vector3 Normal, float Distance);
+
 /// <summary>Adapts engine scene components to a BepuPhysics fixed-step simulation.</summary>
 public sealed class PhysicsWorld : IDisposable
 {
     private const float PlaneThickness = 0.02f;
-    private const float PlaneExtent = 100_000f;
+    private const int TerrainChunkQuads = 64;
     private readonly BufferPool _bufferPool = new();
     private readonly List<PhysicsBody?> _bodyHandles = [];
     private readonly List<PhysicsBody?> _staticHandles = [];
     private readonly ContactBridge _contactBridge;
     private readonly Func<AssetReference, StaticMeshResource?>? _meshResolver;
+    private readonly Func<AssetReference, TerrainResource?>? _terrainResolver;
     private readonly List<PhysicsBody> _bodies = [];
+    private readonly List<string> _validationIssues = [];
     private Simulation _simulation;
     private double _accumulator;
     private double _fixedTimeStep = 1d / 60d;
     private int _maxSubsteps = 8;
+    private int _colliderCount;
     private bool _disposed;
 
     /// <summary>Creates an empty Bepu-backed physics world.</summary>
     /// <param name="meshResolver">Optional imported mesh resolver used by static mesh colliders.</param>
-    public PhysicsWorld(Func<AssetReference, StaticMeshResource?>? meshResolver = null)
+    /// <param name="terrainResolver">Optional explicit terrain-data resolver.</param>
+    public PhysicsWorld(Func<AssetReference, StaticMeshResource?>? meshResolver = null,
+        Func<AssetReference, TerrainResource?>? terrainResolver = null)
     {
         _meshResolver = meshResolver;
+        _terrainResolver = terrainResolver;
         _contactBridge = new ContactBridge(this);
         _simulation = CreateSimulation();
     }
@@ -84,10 +99,129 @@ public sealed class PhysicsWorld : IDisposable
     }
 
     /// <summary>Gets the number of attached colliders.</summary>
-    public int BodyCount => _bodies.Count;
+    public int BodyCount => _colliderCount;
+
+    /// <summary>Gets validation issues that left authored colliders inactive during attachment.</summary>
+    public IReadOnlyList<string> ValidationIssues => _validationIssues;
 
     /// <summary>Occurs for each overlapping collider pair during a fixed step.</summary>
     public event Action<PhysicsContact>? Contact;
+
+    /// <summary>Finds the closest collider along a normalized world-space ray.</summary>
+    /// <param name="origin">World-space ray origin.</param>
+    /// <param name="direction">World-space ray direction; normalization is performed internally.</param>
+    /// <param name="maximumDistance">Maximum accepted hit distance.</param>
+    /// <param name="collisionMask">Layers eligible for the query.</param>
+    /// <param name="hit">Closest hit when successful.</param>
+    /// <returns>True when an eligible collider was hit.</returns>
+    public bool TryRaycast(Vector3 origin, Vector3 direction, float maximumDistance,
+        uint collisionMask, out PhysicsRayHit hit)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var lengthSquared = direction.LengthSquared();
+        if (!float.IsFinite(lengthSquared) || lengthSquared <= float.Epsilon)
+            throw new ArgumentOutOfRangeException(nameof(direction));
+        if (!float.IsFinite(maximumDistance) || maximumDistance <= 0f)
+            throw new ArgumentOutOfRangeException(nameof(maximumDistance));
+        direction /= MathF.Sqrt(lengthSquared);
+        var handler = new RayHitHandler(this, origin, direction, collisionMask);
+        _simulation.RayCast(in origin, in direction, maximumDistance, ref handler, 0);
+        hit = handler.Hit;
+        return handler.HasHit;
+    }
+
+    /// <summary>Samples the highest attached explicit terrain at one world XZ position.</summary>
+    /// <param name="worldPosition">World position whose XZ coordinates are queried.</param>
+    /// <param name="height">Highest matching world-space surface Y.</param>
+    /// <returns>True when the point lies over an attached terrain collider.</returns>
+    public bool TryGetTerrainHeight(Vector3 worldPosition, out float height)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        height = float.NegativeInfinity;
+        var found = false;
+        for (var index = 0; index < _bodies.Count; index++)
+        {
+            var body = _bodies[index];
+            if (body.Collider is not TerrainColliderComponent terrain ||
+                terrain.TerrainData is not { } reference)
+                continue;
+            var resource = body.TerrainResource ?? _terrainResolver?.Invoke(reference);
+            var colliderTransform = Matrix4x4.CreateTranslation(terrain.Center) *
+                body.Node.GetModelMatrix();
+            if (resource is null || !Matrix4x4.Invert(colliderTransform, out var inverse))
+                continue;
+            var local = Vector3.Transform(worldPosition, inverse);
+            var u = local.X / terrain.HorizontalSize.X + .5f;
+            var v = local.Z / terrain.HorizontalSize.Y + .5f;
+            if (u < 0f || u > 1f || v < 0f || v > 1f)
+                continue;
+            var localHeight = resource.Sample(u, v) * terrain.HeightScale;
+            var surface = Vector3.Transform(new Vector3(local.X, localHeight, local.Z),
+                colliderTransform);
+            height = MathF.Max(height, surface.Y);
+            found = true;
+        }
+        return found;
+    }
+
+    /// <summary>Replaces only native terrain chunks touched by edited height samples.</summary>
+    /// <param name="node">Attached terrain owner.</param>
+    /// <param name="resource">Updated terrain sample resource with unchanged dimensions.</param>
+    /// <param name="dirtyRegions">Chunk regions returned by TerrainResource dirty mapping.</param>
+    public void RebuildTerrain(Node3D node, TerrainResource resource,
+        IReadOnlyList<TerrainChunkRegion> dirtyRegions)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(node);
+        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(dirtyRegions);
+        PhysicsBody? body = null;
+        for (var index = 0; index < _bodies.Count; index++)
+        {
+            if (ReferenceEquals(_bodies[index].Node, node) &&
+                _bodies[index].Collider is TerrainColliderComponent)
+            {
+                body = _bodies[index];
+                break;
+            }
+        }
+        if (body is null || body.Collider is not TerrainColliderComponent collider ||
+            body.TerrainChunks is null)
+            throw new InvalidOperationException("The node has no attached active terrain collider.");
+        if (body.TerrainResource is not { } previousResource ||
+            resource.Width != previousResource.Width || resource.Depth != previousResource.Depth)
+            throw new ArgumentException(
+                "Updated terrain dimensions must match the attached terrain resource.",
+                nameof(resource));
+        for (var dirtyIndex = 0; dirtyIndex < dirtyRegions.Count; dirtyIndex++)
+        {
+            if (body.FindTerrainChunk(dirtyRegions[dirtyIndex]) < 0)
+                throw new ArgumentException(
+                    "A dirty region does not match an attached terrain chunk.",
+                    nameof(dirtyRegions));
+            for (var precedingIndex = 0; precedingIndex < dirtyIndex; precedingIndex++)
+            {
+                if (dirtyRegions[precedingIndex] == dirtyRegions[dirtyIndex])
+                    throw new ArgumentException("Dirty terrain regions must be unique.",
+                        nameof(dirtyRegions));
+            }
+        }
+        body.TerrainResource = resource;
+        GetColliderPose(node, collider, out var pose, out var scale, out _);
+        for (var dirtyIndex = 0; dirtyIndex < dirtyRegions.Count; dirtyIndex++)
+        {
+            var region = dirtyRegions[dirtyIndex];
+            var nativeIndex = body.FindTerrainChunk(region);
+            var previous = body.TerrainChunks[nativeIndex];
+            _simulation.Statics.Remove(previous.Handle);
+            if ((uint)previous.Handle.Value < (uint)_staticHandles.Count)
+                _staticHandles[previous.Handle.Value] = null;
+            _simulation.Shapes.RecursivelyRemoveAndDispose(previous.Shape, _bufferPool);
+            body.RemoveStaticHandle(previous.Handle);
+            body.TerrainChunks.RemoveAt(nativeIndex);
+            AddTerrainChunk(body, pose, collider, scale, resource, region);
+        }
+    }
 
     /// <summary>Rebuilds the Bepu simulation from enabled colliders in one hierarchy.</summary>
     /// <param name="root">Synthetic scene root.</param>
@@ -130,8 +264,10 @@ public sealed class PhysicsWorld : IDisposable
         _simulation.Dispose();
         _bufferPool.Clear();
         _bodies.Clear();
+        _validationIssues.Clear();
         _bodyHandles.Clear();
         _staticHandles.Clear();
+        _colliderCount = 0;
     }
 
     /// <summary>Creates a Bepu simulation using engine-owned contact and integration callbacks.</summary>
@@ -151,8 +287,10 @@ public sealed class PhysicsWorld : IDisposable
         _simulation.Dispose();
         _bufferPool.Clear();
         _bodies.Clear();
+        _validationIssues.Clear();
         _bodyHandles.Clear();
         _staticHandles.Clear();
+        _colliderCount = 0;
         _accumulator = 0d;
         _simulation = CreateSimulation();
     }
@@ -163,24 +301,30 @@ public sealed class PhysicsWorld : IDisposable
     {
         if (node is Node3D node3D)
         {
-            ColliderComponent? collider = null;
             RigidBodyComponent? rigidBody = null;
+            List<ColliderComponent>? colliders = null;
             var components = node.Components;
             for (var index = 0; index < components.Count; index++)
             {
                 if (!components[index].Enabled)
                     continue;
-                if (components[index] is ColliderComponent foundCollider)
-                    collider ??= foundCollider;
-                else if (components[index] is RigidBodyComponent foundRigidBody)
+                if (components[index] is RigidBodyComponent foundRigidBody)
                     rigidBody ??= foundRigidBody;
             }
-            if (collider is not null)
+            for (var index = 0; index < components.Count; index++)
             {
-                if (collider.Shape == ColliderShape.Mesh && collider.Mesh is null)
-                    AddDescendantMeshBodies(node3D, rigidBody, collider);
-                else
-                    AddBody(node3D, rigidBody, collider);
+                if (components[index] is ColliderComponent { Enabled: true } collider)
+                {
+                    colliders ??= [];
+                    colliders.Add(collider);
+                }
+            }
+            if (colliders is { Count: > 1 } && rigidBody is { MotionType: not RigidBodyMotionType.Static })
+                AddMovableColliders(node3D, rigidBody, colliders);
+            else if (colliders is not null)
+            {
+                for (var index = 0; index < colliders.Count; index++)
+                    AddBody(node3D, rigidBody, colliders[index]);
             }
         }
         var children = node.Children;
@@ -188,131 +332,260 @@ public sealed class PhysicsWorld : IDisposable
             AttachNode(children[index]);
     }
 
-    /// <summary>Adds static triangle colliders for imported meshes below a model root.</summary>
-    /// <param name="root">Model root owning the compound collider.</param>
-    /// <param name="rigidBody">Optional root motion settings.</param>
-    /// <param name="source">Authored compound collider settings.</param>
-    private void AddDescendantMeshBodies(
-        Node3D root,
-        RigidBodyComponent? rigidBody,
-        ColliderComponent source)
+    /// <summary>Builds movable solid compounds and separate follower sensors for mixed triggers.</summary>
+    /// <param name="node">Shared scene transform.</param><param name="rigidBody">Motion settings.</param>
+    /// <param name="colliders">Enabled colliders in authored order.</param>
+    private void AddMovableColliders(Node3D node, RigidBodyComponent rigidBody,
+        List<ColliderComponent> colliders)
     {
-        if (rigidBody is { MotionType: not RigidBodyMotionType.Static })
-            throw new InvalidOperationException("Compound triangle mesh colliders must be static.");
-        var added = 0;
-        AddDescendantMeshBodies(root, source, ref added);
-        if (added == 0)
+        var triggerCount = 0;
+        for (var index = 0; index < colliders.Count; index++)
+            triggerCount += colliders[index].IsTrigger ? 1 : 0;
+        if (triggerCount == 0 || triggerCount == colliders.Count)
         {
-            throw new InvalidOperationException(
-                $"Compound mesh collider '{root.Name}' has no descendant mesh instances.");
+            AddCompoundBody(node, rigidBody, colliders);
+            return;
         }
-    }
-
-    /// <summary>Recursively adds one static body for each descendant mesh instance.</summary>
-    /// <param name="node">Current hierarchy node.</param>
-    /// <param name="source">Authored compound collider settings.</param>
-    /// <param name="added">Number of mesh bodies created.</param>
-    private void AddDescendantMeshBodies(
-        Node node,
-        ColliderComponent source,
-        ref int added)
-    {
-        var children = node.Children;
-        for (var index = 0; index < children.Count; index++)
+        var solids = new List<ColliderComponent>(colliders.Count - triggerCount);
+        for (var index = 0; index < colliders.Count; index++)
         {
-            var child = children[index];
-            if (child is MeshInstance3D mesh &&
-                (mesh.Mesh.SubAsset?.StartsWith("model-batch/", StringComparison.Ordinal) == true ||
-                 !HasModelBatchDescendant(node)))
-            {
-                var collider = new ColliderComponent
-                {
-                    Shape = ColliderShape.Mesh,
-                    Mesh = mesh.Mesh,
-                    Center = source.Center,
-                    Friction = source.Friction,
-                    Restitution = source.Restitution,
-                    IsTrigger = source.IsTrigger
-                };
-                AddBody(mesh, null, collider);
-                added++;
-            }
-            AddDescendantMeshBodies(child, source, ref added);
+            if (!colliders[index].IsTrigger)
+                solids.Add(colliders[index]);
         }
-    }
-
-    /// <summary>Returns whether a hierarchy contains an optimized model batch.</summary>
-    /// <param name="node">Hierarchy root.</param>
-    /// <returns>True when a batch mesh exists below the node.</returns>
-    private static bool HasModelBatchDescendant(Node node)
-    {
-        var children = node.Children;
-        for (var index = 0; index < children.Count; index++)
+        if (solids.Count == 1)
+            AddBody(node, rigidBody, solids[0]);
+        else
+            AddCompoundBody(node, rigidBody, solids);
+        for (var index = 0; index < colliders.Count; index++)
         {
-            if (children[index] is MeshInstance3D mesh &&
-                mesh.Mesh.SubAsset?.StartsWith("model-batch/", StringComparison.Ordinal) == true)
-            {
-                return true;
-            }
-            if (HasModelBatchDescendant(children[index]))
-                return true;
+            if (colliders[index].IsTrigger)
+                AddBody(node, rigidBody, colliders[index], followsNode: true);
         }
-        return false;
     }
 
     /// <summary>Creates one scaled Bepu primitive and registers its engine mapping.</summary>
     /// <param name="node">Scene transform represented by the body.</param>
     /// <param name="rigidBody">Optional motion settings.</param>
     /// <param name="collider">Collision geometry and material.</param>
-    private void AddBody(Node3D node, RigidBodyComponent? rigidBody, ColliderComponent collider)
+    private void AddBody(Node3D node, RigidBodyComponent? rigidBody, ColliderComponent collider,
+        bool followsNode = false)
     {
-        GetColliderPose(node, collider, out var pose, out var scale, out var origin);
-        var body = new PhysicsBody(node, rigidBody, collider, pose.Position - origin);
-        _bodies.Add(body);
-        switch (collider.Shape)
+        StaticMeshResource? resolvedMesh = null;
+        TerrainResource? resolvedTerrain = null;
+        if (collider is MeshColliderComponent meshCollider)
         {
-            case ColliderShape.Sphere:
-                var sphereRadius = collider.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+            if (rigidBody is { MotionType: not RigidBodyMotionType.Static })
+                throw new InvalidOperationException("Triangle mesh colliders must be static.");
+            if (meshCollider.Mesh is not { } reference)
+            {
+                AddValidationIssue(node, "Mesh collider requires an explicit collision mesh.");
+                return;
+            }
+            resolvedMesh = _meshResolver?.Invoke(reference);
+            if (resolvedMesh is null)
+            {
+                AddValidationIssue(node, $"Collision mesh '{reference}' could not be resolved.");
+                return;
+            }
+        }
+        else if (collider is TerrainColliderComponent terrainCollider)
+        {
+            if (rigidBody is { MotionType: not RigidBodyMotionType.Static })
+                throw new InvalidOperationException("Terrain colliders must be static.");
+            if (terrainCollider.TerrainData is not { } reference)
+            {
+                AddValidationIssue(node, "Terrain collider requires explicit terrain data.");
+                return;
+            }
+            resolvedTerrain = _terrainResolver?.Invoke(reference);
+            if (resolvedTerrain is null)
+            {
+                AddValidationIssue(node, $"Terrain data '{reference}' could not be resolved.");
+                return;
+            }
+        }
+        GetColliderPose(node, collider, out var pose, out var scale, out var origin);
+        var body = new PhysicsBody(node, rigidBody, collider, pose.Position - origin, followsNode);
+        _bodies.Add(body);
+        _colliderCount++;
+        switch (collider)
+        {
+            case SphereColliderComponent sphere:
+                var sphereRadius = sphere.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
                 AddBepuBody(body, pose, new Sphere(sphereRadius));
                 break;
-            case ColliderShape.Capsule:
-                var capsuleRadius = collider.Radius * MathF.Max(scale.X, scale.Z);
-                var capsuleHeight = collider.Height * scale.Y;
+            case CapsuleColliderComponent capsule:
+                var capsuleRadius = capsule.Radius * MathF.Max(scale.X, scale.Z);
+                var capsuleHeight = capsule.Height * scale.Y;
                 AddBepuBody(body, pose,
                     new Capsule(capsuleRadius, MathF.Max(0.001f, capsuleHeight - capsuleRadius * 2f)));
                 break;
-            case ColliderShape.Cylinder:
+            case CylinderColliderComponent cylinder:
                 AddBepuBody(body, pose,
-                    new Cylinder(collider.Radius * MathF.Max(scale.X, scale.Z), collider.Height * scale.Y));
+                    new Cylinder(cylinder.Radius * MathF.Max(scale.X, scale.Z), cylinder.Height * scale.Y));
                 break;
-            case ColliderShape.Plane:
+            case PlaneColliderComponent plane:
                 pose.Position += Vector3.Transform(new Vector3(0f, -PlaneThickness * 0.5f, 0f),
                     pose.Orientation);
                 body.CenterOffset = pose.Position - origin;
-                AddBepuBody(body, pose, new Box(PlaneExtent, PlaneThickness, PlaneExtent));
+                AddBepuBody(body, pose, new Box(
+                    plane.Size.X * scale.X, PlaneThickness, plane.Size.Y * scale.Z));
                 break;
-            case ColliderShape.Mesh:
-                AddMeshBody(body, pose, scale);
+            case MeshColliderComponent:
+                AddMeshBody(body, pose, scale, resolvedMesh!);
                 break;
-            default:
-                var size = collider.Size * scale;
+            case BoxColliderComponent box:
+                var size = box.Size * scale;
                 AddBepuBody(body, pose, new Box(size.X, size.Y, size.Z));
                 break;
+            case TerrainColliderComponent terrain:
+                AddTerrainBody(body, pose, terrain, scale, resolvedTerrain!);
+                break;
+            default:
+                throw new NotSupportedException(
+                    $"Collider type '{collider.GetType().Name}' is not supported.");
         }
+    }
+
+    /// <summary>Records one inactive-collider validation issue with scene context.</summary>
+    /// <param name="node">Collider owner.</param><param name="message">Validation message.</param>
+    private void AddValidationIssue(Node3D node, string message)
+    {
+        var name = string.IsNullOrWhiteSpace(node.Name) ? "Node3D" : node.Name;
+        _validationIssues.Add($"{name}: {message}");
+    }
+
+    /// <summary>Creates one native compound for all movable primitive colliders on a node.</summary>
+    /// <param name="node">Scene transform represented by the compound.</param>
+    /// <param name="rigidBody">Required movable-body settings.</param>
+    /// <param name="colliders">Two or more enabled colliders in authored order.</param>
+    private void AddCompoundBody(Node3D node, RigidBodyComponent rigidBody,
+        List<ColliderComponent> colliders)
+    {
+        var model = node.GetModelMatrix();
+        if (!Matrix4x4.Decompose(model, out var scale, out var orientation, out var origin))
+        {
+            scale = Vector3.One;
+            orientation = Quaternion.Identity;
+            origin = node.GetWorldPosition();
+        }
+        scale = Vector3.Abs(scale);
+        var builder = new CompoundBuilder(_bufferPool, _simulation.Shapes, colliders.Count);
+        try
+        {
+            var weight = rigidBody.Mass / colliders.Count;
+            for (var index = 0; index < colliders.Count; index++)
+                AddCompoundChild(ref builder, colliders[index], scale, weight,
+                    rigidBody.MotionType == RigidBodyMotionType.Kinematic);
+
+            Buffer<CompoundChild> children;
+            BodyInertia inertia;
+            Vector3 localCenter;
+            if (rigidBody.MotionType == RigidBodyMotionType.Kinematic)
+            {
+                builder.BuildKinematicCompound(out children, out localCenter);
+                inertia = default;
+            }
+            else
+            {
+                builder.BuildDynamicCompound(out children, out inertia, out localCenter);
+                inertia.InverseInertiaTensor = default;
+            }
+            var compound = new Compound(children);
+            var shapeIndex = _simulation.Shapes.Add(compound);
+            var worldCenter = origin + Vector3.Transform(localCenter, orientation);
+            var pose = new RigidPose(worldCenter, orientation);
+            var body = new PhysicsBody(node, rigidBody, colliders.ToArray(),
+                localCenter, worldCenter - origin);
+            _bodies.Add(body);
+            _colliderCount += colliders.Count;
+            var collidable = new CollidableDescription(shapeIndex, 0.1f);
+            var activity = new BodyActivityDescription(0.01f);
+            var description = rigidBody.MotionType == RigidBodyMotionType.Kinematic
+                ? BodyDescription.CreateKinematic(pose,
+                    new BodyVelocity(rigidBody.LinearVelocity), collidable, activity)
+                : BodyDescription.CreateDynamic(pose,
+                    new BodyVelocity(rigidBody.LinearVelocity), inertia, collidable, activity);
+            var handle = _simulation.Bodies.Add(description);
+            body.BodyHandle = handle;
+            RegisterHandle(_bodyHandles, handle.Value, body);
+        }
+        finally
+        {
+            builder.Dispose();
+        }
+    }
+
+    /// <summary>Adds one supported convex collider to a native compound builder.</summary>
+    /// <param name="builder">Native compound builder.</param>
+    /// <param name="collider">Authored collider.</param>
+    /// <param name="scale">Absolute node world scale.</param>
+    /// <param name="weight">Mass contribution.</param>
+    /// <param name="kinematic">Whether inertia computation can be skipped.</param>
+    private static void AddCompoundChild(ref CompoundBuilder builder, ColliderComponent collider,
+        Vector3 scale, float weight, bool kinematic)
+    {
+        var localPosition = collider.Center * scale;
+        switch (collider)
+        {
+            case SphereColliderComponent sphere:
+                var sphereShape = new Sphere(sphere.Radius * MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z)));
+                AddCompoundShape(ref builder, ref sphereShape, localPosition, weight, kinematic);
+                break;
+            case CapsuleColliderComponent capsule:
+                var capsuleRadius = capsule.Radius * MathF.Max(scale.X, scale.Z);
+                var capsuleShape = new Capsule(capsuleRadius,
+                    MathF.Max(0.001f, capsule.Height * scale.Y - capsuleRadius * 2f));
+                AddCompoundShape(ref builder, ref capsuleShape, localPosition, weight, kinematic);
+                break;
+            case CylinderColliderComponent cylinder:
+                var cylinderShape = new Cylinder(cylinder.Radius * MathF.Max(scale.X, scale.Z),
+                    cylinder.Height * scale.Y);
+                AddCompoundShape(ref builder, ref cylinderShape, localPosition, weight, kinematic);
+                break;
+            case PlaneColliderComponent plane:
+                var planeShape = new Box(plane.Size.X * scale.X, PlaneThickness,
+                    plane.Size.Y * scale.Z);
+                localPosition.Y -= PlaneThickness * .5f;
+                AddCompoundShape(ref builder, ref planeShape, localPosition, weight, kinematic);
+                break;
+            case BoxColliderComponent box:
+                var size = box.Size * scale;
+                var boxShape = new Box(size.X, size.Y, size.Z);
+                AddCompoundShape(ref builder, ref boxShape, localPosition, weight, kinematic);
+                break;
+            case MeshColliderComponent:
+                throw new InvalidOperationException("Triangle mesh colliders must be static and cannot be compound children of a movable body.");
+            case TerrainColliderComponent:
+                throw new InvalidOperationException("Terrain colliders must be static and cannot be compound children of a movable body.");
+            default:
+                throw new NotSupportedException($"Collider type '{collider.GetType().Name}' is not supported in compounds.");
+        }
+    }
+
+    /// <summary>Adds one unmanaged convex shape with an identity local orientation.</summary>
+    /// <typeparam name="TShape">Bepu convex shape type.</typeparam>
+    /// <param name="builder">Native compound builder.</param><param name="shape">Child shape.</param>
+    /// <param name="localPosition">Child center relative to the node.</param>
+    /// <param name="weight">Mass contribution.</param><param name="kinematic">Whether inertia is unnecessary.</param>
+    private static void AddCompoundShape<TShape>(ref CompoundBuilder builder, ref TShape shape,
+        Vector3 localPosition, float weight, bool kinematic)
+        where TShape : unmanaged, IConvexShape
+    {
+        var localPose = new RigidPose(localPosition, Quaternion.Identity);
+        if (kinematic)
+            builder.AddForKinematic(in shape, in localPose, weight);
+        else
+            builder.Add(in shape, in localPose, weight);
     }
 
     /// <summary>Adds one imported triangle mesh as a static BEPU collidable.</summary>
     /// <param name="body">Engine body mapping receiving the static handle.</param>
     /// <param name="pose">World pose of the mesh origin.</param>
     /// <param name="scale">Absolute world scale applied by BEPU.</param>
-    private void AddMeshBody(PhysicsBody body, RigidPose pose, Vector3 scale)
+    private void AddMeshBody(PhysicsBody body, RigidPose pose, Vector3 scale,
+        StaticMeshResource resource)
     {
-        if (body.RigidBody is { MotionType: not RigidBodyMotionType.Static })
-            throw new InvalidOperationException("Triangle mesh colliders must be static.");
-        var reference = body.Collider.Mesh
-            ?? throw new InvalidOperationException("A mesh collider requires a mesh reference.");
-        var resource = _meshResolver?.Invoke(reference)
-            ?? throw new InvalidOperationException($"Collision mesh '{reference}' could not be resolved.");
         var triangleCount = resource.Indices.Length / 3;
         _bufferPool.Take<Triangle>(triangleCount, out var triangles);
         for (var triangleIndex = 0; triangleIndex < triangleCount; triangleIndex++)
@@ -328,6 +601,69 @@ public sealed class PhysicsWorld : IDisposable
         var handle = _simulation.Statics.Add(new StaticDescription(pose, shapeIndex));
         body.StaticHandle = handle;
         RegisterHandle(_staticHandles, handle.Value, body);
+    }
+
+    /// <summary>Adds an explicit height grid as a static triangle terrain shape.</summary>
+    /// <param name="body">Engine body mapping receiving the static handle.</param>
+    /// <param name="pose">World pose of the terrain center.</param>
+    /// <param name="collider">Authored terrain dimensions and asset reference.</param>
+    /// <param name="scale">Absolute node world scale.</param>
+    private void AddTerrainBody(PhysicsBody body, RigidPose pose,
+        TerrainColliderComponent collider, Vector3 scale, TerrainResource resource)
+    {
+        body.TerrainResource = resource;
+        var regions = resource.GetChunkRegions(TerrainChunkQuads);
+        for (var index = 0; index < regions.Length; index++)
+            AddTerrainChunk(body, pose, collider, scale, resource, regions[index]);
+    }
+
+    /// <summary>Builds and registers one bounded native terrain mesh region.</summary>
+    /// <param name="body">Engine terrain body.</param><param name="pose">Shared terrain pose.</param>
+    /// <param name="collider">Authored terrain dimensions.</param><param name="scale">World scale.</param>
+    /// <param name="resource">Current height samples.</param><param name="region">Quad region.</param>
+    private void AddTerrainChunk(PhysicsBody body, RigidPose pose,
+        TerrainColliderComponent collider, Vector3 scale, TerrainResource resource,
+        TerrainChunkRegion region)
+    {
+        var startZ = region.StartZ;
+        var endZ = startZ + region.QuadCountZ;
+        var startX = region.StartX;
+        var endX = startX + region.QuadCountX;
+        var triangleCount = checked(region.QuadCountX * region.QuadCountZ * 2);
+        _bufferPool.Take<Triangle>(triangleCount, out var triangles);
+        var triangleIndex = 0;
+        for (var z = startZ; z < endZ; z++)
+        {
+            for (var x = startX; x < endX; x++)
+            {
+                var a = GetTerrainVertex(resource, collider, x, z);
+                var b = GetTerrainVertex(resource, collider, x + 1, z);
+                var c = GetTerrainVertex(resource, collider, x + 1, z + 1);
+                var d = GetTerrainVertex(resource, collider, x, z + 1);
+                triangles[triangleIndex++] = new Triangle(a, b, c);
+                triangles[triangleIndex++] = new Triangle(a, c, d);
+            }
+        }
+        var mesh = new BepuMesh(triangles, scale, _bufferPool);
+        var shapeIndex = _simulation.Shapes.Add(mesh);
+        var handle = _simulation.Statics.Add(new StaticDescription(pose, shapeIndex));
+        body.AddTerrainChunk(new TerrainNativeChunk(region, handle, shapeIndex));
+        RegisterHandle(_staticHandles, handle.Value, body);
+    }
+
+    /// <summary>Computes one centered local terrain vertex from a normalized sample.</summary>
+    /// <param name="resource">Height sample grid.</param><param name="collider">Terrain dimensions.</param>
+    /// <param name="x">Sample column.</param><param name="z">Sample row.</param>
+    /// <returns>Local terrain vertex.</returns>
+    private static Vector3 GetTerrainVertex(TerrainResource resource,
+        TerrainColliderComponent collider, int x, int z)
+    {
+        var u = x / (float)(resource.Width - 1);
+        var v = z / (float)(resource.Depth - 1);
+        return new Vector3(
+            (u - .5f) * collider.HorizontalSize.X,
+            resource.GetHeight(x, z) * collider.HeightScale,
+            (v - .5f) * collider.HorizontalSize.Y);
     }
 
     /// <summary>Adds one convex shape as a dynamic, kinematic, or static Bepu collidable.</summary>
@@ -352,7 +688,7 @@ public sealed class PhysicsWorld : IDisposable
         var collidable = new CollidableDescription(shapeIndex, 0.1f);
         var activity = new BodyActivityDescription(0.01f);
         BodyDescription description;
-        if (rigidBody.MotionType == RigidBodyMotionType.Kinematic)
+        if (body.FollowsNode || rigidBody.MotionType == RigidBodyMotionType.Kinematic)
         {
             description = BodyDescription.CreateKinematic(
                 pose, new BodyVelocity(rigidBody.LinearVelocity), collidable, activity);
@@ -390,13 +726,22 @@ public sealed class PhysicsWorld : IDisposable
             if (body.BodyHandle is { } handle)
             {
                 var reference = _simulation.Bodies[handle];
+                if (body.FollowsNode)
+                {
+                    GetBodyPose(body, out var followerPose, out var followerOrigin);
+                    body.CenterOffset = followerPose.Position - followerOrigin;
+                    reference.Pose = followerPose;
+                    reference.Velocity = default;
+                    _simulation.Bodies.UpdateBounds(handle);
+                    continue;
+                }
                 var externallyMoved = EnableInterpolation
                     ? !body.HasPresentationPosition ||
                       Vector3.DistanceSquared(worldPosition, body.PresentationPosition) > 0.0000001f
                     : Vector3.DistanceSquared(worldPosition, body.SimulationPosition) > 0.0000001f;
                 if (body.RigidBody?.MotionType == RigidBodyMotionType.Kinematic || externallyMoved)
                 {
-                    GetColliderPose(body.Node, body.Collider, out var pose, out _, out var origin);
+                    GetBodyPose(body, out var pose, out var origin);
                     body.CenterOffset = pose.Position - origin;
                     reference.Pose = pose;
                     _simulation.Bodies.UpdateBounds(handle);
@@ -411,15 +756,19 @@ public sealed class PhysicsWorld : IDisposable
                 }
                 continue;
             }
-            if (body.StaticHandle is not { } staticHandle)
+            if (body.StaticHandles is not { Count: > 0 } staticHandles)
                 continue;
-            GetColliderPose(body.Node, body.Collider, out var staticPose, out _, out var staticOrigin);
-            if (body.Collider.Shape == ColliderShape.Plane)
+            GetBodyPose(body, out var staticPose, out var staticOrigin);
+            if (body.Collider is PlaneColliderComponent)
                 staticPose.Position += Vector3.Transform(
                     new Vector3(0f, -PlaneThickness * 0.5f, 0f), staticPose.Orientation);
             body.CenterOffset = staticPose.Position - staticOrigin;
-            _simulation.Statics[staticHandle].Pose = staticPose;
-            _simulation.Statics.UpdateBounds(staticHandle);
+            for (var handleIndex = 0; handleIndex < staticHandles.Count; handleIndex++)
+            {
+                var staticHandle = staticHandles[handleIndex];
+                _simulation.Statics[staticHandle].Pose = staticPose;
+                _simulation.Statics.UpdateBounds(staticHandle);
+            }
         }
     }
 
@@ -431,7 +780,8 @@ public sealed class PhysicsWorld : IDisposable
         {
             var body = _bodies[index];
             body.PreviousPosition = body.SimulationPosition;
-            if (body.BodyHandle is not { } handle || body.RigidBody is not { } rigidBody)
+            if (body.FollowsNode || body.BodyHandle is not { } handle ||
+                body.RigidBody is not { } rigidBody)
                 continue;
             var reference = _simulation.Bodies[handle];
             var velocity = rigidBody.LinearVelocity;
@@ -457,7 +807,7 @@ public sealed class PhysicsWorld : IDisposable
         for (var index = 0; index < _bodies.Count; index++)
         {
             var body = _bodies[index];
-            if (body.BodyHandle is not { } handle)
+            if (body.FollowsNode || body.BodyHandle is not { } handle)
                 continue;
             var reference = _simulation.Bodies[handle];
             body.SimulationPosition = reference.Pose.Position - body.CenterOffset;
@@ -509,6 +859,24 @@ public sealed class PhysicsWorld : IDisposable
         pose = new RigidPose(Vector3.Transform(collider.Center, matrix), orientation);
     }
 
+    /// <summary>Computes the current native pose for a primitive or compound body.</summary>
+    /// <param name="body">Retained engine body mapping.</param>
+    /// <param name="pose">Resulting native pose.</param>
+    /// <param name="origin">Current world node origin.</param>
+    private static void GetBodyPose(PhysicsBody body, out RigidPose pose, out Vector3 origin)
+    {
+        if (!body.IsCompound)
+        {
+            GetColliderPose(body.Node, body.Collider, out pose, out _, out origin);
+            return;
+        }
+        var matrix = body.Node.GetModelMatrix();
+        origin = Vector3.Transform(Vector3.Zero, matrix);
+        if (!Matrix4x4.Decompose(matrix, out _, out var orientation, out _))
+            orientation = Quaternion.Identity;
+        pose = new RigidPose(origin + Vector3.Transform(body.LocalCenter, orientation), orientation);
+    }
+
     /// <summary>Assigns a world position while preserving parent-relative storage.</summary>
     /// <param name="node">Node to move.</param>
     /// <param name="worldPosition">Desired world position.</param>
@@ -557,12 +925,36 @@ public sealed class PhysicsWorld : IDisposable
             MathF.Sqrt(a.Collider.Friction * b.Collider.Friction),
             2f + MathF.Max(a.Collider.Restitution, b.Collider.Restitution) * 8f,
             new SpringSettings(30f, 1f));
-        var trigger = a.Collider.IsTrigger || b.Collider.IsTrigger;
+        var trigger = !a.IsCompound && a.Collider.IsTrigger ||
+            !b.IsCompound && b.Collider.IsTrigger;
         if (manifold.Count > 0)
         {
             manifold.GetContact(0, out _, out var normal, out var depth, out _);
             if (depth > 0f)
                 Contact?.Invoke(new PhysicsContact(a.Node, b.Node, -normal, depth, trigger));
+        }
+        return !trigger;
+    }
+
+    /// <summary>Configures an exact compound child contact, including trigger notification.</summary>
+    /// <param name="pair">Native collidable pair.</param><param name="childIndexA">First child.</param>
+    /// <param name="childIndexB">Second child.</param><param name="manifold">Generated child manifold.</param>
+    /// <returns>False for an authored trigger child so no response constraint is created.</returns>
+    private bool ConfigureChildContact(CollidablePair pair, int childIndexA, int childIndexB,
+        ref ConvexContactManifold manifold)
+    {
+        var a = GetBody(pair.A);
+        var b = GetBody(pair.B);
+        if (a is null || b is null)
+            return true;
+        var colliderA = a.GetCollider(childIndexA);
+        var colliderB = b.GetCollider(childIndexB);
+        var trigger = colliderA.IsTrigger || colliderB.IsTrigger;
+        if (trigger && manifold.Count > 0)
+        {
+            manifold.GetContact(0, out _, out var normal, out var depth, out _);
+            if (depth > 0f)
+                Contact?.Invoke(new PhysicsContact(a.Node, b.Node, -normal, depth, true));
         }
         return !trigger;
     }
@@ -573,9 +965,49 @@ public sealed class PhysicsWorld : IDisposable
     /// <returns>True for dynamic pairs and trigger-only static/kinematic pairs.</returns>
     private bool AllowContact(CollidableReference a, CollidableReference b)
     {
+        var bodyA = GetBody(a);
+        var bodyB = GetBody(b);
+        if (bodyA is null || bodyB is null || !HasCompatibleLayers(bodyA, bodyB))
+            return false;
         if (a.Mobility == CollidableMobility.Dynamic || b.Mobility == CollidableMobility.Dynamic)
             return true;
-        return GetBody(a)?.Collider.IsTrigger == true || GetBody(b)?.Collider.IsTrigger == true;
+        return bodyA.HasTrigger || bodyB.HasTrigger;
+    }
+
+    /// <summary>Checks whether any collider pair between two native bodies can interact.</summary>
+    /// <param name="a">First engine body.</param><param name="b">Second engine body.</param>
+    /// <returns>True when at least one authored layer pair is mutually enabled.</returns>
+    private static bool HasCompatibleLayers(PhysicsBody a, PhysicsBody b)
+    {
+        for (var aIndex = 0; aIndex < a.Colliders.Length; aIndex++)
+        {
+            var colliderA = a.Colliders[aIndex];
+            for (var bIndex = 0; bIndex < b.Colliders.Length; bIndex++)
+            {
+                var colliderB = b.Colliders[bIndex];
+                if ((colliderA.CollisionMask & colliderB.CollisionLayer) != 0u &&
+                    (colliderB.CollisionMask & colliderA.CollisionLayer) != 0u)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Checks exact compound child layers during child-level narrow phase.</summary>
+    /// <param name="pair">Owning native collidable pair.</param>
+    /// <param name="childIndexA">First compound child index.</param>
+    /// <param name="childIndexB">Second compound child index.</param>
+    /// <returns>True when the selected authored colliders mutually enable contact.</returns>
+    private bool AllowChildContact(CollidablePair pair, int childIndexA, int childIndexB)
+    {
+        var bodyA = GetBody(pair.A);
+        var bodyB = GetBody(pair.B);
+        if (bodyA is null || bodyB is null)
+            return false;
+        var colliderA = bodyA.GetCollider(childIndexA);
+        var colliderB = bodyB.GetCollider(childIndexB);
+        return (colliderA.CollisionMask & colliderB.CollisionLayer) != 0u &&
+            (colliderB.CollisionMask & colliderA.CollisionLayer) != 0u;
     }
 
     /// <summary>Bridges Bepu's copied callback structs back to their owning world.</summary>
@@ -589,6 +1021,72 @@ public sealed class PhysicsWorld : IDisposable
         internal ContactBridge(PhysicsWorld world)
         {
             World = world;
+        }
+    }
+
+    /// <summary>Collects the closest Bepu ray hit while applying engine collision layers.</summary>
+    private struct RayHitHandler : IRayHitHandler
+    {
+        private readonly PhysicsWorld _world;
+        private readonly Vector3 _origin;
+        private readonly Vector3 _direction;
+        private readonly uint _collisionMask;
+
+        /// <summary>Gets whether a hit has been collected.</summary>
+        internal bool HasHit { get; private set; }
+
+        /// <summary>Gets the closest collected engine hit.</summary>
+        internal PhysicsRayHit Hit { get; private set; }
+
+        /// <summary>Creates a query callback.</summary>
+        /// <param name="world">World used for handle mapping.</param>
+        /// <param name="origin">Normalized ray origin.</param>
+        /// <param name="direction">Normalized ray direction.</param>
+        /// <param name="collisionMask">Eligible engine layers.</param>
+        internal RayHitHandler(PhysicsWorld world, Vector3 origin, Vector3 direction,
+            uint collisionMask)
+        {
+            _world = world;
+            _origin = origin;
+            _direction = direction;
+            _collisionMask = collisionMask;
+            HasHit = false;
+            Hit = default;
+        }
+
+        /// <inheritdoc/>
+        public bool AllowTest(CollidableReference collidable)
+        {
+            var body = _world.GetBody(collidable);
+            if (body is null)
+                return false;
+            for (var index = 0; index < body.Colliders.Length; index++)
+            {
+                if ((_collisionMask & body.Colliders[index].CollisionLayer) != 0u)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <inheritdoc/>
+        public bool AllowTest(CollidableReference collidable, int childIndex)
+        {
+            var body = _world.GetBody(collidable);
+            return body is not null &&
+                (_collisionMask & body.GetCollider(childIndex).CollisionLayer) != 0u;
+        }
+
+        /// <inheritdoc/>
+        public void OnRayHit(in BepuPhysics.Trees.RayData ray, ref float maximumT,
+            float t, in Vector3 normal, CollidableReference collidable, int childIndex)
+        {
+            var body = _world.GetBody(collidable);
+            if (body is null)
+                return;
+            maximumT = t;
+            HasHit = true;
+            Hit = new PhysicsRayHit(body.Node, body.GetCollider(childIndex),
+                _origin + _direction * t, normal, t);
         }
     }
 
@@ -630,7 +1128,7 @@ public sealed class PhysicsWorld : IDisposable
             int workerIndex,
             CollidablePair pair,
             int childIndexA,
-            int childIndexB) => true;
+            int childIndexB) => _bridge.World.AllowChildContact(pair, childIndexA, childIndexB);
 
         /// <inheritdoc/>
         public bool ConfigureContactManifold(
@@ -638,7 +1136,9 @@ public sealed class PhysicsWorld : IDisposable
             CollidablePair pair,
             int childIndexA,
             int childIndexB,
-            ref ConvexContactManifold manifold) => true;
+            ref ConvexContactManifold manifold) =>
+            _bridge.World.ConfigureChildContact(
+                pair, childIndexA, childIndexB, ref manifold);
 
         /// <inheritdoc/>
         public void Dispose()
@@ -694,11 +1194,53 @@ public sealed class PhysicsWorld : IDisposable
         /// <summary>Gets the required collision component.</summary>
         internal ColliderComponent Collider { get; }
 
+        /// <summary>Gets all authored colliders represented by this native body.</summary>
+        internal ColliderComponent[] Colliders { get; }
+
+        /// <summary>Gets whether this mapping represents a native compound.</summary>
+        internal bool IsCompound => Colliders.Length > 1;
+
+        /// <summary>Gets whether any authored collider represented by the body is a trigger.</summary>
+        internal bool HasTrigger
+        {
+            get
+            {
+                for (var index = 0; index < Colliders.Length; index++)
+                {
+                    if (Colliders[index].IsTrigger)
+                        return true;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>Gets compound center of mass in scaled node-local coordinates.</summary>
+        internal Vector3 LocalCenter { get; }
+
         /// <summary>Gets or sets the Bepu body handle.</summary>
         internal BodyHandle? BodyHandle { get; set; }
 
         /// <summary>Gets or sets the Bepu static handle.</summary>
-        internal StaticHandle? StaticHandle { get; set; }
+        internal StaticHandle? StaticHandle
+        {
+            get => StaticHandles is { Count: > 0 } handles ? handles[0] : null;
+            set
+            {
+                StaticHandles ??= [];
+                StaticHandles.Clear();
+                if (value is { } handle)
+                    StaticHandles.Add(handle);
+            }
+        }
+
+        /// <summary>Gets all native static handles, including terrain chunks.</summary>
+        internal List<StaticHandle>? StaticHandles { get; private set; }
+
+        /// <summary>Gets native chunks owned by an explicit terrain collider.</summary>
+        internal List<TerrainNativeChunk>? TerrainChunks { get; private set; }
+
+        /// <summary>Gets or sets current height samples used by queries and rebuilds.</summary>
+        internal TerrainResource? TerrainResource { get; set; }
 
         /// <summary>Gets or sets the world offset from node origin to collider center.</summary>
         internal Vector3 CenterOffset { get; set; }
@@ -715,6 +1257,9 @@ public sealed class PhysicsWorld : IDisposable
         /// <summary>Gets or sets whether a presentation pose has been published.</summary>
         internal bool HasPresentationPosition { get; set; }
 
+        /// <summary>Gets whether this sensor follows the node instead of publishing simulation pose.</summary>
+        internal bool FollowsNode { get; }
+
         /// <summary>Creates retained state for one Bepu collidable.</summary>
         /// <param name="node">Transformed scene node.</param>
         /// <param name="rigidBody">Optional motion component.</param>
@@ -724,16 +1269,92 @@ public sealed class PhysicsWorld : IDisposable
             Node3D node,
             RigidBodyComponent? rigidBody,
             ColliderComponent collider,
-            Vector3 centerOffset)
+            Vector3 centerOffset,
+            bool followsNode = false)
         {
             Node = node;
             RigidBody = rigidBody;
             Collider = collider;
+            Colliders = [collider];
+            FollowsNode = followsNode;
             CenterOffset = centerOffset;
             var position = node.GetWorldPosition();
             PreviousPosition = position;
             SimulationPosition = position;
             PresentationPosition = position;
         }
+
+        /// <summary>Creates retained state for a native compound collidable.</summary>
+        /// <param name="node">Transformed scene node.</param>
+        /// <param name="rigidBody">Movable body component.</param>
+        /// <param name="colliders">Compound children in authored order.</param>
+        /// <param name="localCenter">Scaled local center of mass.</param>
+        /// <param name="centerOffset">World offset from node origin to center of mass.</param>
+        internal PhysicsBody(Node3D node, RigidBodyComponent rigidBody,
+            ColliderComponent[] colliders, Vector3 localCenter, Vector3 centerOffset)
+        {
+            Node = node;
+            RigidBody = rigidBody;
+            Colliders = colliders;
+            Collider = colliders[0];
+            CenterOffset = centerOffset;
+            LocalCenter = localCenter;
+            var position = node.GetWorldPosition();
+            PreviousPosition = position;
+            SimulationPosition = position;
+            PresentationPosition = position;
+        }
+
+        /// <summary>Gets a compound child collider, or the sole primitive collider.</summary>
+        /// <param name="childIndex">Native compound child index.</param>
+        /// <returns>Authored collider represented by the child.</returns>
+        internal ColliderComponent GetCollider(int childIndex)
+        {
+            return (uint)childIndex < (uint)Colliders.Length ? Colliders[childIndex] : Collider;
+        }
+
+        /// <summary>Adds one native static handle without replacing preceding chunks.</summary>
+        /// <param name="handle">New static handle.</param>
+        internal void AddStaticHandle(StaticHandle handle)
+        {
+            StaticHandles ??= [];
+            StaticHandles.Add(handle);
+        }
+
+        /// <summary>Adds one native terrain chunk and its static handle.</summary>
+        /// <param name="chunk">Native terrain chunk.</param>
+        internal void AddTerrainChunk(TerrainNativeChunk chunk)
+        {
+            TerrainChunks ??= [];
+            TerrainChunks.Add(chunk);
+            AddStaticHandle(chunk.Handle);
+        }
+
+        /// <summary>Finds a native terrain chunk by its exact authored quad region.</summary>
+        /// <param name="region">Requested region.</param><returns>Chunk index or minus one.</returns>
+        internal int FindTerrainChunk(TerrainChunkRegion region)
+        {
+            if (TerrainChunks is null)
+                return -1;
+            for (var index = 0; index < TerrainChunks.Count; index++)
+            {
+                if (TerrainChunks[index].Region == region)
+                    return index;
+            }
+            return -1;
+        }
+
+        /// <summary>Removes one static handle retained by a replaced terrain chunk.</summary>
+        /// <param name="handle">Handle to remove.</param>
+        internal void RemoveStaticHandle(StaticHandle handle)
+        {
+            StaticHandles?.Remove(handle);
+        }
     }
+
+    /// <summary>Retains one replaceable native terrain chunk.</summary>
+    /// <param name="Region">Authored quad region.</param><param name="Handle">Bepu static handle.</param>
+    /// <param name="Shape">Bepu mesh shape index.</param>
+    private readonly record struct TerrainNativeChunk(
+        TerrainChunkRegion Region, StaticHandle Handle, TypedIndex Shape);
 }

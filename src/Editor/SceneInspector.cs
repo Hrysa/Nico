@@ -44,6 +44,9 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
 
+    /// <summary>Gets the exact component focused by Scene preview picking.</summary>
+    public Component? FocusedComponent { get; private set; }
+
     /// <summary>Gets the active Inspector edit-form scope.</summary>
     public UIEditForm EditForm => _editForm;
 
@@ -74,7 +77,16 @@ public sealed class SceneInspector : Panel
     /// <param name="node">Selected authored node, or null.</param>
     public void Bind(Node? node)
     {
-        if (ReferenceEquals(InspectedNode, node) && Children.Count > 0)
+        Bind(node, null);
+    }
+
+    /// <summary>Rebuilds Inspector fields and emphasizes one preview-picked component.</summary>
+    /// <param name="node">Selected authored node, or null.</param>
+    /// <param name="focusedComponent">Exact selected component, or null for node selection.</param>
+    public void Bind(Node? node, Component? focusedComponent)
+    {
+        var focusChanged = !ReferenceEquals(FocusedComponent, focusedComponent);
+        if (ReferenceEquals(InspectedNode, node) && !focusChanged && Children.Count > 0)
         {
             ResolveBoundMaterial(node);
             RefreshValues();
@@ -83,6 +95,7 @@ public sealed class SceneInspector : Panel
 
         UnsubscribeFromNode();
         InspectedNode = node;
+        FocusedComponent = focusedComponent;
         DeactivateScriptBindings();
         _editForm.Clear();
         ClearChildren();
@@ -95,7 +108,7 @@ public sealed class SceneInspector : Panel
                 "Select an object to inspect", _theme.TextMuted));
             return;
         }
-        if (RestoreCachedView(node))
+        if (!focusChanged && RestoreCachedView(node))
         {
             SubscribeToNode(node);
             return;
@@ -139,10 +152,168 @@ public sealed class SceneInspector : Panel
                 scriptY = AddAnimatorSection(animator, scriptY);
         }
 
+        scriptY = AddPhysicsSections(node, scriptY);
         AddScriptSections(node, scriptY);
         CacheCurrentView(node);
         SubscribeToNode(node);
     }
+
+    /// <summary>Adds concrete rigid-body and collider fields in authored component order.</summary>
+    /// <param name="node">Inspected component owner.</param>
+    /// <param name="y">Available section top.</param>
+    /// <returns>Top available for the next section.</returns>
+    private float AddPhysicsSections(Node node, float y)
+    {
+        var components = node.Components;
+        var physicsIndex = 0;
+        if (FocusedComponent is RigidBodyComponent focusedBody &&
+            ReferenceEquals(focusedBody.Owner, node))
+            y = AddRigidBodySection(focusedBody, y, physicsIndex++);
+        else if (FocusedComponent is ColliderComponent focusedCollider &&
+            ReferenceEquals(focusedCollider.Owner, node))
+            y = AddColliderSection(focusedCollider, y, physicsIndex++);
+        for (var index = 0; index < components.Count; index++)
+        {
+            if (ReferenceEquals(components[index], FocusedComponent))
+                continue;
+            switch (components[index])
+            {
+                case RigidBodyComponent rigidBody:
+                    y = AddRigidBodySection(rigidBody, y, physicsIndex++);
+                    break;
+                case ColliderComponent collider:
+                    y = AddColliderSection(collider, y, physicsIndex++);
+                    break;
+            }
+        }
+        return y;
+    }
+
+    /// <summary>Adds the core editable rigid-body fields.</summary>
+    /// <param name="body">Component being edited.</param><param name="y">Section top.</param>
+    /// <param name="index">Unique component display index.</param><returns>Following section top.</returns>
+    private float AddRigidBodySection(RigidBodyComponent body, float y, int index)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Rigid Body", _theme.TextPrimary));
+        AddFloatRow("Mass", $"RigidBody{index}Mass", y + 30f, () => body.Mass,
+            value => body.Mass = value, positive: true);
+        AddFloatRow("Gravity", $"RigidBody{index}Gravity", y + 68f,
+            () => body.GravityScale, value => body.GravityScale = value);
+        AddFloatRow("Damping", $"RigidBody{index}Damping", y + 106f,
+            () => body.LinearDamping, value => body.LinearDamping = value, nonnegative: true);
+        return y + 148f;
+    }
+
+    /// <summary>Adds shared and type-specific fields for one concrete collider.</summary>
+    /// <param name="collider">Collider being edited.</param><param name="y">Section top.</param>
+    /// <param name="index">Unique component display index.</param><returns>Following section top.</returns>
+    private float AddColliderSection(ColliderComponent collider, float y, int index)
+    {
+        var prefix = $"Collider{index}";
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+            GetColliderDisplayName(collider) +
+            (ReferenceEquals(collider, FocusedComponent) ? " (Selected)" : string.Empty),
+            _theme.TextPrimary));
+        AddVectorRow("Center", prefix + "Center", y + 30f, () => collider.Center,
+            value => collider.Center = value, radiansAsDegrees: false);
+        var row = y + 68f;
+        switch (collider)
+        {
+            case BoxColliderComponent box:
+                AddVectorRow("Size", prefix + "Size", row, () => box.Size,
+                    value => box.Size = value, radiansAsDegrees: false, positive: true);
+                row += 38f;
+                break;
+            case SphereColliderComponent sphere:
+                AddFloatRow("Radius", prefix + "Radius", row, () => sphere.Radius,
+                    value => sphere.Radius = value, positive: true);
+                row += 38f;
+                break;
+            case CapsuleColliderComponent capsule:
+                AddFloatRow("Radius", prefix + "Radius", row, () => capsule.Radius,
+                    value => capsule.Radius = value, positive: true);
+                AddFloatRow("Height", prefix + "Height", row + 38f, () => capsule.Height,
+                    value => capsule.Height = value, positive: true);
+                row += 76f;
+                break;
+            case CylinderColliderComponent cylinder:
+                AddFloatRow("Radius", prefix + "Radius", row, () => cylinder.Radius,
+                    value => cylinder.Radius = value, positive: true);
+                AddFloatRow("Height", prefix + "Height", row + 38f, () => cylinder.Height,
+                    value => cylinder.Height = value, positive: true);
+                row += 76f;
+                break;
+            case PlaneColliderComponent plane:
+                AddVector2Row("Size", prefix + "Size", row, () => plane.Size,
+                    value => plane.Size = value);
+                row += 38f;
+                break;
+            case MeshColliderComponent mesh:
+                AddAssetReferenceRow("Mesh", prefix + "Mesh", row, () => mesh.Mesh,
+                    value => mesh.Mesh = value);
+                row += 38f;
+                if (mesh.Mesh is null)
+                {
+                    AddChild(CreateLabel(78f, row, Width - 90f, 26f,
+                        "Missing explicit collision mesh", _theme.Error));
+                    row += 30f;
+                }
+                break;
+            case TerrainColliderComponent terrain:
+                AddAssetReferenceRow("Terrain", prefix + "Terrain", row,
+                    () => terrain.TerrainData, value => terrain.TerrainData = value);
+                AddVector2Row("Size", prefix + "Size", row + 38f,
+                    () => terrain.HorizontalSize, value => terrain.HorizontalSize = value);
+                AddFloatRow("Height", prefix + "Height", row + 76f,
+                    () => terrain.HeightScale, value => terrain.HeightScale = value,
+                    positive: true);
+                row += 114f;
+                if (terrain.TerrainData is null)
+                {
+                    AddChild(CreateLabel(78f, row, Width - 90f, 26f,
+                        "Missing explicit terrain data", _theme.Error));
+                    row += 30f;
+                }
+                break;
+        }
+        AddFloatRow("Friction", prefix + "Friction", row, () => collider.Friction,
+            value => collider.Friction = Math.Clamp(value, 0f, 1f), nonnegative: true);
+        AddFloatRow("Bounce", prefix + "Restitution", row + 38f,
+            () => collider.Restitution,
+            value => collider.Restitution = Math.Clamp(value, 0f, 1f), nonnegative: true);
+        AddUIntRow("Layer", prefix + "Layer", row + 76f, () => collider.CollisionLayer,
+            value => collider.CollisionLayer = value, singleBit: true);
+        AddUIntRow("Mask", prefix + "Mask", row + 114f, () => collider.CollisionMask,
+            value => collider.CollisionMask = value);
+        var trigger = new ToggleButton(Width - 24f, 30f, "Trigger", _theme)
+        {
+            Name = prefix + "Trigger",
+            IsChecked = collider.IsTrigger,
+            Margin = new Thickness(12f, row + 152f, 0f, 0f)
+        };
+        trigger.CheckedChanged += value =>
+        {
+            collider.IsTrigger = value;
+            if (InspectedNode is { } inspected)
+                NodeChanged?.Invoke(inspected);
+        };
+        AddChild(trigger);
+        return row + 194f;
+    }
+
+    /// <summary>Gets a human-readable concrete collider heading.</summary>
+    /// <param name="collider">Collider to name.</param><returns>Inspector heading.</returns>
+    private static string GetColliderDisplayName(ColliderComponent collider) => collider switch
+    {
+        BoxColliderComponent => "Box Collider",
+        SphereColliderComponent => "Sphere Collider",
+        CapsuleColliderComponent => "Capsule Collider",
+        CylinderColliderComponent => "Cylinder Collider",
+        PlaneColliderComponent => "Plane Collider",
+        MeshColliderComponent => "Mesh Collider",
+        TerrainColliderComponent => "Terrain Collider",
+        _ => "Collider"
+    };
 
     /// <summary>Adds editable playback settings for one animator component.</summary>
     /// <param name="animator">Animator component to edit.</param>
@@ -699,22 +870,195 @@ public sealed class SceneInspector : Panel
         return ResolveScriptName?.Invoke(id) ?? id.ToString();
     }
 
-    /// <summary>
-    /// Adds a three-component vector editor row.
-    /// </summary>
-    /// <param name="label">Row label.</param>
-    /// <param name="namePrefix">Prefix assigned to field names.</param>
-    /// <param name="y">Local row position.</param>
-    /// <param name="read">Callback returning the latest vector value.</param>
-    /// <param name="apply">Callback receiving valid edited values.</param>
-    /// <param name="radiansAsDegrees">Whether displayed values convert radians to degrees.</param>
+    /// <summary>Adds a validated scalar component field.</summary>
+    /// <param name="label">Displayed label.</param><param name="name">Field name.</param>
+    /// <param name="y">Row position.</param><param name="read">Current value reader.</param>
+    /// <param name="apply">Validated value writer.</param><param name="positive">Require greater than zero.</param>
+    /// <param name="nonnegative">Require zero or greater.</param>
+    private void AddFloatRow(string label, string name, float y, Func<float> read,
+        Action<float> apply, bool positive = false, bool nonnegative = false)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var field = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = name,
+            Text = Format(read()),
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = text => ValidateConstrainedFloat(text, positive, nonnegative),
+            Margin = new Thickness(78f, y, 0f, 0f)
+        };
+        field.ValueUpdateRequested += text =>
+        {
+            if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
+                    out var value) || positive && value <= 0f || nonnegative && value < 0f)
+                return;
+            apply(value);
+            if (InspectedNode is { } inspected)
+                NodeChanged?.Invoke(inspected);
+        };
+        RegisterRefresh(field, () => Format(read()));
+        _editForm.Register(field);
+        AddChild(field);
+    }
+
+    /// <summary>Adds a two-component positive dimension field row.</summary>
+    /// <param name="label">Displayed label.</param><param name="namePrefix">Field prefix.</param>
+    /// <param name="y">Row position.</param><param name="read">Current vector reader.</param>
+    /// <param name="apply">Validated vector writer.</param>
+    private void AddVector2Row(string label, string namePrefix, float y, Func<Vector2> read,
+        Action<Vector2> apply)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var width = MathF.Floor((Width - 94f) * .5f);
+        for (var index = 0; index < 2; index++)
+        {
+            var componentIndex = index;
+            var field = new TextField(width, 30f, _theme)
+            {
+                Name = namePrefix + "XZ"[index],
+                Text = Format(index == 0 ? read().X : read().Y),
+                UpdateTrigger = TextUpdateTrigger.Commit,
+                Validator = text => ValidateConstrainedFloat(text, true, false),
+                Margin = new Thickness(78f + index * (width + 4f), y, 0f, 0f)
+            };
+            field.ValueUpdateRequested += text =>
+            {
+                if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out var value) || value <= 0f)
+                    return;
+                var current = read();
+                apply(componentIndex == 0 ? current with { X = value } : current with { Y = value });
+                if (InspectedNode is { } inspected)
+                    NodeChanged?.Invoke(inspected);
+            };
+            RegisterRefresh(field, () => Format(componentIndex == 0 ? read().X : read().Y));
+            _editForm.Register(field);
+            AddChild(field);
+        }
+    }
+
+    /// <summary>Adds an editable unsigned collision layer or mask.</summary>
+    /// <param name="label">Displayed label.</param><param name="name">Field name.</param>
+    /// <param name="y">Row position.</param><param name="read">Current value reader.</param>
+    /// <param name="apply">Value writer.</param>
+    /// <param name="singleBit">Whether the value must contain exactly one set bit.</param>
+    private void AddUIntRow(string label, string name, float y, Func<uint> read,
+        Action<uint> apply, bool singleBit = false)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var field = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = name,
+            Text = read().ToString(CultureInfo.InvariantCulture),
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = text => ValidateUnsigned(text, singleBit),
+            Margin = new Thickness(78f, y, 0f, 0f)
+        };
+        field.ValueUpdateRequested += text =>
+        {
+            if (!uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out var value) || singleBit &&
+                (value == 0u || (value & (value - 1u)) != 0u))
+                return;
+            apply(value);
+            if (InspectedNode is { } inspected)
+                NodeChanged?.Invoke(inspected);
+        };
+        RegisterRefresh(field, () => read().ToString(CultureInfo.InvariantCulture));
+        _editForm.Register(field);
+        AddChild(field);
+    }
+
+    /// <summary>Validates an unsigned integer and optional single-bit layer constraint.</summary>
+    /// <param name="text">Pending text.</param><param name="singleBit">Require exactly one bit.</param>
+    /// <returns>Error message or null.</returns>
+    private static string? ValidateUnsigned(string text, bool singleBit)
+    {
+        if (!uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                out var value))
+            return "Enter an unsigned integer.";
+        return singleBit && (value == 0u || (value & (value - 1u)) != 0u)
+            ? "Choose exactly one layer bit." : null;
+    }
+
+    /// <summary>Adds an editable explicit asset UUID with optional hash-delimited subasset.</summary>
+    /// <param name="label">Displayed label.</param><param name="name">Field name.</param>
+    /// <param name="y">Row position.</param><param name="read">Current reference reader.</param>
+    /// <param name="apply">Reference writer.</param>
+    private void AddAssetReferenceRow(string label, string name, float y,
+        Func<AssetReference?> read, Action<AssetReference?> apply)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var field = new TextField(Width - 90f, 30f, _theme)
+        {
+            Name = name,
+            Text = read()?.ToString() ?? string.Empty,
+            Placeholder = "Required asset UUID[#subasset]",
+            UpdateTrigger = TextUpdateTrigger.Commit,
+            Validator = text => TryParseAssetReference(text, out _) ? null :
+                "Enter an asset UUID with an optional #subasset.",
+            Margin = new Thickness(78f, y, 0f, 0f)
+        };
+        field.ValueUpdateRequested += text =>
+        {
+            if (!TryParseAssetReference(text, out var reference))
+                return;
+            apply(reference);
+            if (InspectedNode is { } inspected)
+                NodeChanged?.Invoke(inspected);
+        };
+        RegisterRefresh(field, () => read()?.ToString() ?? string.Empty);
+        _editForm.Register(field);
+        AddChild(field);
+    }
+
+    /// <summary>Parses an explicit asset reference entered in diagnostic form.</summary>
+    /// <param name="text">UUID followed by an optional hash and subasset.</param>
+    /// <param name="reference">Parsed reference.</param><returns>True when valid.</returns>
+    private static bool TryParseAssetReference(string text, out AssetReference? reference)
+    {
+        var separator = text.IndexOf('#');
+        var assetText = separator < 0 ? text : text[..separator];
+        var subAsset = separator < 0 ? null : text[(separator + 1)..];
+        if (!AssetId.TryParse(assetText.Trim(), out var asset) ||
+            subAsset is not null && string.IsNullOrWhiteSpace(subAsset))
+        {
+            reference = null;
+            return false;
+        }
+        reference = new AssetReference(asset, subAsset?.Trim());
+        return true;
+    }
+
+    /// <summary>Validates a finite scalar with optional sign constraints.</summary>
+    /// <param name="text">Pending text.</param><param name="positive">Require greater than zero.</param>
+    /// <param name="nonnegative">Require zero or greater.</param><returns>Error or null.</returns>
+    private static string? ValidateConstrainedFloat(string text, bool positive, bool nonnegative)
+    {
+        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
+                out var value) || !float.IsFinite(value))
+            return "Enter a finite number.";
+        if (positive && value <= 0f)
+            return "Enter a value greater than zero.";
+        if (nonnegative && value < 0f)
+            return "Enter zero or a positive value.";
+        return null;
+    }
+
+    /// <summary>Adds a three-component vector editor row.</summary>
+    /// <param name="label">Row label.</param><param name="namePrefix">Field-name prefix.</param>
+    /// <param name="y">Local row position.</param><param name="read">Current vector reader.</param>
+    /// <param name="apply">Validated vector writer.</param>
+    /// <param name="radiansAsDegrees">Whether display values use degrees.</param>
+    /// <param name="positive">Whether each component must be greater than zero.</param>
     private void AddVectorRow(
         string label,
         string namePrefix,
         float y,
         Func<Vector3> read,
         Action<Vector3> apply,
-        bool radiansAsDegrees)
+        bool radiansAsDegrees,
+        bool positive = false)
     {
         const float labelWidth = 66f;
         const float spacing = 4f;
@@ -734,14 +1078,16 @@ public sealed class SceneInspector : Panel
                 Name = $"{namePrefix}{"XYZ"[index]}",
                 Text = Format(GetComponent(displayValue, index)),
                 UpdateTrigger = TextUpdateTrigger.Commit,
-                Validator = ValidateFloat,
+                Validator = text => positive
+                    ? ValidateConstrainedFloat(text, true, false)
+                    : ValidateFloat(text),
                 Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing),
                     y, 0f, 0f)
             };
             field.ValueUpdateRequested += text =>
             {
                 if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
-                        out var component))
+                        out var component) || positive && component <= 0f)
                     return;
                 var edited = read();
                 var internalComponent = radiansAsDegrees

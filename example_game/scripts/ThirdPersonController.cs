@@ -196,9 +196,8 @@ public sealed partial class ThirdPersonController : SceneScript
     /// <summary>Adds a foot-origin capsule matching the example character.</summary>
     private void AddDefaultCollider()
     {
-        Owner.AddComponent(new ColliderComponent
+        Owner.AddComponent(new CapsuleColliderComponent
         {
-            Shape = ColliderShape.Capsule,
             Center = new Vector3(0f, 0.9f, 0f),
             Radius = 0.35f,
             Height = 1.8f
