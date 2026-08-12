@@ -18,7 +18,11 @@ public sealed class AnimationSetEditorTests
         var reference = new AssetReference(AssetId.New(), "animation/0");
         AnimationSetAuthoring.Save(path,
             [new AnimationSetEntry("Run", reference, null, true, "Hips")]);
-        var editor = new AnimationSetEditor();
+        var editor = new AnimationSetEditor
+        {
+            ResolveRootJoints = _ => new AnimationRootJointOptions(
+                ["Root", "Hips"], "Hips")
+        };
 
         editor.Open(path);
 
@@ -29,7 +33,7 @@ public sealed class AnimationSetEditorTests
         Assert.True(FindByName<CheckBox>(editor, "AnimationLoop")!.IsChecked);
         Assert.Equal(1d, FindByName<NumericField>(editor, "AnimationSpeed")!.Value);
         Assert.Equal("Hips",
-            FindByName<TextField>(editor, "AnimationRootMotionJoint")!.Text);
+            FindByName<ComboBox>(editor, "AnimationRootMotionJoint")!.SelectedItem);
     }
 
     /// <summary>Adds an imported animation with a unique alias and saves readable JSON.</summary>
@@ -43,7 +47,11 @@ public sealed class AnimationSetEditorTests
         var source = new ImportedSubAssetNode(
             System.IO.Path.Combine(directory.Path, "Run.glb"), reference,
             "nico/skeletal-animation", "Run [Animation]");
-        var editor = new AnimationSetEditor();
+        var editor = new AnimationSetEditor
+        {
+            ResolveRootJoints = _ => new AnimationRootJointOptions(
+                ["Armature", "mixamorig:Hips"], "mixamorig:Hips")
+        };
         editor.Open(path);
         var saved = false;
         editor.Saved += _ => saved = true;
@@ -57,6 +65,8 @@ public sealed class AnimationSetEditorTests
         var entry = Assert.Single(AnimationSetResource.Load(stream).Entries);
         Assert.Equal("Run", entry.Alias);
         Assert.Equal(reference, entry.Source);
+        Assert.True(entry.InPlace);
+        Assert.Equal("mixamorig:Hips", entry.RootMotionJoint);
     }
 
     /// <summary>Rejects non-animation imported artifacts from the animation set.</summary>
@@ -75,6 +85,57 @@ public sealed class AnimationSetEditorTests
 
         Assert.False(editor.Add(source));
         Assert.Empty(editor.Entries);
+    }
+
+    /// <summary>Add toolbar is visible and physical GLB resolution can add its animations.</summary>
+    [Fact]
+    public void AddButton_PhysicalGlb_UsesConfiguredAnimationResolver()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "Actions.nanimset");
+        var glbPath = System.IO.Path.Combine(directory.Path, "Actions.glb");
+        AnimationSetAuthoring.Save(path, []);
+        var file = new FileSystemNode(glbPath, false);
+        var imported = new ImportedSubAssetNode(glbPath,
+            new AssetReference(AssetId.New(), "animation/0"),
+            "nico/skeletal-animation", "Jump [Animation]");
+        var editor = new AnimationSetEditor
+        {
+            ResolveFileAnimations = _ => [imported]
+        };
+        editor.Open(path);
+        var requested = false;
+        editor.AddRequested += () =>
+        {
+            requested = true;
+            editor.Add(file);
+        };
+
+        FindByName<Button>(editor, "AnimationSetAdd")!.InvokeClick();
+
+        Assert.True(requested);
+        Assert.Equal("Jump", Assert.Single(editor.Entries).Alias);
+    }
+
+    /// <summary>Form controls remain bounded by the dock viewport during layout.</summary>
+    [Fact]
+    public void Layout_LongSourceReference_RemainsInsideEditorWidth()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "Actions.nanimset");
+        AnimationSetAuthoring.Save(path,
+        [
+            new AnimationSetEntry("Run",
+                new AssetReference(AssetId.New(), new string('x', 300)))
+        ]);
+        var editor = new AnimationSetEditor { Width = 700f, Height = 400f };
+        editor.Open(path);
+
+        editor.BuildDrawList();
+
+        var source = FindByName<TextField>(editor, "AnimationSource")!;
+        Assert.True(float.IsFinite(source.Width));
+        Assert.InRange(source.Right, editor.Left, editor.Right);
     }
 
     /// <summary>Finds a named descendant in one retained UI subtree.</summary>

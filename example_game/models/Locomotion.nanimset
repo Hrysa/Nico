@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "entries": [
     {
       "alias": "Idle",
@@ -14,8 +14,7 @@
         "asset": "019fefe0-0061-792f-ba2d-27e40bd50f64",
         "subAsset": "animation/0"
       },
-      "inPlace": true,
-      "rootMotionJoint": "mixamorig:Hips"
+      "inPlace": true
     }
   ]
 }

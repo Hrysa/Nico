@@ -23,6 +23,7 @@
     <Project Path="tests/Engine.Physics.Tests/Engine.Physics.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/Engine.AssetTool/Engine.AssetTool.csproj" />
     <Project Path="tools/Engine.Profiler.Weaver/Engine.Profiler.Weaver.csproj" />
     <Project Path="tools/Engine.Script.Generator/Engine.Script.Generator.csproj" />
     <Project Path="tools/Engine.UI.Benchmarks/Engine.UI.Benchmarks.csproj" />

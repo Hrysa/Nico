@@ -39,14 +39,14 @@ An `AssetId` answers which persistent project asset is referenced. A project-rel
 - Validate artifact versions, checksums, required engine versions, missing dependencies, and duplicate package entries before starting the game.
 - Leave room for package splitting, streaming groups, patches, DLC, encryption/signing, and mod mounts without making them requirements for the first package format.
 
-### Validation and completion criteria
+### Asset pipeline validation and completion criteria
 
 - A script compilation failure does not corrupt metadata, scenes, the last successful artifact set, or the running Editor.
 - Editor loose-file loading and Player package loading produce equivalent runtime resources from the same asset reference.
 
 ### Explicitly deferred
 
-- Production texture, shader, model, audio, material, scene, and prefab importers beyond the contracts required to add them cleanly.
+- Audio, shader-source, prefab, and production platform-compression importers. GLB models/animations/materials/textures, image textures, standard materials, animation sets, collision meshes, terrain, and scenes already have current import or persistence paths.
 - Distributed asset processing and remote artifact caches.
 - A final Source 2 VPK-compatible format; 0.2.0 requires package-ready abstractions and a minimal Nico package, not wire compatibility with VPK.
 - Advanced package encryption, signing, differential patch generation, and network streaming.
@@ -71,15 +71,15 @@ An `AssetId` answers which persistent project asset is referenced. A project-rel
 - Validate three distinct budgets: idle with no selection, idle with a selected object, and active gizmo dragging. Optimize sustained allocations first; selection-change and other one-frame spikes are secondary.
 - Target approximately 0–1 KB per idle Editor frame, 0–2 KB for an unchanged active viewport, and less than 10 KB per gizmo-drag frame, then revise budgets from representative profiling data.
 
-### Multi-window editor
+### Typography and bounded glyph cache
 
-- Prioritize detachable Scene and Game viewports, followed by Inspector, Hierarchy, FileSystem, profiler, debugger, and settings.
-- Keep temporary workflows such as Open Scene as in-window modal overlays.
+The current renderer already provides on-demand TrueType glyph generation, DirectWrite hinted RGB coverage on Windows, Unicode fallback, and per-window atlas textures. Remaining work is:
 
-### Dynamic glyph generation and runtime cache
-
-- Add selectable font faces, weights, and fallback chains to the existing on-demand glyph cache.
-- Share compatible immutable glyph data safely across native windows and DPI contexts.
+- Add user-selectable font faces, weights, and ordered fallback chains.
+- Add bounded atlas pages with usage tracking and fence-safe eviction for long sessions.
+- Persist reusable glyph pages and metadata when font source and rasterization settings match.
+- Share compatible immutable glyph data across native windows and DPI contexts while retaining per-window GPU descriptors and synchronization.
+- Add cache hit-rate, atlas occupancy, generation, upload, and eviction diagnostics.
 
 ### AI and automation interface
 
@@ -95,14 +95,6 @@ An `AssetId` answers which persistent project asset is referenced. A project-rel
 - Add an MCP adapter as a thin schema-driven layer over the local command API for AI clients.
 - Publish scene, selection, build, and play-state events for interactive clients and progress reporting.
 - Restrict all asset and filesystem operations to the opened project root; do not expose unrestricted filesystem access or arbitrary command execution.
-
-### Bounded glyph cache and font fallback
-
-- Add bounded atlas pages with usage tracking and fence-safe glyph eviction so long editor sessions cannot exhaust a fixed atlas.
-- Persist reusable glyph-cache pages and metadata between editor sessions when the font source and rasterization settings still match.
-- Support fallback font chains and dynamically generated Unicode glyphs without baking every supported codepoint at startup.
-- Share compatible glyph-cache pages across native windows while keeping per-window descriptors and synchronization explicit.
-- Add cache hit-rate, atlas occupancy, generation, upload, and eviction diagnostics for profiling.
 
 ## Version 0.4.0
 
@@ -122,7 +114,7 @@ Replace viewport MSAA with a full temporal anti-aliasing pipeline while preservi
 - Add debug views and metrics for motion vectors, jitter, history weight, rejected history, disocclusion, and resolve cost.
 - Retain MSAA as a temporary fallback during development, then remove the multisampled viewport attachments and resolve path once TAA meets the completion criteria.
 
-### Validation and completion criteria
+### TAA validation and completion criteria
 
 - Static and moving scenes remain stable at native resolution with visibly less edge and shader aliasing than the current MSAA path.
 - Camera movement, object motion, newly revealed surfaces, animation, particles, and viewport resizing do not produce persistent ghosting or invalid history.

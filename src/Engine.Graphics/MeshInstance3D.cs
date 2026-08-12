@@ -13,8 +13,6 @@ public readonly record struct MeshBounds(Vector3 Minimum, Vector3 Maximum);
 /// </summary>
 public class MeshInstance3D : Node3D
 {
-    private MaterialProperties? _materialOverride;
-
     /// <summary>Gets or sets the persistent mesh resource to render.</summary>
     public AssetReference Mesh { get; set; }
 
@@ -23,23 +21,6 @@ public class MeshInstance3D : Node3D
 
     /// <summary>Gets persistent material assignments by mesh material slot.</summary>
     public List<AssetReference> Materials { get; } = [];
-
-    /// <summary>Gets or sets the scene-local copy-on-write material override for slot zero.</summary>
-    public MaterialProperties? MaterialOverride
-    {
-        get => _materialOverride;
-        set
-        {
-            if (ReferenceEquals(_materialOverride, value))
-                return;
-            if (_materialOverride is not null)
-                _materialOverride.Changed -= OnMaterialOverrideChanged;
-            _materialOverride = value;
-            if (_materialOverride is not null)
-                _materialOverride.Changed += OnMaterialOverrideChanged;
-            NotifyChanged(NodeChangeKind.Render);
-        }
-    }
 
     /// <summary>
     /// Creates a mesh instance using the built-in cube resource.
@@ -50,11 +31,6 @@ public class MeshInstance3D : Node3D
         Name = "MeshInstance3D";
     }
 
-    /// <summary>Publishes a mutation made inside the scene-local material.</summary>
-    private void OnMaterialOverrideChanged()
-    {
-        NotifyChanged(NodeChangeKind.Render);
-    }
 }
 
 /// <summary>Defines stable engine-owned resources available without project imports.</summary>

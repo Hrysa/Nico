@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Engine.Core;
 
 namespace Engine.Graphics;
 
@@ -373,15 +374,13 @@ public sealed record TextureResource(
     }
 }
 
-/// <summary>Describes the first built-in forward material feature set.</summary>
-public sealed class StandardMaterialResource
+/// <summary>Contains renderer-resolved standard-material values and GPU resources.</summary>
+public sealed class ResolvedStandardMaterial
 {
-    private const string Magic = "NMATL001";
-
     /// <summary>Gets or sets linear base-color multiplier.</summary>
     public Vector4 BaseColor { get; set; } = Vector4.One;
 
-    /// <summary>Gets or sets an optional base-color texture handle.</summary>
+    /// <summary>Gets or sets an optional renderer-owned base-color texture.</summary>
     public TextureHandle BaseColorTexture { get; set; }
 
     /// <summary>Gets or sets metallic response in the range zero through one.</summary>
@@ -393,38 +392,25 @@ public sealed class StandardMaterialResource
     /// <summary>Gets or sets whether back-face culling is disabled.</summary>
     public bool DoubleSided { get; set; }
 
-    /// <summary>Reads one versioned Nico standard-material artifact.</summary>
-    /// <param name="stream">Readable artifact stream.</param>
-    /// <returns>The decoded material and its unresolved base-color texture slot.</returns>
-    public static (StandardMaterialResource Material, int BaseColorTextureSlot) Load(Stream stream)
+    /// <summary>Resolves persistent material values with an optional GPU texture.</summary>
+    /// <param name="source">Persistent material resource.</param>
+    /// <param name="texture">Renderer-owned texture handle.</param>
+    /// <returns>A renderer-ready material.</returns>
+    public static ResolvedStandardMaterial Resolve(
+        StandardMaterialAsset source,
+        TextureHandle texture = default)
     {
-        ArgumentNullException.ThrowIfNull(stream);
-        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
-        if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
-            throw new InvalidDataException("Standard material artifact has an invalid signature.");
-        if (reader.ReadUInt32() != 1u)
-            throw new InvalidDataException("Standard material artifact version is unsupported.");
-        var material = new StandardMaterialResource
+        ArgumentNullException.ThrowIfNull(source);
+        return new ResolvedStandardMaterial
         {
-            BaseColor = new Vector4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
-                reader.ReadSingle()),
-            Metallic = reader.ReadSingle(),
-            Roughness = reader.ReadSingle(),
-            DoubleSided = reader.ReadBoolean()
+            BaseColor = source.BaseColor,
+            BaseColorTexture = texture,
+            Metallic = source.Metallic,
+            Roughness = source.Roughness,
+            DoubleSided = source.DoubleSided
         };
-        var textureSlot = reader.ReadInt32();
-        if (stream.CanSeek && stream.Position != stream.Length)
-            throw new InvalidDataException("Standard material artifact payload length is invalid.");
-        return (material, textureSlot);
     }
 }
-
-/// <summary>Contains a decoded material and its unresolved imported texture slot.</summary>
-/// <param name="Material">Decoded renderer-independent material values.</param>
-/// <param name="BaseColorTextureSlot">Model-local texture slot, or negative when absent.</param>
-public sealed record DecodedStandardMaterial(
-    StandardMaterialResource Material,
-    int BaseColorTextureSlot);
 
 /// <summary>Identifies one renderer-owned texture resource.</summary>
 /// <param name="Value">Opaque renderer-owned identifier.</param>

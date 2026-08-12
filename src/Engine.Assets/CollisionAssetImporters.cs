@@ -1,3 +1,5 @@
+using Engine.Core;
+
 namespace Engine.Assets;
 
 /// <summary>Publishes a generated collision-mesh source with its runtime content type.</summary>
@@ -63,5 +65,33 @@ public sealed class AnimationSetAssetImporter : IAssetImporter
         ArgumentNullException.ThrowIfNull(context);
         return CollisionMeshAssetImporter.Copy(
             context, "animation-set.nanimset", "nico/animation-set");
+    }
+}
+
+/// <summary>Publishes a project-authored standard-material source.</summary>
+public sealed class StandardMaterialAssetImporter : IAssetImporter
+{
+    /// <inheritdoc/>
+    public string Id => "standard-material";
+
+    /// <inheritdoc/>
+    public int Version => 1;
+
+    /// <inheritdoc/>
+    public AssetImportResult Import(AssetImportContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.CancellationToken.ThrowIfCancellationRequested();
+        StandardMaterialAsset material;
+        using (var source = context.OpenSource())
+            material = StandardMaterialAssetCodec.Load(source);
+        using (var source = context.OpenSource())
+        using (var destination = context.CreateArtifact("material.nmat"))
+            source.CopyTo(destination);
+        var dependencies = material.BaseColorTexture is { } texture
+            ? new[] { texture } : [];
+        return new AssetImportResult(
+            [new AssetArtifact("main", "nico/standard-material", "material.nmat")],
+            dependencies, []);
     }
 }

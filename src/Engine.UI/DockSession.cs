@@ -451,13 +451,22 @@ public sealed class DockSession : IDisposable
     public void SynchronizeFloatingWindows()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var geometryChanged = false;
         for (var index = Workspace.FloatingRoots.Count - 1; index >= 0; index--)
         {
             var floating = Workspace.FloatingRoots[index];
             if (_floatingWindows.TryGetValue(floating.Id, out var existing))
             {
                 if (existing.Window is IDockFloatingGeometry geometry)
+                {
+                    var previousLeft = floating.Left;
+                    var previousTop = floating.Top;
+                    var previousWidth = floating.Width;
+                    var previousHeight = floating.Height;
                     geometry.SynchronizeGeometry();
+                    geometryChanged |= previousLeft != floating.Left || previousTop != floating.Top ||
+                        previousWidth != floating.Width || previousHeight != floating.Height;
+                }
                 if (existing.Window.IsOpen)
                     continue;
                 existing.Host.WorkspaceChanged -= Refresh;
@@ -466,6 +475,7 @@ public sealed class DockSession : IDisposable
                 existing.Window.Dispose();
                 _floatingWindows.Remove(floating.Id);
                 Workspace.FloatingRoots.RemoveAt(index);
+                geometryChanged = true;
                 continue;
             }
             var host = new DockHost(
@@ -482,6 +492,8 @@ public sealed class DockSession : IDisposable
             }
         }
         RemoveOrphanWindows();
+        if (geometryChanged)
+            WorkspaceChanged?.Invoke();
     }
 
     /// <summary>Disposes every floating presentation host.</summary>

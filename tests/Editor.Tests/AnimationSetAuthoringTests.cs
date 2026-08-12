@@ -26,7 +26,7 @@ public sealed class AnimationSetAuthoringTests
             var entry = Assert.Single(loaded.Entries);
             Assert.Equal("Run", entry.Alias);
             Assert.Equal(source, entry.Source);
-            Assert.Equal("Sprint", entry.Clip);
+            Assert.Null(entry.Clip);
         }
         finally
         {

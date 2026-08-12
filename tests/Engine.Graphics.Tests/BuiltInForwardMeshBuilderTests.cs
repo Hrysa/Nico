@@ -31,7 +31,7 @@ public class BuiltInForwardMeshBuilderTests
             [new Submesh(0, 6, 0)]);
 
         var vertices = BuiltInForwardMeshBuilder.BuildIndexedVertices(mesh,
-            new StandardMaterialResource());
+            new ResolvedStandardMaterial());
 
         Assert.Equal(3, vertices.Length);
         Assert.Equal(source.Select(vertex => vertex.Position),
@@ -51,7 +51,7 @@ public class BuiltInForwardMeshBuilderTests
             ],
             [0, 1, 2], [new Submesh(0, 3, 0)]);
         var factor = new Vector4(0.25f, 0.5f, 0.75f, 1f);
-        var material = new StandardMaterialResource
+        var material = new ResolvedStandardMaterial
         {
             BaseColor = factor,
             BaseColorTexture = new TextureHandle(1)
@@ -76,7 +76,7 @@ public class BuiltInForwardMeshBuilderTests
             new ModelVertex(Vector3.UnitZ, Vector3.UnitY, Vector2.Zero, Vector4.UnitX,
                 vertexColor)
         ], [0, 1, 2], [new Submesh(0, 3, 0)]);
-        var material = new StandardMaterialResource
+        var material = new ResolvedStandardMaterial
         {
             BaseColor = new Vector4(0.5f, 0.4f, 0.2f, 0.5f)
         };

@@ -63,7 +63,7 @@ public sealed class AnimationSetResourceTests
         var source = new AssetReference(AssetId.New(), "animation/Run");
         var expected = new AnimationSetResource(
         [
-            new AnimationSetEntry("Run", source, "Sprint", true, "Hips", 0.75f, false)
+            new AnimationSetEntry("Run", source, null, true, "Hips", 0.75f, false)
         ]);
         using var stream = new MemoryStream();
 

@@ -40,7 +40,7 @@ public static class BuiltInForwardMeshBuilder
     /// <returns>Compact shaded vertices preserving source index addressing.</returns>
     public static ForwardModelVertex[] BuildIndexedVertices(
         StaticMeshResource mesh,
-        StandardMaterialResource material)
+        ResolvedStandardMaterial material)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(material);
@@ -60,7 +60,7 @@ public static class BuiltInForwardMeshBuilder
     /// <returns>Packed vertices preserving source index addressing.</returns>
     public static SkinnedForwardModelVertex[] BuildSkinnedVertices(
         SkinnedMeshResource mesh,
-        StandardMaterialResource material)
+        ResolvedStandardMaterial material)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(material);

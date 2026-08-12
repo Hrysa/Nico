@@ -720,8 +720,11 @@ public sealed class DockWorkspaceTests
         using var session = new DockSession(
             new DockWorkspace { Root = group }, registry, factory);
         Assert.True(session.FloatTab("profiler", 10f, 20f, 400f, 300f));
+        var changes = 0;
+        session.WorkspaceChanged += () => changes++;
 
         factory.Windows[0].NextGeometry = (50f, 60f, 700f, 500f);
+        session.SynchronizeFloatingWindows();
         session.SynchronizeFloatingWindows();
 
         var floating = session.Workspace.FloatingRoots[0];
@@ -730,6 +733,7 @@ public sealed class DockWorkspaceTests
         Assert.Equal(700f, floating.Width);
         Assert.Equal(500f, floating.Height);
         Assert.True(factory.Windows[0].GeometrySyncCount > 0);
+        Assert.Equal(1, changes);
     }
 
     /// <summary>Verifies persisted floating roots can wait until renderer initialization completes.</summary>

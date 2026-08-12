@@ -201,7 +201,8 @@ public class UIThemeTests
         var commands = surface.BuildDrawList().Commands;
 
         Assert.Equal(4, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
-        Assert.Empty(commands.Where(command => command.Type == UIDrawCommandType.RoundedRectangle));
+        Assert.DoesNotContain(commands,
+            command => command.Type == UIDrawCommandType.RoundedRectangle);
     }
 
     /// <summary>Verifies panel corners are rounded with theme radius by default.</summary>

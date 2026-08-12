@@ -98,13 +98,7 @@ public class SceneFileStoreTests
             var cube = new MeshInstance3D
             {
                 Name = "Cube",
-                ScriptId = AssetId.New(),
-                MaterialOverride = new MaterialProperties
-                {
-                    BaseColor = new Vector4(0.2f, 0.3f, 0.4f, 1f),
-                    Metallic = 0.6f,
-                    Roughness = 0.7f
-                }
+                ScriptId = AssetId.New()
             };
             var firstScript = Assert.IsType<ScriptComponent>(Assert.Single(cube.Components));
             firstScript.SetPropertyOverride(101, SerializedPropertyValue.From(2.5d));
@@ -179,8 +173,6 @@ public class SceneFileStoreTests
             Assert.Equal(new Vector3(1f, 2f, 3f), loadedBody.LinearVelocity);
             Assert.Equal(0.5f, loadedBody.GravityScale);
             Assert.Equal(0.1f, loadedBody.LinearDamping);
-            Assert.Equal(cube.MaterialOverride.BaseColor, loadedCube.MaterialOverride?.BaseColor);
-            Assert.Equal(cube.MaterialOverride.Metallic, loadedCube.MaterialOverride?.Metallic);
             Assert.Equal(2, loaded.MeshInstances.Count);
             var loadedModel = Assert.IsType<MeshInstance3D>(loaded.Root.Children[2]);
             Assert.Equal(modelReference, loadedModel.Mesh);
@@ -231,7 +223,6 @@ public class SceneFileStoreTests
                   "scriptId": "{{scriptId}}",
                   "camera": null,
                   "model": null,
-                  "materialOverride": null,
                   "children": []
                 },
                 {
@@ -244,7 +235,6 @@ public class SceneFileStoreTests
                   "scriptId": null,
                   "camera": { "fov": 0.8, "near": 0.1, "far": 100 },
                   "model": null,
-                  "materialOverride": null,
                   "children": []
                 }
               ]

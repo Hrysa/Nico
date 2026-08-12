@@ -251,7 +251,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         StaticMeshResource mesh,
-        StandardMaterialResource material,
+        StandardMaterialAsset material,
         TextureResource? texture = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
@@ -262,8 +262,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
         try
         {
-            material.BaseColorTexture = textureHandle;
-            var meshHandle = _renderer.CreateStaticMesh(mesh, material);
+            var meshHandle = _renderer.CreateStaticMesh(
+                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, meshHandle, textureHandle, default, null));
         }
@@ -285,7 +285,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         SkinnedMeshResource mesh,
-        StandardMaterialResource material,
+        StandardMaterialAsset material,
         TextureResource? texture = null,
         AnimationClipResource[]? animations = null,
         AnimationController? sharedController = null)
@@ -298,8 +298,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
         try
         {
-            material.BaseColorTexture = textureHandle;
-            var handles = _renderer.CreateSkinnedMesh(mesh, material);
+            var handles = _renderer.CreateSkinnedMesh(
+                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
             var playbackResource = animations is null
                 ? mesh
                 : new SkinnedMeshResource(mesh.Mesh, mesh.Influences, mesh.Skeleton,

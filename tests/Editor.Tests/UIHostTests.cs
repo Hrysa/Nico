@@ -1536,12 +1536,12 @@ public class UIHostTests
         /// <inheritdoc/>
         public MeshHandle CreateStaticMesh(
             StaticMeshResource mesh,
-            StandardMaterialResource material) => default;
+            ResolvedStandardMaterial material) => default;
 
         /// <inheritdoc/>
         public SkinnedMeshHandles CreateSkinnedMesh(
             SkinnedMeshResource mesh,
-            StandardMaterialResource material) => default;
+            ResolvedStandardMaterial material) => default;
 
         /// <inheritdoc/>
         public void UpdateSkinPalette(

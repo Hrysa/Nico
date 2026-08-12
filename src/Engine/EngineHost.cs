@@ -94,6 +94,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         registry.Register(new CollisionMeshAssetImporter());
         registry.Register(new TerrainAssetImporter());
         registry.Register(new AnimationSetAssetImporter());
+        registry.Register(new StandardMaterialAssetImporter());
+        registry.Register(new ImageTextureAssetImporter());
         var pipeline = new AssetImportPipeline(database, registry);
         _runtimeResources = CreateRuntimeResourceManager(database, pipeline);
 
@@ -345,15 +347,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
                 mesh = LoadRuntimeResource(meshReference, new StaticMeshResource([], [], []));
             }
         }
-        var defaultMaterial = MaterialProperties.Default;
-        var material = new StandardMaterialResource
-        {
-            BaseColor = defaultMaterial.BaseColor,
-            Metallic = defaultMaterial.Metallic,
-            Roughness = defaultMaterial.Roughness,
-            DoubleSided = defaultMaterial.DoubleSided
-        };
-        var textureSlot = -1;
+        var material = new StandardMaterialAsset();
         var materialSlot = mesh.Submeshes.Count > 0 ? mesh.Submeshes[0].MaterialSlot : -1;
         var defaultMaterialArtifact = outcome?.Artifacts.FirstOrDefault(artifact =>
             artifact.Key == $"material/{materialSlot}");
@@ -371,41 +365,30 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             artifact.ContentType == "nico/standard-material");
         if (materialArtifact is not null)
         {
-            var decoded = LoadRuntimeResource(materialReference,
-                new DecodedStandardMaterial(new StandardMaterialResource(), -1));
-            material = CloneMaterial(decoded.Material);
-            textureSlot = decoded.BaseColorTextureSlot;
+            material = CloneMaterial(LoadRuntimeResource(
+                materialReference, new StandardMaterialAsset()));
         }
         var textureHandle = default(TextureHandle);
-        var textureArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
-            artifact.Key == $"texture/{textureSlot}");
-        if (textureArtifact is not null)
+        if (material.BaseColorTexture is { } textureReference)
         {
-            var texture = LoadRuntimeResource(
-                new AssetReference(materialReference.Asset, textureArtifact.Key),
+            var texture = LoadRuntimeResource(textureReference,
                 new TextureResource(0, 0, [], TextureColorSpace.Linear));
             textureHandle = _window.CreateTexture(texture);
-            material.BaseColorTexture = textureHandle;
-        }
-        if (instance.MaterialOverride is { } materialOverride)
-        {
-            material.BaseColor = materialOverride.BaseColor;
-            material.Metallic = materialOverride.Metallic;
-            material.Roughness = materialOverride.Roughness;
-            material.DoubleSided = materialOverride.DoubleSided;
         }
         try
         {
             if (skin is null)
             {
-                var meshHandle = _window.CreateStaticMesh(mesh, material);
+                var meshHandle = _window.CreateStaticMesh(
+                    mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
                 _renderables.Add(new RuntimeRenderable(
                     instance, meshHandle, textureHandle, default, null));
             }
             else
             {
                 var controller = new AnimationController(skin);
-                var handles = _window.CreateSkinnedMesh(skin, material);
+                var handles = _window.CreateSkinnedMesh(
+                    skin, ResolvedStandardMaterial.Resolve(material, textureHandle));
                 _window.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
                 _animationService!.Register(instance, controller);
                 _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
@@ -537,12 +520,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<AnimationSetResource>(
             "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
-        manager.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
-            "nico/standard-material", (stream, _, _) =>
-            {
-                var (material, textureSlot) = StandardMaterialResource.Load(stream);
-                return new DecodedStandardMaterial(material, textureSlot);
-            }));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<StandardMaterialAsset>(
+            "nico/standard-material", (stream, _, _) => StandardMaterialAssetCodec.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<TextureResource>(
             "nico/texture2d", (stream, _, _) => TextureResource.Load(stream)));
         return manager;
@@ -596,15 +575,9 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <summary>Creates renderer-local mutable values from a shared decoded material.</summary>
     /// <param name="source">Shared decoded material.</param>
     /// <returns>An independent material copy.</returns>
-    private static StandardMaterialResource CloneMaterial(StandardMaterialResource source)
+    private static StandardMaterialAsset CloneMaterial(StandardMaterialAsset source)
     {
-        return new StandardMaterialResource
-        {
-            BaseColor = source.BaseColor,
-            Metallic = source.Metallic,
-            Roughness = source.Roughness,
-            DoubleSided = source.DoubleSided
-        };
+        return source.Clone();
     }
 
     /// <summary>Submits the loaded scene through its game camera.</summary>
@@ -764,6 +737,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             ".ncollision" => "collision-mesh",
             ".nterrain" => "terrain",
             ".nanimset" => "animation-set",
+            ".nmat" => "standard-material",
+            ".png" or ".jpg" or ".jpeg" => "image-texture",
             _ => null
         };
     }

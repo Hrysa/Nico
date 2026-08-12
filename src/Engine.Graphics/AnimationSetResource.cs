@@ -150,8 +150,6 @@ public sealed class AnimationSetResource
             writer.WriteString("asset", entry.Source.Asset.Value);
             writer.WriteString("subAsset", entry.Source.SubAsset);
             writer.WriteEndObject();
-            if (entry.Clip is not null)
-                writer.WriteString("clip", entry.Clip);
             if (entry.InPlace)
                 writer.WriteBoolean("inPlace", true);
             if (entry.RootMotionJoint is not null)

@@ -23,7 +23,7 @@ public sealed partial class RotateObject : SceneScript
 }
 ```
 
-Every script source has an adjacent `.meta` file containing its stable `AssetId`. Scene format 4 attaches that asset through the node's component list:
+Every script source has an adjacent `.meta` file containing its stable `AssetId`. Current scene format 11 attaches that asset through the node's component list:
 
 ```json
 {

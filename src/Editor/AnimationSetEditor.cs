@@ -1,7 +1,15 @@
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 
 namespace Editor;
+
+/// <summary>Lists selectable root-motion joints and the conventional detected choice.</summary>
+/// <param name="Joints">Joint names exposed by the source skeleton.</param>
+/// <param name="DetectedJoint">Conventional translated root joint, or null.</param>
+public readonly record struct AnimationRootJointOptions(
+    string[] Joints,
+    string? DetectedJoint);
 
 /// <summary>Edits one human-readable animation-set source asset.</summary>
 public sealed class AnimationSetEditor : ContentControl
@@ -10,11 +18,10 @@ public sealed class AnimationSetEditor : ContentControl
     private readonly ListView _entryList;
     private readonly TextField _aliasField;
     private readonly TextField _sourceField;
-    private readonly TextField _clipField;
     private readonly NumericField _speedField;
     private readonly CheckBox _loopField;
     private readonly CheckBox _inPlaceField;
-    private readonly TextField _rootMotionJointField;
+    private readonly ComboBox _rootMotionJointField;
     private readonly Label _pathLabel;
     private readonly Label _statusLabel;
     private bool _synchronizing;
@@ -22,6 +29,19 @@ public sealed class AnimationSetEditor : ContentControl
 
     /// <summary>Occurs after the current source asset is saved successfully.</summary>
     public event Action<string>? Saved;
+
+    /// <summary>Occurs when the toolbar requests adding the selected project asset.</summary>
+    public event Action? AddRequested;
+
+    /// <summary>Gets or sets the resolver that imports a physical animation file for authoring.</summary>
+    public Func<FileSystemNode, IReadOnlyList<ImportedSubAssetNode>>? ResolveFileAnimations
+    {
+        get;
+        set;
+    }
+
+    /// <summary>Gets or sets the resolver supplying root-joint choices for an animation source.</summary>
+    public Func<AssetReference, AnimationRootJointOptions>? ResolveRootJoints { get; set; }
 
     /// <summary>Gets the currently opened source path, or null.</summary>
     public string? Path => _path;
@@ -61,7 +81,6 @@ public sealed class AnimationSetEditor : ContentControl
         _aliasField = CreateField("AnimationAlias", resolvedTheme);
         _sourceField = CreateField("AnimationSource", resolvedTheme);
         _sourceField.IsReadOnly = true;
-        _clipField = CreateField("AnimationClip", resolvedTheme);
         _speedField = new NumericField(0f, resolvedTheme.ControlHeight, resolvedTheme)
         {
             Name = "AnimationSpeed",
@@ -78,23 +97,26 @@ public sealed class AnimationSetEditor : ContentControl
         {
             Name = "AnimationInPlace"
         };
-        _rootMotionJointField = CreateField("AnimationRootMotionJoint", resolvedTheme);
+        _rootMotionJointField = new ComboBox(0f, resolvedTheme.ControlHeight, resolvedTheme)
+        {
+            Name = "AnimationRootMotionJoint",
+            Width = 0f
+        };
 
         var save = new Button(76f, resolvedTheme.ControlHeight, "Save", resolvedTheme,
             ButtonStyle.Primary) { Name = "AnimationSetSave" };
+        var add = new Button(68f, resolvedTheme.ControlHeight, "Add", resolvedTheme)
+            { Name = "AnimationSetAdd" };
         var reload = new Button(76f, resolvedTheme.ControlHeight, "Reload", resolvedTheme)
             { Name = "AnimationSetReload" };
         var remove = new Button(86f, resolvedTheme.ControlHeight, "Remove", resolvedTheme)
             { Name = "AnimationSetRemove" };
         save.Click += Save;
+        add.Click += () => AddRequested?.Invoke();
         reload.Click += Reload;
         remove.Click += RemoveSelected;
         _entryList.SelectionChanged += SelectEntry;
         _aliasField.TextChanged += value => UpdateSelected(entry => entry with { Alias = value });
-        _clipField.TextChanged += value => UpdateSelected(entry => entry with
-        {
-            Clip = string.IsNullOrWhiteSpace(value) ? null : value
-        });
         _speedField.ValueChanged += value => UpdateSelected(entry => entry with
         {
             Speed = (float)value
@@ -106,19 +128,18 @@ public sealed class AnimationSetEditor : ContentControl
         _inPlaceField.CheckedChanged += value => UpdateSelected(entry => entry with
         {
             InPlace = value,
-            RootMotionJoint = value && !string.IsNullOrWhiteSpace(_rootMotionJointField.Text)
-                ? _rootMotionJointField.Text : null
+            RootMotionJoint = value ? GetSelectedRootJoint() : null
         });
-        _rootMotionJointField.TextChanged += value => UpdateSelected(entry => entry with
+        _rootMotionJointField.SelectionChanged += (_, value) => UpdateSelected(entry => entry with
         {
-            RootMotionJoint = entry.InPlace && !string.IsNullOrWhiteSpace(value) ? value : null
+            RootMotionJoint = entry.InPlace && _rootMotionJointField.SelectedIndex > 0
+                ? value : null
         });
 
         var form = UI.Column(
         [
             FormRow("Alias", _aliasField, resolvedTheme),
             FormRow("Source", _sourceField, resolvedTheme),
-            FormRow("Source clip", _clipField, resolvedTheme),
             FormRow("Speed", _speedField, resolvedTheme),
             _loopField,
             _inPlaceField,
@@ -129,9 +150,10 @@ public sealed class AnimationSetEditor : ContentControl
             panel.Padding = new Thickness(12f);
             panel.Gap = 8f;
         }).Grow();
+        form.FlexBasis = 0f;
         Content = UI.Column(
         [
-            UI.Row([save, reload, remove, _pathLabel.Grow()],
+            UI.Row([save, add, reload, remove, _pathLabel.Grow()],
                 backgroundColor: resolvedTheme.SurfaceRaised,
                 alignItems: FlexAlignment.Center, gap: 6f).Configure(toolbar =>
                 {
@@ -172,10 +194,30 @@ public sealed class AnimationSetEditor : ContentControl
         if (_path is null || source.ContentType != "nico/skeletal-animation")
             return false;
         var alias = CreateUniqueAlias(GetDefaultAlias(source));
-        _entries.Add(new AnimationSetEntry(alias, source.Reference));
+        var rootJoint = ResolveRootJoints?.Invoke(source.Reference).DetectedJoint;
+        _entries.Add(new AnimationSetEntry(alias, source.Reference,
+            InPlace: rootJoint is not null, RootMotionJoint: rootJoint));
         RefreshList(_entries.Count - 1);
         _statusLabel.Text = $"Added {alias}; save to publish changes";
         return true;
+    }
+
+    /// <summary>Adds every imported animation resolved from a physical GLB source.</summary>
+    /// <param name="source">Physical animation GLB.</param>
+    /// <returns>Number of animation artifacts added.</returns>
+    public int Add(FileSystemNode source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (_path is null || ResolveFileAnimations is null)
+            return 0;
+        var animations = ResolveFileAnimations(source);
+        var added = 0;
+        for (var index = 0; index < animations.Count; index++)
+        {
+            if (Add(animations[index]))
+                added++;
+        }
+        return added;
     }
 
     /// <summary>Saves the current entries as readable source JSON.</summary>
@@ -217,7 +259,8 @@ public sealed class AnimationSetEditor : ContentControl
             FlexShrink = 0f
         },
         field.Grow()
-    ], alignItems: FlexAlignment.Center, gap: 8f);
+    ], alignItems: FlexAlignment.Center, gap: 8f).Configure(row =>
+        field.FlexBasis = 0f);
 
     /// <summary>Creates a numeric form row.</summary>
     /// <param name="label">Displayed field label.</param>
@@ -233,7 +276,25 @@ public sealed class AnimationSetEditor : ContentControl
             FlexShrink = 0f
         },
         field.Grow()
-    ], alignItems: FlexAlignment.Center, gap: 8f);
+    ], alignItems: FlexAlignment.Center, gap: 8f).Configure(row =>
+        field.FlexBasis = 0f);
+
+    /// <summary>Creates a choice form row.</summary>
+    /// <param name="label">Displayed field label.</param>
+    /// <param name="field">Selectable choice field.</param>
+    /// <param name="theme">Resolved UI theme.</param>
+    /// <returns>Configured horizontal form row.</returns>
+    private static FlexPanel FormRow(string label, ComboBox field, UITheme theme) => UI.Row(
+    [
+        new Label(label, 92f, theme.ControlHeight)
+        {
+            ForegroundColor = theme.TextSecondary,
+            PaddingLeft = 0f,
+            FlexShrink = 0f
+        },
+        field.Grow()
+    ], alignItems: FlexAlignment.Center, gap: 8f).Configure(row =>
+        field.FlexBasis = 0f);
 
     /// <summary>Creates one editor text field.</summary>
     /// <param name="name">Stable element name.</param>
@@ -264,26 +325,56 @@ public sealed class AnimationSetEditor : ContentControl
             var entry = _entries[index];
             _aliasField.Text = entry.Alias;
             _sourceField.Text = entry.Source.ToString();
-            _clipField.Text = entry.Clip ?? string.Empty;
             _speedField.Value = entry.Speed;
             _loopField.IsChecked = entry.Loop;
             _inPlaceField.IsChecked = entry.InPlace;
-            _rootMotionJointField.Text = entry.RootMotionJoint ?? string.Empty;
+            PopulateRootJointChoices(entry.Source, entry.RootMotionJoint);
             _rootMotionJointField.IsEnabled = entry.InPlace;
         }
         else
         {
             _aliasField.Text = string.Empty;
             _sourceField.Text = string.Empty;
-            _clipField.Text = string.Empty;
             _speedField.Value = 1d;
             _loopField.IsChecked = true;
             _inPlaceField.IsChecked = false;
-            _rootMotionJointField.Text = string.Empty;
+            _rootMotionJointField.SetItems(["Auto detect"]);
+            _rootMotionJointField.Select(0);
             _rootMotionJointField.IsEnabled = false;
         }
         _synchronizing = false;
     }
+
+    /// <summary>Loads source skeleton joint choices and selects an authored or detected value.</summary>
+    /// <param name="source">Animation artifact reference.</param>
+    /// <param name="selectedJoint">Authored explicit joint, or null for automatic detection.</param>
+    private void PopulateRootJointChoices(AssetReference source, string? selectedJoint)
+    {
+        var options = ResolveRootJoints?.Invoke(source) ?? new AnimationRootJointOptions([], null);
+        var names = new string[options.Joints.Length + 1];
+        names[0] = options.DetectedJoint is null
+            ? "Auto detect"
+            : $"Auto detect ({options.DetectedJoint})";
+        Array.Copy(options.Joints, 0, names, 1, options.Joints.Length);
+        _rootMotionJointField.SetItems(names);
+        var selectedIndex = 0;
+        if (selectedJoint is not null)
+        {
+            for (var index = 0; index < options.Joints.Length; index++)
+            {
+                if (!string.Equals(options.Joints[index], selectedJoint, StringComparison.Ordinal))
+                    continue;
+                selectedIndex = index + 1;
+                break;
+            }
+        }
+        _rootMotionJointField.Select(selectedIndex);
+    }
+
+    /// <summary>Gets the explicit selected root joint, or null for automatic detection.</summary>
+    /// <returns>Selected skeleton joint name, or null.</returns>
+    private string? GetSelectedRootJoint() => _rootMotionJointField.SelectedIndex > 0
+        ? _rootMotionJointField.SelectedItem : null;
 
     /// <summary>Applies one immutable-entry edit to the current selection.</summary>
     /// <param name="update">Entry transformation.</param>
@@ -317,7 +408,6 @@ public sealed class AnimationSetEditor : ContentControl
     {
         _entryList.IsEnabled = enabled;
         _aliasField.IsEnabled = enabled;
-        _clipField.IsEnabled = enabled;
         _speedField.IsEnabled = enabled;
         _loopField.IsEnabled = enabled;
         _inPlaceField.IsEnabled = enabled;
@@ -330,18 +420,36 @@ public sealed class AnimationSetEditor : ContentControl
     private void OnDrag(UIElement sender, UIDragEventArgs dragEvent)
     {
         if (dragEvent.RoutePhase == UIRoutePhase.Preview || _path is null ||
-            !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) ||
-            payload?.Item is not ImportedSubAssetNode
-            {
-                ContentType: "nico/skeletal-animation"
-            } source)
+            !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) || payload is null)
+            return;
+        var accepted = payload.Item is ImportedSubAssetNode
+            { ContentType: "nico/skeletal-animation" } ||
+            payload.Item is FileSystemNode physicalFile && IsGlb(physicalFile) &&
+            ResolveFileAnimations is not null;
+        if (!accepted)
             return;
         if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
             dragEvent.Effect = UIDragEffect.Copy;
-        else if (dragEvent.Kind == UIDragEventKind.Drop && Add(source))
-            dragEvent.Effect = UIDragEffect.Copy;
+        else if (dragEvent.Kind == UIDragEventKind.Drop)
+        {
+            var added = payload.Item switch
+            {
+                ImportedSubAssetNode source => Add(source) ? 1 : 0,
+                FileSystemNode file => Add(file),
+                _ => 0
+            };
+            if (added > 0)
+                dragEvent.Effect = UIDragEffect.Copy;
+        }
         dragEvent.Handled = true;
     }
+
+    /// <summary>Checks whether a physical project row is an animation-capable GLB source.</summary>
+    /// <param name="file">Physical filesystem row.</param>
+    /// <returns>True for non-directory `.glb` files.</returns>
+    private static bool IsGlb(FileSystemNode file) => !file.IsDirectory &&
+        System.IO.Path.GetExtension(file.FullPath).Equals(
+            ".glb", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Builds a concise alias from an imported artifact display name.</summary>
     /// <param name="source">Imported animation artifact.</param>

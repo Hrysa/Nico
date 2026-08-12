@@ -18,7 +18,6 @@ public sealed class SceneInspector : Panel
     private readonly Dictionary<Node, CachedInspectorView> _cachedViews = new();
     private readonly List<ScriptFieldBinding> _scriptBindings = new();
     private readonly UIEditForm _editForm;
-    private MaterialProperties? _resolvedMaterial;
     private bool _scriptBindingsDirty;
     private bool _modelBindingsDirty;
     private Node? _subscribedNode;
@@ -32,11 +31,11 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets or sets the resolver for live script instances in play mode.</summary>
     public Func<ScriptComponent, SceneScript?>? ResolveScriptInstance { get; set; }
 
-    /// <summary>Gets or sets the resolver for a mesh instance's effective material values.</summary>
-    public Func<MeshInstance3D, MaterialProperties>? ResolveMaterial { get; set; }
-
     /// <summary>Gets or sets the display-name resolver for a mesh material assignment.</summary>
     public Func<MeshInstance3D, string>? ResolveMaterialName { get; set; }
+
+    /// <summary>Gets or sets the reusable content factory for referenced assets.</summary>
+    public Func<AssetReference, UIElement?>? CreateAssetInspectorContent { get; set; }
 
     /// <summary>Gets the node currently displayed by the Inspector.</summary>
     public Node? InspectedNode { get; private set; }
@@ -65,7 +64,7 @@ public sealed class SceneInspector : Panel
         _theme = theme ?? UITheme.Dark;
         _editForm = new UIEditForm(this);
         PaintBackground = false;
-        Bind(null);
+        Bind((Node?)null);
     }
 
     /// <summary>
@@ -85,11 +84,11 @@ public sealed class SceneInspector : Panel
         var focusChanged = !ReferenceEquals(FocusedComponent, focusedComponent);
         if (ReferenceEquals(InspectedNode, node) && !focusChanged && Children.Count > 0)
         {
-            ResolveBoundMaterial(node);
             RefreshValues();
             return;
         }
 
+        DeactivateInspectorContent();
         UnsubscribeFromNode();
         InspectedNode = node;
         FocusedComponent = focusedComponent;
@@ -98,7 +97,6 @@ public sealed class SceneInspector : Panel
         ClearChildren();
         _refreshBindings.Clear();
         _scriptBindings.Clear();
-        ResolveBoundMaterial(node);
         if (node is null)
         {
             AddChild(CreateLabel(12f, 12f, Width - 24f, 28f,
@@ -146,13 +144,40 @@ public sealed class SceneInspector : Panel
         if (node is MeshInstance3D meshInstance)
         {
             AddMaterialSection(meshInstance, 236f);
-            scriptY = 464f;
+            scriptY = 580f;
         }
 
         scriptY = AddPhysicsSections(node, scriptY);
         AddScriptSections(node, scriptY);
         CacheCurrentView(node);
+        ActivateInspectorContent();
         SubscribeToNode(node);
+    }
+
+    /// <summary>Displays provider-created properties for a non-scene selection.</summary>
+    /// <param name="document">Provider-independent Inspector content.</param>
+    public void Bind(InspectorDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        DeactivateInspectorContent();
+        UnsubscribeFromNode();
+        InspectedNode = null;
+        FocusedComponent = null;
+        DeactivateScriptBindings();
+        _editForm.Clear();
+        ClearChildren();
+        _refreshBindings.Clear();
+        _scriptBindings.Clear();
+        AddChild(CreateLabel(12f, 8f, Width - 24f, 24f,
+            document.Title, _theme.TextSecondary));
+        AddChild(CreateLabel(12f, 40f, Width - 24f, 30f,
+            document.DisplayName, _theme.TextPrimary));
+        var content = document.Content;
+        content.Margin = new Thickness(12f, 82f, 12f, 0f);
+        content.Width = 0f;
+        content.HorizontalAlignment = HorizontalAlignment.Stretch;
+        AddChild(content);
+        ActivateInspectorContent();
     }
 
     /// <summary>Adds editable color, strength, ambient, and enabled light settings.</summary>
@@ -375,16 +400,6 @@ public sealed class SceneInspector : Panel
     };
 
 
-    /// <summary>Resolves material values associated with the currently bound node.</summary>
-    /// <param name="node">Node being bound, or null.</param>
-    private void ResolveBoundMaterial(Node? node)
-    {
-        _resolvedMaterial = node is MeshInstance3D boundMeshInstance
-            ? boundMeshInstance.MaterialOverride ?? ResolveMaterial?.Invoke(boundMeshInstance)
-                ?? MaterialProperties.Default
-            : null;
-    }
-
     /// <summary>Restores a previously constructed Inspector view for a node.</summary>
     /// <param name="node">Node whose view should be restored.</param>
     /// <returns>True when a retained view was restored.</returns>
@@ -404,6 +419,7 @@ public sealed class SceneInspector : Panel
         for (var index = 0; index < _scriptBindings.Count; index++)
             _scriptBindings[index].Activate();
         RefreshValues();
+        ActivateInspectorContent();
         return true;
     }
 
@@ -415,6 +431,38 @@ public sealed class SceneInspector : Panel
             Children.OfType<UIElement>().ToArray(),
             _refreshBindings.ToArray(),
             _scriptBindings.ToArray());
+    }
+
+    /// <summary>Activates lifecycle-aware content in the current visual subtree.</summary>
+    private void ActivateInspectorContent()
+    {
+        VisitInspectorContent(this, activate: true);
+    }
+
+    /// <summary>Deactivates lifecycle-aware content leaving the current visual subtree.</summary>
+    private void DeactivateInspectorContent()
+    {
+        VisitInspectorContent(this, activate: false);
+    }
+
+    /// <summary>Visits lifecycle-aware Inspector descendants.</summary>
+    /// <param name="root">Subtree root.</param>
+    /// <param name="activate">True to activate; false to deactivate.</param>
+    private static void VisitInspectorContent(UIElement root, bool activate)
+    {
+        if (root is IInspectorContentLifecycle lifecycle)
+        {
+            if (activate)
+                lifecycle.Activate();
+            else
+                lifecycle.Deactivate();
+        }
+        var children = root.Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (children[index] is UIElement child)
+                VisitInspectorContent(child, activate);
+        }
     }
 
     /// <summary>Rebuilds script sections after compiled schemas or runtime instances change.</summary>
@@ -609,18 +657,17 @@ public sealed class SceneInspector : Panel
             RefreshValues();
     }
 
-    /// <summary>Adds slot-zero material assignment and copy-on-write property editors.</summary>
+    /// <summary>Adds slot-zero material assignment and embeds its shared asset editor.</summary>
     /// <param name="instance">Inspected mesh instance.</param>
     /// <param name="y">Section top.</param>
     private void AddMaterialSection(MeshInstance3D instance, float y)
     {
         AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Material", _theme.TextPrimary));
-        var materialField = new TextField(Width - 88f, 30f, _theme)
+        var materialField = new AssetReferenceField(
+            Width - 88f, 30f, "nico/standard-material", AssignMaterial, _theme)
         {
             Name = "MaterialSlot0",
             Text = GetMaterialName(instance),
-            IsReadOnly = true,
-            AllowDrop = true,
             Margin = new Thickness(12f, y + 30f, 0f, 0f)
         };
         RegisterRefresh(materialField, () => GetMaterialName(instance));
@@ -632,122 +679,21 @@ public sealed class SceneInspector : Panel
         };
         reset.Click += () =>
         {
-            instance.MaterialOverride = null;
+            instance.Materials.Clear();
             NodeChanged?.Invoke(instance);
             Bind(instance);
         };
         AddChild(reset);
 
-        AddMaterialVector4Row(instance, y + 68f);
-        AddMaterialFloatRow(instance, "Metallic", "MaterialMetallic", y + 106f,
-            material => material.Metallic,
-            (material, value) => material.Metallic = Math.Clamp(value, 0f, 1f));
-        AddMaterialFloatRow(instance, "Roughness", "MaterialRoughness", y + 144f,
-            material => material.Roughness,
-            (material, value) => material.Roughness = Math.Clamp(value, 0f, 1f));
-        AddChild(CreateLabel(12f, y + 182f, 80f, 30f, "Texture", _theme.TextSecondary));
-        var textureField = new TextField(Width - 104f, 30f, _theme)
+        var reference = instance.Materials.FirstOrDefault();
+        if (reference.Asset.Value != Guid.Empty &&
+            CreateAssetInspectorContent?.Invoke(reference) is { } content)
         {
-            Name = "MaterialBaseColorTexture",
-            Text = GetEffectiveMaterial(instance).BaseColorTexture?.ToString() ?? string.Empty,
-            Placeholder = "No base-color texture",
-            IsReadOnly = true,
-            AllowDrop = true,
-            Margin = new Thickness(92f, y + 182f, 0f, 0f)
-        };
-        RegisterRefresh(textureField, () =>
-            GetEffectiveMaterial(instance).BaseColorTexture?.ToString() ?? string.Empty);
-        AddChild(textureField);
-    }
-
-    /// <summary>Adds four editable base-color components.</summary>
-    /// <param name="instance">Inspected mesh instance.</param>
-    /// <param name="y">Row top.</param>
-    private void AddMaterialVector4Row(MeshInstance3D instance, float y)
-    {
-        const float labelWidth = 66f;
-        const float spacing = 4f;
-        var fieldWidth = MathF.Floor((MathF.Max(0f, Width - 24f - labelWidth) - spacing * 3f) / 4f);
-        AddChild(CreateLabel(12f, y, labelWidth, 30f, "Base Color", _theme.TextSecondary));
-        for (var index = 0; index < 4; index++)
-        {
-            var componentIndex = index;
-            var field = new TextField(fieldWidth, 30f, _theme)
-            {
-                Name = $"MaterialBaseColor{"RGBA"[index]}",
-                Text = Format(GetComponent(GetEffectiveMaterial(instance).BaseColor, index)),
-                UpdateTrigger = TextUpdateTrigger.Commit,
-                Validator = ValidateFloat,
-                Margin = new Thickness(12f + labelWidth + index * (fieldWidth + spacing), y, 0f, 0f)
-            };
-            field.ValueUpdateRequested += text =>
-            {
-                if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
-                        out var component))
-                    return;
-                var material = GetOrCreateOverride(instance);
-                material.BaseColor = WithComponent(material.BaseColor, componentIndex,
-                    Math.Clamp(component, 0f, 1f));
-            };
-            field.EditCommitted += _ => NodeChanged?.Invoke(instance);
-            _editForm.Register(field);
-            RegisterRefresh(field, () => Format(GetComponent(
-                GetEffectiveMaterial(instance).BaseColor, componentIndex)));
-            AddChild(field);
+            content.Margin = new Thickness(12f, y + 68f, 12f, 0f);
+            content.Width = 0f;
+            content.HorizontalAlignment = HorizontalAlignment.Stretch;
+            AddChild(content);
         }
-    }
-
-    /// <summary>Adds one editable scalar material property.</summary>
-    /// <param name="instance">Inspected mesh instance.</param>
-    /// <param name="label">Property label.</param>
-    /// <param name="name">Field element name.</param>
-    /// <param name="y">Row top.</param>
-    /// <param name="read">Property reader.</param>
-    /// <param name="write">Property writer.</param>
-    private void AddMaterialFloatRow(
-        MeshInstance3D instance,
-        string label,
-        string name,
-        float y,
-        Func<MaterialProperties, float> read,
-        Action<MaterialProperties, float> write)
-    {
-        AddChild(CreateLabel(12f, y, 80f, 30f, label, _theme.TextSecondary));
-        var field = new TextField(Width - 104f, 30f, _theme)
-        {
-            Name = name,
-            Text = Format(read(GetEffectiveMaterial(instance))),
-            UpdateTrigger = TextUpdateTrigger.Commit,
-            Validator = ValidateFloat,
-            Margin = new Thickness(92f, y, 0f, 0f)
-        };
-        field.ValueUpdateRequested += text =>
-        {
-            if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture,
-                    out var value))
-                return;
-            write(GetOrCreateOverride(instance), value);
-        };
-        field.EditCommitted += _ => NodeChanged?.Invoke(instance);
-        _editForm.Register(field);
-        RegisterRefresh(field, () => Format(read(GetEffectiveMaterial(instance))));
-        AddChild(field);
-    }
-
-    /// <summary>Gets the effective material without changing scene ownership.</summary>
-    /// <param name="instance">Mesh instance.</param>
-    /// <returns>Override, resolved assignment, or shared default values.</returns>
-    private MaterialProperties GetEffectiveMaterial(MeshInstance3D instance)
-    {
-        return instance.MaterialOverride ?? _resolvedMaterial ?? MaterialProperties.Default;
-    }
-
-    /// <summary>Creates a scene-local material copy on the first property edit.</summary>
-    /// <param name="instance">Mesh instance receiving an override.</param>
-    /// <returns>The editable scene-local material.</returns>
-    private MaterialProperties GetOrCreateOverride(MeshInstance3D instance)
-    {
-        return instance.MaterialOverride ??= GetEffectiveMaterial(instance).Clone();
     }
 
     /// <summary>Formats the current slot-zero material ownership.</summary>
@@ -755,8 +701,6 @@ public sealed class SceneInspector : Panel
     /// <returns>Material display name.</returns>
     private string GetMaterialName(MeshInstance3D instance)
     {
-        if (instance.MaterialOverride is not null)
-            return "Scene Override";
         return ResolveMaterialName?.Invoke(instance)
             ?? (instance.Materials.Count > 0 ? instance.Materials[0].ToString() : "BuiltIn/Default");
     }
@@ -803,20 +747,6 @@ public sealed class SceneInspector : Panel
             return false;
         instance.Materials.Clear();
         instance.Materials.Add(material);
-        instance.MaterialOverride = null;
-        NodeChanged?.Invoke(instance);
-        Bind(instance);
-        return true;
-    }
-
-    /// <summary>Assigns a base-color texture through a scene-local material override.</summary>
-    /// <param name="texture">Texture asset or imported sub-asset.</param>
-    /// <returns>True when an inspected mesh received the texture override.</returns>
-    public bool AssignBaseColorTexture(AssetReference texture)
-    {
-        if (InspectedNode is not MeshInstance3D instance)
-            return false;
-        GetOrCreateOverride(instance).BaseColorTexture = texture;
         NodeChanged?.Invoke(instance);
         Bind(instance);
         return true;

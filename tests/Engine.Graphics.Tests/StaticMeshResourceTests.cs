@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text;
+using Engine.Core;
 using Xunit;
 
 namespace Engine.Graphics.Tests;
@@ -30,29 +31,53 @@ public class StaticMeshResourceTests
         Assert.Equal(new byte[] { 10, 20, 30, 255 }, texture.Pixels);
     }
 
-    /// <summary>Loads standard material factors while retaining the unresolved texture slot.</summary>
+    /// <summary>Loads standard material factors and its persistent texture reference.</summary>
     [Fact]
-    public void LoadMaterial_ValidArtifact_ReturnsFactorsAndTextureSlot()
+    public void LoadMaterial_ValidArtifact_ReturnsFactorsAndTextureReference()
     {
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("NMATL001"u8);
-            writer.Write(1u);
+            writer.Write("NMATL002"u8);
             foreach (var value in new[] { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f })
                 writer.Write(value);
             writer.Write(true);
-            writer.Write(7);
+            writer.Write(false);
         }
         stream.Position = 0;
 
-        var (material, textureSlot) = StandardMaterialResource.Load(stream);
+        var material = StandardMaterialAssetCodec.Load(stream);
 
         Assert.Equal(new Vector4(0.1f, 0.2f, 0.3f, 0.4f), material.BaseColor);
         Assert.Equal(0.5f, material.Metallic);
         Assert.Equal(0.6f, material.Roughness);
         Assert.True(material.DoubleSided);
-        Assert.Equal(7, textureSlot);
+        Assert.Null(material.BaseColorTexture);
+    }
+
+    /// <summary>Round-trips a standalone standard material through its native artifact format.</summary>
+    [Fact]
+    public void SaveMaterial_ThenLoad_PreservesValues()
+    {
+        var source = new StandardMaterialAsset
+        {
+            BaseColor = new Vector4(0.2f, 0.4f, 0.6f, 0.8f),
+            Metallic = 0.25f,
+            Roughness = 0.75f,
+            DoubleSided = true,
+            BaseColorTexture = new AssetReference(AssetId.New(), "main")
+        };
+        using var stream = new MemoryStream();
+        StandardMaterialAssetCodec.Save(stream, source);
+        stream.Position = 0;
+
+        var material = StandardMaterialAssetCodec.Load(stream);
+
+        Assert.Equal(source.BaseColor, material.BaseColor);
+        Assert.Equal(source.Metallic, material.Metallic);
+        Assert.Equal(source.Roughness, material.Roughness);
+        Assert.Equal(source.DoubleSided, material.DoubleSided);
+        Assert.Equal(source.BaseColorTexture, material.BaseColorTexture);
     }
 
     /// <summary>Loads the importer artifact contract into typed model geometry.</summary>

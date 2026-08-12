@@ -138,16 +138,15 @@ public sealed class GlbModelImporterTests : IDisposable
         Assert.Equal(artifact.Key, Assert.Single(meshNode.ArtifactKeys!));
         var materialArtifact = Assert.Single(result.Artifacts, item =>
             item.ContentType == "nico/standard-material");
-        using var materialReader = new BinaryReader(File.OpenRead(Path.Combine(staging,
-            materialArtifact.RelativePath)));
-        Assert.Equal("NMATL001", Encoding.ASCII.GetString(materialReader.ReadBytes(8)));
-        Assert.Equal(1u, materialReader.ReadUInt32());
-        Assert.Equal(new[] { 0.25f, 0.5f, 0.75f, 1f },
-            Enumerable.Range(0, 4).Select(_ => materialReader.ReadSingle()));
-        Assert.Equal(0.2f, materialReader.ReadSingle());
-        Assert.Equal(0.6f, materialReader.ReadSingle());
-        Assert.True(materialReader.ReadBoolean());
-        Assert.Equal(0, materialReader.ReadInt32());
+        using var materialStream = File.OpenRead(Path.Combine(staging,
+            materialArtifact.RelativePath));
+        var material = StandardMaterialAssetCodec.Load(materialStream);
+        Assert.Equal(new Vector4(0.25f, 0.5f, 0.75f, 1f), material.BaseColor);
+        Assert.Equal(0.2f, material.Metallic);
+        Assert.Equal(0.6f, material.Roughness);
+        Assert.True(material.DoubleSided);
+        Assert.Equal(new AssetReference(metadata.Id, "texture/0"),
+            material.BaseColorTexture);
         var textureArtifact = Assert.Single(result.Artifacts, item =>
             item.ContentType == "nico/texture2d");
         Assert.Equal("texture/0", textureArtifact.Key);

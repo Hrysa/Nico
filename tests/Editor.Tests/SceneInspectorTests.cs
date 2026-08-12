@@ -11,6 +11,25 @@ namespace Editor.Tests;
 
 public class SceneInspectorTests
 {
+    /// <summary>Displays provider-independent properties without scene transform controls.</summary>
+    [Fact]
+    public void Bind_InspectorDocument_ShowsReadOnlyProperties()
+    {
+        var inspector = new SceneInspector(320f, 500f);
+
+        inspector.Bind(new InspectorDocument("Asset", "Ground.nmat",
+            new PropertyInspectorContent([
+            new InspectorProperty("Importer", "standard-material"),
+            new InspectorProperty("Size", "48 B")
+        ])));
+
+        Assert.Null(inspector.InspectedNode);
+        var importer = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "InspectorProperty0"));
+        Assert.Equal("standard-material", importer.Text);
+        Assert.True(importer.IsReadOnly);
+        Assert.Null(FindByName<TextField>(inspector, "NameField"));
+    }
     /// <summary>Edits directional-light color and intensity through authored Inspector fields.</summary>
     [Fact]
     public void DirectionalLight_Fields_UpdateAuthoredSettings()
@@ -146,40 +165,7 @@ public class SceneInspectorTests
         Assert.Equal("First", originalNameField.Text);
     }
 
-    /// <summary>Creates and resets a scene-local material override through the Inspector.</summary>
-    [Fact]
-    public void Material_FirstPropertyEdit_CreatesCopyOnWriteOverride()
-    {
-        var cube = new MeshInstance3D { Name = "Cube" };
-        var inspector = new SceneInspector(320f, 560f);
-        inspector.Bind(cube);
-        var red = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialBaseColorR"));
-        var slot = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialSlot0"));
-
-        red.SetFocus(true);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeTextInput('0');
-        red.InvokeTextInput('.');
-        red.InvokeTextInput('2');
-        Assert.True(inspector.EditForm.CommitAll());
-
-        Assert.NotNull(cube.MaterialOverride);
-        Assert.Equal(0.2f, cube.MaterialOverride.BaseColor.X);
-        inspector.RefreshValues();
-        Assert.Equal("Scene Override", slot.Text);
-
-        Assert.IsType<Button>(FindByName<Button>(inspector, "MaterialReset")).InvokeClick();
-
-        Assert.Null(cube.MaterialOverride);
-        Assert.Equal("BuiltIn/Default", Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialSlot0")).Text);
-    }
-
-    /// <summary>Accepts typed material and texture references in the material panel.</summary>
+    /// <summary>Accepts typed material references without creating a scene override.</summary>
     [Fact]
     public void Material_TypedAssignments_UpdateMeshInstance()
     {
@@ -187,132 +173,9 @@ public class SceneInspectorTests
         var inspector = new SceneInspector(320f, 560f);
         inspector.Bind(mesh);
         var material = new AssetReference(AssetId.New(), "material/Body");
-        var texture = new AssetReference(AssetId.New(), "texture/Albedo");
 
         Assert.True(inspector.AssignMaterial(material));
         Assert.Equal(material, Assert.Single(mesh.Materials));
-        Assert.Null(mesh.MaterialOverride);
-
-        Assert.True(inspector.AssignBaseColorTexture(texture));
-        Assert.Equal(texture, mesh.MaterialOverride?.BaseColorTexture);
-    }
-
-
-    /// <summary>Resolves an imported material once when binding instead of during each refresh.</summary>
-    [Fact]
-    public void Material_RefreshValues_DoesNotRepeatedlyResolveImportedMaterial()
-    {
-        var mesh = new MeshInstance3D();
-        var resolveCount = 0;
-        var inspector = new SceneInspector(320f, 560f)
-        {
-            ResolveMaterial = _ =>
-            {
-                resolveCount++;
-                return new MaterialProperties();
-            }
-        };
-
-        inspector.Bind(mesh);
-        inspector.RefreshValues();
-        inspector.RefreshValues();
-
-        Assert.Equal(1, resolveCount);
-    }
-
-    /// <summary>Creates a scene override when editing material values on an imported mesh.</summary>
-    [Fact]
-    public void ImportedMesh_MaterialPropertyEdit_CreatesEditableOverride()
-    {
-        var mesh = new MeshInstance3D
-        {
-            Mesh = new AssetReference(AssetId.New(), "mesh/Body")
-        };
-        mesh.Materials.Add(new AssetReference(mesh.Mesh.Asset, "material/Body"));
-        var inspector = new SceneInspector(320f, 560f)
-        {
-            ResolveMaterial = _ => new MaterialProperties
-            {
-                BaseColor = new Vector4(0.8f, 0.7f, 0.6f, 1f)
-            }
-        };
-        inspector.Bind(mesh);
-        var red = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialBaseColorR"));
-
-        red.SetFocus(true);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeTextInput('0');
-        red.InvokeTextInput('.');
-        red.InvokeTextInput('2');
-        Assert.True(inspector.EditForm.CommitAll());
-
-        Assert.NotNull(mesh.MaterialOverride);
-        Assert.Equal(0.2f, mesh.MaterialOverride.BaseColor.X);
-    }
-
-    /// <summary>Routes pointer and text input to an imported mesh material field in the real layout.</summary>
-    [Fact]
-    public void ImportedMesh_MaterialPropertyEdit_IsReachableThroughEditorLayout()
-    {
-        var view = EditorUI.BuildView(1280f, 720f);
-        var mesh = new MeshInstance3D
-        {
-            Mesh = new AssetReference(AssetId.New(), "mesh/Body")
-        };
-        mesh.Materials.Add(new AssetReference(mesh.Mesh.Asset, "material/Body"));
-        view.Inspector.ResolveMaterial = _ => new MaterialProperties();
-        view.Inspector.Bind(mesh);
-        view.Root.BuildDrawList();
-        var field = Assert.IsType<TextField>(
-            FindByName<TextField>(view.Inspector, "MaterialRoughness"));
-        var router = new UIEventRouter(view.Root, () => { });
-
-        router.MovePointer(new Vector2(field.Left + 4f, field.Top + field.Height / 2f));
-        router.Press();
-        router.KeyDown((int)InputKey.Backspace);
-        router.TextInput('0');
-        router.KeyDown((int)InputKey.Enter);
-
-        Assert.Same(field, router.FocusedElement);
-        Assert.NotNull(mesh.MaterialOverride);
-    }
-
-    /// <summary>Defers expensive renderer notification until an imported material edit commits.</summary>
-    [Fact]
-    public void ImportedMesh_MaterialTyping_NotifiesOnceWhenInspectorApplies()
-    {
-        var mesh = new MeshInstance3D
-        {
-            Mesh = new AssetReference(AssetId.New(), "mesh/Body")
-        };
-        var inspector = new SceneInspector(320f, 560f)
-        {
-            ResolveMaterial = _ => new MaterialProperties()
-        };
-        var changes = 0;
-        inspector.NodeChanged += _ => changes++;
-        inspector.Bind(mesh);
-        var roughness = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialRoughness"));
-
-        roughness.SetFocus(true);
-        roughness.InvokeKeyDown((int)InputKey.Backspace);
-        roughness.InvokeKeyDown((int)InputKey.Backspace);
-        roughness.InvokeKeyDown((int)InputKey.Backspace);
-        roughness.InvokeTextInput('0');
-        roughness.InvokeTextInput('.');
-        roughness.InvokeTextInput('4');
-        Assert.Equal(0, changes);
-
-        roughness.SetFocus(false);
-        Assert.Equal(0, changes);
-        Assert.True(inspector.EditForm.CommitAll());
-
-        Assert.Equal(1, changes);
-        Assert.Equal(0.4f, mesh.MaterialOverride?.Roughness);
     }
 
     /// <summary>Verifies Inspector Apply and Revert buttons control pending numeric edits.</summary>
@@ -525,22 +388,6 @@ public class SceneInspectorTests
         Assert.True(stored.TryGetNumber(out var storedSpeed));
         Assert.Equal(4d, storedSpeed);
         Assert.Equal(1, nodeChanges);
-    }
-
-    /// <summary>Refreshes material editors directly from material change notifications.</summary>
-    [Fact]
-    public void MaterialOverride_ExternalMutation_RefreshesWithoutPolling()
-    {
-        var material = new MaterialProperties { Roughness = 0.25f };
-        var mesh = new MeshInstance3D { MaterialOverride = material };
-        var inspector = new SceneInspector(320f, 620f);
-        inspector.Bind(mesh);
-        var roughness = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "MaterialRoughness"));
-
-        material.Roughness = 0.8f;
-
-        Assert.Equal("0.8", roughness.Text);
     }
 
     /// <summary>Exposes concrete collider-only fields and applies validated authored dimensions.</summary>

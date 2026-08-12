@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text;
 using System.Text.Json;
+using Engine.Core;
 using SharpGLTF.Schema2;
 using StbImageSharp;
 
@@ -866,15 +867,17 @@ public sealed class GlbModelImporter : IAssetImporter
                 doubleSidedElement.GetBoolean();
             var relativePath = $"materials/{name}-{materialIndex}.nmaterial";
             using (var output = context.CreateArtifact(relativePath))
-            using (var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true))
             {
-                writer.Write("NMATL001"u8);
-                writer.Write(1u);
-                Write(writer, baseColor);
-                writer.Write(metallic);
-                writer.Write(roughness);
-                writer.Write(doubleSided);
-                writer.Write(textureSlot);
+                StandardMaterialAssetCodec.Save(output, new StandardMaterialAsset
+                {
+                    BaseColor = baseColor,
+                    Metallic = metallic,
+                    Roughness = roughness,
+                    DoubleSided = doubleSided,
+                    BaseColorTexture = textureSlot >= 0
+                        ? new AssetReference(context.Metadata.Id, $"texture/{textureSlot}")
+                        : null
+                });
             }
             artifacts.Add(new AssetArtifact($"material/{materialIndex}",
                 "nico/standard-material", relativePath));

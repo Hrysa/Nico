@@ -1,14 +1,14 @@
 {
   "formatVersion": 11,
-  "gameCameraId": "8276779a21cb4983a133451599a5e81b",
+  "gameCameraId": "354c504988ac4911b378097666db3dff",
   "nodes": [
     {
-      "id": "cc4d51027ea841e691a1922859c46112",
+      "id": "6df791513ebd4c4ca2b476cad5a0b326",
       "type": "assetMesh",
       "name": "SceneCube",
       "position": {
         "x": 1.9573392,
-        "y": 1.4202765,
+        "y": 0.5,
         "z": 0
       },
       "rotation": {
@@ -66,16 +66,15 @@
         "subAsset": "mesh/cube",
         "materials": []
       },
-      "materialOverride": null,
       "children": []
     },
     {
-      "id": "94d6ddcefa704a50aca1ad5414b7b67a",
+      "id": "afaeae7127994146b6ed7bb501d35626",
       "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
         "x": 0.65508884,
-        "y": 2.5,
+        "y": 5.092077,
         "z": 0.6121162
       },
       "rotation": {
@@ -101,7 +100,7 @@
               "boolean": null,
               "signedInteger": null,
               "unsignedInteger": null,
-              "number": 5,
+              "number": 7,
               "text": null,
               "vector": null
             }
@@ -157,11 +156,10 @@
           }
         ]
       },
-      "materialOverride": null,
       "children": []
     },
     {
-      "id": "8276779a21cb4983a133451599a5e81b",
+      "id": "354c504988ac4911b378097666db3dff",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -189,11 +187,10 @@
       },
       "directionalLight": null,
       "model": null,
-      "materialOverride": null,
       "children": []
     },
     {
-      "id": "5a8012e9d97d4849b09802327d022e37",
+      "id": "d11385b0f2aa4e1ea4c132b43e475464",
       "type": "custom",
       "name": "HUD",
       "position": {
@@ -226,11 +223,10 @@
       "camera": null,
       "directionalLight": null,
       "model": null,
-      "materialOverride": null,
       "children": []
     },
     {
-      "id": "c29d0b77b9d54d69b856e2a35ce1f0b8",
+      "id": "253937fbade2463fb40e731fb1aac1a2",
       "type": "assetMesh",
       "name": "Plane 1",
       "position": {
@@ -293,11 +289,10 @@
         "subAsset": "mesh/plane",
         "materials": []
       },
-      "materialOverride": null,
       "children": []
     },
     {
-      "id": "f50418555b1c49db84732bbb1be65cf4",
+      "id": "9736034277d9490e8a00aaec6c76b353",
       "type": "directionalLight",
       "name": "Directional Light 1",
       "position": {
@@ -330,7 +325,6 @@
         "isEnabled": true
       },
       "model": null,
-      "materialOverride": null,
       "children": []
     }
   ]

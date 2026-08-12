@@ -42,6 +42,8 @@ assetImporterRegistry.Register(new GlbModelImporter());
 assetImporterRegistry.Register(new CollisionMeshAssetImporter());
 assetImporterRegistry.Register(new TerrainAssetImporter());
 assetImporterRegistry.Register(new AnimationSetAssetImporter());
+assetImporterRegistry.Register(new StandardMaterialAssetImporter());
+assetImporterRegistry.Register(new ImageTextureAssetImporter());
 var assetImportPipeline = new AssetImportPipeline(assetDatabase, assetImporterRegistry);
 using var runtimeResources = new RuntimeResourceManager(
     new PublishedArtifactResolver(assetDatabase, assetImportPipeline, "editor"),
@@ -57,12 +59,8 @@ runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<SkeletalAnimat
     "nico/skeletal-animation", (stream, _, _) => SkeletalAnimationResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<AnimationSetResource>(
     "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
-runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<DecodedStandardMaterial>(
-    "nico/standard-material", (stream, _, _) =>
-    {
-        var (material, textureSlot) = StandardMaterialResource.Load(stream);
-        return new DecodedStandardMaterial(material, textureSlot);
-    }));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StandardMaterialAsset>(
+    "nico/standard-material", (stream, _, _) => StandardMaterialAssetCodec.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TextureResource>(
     "nico/texture2d", (stream, _, _) => TextureResource.Load(stream)));
 logger.LogInformation("Indexed {AssetCount} project assets with {DiagnosticCount} diagnostics",
@@ -202,7 +200,6 @@ var cube = new MeshInstance3D { Name = "SceneCube" };
 var hierarchyTree = editorView.HierarchyTree;
 var inspector = editorView.Inspector;
 inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
-inspector.ResolveMaterial = ResolveMaterialProperties;
 inspector.ResolveMaterialName = ResolveMaterialDisplayName;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
@@ -320,9 +317,41 @@ ScenePickerDialog? scenePickerDialog = null;
 FileSystemCreateDialog? fileSystemCreateDialog = null;
 ConfirmationDialog? confirmationDialog = null;
 var fileSystemTree = editorView.FileSystemTree;
+using var assetDocuments = new AssetDocumentService(reference =>
+{
+    assetDatabase.Refresh();
+    runtimeResources.Invalidate(reference.Asset);
+    foreach (var sceneObject in sceneObjects)
+    {
+        if (sceneObject.Materials.Contains(reference))
+        {
+            LoadAssetMeshResources(sceneObject);
+            if (detachedSceneRenderer is not null)
+                LoadAssetMeshResources(sceneObject, targetRenderer: detachedSceneRenderer);
+            if (detachedGameRenderer is not null)
+                LoadAssetMeshResources(sceneObject, targetRenderer: detachedGameRenderer);
+        }
+    }
+    InvalidateViewports();
+});
+assetDocuments.Register(new StandardMaterialDocumentFactory());
+var editableAssetSources = new EditableAssetSourceRegistry();
+editableAssetSources.Register("nico/standard-material", "standard-material");
+var assetEditors = new AssetEditorRegistry(
+    assetDocuments, ResolveAssetDocument, ResolveAssetReferenceDisplayName);
+assetEditors.Register(new StandardMaterialInspectorFactory());
+var assetDropResolver = new AssetDropResolver(assetDatabase, assetImportPipeline);
+var inspectorProviders = new InspectorProviderRegistry();
+inspectorProviders.Register(new AssetContentInspectorProvider(
+    assetDatabase, assetEditors, () => inspector.Width - 24f));
+inspectorProviders.Register(new ImportedSubAssetInspectorProvider());
+inspectorProviders.Register(new FileSystemInspectorProvider(assetDatabase));
+inspector.CreateAssetInspectorContent = reference =>
+    assetEditors.Create(reference, MathF.Max(0f, inspector.Width - 24f));
 var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
 var profilerRefreshPending = 0;
+long workspaceSaveTimestamp = 0;
 CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
 window.FrameProfiled += sample =>
 {
@@ -333,6 +362,20 @@ window.FrameProfiled += sample =>
 AttachFileSystem(fileSystemTree);
 AttachInspector(inspector);
 ConfigureEditorDragDrop();
+animationSetEditor.ResolveFileAnimations = ResolveAnimationArtifacts;
+animationSetEditor.ResolveRootJoints = ResolveAnimationRootJoints;
+animationSetEditor.AddRequested += () =>
+{
+    var added = fileSystemTree.SelectedItem switch
+    {
+        ImportedSubAssetNode imported => animationSetEditor.Add(imported) ? 1 : 0,
+        FileSystemNode file => animationSetEditor.Add(file),
+        _ => 0
+    };
+    if (added == 0)
+        logger.LogWarning("Select an imported Animation row or an animation GLB before adding");
+    RefreshVertices();
+};
 animationSetEditor.Saved += path =>
 {
     assetDatabase.Refresh();
@@ -362,7 +405,12 @@ foreach (var panelItem in editorView.WindowPanelItems)
     var item = panelItem.Value;
     item.Click += () => SetDockPanelVisible(panelId, item.IsChecked);
 }
-dockSession.WorkspaceChanged += SynchronizeWindowMenuChecks;
+dockSession.WorkspaceChanged += () =>
+{
+    SynchronizeWindowMenuChecks();
+    workspaceSaveTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+    window.RequestFrame();
+};
 SynchronizeWindowMenuChecks();
 editorView.Profiler.Click += () =>
 {
@@ -373,6 +421,19 @@ editorView.Profiler.Click += () =>
     }
 };
 RefreshVertices();
+
+/// <summary>Persists the current project-scoped dock layout with recoverable diagnostics.</summary>
+void SaveDockWorkspace()
+{
+    try
+    {
+        EditorDockWorkspace.Save(project.RootPath, dockSession.Workspace);
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    {
+        logger.LogWarning(exception, "Could not save the Editor dock workspace");
+    }
+}
 
 /// <summary>Connects focused Scene viewport input to one native-window UI host.</summary>
 /// <param name="host">Host whose independent router owns focus for the viewport.</param>
@@ -1175,6 +1236,91 @@ void AddImportedSubAssets(FileSystemNode node)
     }
 }
 
+/// <summary>Imports a physical GLB and exposes all standalone animation artifacts for authoring.</summary>
+/// <param name="source">Physical project file.</param>
+/// <returns>Imported animation rows, or an empty collection when unsupported or invalid.</returns>
+IReadOnlyList<ImportedSubAssetNode> ResolveAnimationArtifacts(FileSystemNode source)
+{
+    if (source.IsDirectory || !Path.GetExtension(source.FullPath).Equals(
+            ".glb", StringComparison.OrdinalIgnoreCase))
+        return [];
+    var record = assetDatabase.FindByPath(source.FullPath);
+    if (record is null)
+        return [];
+    var outcome = assetImportPipeline.Import(record, "editor");
+    if (!outcome.Succeeded)
+    {
+        for (var index = 0; index < outcome.Diagnostics.Count; index++)
+            logger.LogError("GLB import {Code}: {Message}", outcome.Diagnostics[index].Code,
+                outcome.Diagnostics[index].Message);
+        return [];
+    }
+    var animations = new List<ImportedSubAssetNode>();
+    for (var index = 0; index < outcome.Artifacts.Count; index++)
+    {
+        var artifact = outcome.Artifacts[index];
+        if (artifact.ContentType != "nico/skeletal-animation")
+            continue;
+        animations.Add(new ImportedSubAssetNode(source.FullPath,
+            new AssetReference(record.Id, artifact.Key), artifact.ContentType,
+            GetImportedArtifactDisplayName(artifact)));
+    }
+    requestedFileSystemExpansion.Add(source.FullPath);
+    return animations;
+}
+
+/// <summary>Loads one animation skeleton and detects its conventional translated root joint.</summary>
+/// <param name="source">Imported skeletal-animation reference.</param>
+/// <returns>All skeleton joint names and the detected root-motion joint.</returns>
+AnimationRootJointOptions ResolveAnimationRootJoints(AssetReference source)
+{
+    try
+    {
+        var animation = LoadAnimationSource(source);
+        var joints = new string[animation.Skeleton.JointCount];
+        for (var index = 0; index < joints.Length; index++)
+            joints[index] = animation.Skeleton.Joints[index].Name;
+        string? detected = null;
+        for (var clipIndex = 0; clipIndex < animation.Animations.Count && detected is null;
+             clipIndex++)
+        {
+            var clip = animation.Animations[clipIndex];
+            for (var jointIndex = 0; jointIndex < animation.Skeleton.JointCount; jointIndex++)
+            {
+                var name = animation.Skeleton.Joints[jointIndex].Name;
+                if (clip.Tracks[jointIndex]?.Translation is not null &&
+                    (string.Equals(name, "Hips", StringComparison.OrdinalIgnoreCase) ||
+                     name.EndsWith(":Hips", StringComparison.OrdinalIgnoreCase)))
+                {
+                    detected = name;
+                    break;
+                }
+            }
+        }
+        for (var clipIndex = 0; clipIndex < animation.Animations.Count && detected is null;
+             clipIndex++)
+        {
+            var clip = animation.Animations[clipIndex];
+            for (var jointIndex = 0; jointIndex < animation.Skeleton.JointCount; jointIndex++)
+            {
+                if (animation.Skeleton.Joints[jointIndex].ParentIndex < 0 &&
+                    clip.Tracks[jointIndex]?.Translation is not null)
+                {
+                    detected = animation.Skeleton.Joints[jointIndex].Name;
+                    break;
+                }
+            }
+        }
+        return new AnimationRootJointOptions(joints, detected);
+    }
+    catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                       FileNotFoundException)
+    {
+        logger.LogWarning(exception, "Could not inspect animation root joints for {Source}", source);
+        return new AnimationRootJointOptions([], null);
+    }
+}
+
 /// <summary>Returns whether an imported artifact should appear as a selectable child.</summary>
 /// <param name="contentType">Artifact content type.</param>
 /// <returns>True for user-facing model resources.</returns>
@@ -1483,16 +1629,8 @@ void LoadAssetMeshResources(
         }
     }
     instance.LocalBounds = new MeshBounds(importedMesh.BoundsMinimum, importedMesh.BoundsMaximum);
-    var defaultMaterial = MaterialProperties.Default;
-    var material = new StandardMaterialResource
-    {
-        BaseColor = defaultMaterial.BaseColor,
-        Metallic = defaultMaterial.Metallic,
-        Roughness = defaultMaterial.Roughness,
-        DoubleSided = defaultMaterial.DoubleSided
-    };
+    var material = new StandardMaterialAsset();
     TextureResource? textureResource = null;
-    var textureSlot = -1;
     var materialSlot = importedMesh.Submeshes.Count > 0
         ? importedMesh.Submeshes[0].MaterialSlot : -1;
     var defaultMaterialArtifact = outcome?.Artifacts.FirstOrDefault(artifact =>
@@ -1511,28 +1649,10 @@ void LoadAssetMeshResources(
         artifact.ContentType == "nico/standard-material");
     if (materialArtifact is not null)
     {
-        var decoded = LoadRuntimeResource(materialReference,
-            new DecodedStandardMaterial(new StandardMaterialResource(), -1));
-        material = CloneMaterial(decoded.Material);
-        textureSlot = decoded.BaseColorTextureSlot;
+        material = CloneMaterial(LoadRuntimeResource(
+            materialReference, new StandardMaterialAsset()));
     }
-    var textureArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
-        artifact.Key == $"texture/{textureSlot}");
-    if (textureArtifact is not null)
-    {
-        textureResource = LoadRuntimeResource(
-            new AssetReference(materialReference.Asset, textureArtifact.Key),
-            new TextureResource(0, 0, [], TextureColorSpace.Linear));
-    }
-    if (instance.MaterialOverride is { } materialOverride)
-    {
-        material.BaseColor = materialOverride.BaseColor;
-        material.Metallic = materialOverride.Metallic;
-        material.Roughness = materialOverride.Roughness;
-        material.DoubleSided = materialOverride.DoubleSided;
-        textureResource = ResolveTextureResource(materialOverride.BaseColorTexture)
-            ?? textureResource;
-    }
+    textureResource = ResolveTextureResource(material.BaseColorTexture);
     if (importedSkin is null)
     {
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
@@ -1660,51 +1780,9 @@ TerrainResource ResolveTerrainResource(AssetReference reference)
 /// <summary>Creates mutable renderer-local material values from a shared decoded resource.</summary>
 /// <param name="source">Shared decoded material.</param>
 /// <returns>An independent material copy.</returns>
-StandardMaterialResource CloneMaterial(StandardMaterialResource source)
+StandardMaterialAsset CloneMaterial(StandardMaterialAsset source)
 {
-    return new StandardMaterialResource
-    {
-        BaseColor = source.BaseColor,
-        Metallic = source.Metallic,
-        Roughness = source.Roughness,
-        DoubleSided = source.DoubleSided
-    };
-}
-
-/// <summary>Resolves material values used for Inspector copy-on-write editing.</summary>
-/// <param name="instance">Mesh instance whose effective slot zero is requested.</param>
-/// <returns>Resolved imported material or shared default values.</returns>
-MaterialProperties ResolveMaterialProperties(MeshInstance3D instance)
-{
-    if (instance.MaterialOverride is not null)
-        return instance.MaterialOverride;
-    var reference = instance.Materials.FirstOrDefault();
-    if (reference.Asset.Value == Guid.Empty)
-        return MaterialProperties.Default;
-    var record = assetDatabase.Find(reference.Asset);
-    if (record is null)
-        return MaterialProperties.Default;
-    var outcome = assetImportPipeline.TryGetLatestPublished(record, "editor");
-    if (outcome is null)
-        return MaterialProperties.Default;
-    var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
-        candidate.Key == reference.SubAsset &&
-        candidate.ContentType == "nico/standard-material");
-    if (artifact is null || outcome.ArtifactDirectory is null)
-        return MaterialProperties.Default;
-    var decoded = LoadRuntimeResource(reference,
-        new DecodedStandardMaterial(new StandardMaterialResource(), -1));
-    var material = decoded.Material;
-    var textureSlot = decoded.BaseColorTextureSlot;
-    return new MaterialProperties
-    {
-        BaseColor = material.BaseColor,
-        Metallic = material.Metallic,
-        Roughness = material.Roughness,
-        DoubleSided = material.DoubleSided,
-        BaseColorTexture = textureSlot >= 0
-            ? new AssetReference(reference.Asset, $"texture/{textureSlot}") : null
-    };
+    return source.Clone();
 }
 
 /// <summary>Formats slot-zero material ownership for the Inspector.</summary>
@@ -1712,8 +1790,6 @@ MaterialProperties ResolveMaterialProperties(MeshInstance3D instance)
 /// <returns>Readable material source name.</returns>
 string ResolveMaterialDisplayName(MeshInstance3D instance)
 {
-    if (instance.MaterialOverride is not null)
-        return "Scene Override";
     var reference = instance.Materials.FirstOrDefault();
     if (reference.Asset.Value == Guid.Empty)
         return "BuiltIn/Default";
@@ -1721,10 +1797,75 @@ string ResolveMaterialDisplayName(MeshInstance3D instance)
     return reference.SubAsset is null ? path : $"{path} / {reference.SubAsset}";
 }
 
+/// <summary>Formats one persistent asset reference for common Inspector fields.</summary>
+/// <param name="reference">Persistent asset reference.</param>
+/// <returns>Project path followed by an optional sub-asset key.</returns>
+string ResolveAssetReferenceDisplayName(AssetReference reference)
+{
+    var path = assetDatabase.Find(reference.Asset)?.ProjectPath ?? reference.Asset.ToString();
+    return reference.SubAsset is null or "main"
+        ? path : $"{path} / {reference.SubAsset}";
+}
+
+/// <summary>Resolves current storage and content type for one persistent asset output.</summary>
+/// <param name="reference">Persistent asset reference.</param>
+/// <returns>Current document location, or null when the output is unavailable.</returns>
+ResolvedAssetDocument? ResolveAssetDocument(AssetReference reference)
+{
+    var record = assetDatabase.Find(reference.Asset);
+    if (record is null)
+        return null;
+    var outcome = assetImportPipeline.Import(record, "editor");
+    var requestedKey = reference.SubAsset ?? "main";
+    var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+        candidate.Key == requestedKey);
+    if (!outcome.Succeeded || artifact is null)
+        return null;
+    var isEditable = editableAssetSources.IsEditable(
+        artifact.ContentType, record.Importer, reference.SubAsset);
+    Stream OpenCurrentContent()
+    {
+        var current = assetDatabase.Find(reference.Asset)
+            ?? throw new FileNotFoundException($"Asset '{reference.Asset}' is missing.");
+        if (isEditable)
+            return File.OpenRead(Path.Combine(project.RootPath, current.ProjectPath));
+        var published = assetImportPipeline.Import(current, "editor");
+        var currentArtifact = published.Artifacts.FirstOrDefault(candidate =>
+            candidate.Key == requestedKey && candidate.ContentType == artifact.ContentType);
+        if (!published.Succeeded || published.ArtifactDirectory is null || currentArtifact is null)
+            throw new InvalidDataException($"Asset output '{reference}' is unavailable.");
+        return File.OpenRead(Path.Combine(
+            published.ArtifactDirectory, currentArtifact.RelativePath));
+    }
+    Action<Action<Stream>>? write = null;
+    if (isEditable)
+    {
+        write = contentWriter =>
+        {
+            var current = assetDatabase.Find(reference.Asset)
+                ?? throw new FileNotFoundException($"Asset '{reference.Asset}' is missing.");
+            AssetDocumentStorage.WriteAtomic(
+                Path.Combine(project.RootPath, current.ProjectPath), contentWriter);
+        };
+    }
+    var location = new AssetDocumentLocation(reference,
+        () => ResolveAssetReferenceDisplayName(reference), OpenCurrentContent, write);
+    return new ResolvedAssetDocument(artifact.ContentType, location);
+}
+
 /// <summary>Connects scene opening to the project filesystem tree.</summary>
 /// <param name="tree">Filesystem tree to attach.</param>
 void AttachFileSystem(TreeView tree)
 {
+    tree.SelectionChanged += item =>
+    {
+        if (item is not null && inspectorProviders.TryCreate(item, out var document) &&
+            document is not null)
+        {
+            inspector.Bind(document);
+            RefreshVertices();
+        }
+    };
     tree.ItemActivated += OpenFileSystemEntry;
 }
 
@@ -1896,6 +2037,50 @@ void ShowAnimationSetPathDialog(string parentDirectory)
     RefreshVertices();
 }
 
+/// <summary>Shows a project-scoped path dialog for a new standard-material asset.</summary>
+/// <param name="parentDirectory">Directory receiving the new asset.</param>
+void ShowMaterialPathDialog(string parentDirectory)
+{
+    CloseFileContextMenu();
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height, "Material", relativeParent,
+        actionVerb: "Add") { Name = "AddMaterialDialog" };
+    dialog.CreateRequested += requestedName =>
+    {
+        var fileName = requestedName.EndsWith(".nmat", StringComparison.OrdinalIgnoreCase)
+            ? requestedName : requestedName + ".nmat";
+        var assetPath = Path.Combine(parentDirectory, fileName);
+        if (File.Exists(assetPath) || Directory.Exists(assetPath))
+        {
+            dialog.ShowError("An item with that name already exists.");
+            RefreshVertices();
+            return;
+        }
+        try
+        {
+            MaterialAuthoring.SaveDefault(assetPath);
+            assetDatabase.Refresh();
+            CloseFileContextMenu();
+            RefreshFileSystem();
+            RefreshVertices();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                           or ArgumentException or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not create material {AssetPath}", assetPath);
+            dialog.ShowError("Could not create this material.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    overlay.Add(dialog, Vector2.Zero);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
 /// <summary>Shows file types that can be created in the selected project directory.</summary>
 /// <param name="parentDirectory">Directory receiving the new file.</param>
 /// <param name="x">Submenu screen X position.</param>
@@ -1911,6 +2096,7 @@ void ShowAddFileSubmenu(string parentDirectory, float x, float y)
     submenu.AddItem("Add Scene", () => ShowScenePathDialog(parentDirectory,
         createDefaultScene: true, saveAction: false));
     submenu.AddItem("Add Animation Set", () => ShowAnimationSetPathDialog(parentDirectory));
+    submenu.AddItem("Add Material", () => ShowMaterialPathDialog(parentDirectory));
     submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
         createFolder: false));
     fileSubmenu = submenu;
@@ -2569,19 +2755,6 @@ void MoveFileSystemEntry(FileSystemNode source, TreeViewDropTarget dropTarget)
     }
 }
 
-/// <summary>Assigns a typed imported resource to the active Inspector material panel.</summary>
-/// <param name="source">Dragged imported sub-asset.</param>
-/// <returns>True when the Inspector accepted the resource.</returns>
-bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
-{
-    return source.ContentType switch
-    {
-        "nico/standard-material" => inspector.AssignMaterial(source.Reference),
-        "nico/texture2d" => inspector.AssignBaseColorTexture(source.Reference),
-        _ => false
-    };
-}
-
 /// <summary>Connects editor trees and Inspector slots to the shared routed drag system.</summary>
 void ConfigureEditorDragDrop()
 {
@@ -2663,37 +2836,33 @@ void HandleFileSystemDrag(UIElement sender, UIDragEventArgs dragEvent)
 void HandleInspectorDrag(UIElement sender, UIDragEventArgs dragEvent)
 {
     if (dragEvent.RoutePhase != UIRoutePhase.Bubble ||
-        !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) || payload is null ||
-        dragEvent.Target is not TextField field)
+        !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) || payload is null)
         return;
-    var accepted = field.Name switch
+    if (dragEvent.Target is AssetReferenceField assetField &&
+        assetDropResolver.TryResolve(
+            payload.Item, assetField.AcceptedContentType, out var reference))
     {
-        "ScriptAssetField" when payload.Item is FileSystemNode file =>
-            Path.GetExtension(file.FullPath).Equals(".cs", StringComparison.OrdinalIgnoreCase),
-        "MaterialSlot0" when payload.Item is ImportedSubAssetNode imported =>
-            imported.ContentType == "nico/standard-material",
-        "MaterialBaseColorTexture" when payload.Item is ImportedSubAssetNode imported =>
-            imported.ContentType == "nico/texture2d",
-        _ => false
-    };
-    if (!accepted)
-        return;
-    if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
-        dragEvent.Effect = UIDragEffect.Copy;
-    else if (dragEvent.Kind == UIDragEventKind.Drop)
-    {
-        var changed = payload.Item switch
-        {
-            FileSystemNode file => ScriptFileDrop.TryAttach(
-                file, inspector, assetDatabase),
-            ImportedSubAssetNode imported => TryAssignInspectorSubAsset(imported),
-            _ => false
-        };
-        if (changed)
+        if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+            dragEvent.Effect = UIDragEffect.Copy;
+        else if (dragEvent.Kind == UIDragEventKind.Drop && assetField.Assign(reference))
         {
             dragEvent.Effect = UIDragEffect.Copy;
             RefreshVertices();
         }
+        dragEvent.Handled = true;
+        return;
+    }
+    if (dragEvent.Target is not TextField { Name: "ScriptAssetField" } ||
+        payload.Item is not FileSystemNode scriptFile ||
+        !Path.GetExtension(scriptFile.FullPath).Equals(".cs", StringComparison.OrdinalIgnoreCase))
+        return;
+    if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+        dragEvent.Effect = UIDragEffect.Copy;
+    else if (dragEvent.Kind == UIDragEventKind.Drop && ScriptFileDrop.TryAttach(
+                 scriptFile, inspector, assetDatabase))
+    {
+        dragEvent.Effect = UIDragEffect.Copy;
+        RefreshVertices();
     }
     dragEvent.Handled = true;
 }
@@ -2829,6 +2998,13 @@ mainUIHost.PreviewTextComposition = _ => sceneInputContext.RoutesText(uiEventRou
 // ── Game loop: Update → Render ──────────────────────────────
 window.Update += delta =>
 {
+    if (workspaceSaveTimestamp != 0 &&
+        System.Diagnostics.Stopwatch.GetElapsedTime(workspaceSaveTimestamp) >=
+        TimeSpan.FromMilliseconds(300))
+    {
+        workspaceSaveTimestamp = 0;
+        SaveDockWorkspace();
+    }
     if (Interlocked.Exchange(ref profilerRefreshPending, 0) != 0)
         RefreshUI();
     if (Interlocked.Exchange(ref assetRefreshPending, 0) != 0)
@@ -2908,6 +3084,7 @@ window.Update += delta =>
             playBuildTask is not null
             || scriptSchemaBuildTask is not null
             || pendingResizeTimestamp != 0
+            || workspaceSaveTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates
             || dockSession.RequiresContinuousUpdates);
 };
@@ -2915,14 +3092,7 @@ window.Update += delta =>
 logger.LogInformation("Running main loop...");
 window.Run();
 isShuttingDown = true;
-try
-{
-    EditorDockWorkspace.Save(project.RootPath, dockSession.Workspace);
-}
-catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-{
-    logger.LogWarning(exception, "Could not save the Editor dock workspace");
-}
+SaveDockWorkspace();
 StopPlayMode();
 if (playBuildTask is not null)
 {

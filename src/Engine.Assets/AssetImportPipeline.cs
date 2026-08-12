@@ -58,8 +58,9 @@ public sealed class PublishedArtifactResolver : IAssetResolver
             ?? throw new FileNotFoundException($"Asset '{reference.Asset}' is missing.");
         var outcome = _pipeline.TryGetLatestPublished(record, _target)
             ?? throw new FileNotFoundException($"Asset '{reference.Asset}' has no published import.");
+        var requestedKey = reference.SubAsset ?? "main";
         var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
-            candidate.Key == reference.SubAsset)
+            candidate.Key == requestedKey)
             ?? throw new FileNotFoundException($"Sub-asset '{reference}' is missing.");
         return new ResolvedAsset(
             new LooseFileAssetLocation(Path.Combine(outcome.ArtifactDirectory!, artifact.RelativePath)),

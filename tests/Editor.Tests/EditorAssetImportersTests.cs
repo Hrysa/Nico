@@ -11,6 +11,9 @@ public class EditorAssetImportersTests
     [InlineData("Scenes/Main.node", "scene")]
     [InlineData("Scenes/Main.scene.node", "scene")]
     [InlineData("Models/Robot.GLB", "gltf-model")]
+    [InlineData("Textures/Grid.PNG", "image-texture")]
+    [InlineData("Textures/Grid.jpg", "image-texture")]
+    [InlineData("Materials/Ground.nmat", "standard-material")]
     [InlineData("README.md", null)]
     [InlineData("Game.csproj", null)]
     public void Select_KnownExtension_ReturnsExpectedImporter(string path, string? importer)

@@ -13,9 +13,8 @@ node.AddComponent(new RigidBodyComponent
     Mass = 1f
 });
 
-node.AddComponent(new ColliderComponent
+node.AddComponent(new BoxColliderComponent
 {
-    Shape = ColliderShape.Box,
     Size = Vector3.One
 });
 ```
@@ -23,13 +22,13 @@ node.AddComponent(new ColliderComponent
 A static floor needs only a collider:
 
 ```csharp
-floor.AddComponent(new ColliderComponent
+floor.AddComponent(new PlaneColliderComponent
 {
-    Shape = ColliderShape.Plane
+    Size = new Vector2(100f, 100f)
 });
 ```
 
-Supported motion types are static, dynamic, and kinematic. Supported collider shapes are box, sphere, capsule, cylinder, and infinite plane. Colliders expose center, dimensions, trigger state, friction, and restitution.
+Supported motion types are static, dynamic, and kinematic. Concrete collider components are box, sphere, capsule, cylinder, finite XZ plane, static triangle mesh, and heightfield terrain. Colliders expose center, dimensions or an asset reference, trigger state, collision layer/mask, friction, and restitution.
 
 ## Simulation ownership
 
@@ -43,7 +42,7 @@ Do not assign a dynamic body's position every frame. Change `LinearVelocity`, or
 
 `PhysicsWorld` defaults to a 60 Hz fixed step with bounded catch-up. Bepu owns broad-phase and narrow-phase collision detection, sleeping, contact constraints, and friction response. The engine adapter applies per-component gravity and linear damping before each Bepu step. Trigger pairs raise `Contact` without physical response.
 
-Boxes, spheres, capsules, and cylinders use Bepu's exact primitive collision shapes. The engine's infinite plane component is represented by a very large thin static Bepu box. Angular motion remains locked until angular velocity and torque are exposed by the engine component API.
+Boxes, spheres, capsules, and cylinders use Bepu's exact primitive collision shapes. `PlaneColliderComponent` is a configurable finite thin static box. `MeshColliderComponent` consumes explicitly imported/chunked static triangle collision data; adding a collider to a visual GLB does not implicitly reuse render geometry. `TerrainColliderComponent` consumes imported heightfield samples. Angular motion remains locked until angular velocity and torque are exposed by the engine component API.
 
 Client runtimes enable transform interpolation between completed steps. Headless and authoritative simulations should leave interpolation disabled so node transforms expose the latest completed simulation state.
 

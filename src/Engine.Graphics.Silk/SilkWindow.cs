@@ -3171,7 +3171,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     }
 
     /// <inheritdoc/>
-    public MeshHandle CreateStaticMesh(StaticMeshResource mesh, StandardMaterialResource material)
+    public MeshHandle CreateStaticMesh(StaticMeshResource mesh, ResolvedStandardMaterial material)
     {
         var handle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
         var vertices = BuiltInForwardMeshBuilder.BuildIndexedVertices(mesh, material);
@@ -3186,7 +3186,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     /// <inheritdoc/>
     public SkinnedMeshHandles CreateSkinnedMesh(
         SkinnedMeshResource mesh,
-        StandardMaterialResource material)
+        ResolvedStandardMaterial material)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(material);

@@ -132,8 +132,6 @@ public static class SceneFileStore
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
                     meshInstance.Materials.ToList()) : null,
-            node is MeshInstance3D { MaterialOverride: { } materialOverride }
-                ? MaterialOverrideData.From(materialOverride) : null,
             children);
     }
 
@@ -169,8 +167,6 @@ public static class SceneFileStore
         node.Rotation = data.Rotation.ToVector3();
         node.Scale = data.Scale.ToVector3();
         DecodeComponents(data, node);
-        if (node is MeshInstance3D meshNode && data.MaterialOverride is not null)
-            meshNode.MaterialOverride = data.MaterialOverride.ToMaterial();
         nodesById.Add(data.Id, node);
         if (node is MeshInstance3D meshInstance)
             meshInstances.Add(meshInstance);
@@ -484,7 +480,6 @@ public static class SceneFileStore
         CameraData? Camera,
         DirectionalLightData? DirectionalLight,
         ModelData? Model,
-        MaterialOverrideData? MaterialOverride,
         List<SceneNodeData> Children);
 
     private sealed record SceneComponentData(
@@ -602,32 +597,6 @@ public static class SceneFileStore
         AssetId Asset,
         string? SubAsset,
         List<AssetReference>? Materials = null);
-
-    private sealed record MaterialOverrideData(
-        SceneVector4 BaseColor,
-        float Metallic,
-        float Roughness,
-        bool DoubleSided,
-        AssetReference? BaseColorTexture)
-    {
-        /// <summary>Encodes editable material values.</summary>
-        /// <param name="material">Scene-local material.</param>
-        /// <returns>Serializable material data.</returns>
-        public static MaterialOverrideData From(MaterialProperties material) => new(
-            SceneVector4.From(material.BaseColor), material.Metallic, material.Roughness,
-            material.DoubleSided, material.BaseColorTexture);
-
-        /// <summary>Decodes editable material values.</summary>
-        /// <returns>A scene-local material.</returns>
-        public MaterialProperties ToMaterial() => new()
-        {
-            BaseColor = BaseColor.ToVector4(),
-            Metallic = Metallic,
-            Roughness = Roughness,
-            DoubleSided = DoubleSided,
-            BaseColorTexture = BaseColorTexture
-        };
-    }
 
     private sealed class SerializationContext
     {

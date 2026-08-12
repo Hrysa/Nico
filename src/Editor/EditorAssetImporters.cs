@@ -21,6 +21,8 @@ public static class EditorAssetImporters
             ".ncollision" => "collision-mesh",
             ".nterrain" => "terrain",
             ".nanimset" => "animation-set",
+            ".nmat" => "standard-material",
+            ".png" or ".jpg" or ".jpeg" => "image-texture",
             _ => null
         };
     }

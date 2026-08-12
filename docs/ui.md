@@ -104,7 +104,7 @@ The Editor mounts this content above the Game viewport during play, including wh
 
 ## Rendering and accessibility
 
-`UIDrawList` contains semantic commands for solid/rounded shapes, strokes, text, images, and viewport textures. The Silk backend performs clipping, batching, glyph shaping/rasterization, and texture binding.
+`UIDrawList` contains semantic commands for solid/rounded shapes, strokes, text, images, and viewport textures. The Silk backend performs clipping, batching, glyph shaping/rasterization, and texture binding. Fonts use on-demand glyph atlases. Windows prefers native DirectWrite hinted RGB subpixel coverage and falls back to the cross-platform TrueType rasterizer; other platforms use the cross-platform path. Coverage format is explicit so Windows subpixel filtering does not alter other platforms.
 
 The retained tree exposes semantic snapshots and actions for accessibility adapters. New interactive controls must provide an appropriate role, label, state/value data, and semantic actions.
 

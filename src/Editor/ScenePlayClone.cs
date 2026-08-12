@@ -90,7 +90,6 @@ public static class ScenePlayClone
             destinationMesh.Mesh = sourceMesh.Mesh;
             destinationMesh.LocalBounds = sourceMesh.LocalBounds;
             destinationMesh.Materials.AddRange(sourceMesh.Materials);
-            destinationMesh.MaterialOverride = sourceMesh.MaterialOverride?.Clone();
         }
     }
 

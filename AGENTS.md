@@ -8,37 +8,47 @@ C# game engine built on **Silk.NET 2.23.0**, targeting **.NET 11.0**. "Editor as
 
 ```
 GameEngine.slnx
-├── src/Engine.Core/         → pure abstractions (no Silk.NET): Node base class
-├── src/Engine.Graphics/     → graphics abstractions (no Silk.NET): ICamera, IWindow, Vertex, Color
-├── src/Engine.Graphics.Silk/ → Silk.NET implementations: SilkWindow, FrameScheduler, ViewportFbo
-├── src/Engine.UI/           → UI element types (UIElement, Panel, Button, ViewportPanel)
+├── src/Engine.Core/         → nodes, components, asset identity, persistent material data
+├── src/Engine.Assets/       → metadata, importers, artifacts, VFS, runtime resources
+├── src/Engine.Graphics/     → renderer-independent scene, animation, render pipeline, queues
+├── src/Engine.Graphics.Silk/ → Silk.NET/Vulkan, native windows, text rasterization
+├── src/Engine.Physics/      → BepuPhysics adapter
+├── src/Engine.Scripting/    → script lifecycle, observed properties, scene services
+├── src/Engine.UI/           → retained UI, routing, controls, docking, accessibility
 ├── src/Engine/              → runtime composition facade (EngineHost)
-├── src/Editor/              → editor app entry point (Program.cs, EditorUI.cs)
-└── src/Player/              → game runtime (Player.csproj)
+├── src/Editor/              → editor composition and tooling
+├── src/Player/              → game runtime
+└── tools/                   → generators, profiling, benchmarks, asset authoring
 ```
 
-**Current state:** Working Vulkan renderer with 2-pass rendering (FBO pass + swapchain pass). Scene viewport renders a rotating 3D cube via PerspectiveCamera. Game viewport renders a static colored quad via orthographic projection. UI layout with menu bar, status bar, hierarchy, inspector panels.
+**Current state:** The Editor loads versioned scenes, GLB/static/skinned meshes, materials, textures, animation sets, scripts, physics, HUDs, and configurable render pipelines. Scene and Game views render independently, can move to detached native windows, and remain embedded in the retained dock workspace when docked.
 
 ## Dependency Rules (Iron Law)
 
 ```
-Editor → Engine.Graphics, Engine.Graphics.Silk, Engine.UI
+Editor → Engine.Assets, Engine.Graphics, Engine.Graphics.Silk, Engine.Physics, Engine.Scripting, Engine.UI
 Player → Engine
 Engine.Graphics → Engine.Core
+Engine.Assets → Engine.Core
 Engine.Graphics.Silk → Engine.Graphics
 Engine.Graphics.Silk → Silk.NET (NuGet)   ← ONLY project that references Silk.NET directly
 Engine.UI → Engine.Core
 Engine.UI → Engine.Graphics
+Engine.Physics → Engine.Core, Engine.Graphics
+Engine.Scripting → Engine.Core, Engine.Graphics
 ```
 
-- `Engine.Core` contains pure abstractions and domain logic — no Silk.NET. Has `Node` base class.
-- `Engine.Graphics` contains graphics abstractions and renderer-independent scene/render data — no Silk.NET. Has `Color`, `Vertex`, `ICamera`, `IWindow`, `IInputSource`, `IRenderer`, and `RenderQueue`.
-- `Engine.Graphics.Silk` contains Silk.NET implementations of graphics abstractions. `FrameScheduler`, `SwapchainManager`, `FrameVertexBuffers`, and `PipelineResources` own focused Vulkan lifecycles.
-- `Engine.UI` contains UI element types (`UIElement`, `Panel`, `Button`, `ViewportPanel`) — extends `Node` from `Engine.Core`.
-- `Editor` and `Player` interact with graphics only through interfaces defined in `Engine.Graphics`.
+- `Engine.Core` contains backend-independent domain state and codecs; it has no graphics or asset-import dependency.
+- `Engine.Assets` may reference format libraries, but it does not reference rendering or Silk.NET.
+- `Engine.Graphics` contains scene/render/animation abstractions and data; it has no Silk.NET dependency.
+- `Engine.Graphics.Silk` contains the only Silk.NET and Vulkan implementation code.
+- `Engine.UI` contains renderer-independent retained UI elements extending `Node`.
+- `Editor`, `Engine`, and `Player` compose lower layers; gameplay and tools must not depend on concrete Vulkan types.
 - `Silk.NET` references are confined to `Engine.Graphics.Silk`.
 
 ## Rendering Pipeline
+
+Game/Scene code prepares a `RenderQueue`. A renderer-independent `RenderPipeline` executes ordered `RenderPipelinePass` instances and must call `SubmitScene()` exactly once. `BasicForwardRenderPipeline` exposes Shadows, DepthPrepass, Opaque, Transparent, and PostProcess stages. Empty stages are extension points; the opaque pass currently performs scene submission. Output effects such as grayscale are expressed through `RenderOutputSettings`.
 
 ### FrameScheduler
 
@@ -49,11 +59,11 @@ Engine.UI → Engine.Graphics
 - **Frame lifecycle:** `BeginFrame()` waits/resets fence → `BeginPass()` allocates command buffer → `EndPass()` ends recording → `SubmitPass()` submits with semaphore chain → `EndFrame()` advances frame counter
 - **Semaphore chain:** Pass N waits on pass N-1's semaphore (or imageAvailable for first pass); last pass's semaphore is waited on by present
 
-### Pass 1: Per-viewport FBO rendering
+### Pass 1: Per-render-view offscreen rendering
 1. For each registered viewport:
    - Bind FBO framebuffer (color attachment)
    - Set viewport scissor to FBO dimensions
-   - Replay queued draw calls with `_fboGraphicsPipeline`
+   - Replay the submitted render queue with the appropriate retained mesh pipelines
    - End render pass
 
 ### Pass 2: Editor UI → Screen
@@ -69,15 +79,15 @@ Engine.UI → Engine.Graphics
 ## Camera System
 
 - `ICamera` interface in `Engine.Graphics` — `GetViewMatrix()`, `GetProjectionMatrix()`, `GetPushConstants(model)`, `UpdateViewport(w, h)`
-- `PerspectiveCamera` — full implementation with FOV/aspect/near/far, euler-angle rotation, movement, pitch clamping. Vulkan Y-flip and Z [0,1] remap applied in `GetProjectionMatrix()`.
+- `PerspectiveCamera` — FOV/aspect/near/far, Euler-authored orientation resolved through quaternions for movement/orbit math, and pitch clamping. Vulkan correction is applied in `GetProjectionMatrix()`.
 - `OrthographicCamera` — orthographic projection with viewport updates, panning, and zooming
-- Both extend `Node` (get Position/Rotation/Scale for free)
+- Both extend `Node3D`.
 - ViewportPanel has `ICamera? Camera` property
-- Scene viewport uses PerspectiveCamera with a rotating cube (36 vertices, 12 triangles)
+- Scene navigation uses `FlyCameraController`; game cameras remain ordinary root scene nodes and are not forced under a camera rig.
 
 ## Debug System
 
-Conditional compilation per subsystem. Define symbols in `Directory.Build.props`:
+Conditional compilation is available per subsystem. `Directory.Build.props` currently enables Core, Graphics, Graphics.Silk, UI, and Editor logging; add `DEBUG_INPUT` temporarily when native input tracing is required.
 
 ```csharp
 Debug.Core(LogLevel.Debug, "message {0}", arg);
@@ -101,15 +111,15 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
 
 - `IInputSource` events: `MouseMove`, `MouseDown`, `MouseUp`, `MouseDoubleClick`, `MouseScroll`, `KeyDown`, `KeyUp`
 - `SilkWindow` subscribes to Silk.NET `IMouse` / `IKeyboard` after window creation
-- `UIEventRouter` performs recursive hit testing and dispatches hover, press, click, and scroll state.
+- `UIEventRouter` performs clipped hit testing and preview/target/bubble routing for pointer, keyboard, text/composition, commands, focus, and drag/drop.
 
 ## Viewport System
 
-- `ViewportPanel` extends `Panel` — tracks `ViewportId`, `Camera`, resize detection
-- `ViewportFbo` — per-viewport Vulkan resources (color image, framebuffer, sampler, descriptor set)
-- `IRenderer.RegisterViewport()` / `UnregisterViewport()` / `ResizeViewport()`
+- `ViewportPanel` extends `Panel` and presents a `RenderViewHandle`.
+- `ViewportFbo` owns per-view color/depth images, framebuffer, sampler, and descriptor state.
+- `IRenderer.CreateRenderView()` / `DestroyRenderView()` / `ResizeRenderView()`
 - `IWindow.Update` — event fired each frame with delta time (logic goes here)
-- `IRenderer.DrawInViewport()` — queues vertices for FBO pass (call from Update handler)
+- `RenderPipeline.Render()` submits a prepared `RenderQueue` to a view.
 - `IRenderer.SetViewportClearColor()` — per-viewport clear color
 
 ## Coding Conventions
@@ -135,6 +145,34 @@ Debug.Input(LogLevel.Trace, "Mouse: ({X}, {Y})", x, y);
   - A `for` loop over `List<T>` can be marginally faster by avoiding the enumerator version check, but prefer the clearer direct `foreach` unless profiling proves loop overhead matters.
   - Consider `CollectionsMarshal.AsSpan(list)` only for a proven bottleneck where the list cannot change during traversal.
   - Add an allocation regression test when introducing a new hot-path collection or enumeration pattern.
+
+## Asset and Inspector Architecture Principles
+
+- **No compatibility by default**: do not retain legacy asset formats, migration readers, deprecated
+  APIs, or parallel code paths unless compatibility is explicitly requested. Replace obsolete formats
+  and update all producers and consumers together.
+- **Assets own their properties**: properties intrinsic to an asset belong in that asset. Scene nodes
+  store asset references and must not silently duplicate referenced asset data as scene overrides.
+  Per-object overrides or unique instances must be explicit user-facing features.
+- **One editor per concept**: implement a single reusable Inspector content component for each domain
+  concept. When a scene object references an asset, embed the same asset editor used for direct
+  filesystem inspection; never copy its controls or property-update logic into the object Inspector.
+- **Inspector is a host**: the Inspector shell must not contain switches for every asset type.
+  Selection-specific providers create composable Inspector content through registries and shared
+  contexts. Adding an asset type should require registration, not edits throughout `Program.cs`, the
+  filesystem tree, and `SceneInspector`.
+- **Use shared asset documents**: load, cache, dirty-track, atomically save, reload, notify, and
+  invalidate runtime resources through reusable typed asset-document services. Direct asset selection
+  and embedded object views of the same asset must share one document and remain synchronized.
+- **Compose common property editors**: reuse typed bindings and standard editors for numbers, vectors,
+  colors, booleans, enums, collections, and asset references. Domain editors compose these controls;
+  they do not reimplement parsing, validation, undo, refresh, or persistence.
+- **Asset references are generic UI infrastructure**: use one filtered asset-reference field and one
+  drag/drop resolution path for physical files and imported sub-assets. Do not add specialized PNG,
+  material, animation, or other asset-drop branches for each Inspector consumer.
+- **Prefer general mechanisms over local fixes**: before adding type checks or duplicated handlers,
+  identify the reusable lifecycle, binding, routing, or UI abstraction. A new implementation should
+  make the next asset type cheaper to add without copy-paste changes.
 
 ## Known Pitfalls
 
@@ -162,9 +200,9 @@ The only Vulkan-specific correction is the **Y-flip** (`M22 = -M22`) on the pers
 
 ```bash
 dotnet build GameEngine.slnx           # build all
-./run.sh                               # run editor (sets MoltenVK env on macOS)
-dotnet run --project src/Editor        # run editor directly
-dotnet run --project src/Player        # run game directly
+./run.sh example_game                  # run editor (sets MoltenVK env on macOS)
+dotnet run --project src/Editor -- example_game
+dotnet run --project src/Player -- example_game example_game/scenes/scene.node
 ```
 
 ### macOS Vulkan Setup
