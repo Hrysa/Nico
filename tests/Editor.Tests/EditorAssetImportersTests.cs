@@ -1,4 +1,5 @@
 using Editor;
+using Engine.Assets;
 using Xunit;
 
 namespace Editor.Tests;
@@ -29,5 +30,26 @@ public class EditorAssetImportersTests
     public void Select_CollisionSources_ReturnsTypedImporter(string path, string importer)
     {
         Assert.Equal(importer, EditorAssetImporters.Select(path));
+    }
+
+    /// <summary>Ensures every selected importer ID is present in the Editor registry.</summary>
+    [Fact]
+    public void RegisterAll_EverySelectedImporter_Resolves()
+    {
+        string[] paths =
+        [
+            "Scripts/Move.cs", "Scenes/Main.node", "Models/Robot.glb",
+            "Map.ncollision", "Map.nterrain", "Character.nanimset",
+            "Materials/Ground.nmat", "Textures/Grid.png"
+        ];
+        var registry = new AssetImporterRegistry();
+
+        EditorAssetImporters.RegisterAll(registry);
+
+        for (var index = 0; index < paths.Length; index++)
+        {
+            var id = Assert.IsType<string>(EditorAssetImporters.Select(paths[index]));
+            Assert.Equal(id, registry.Resolve(id).Id);
+        }
     }
 }

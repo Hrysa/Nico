@@ -12,6 +12,13 @@ public sealed class GlbModelImporterTests : IDisposable
 {
     private readonly string _directory = Directory.CreateTempSubdirectory("nico-glb-").FullName;
 
+    /// <summary>Guards the cache contract for the current standard-material artifact format.</summary>
+    [Fact]
+    public void Version_CurrentMaterialArtifactContract_IsNine()
+    {
+        Assert.Equal(9, new GlbModelImporter().Version);
+    }
+
     /// <summary>Imports the example character and Run clip and verifies in-place hips binding.</summary>
     [Fact]
     public void Import_ExampleRun_InPlaceBindingRemovesHorizontalHipsTravel()

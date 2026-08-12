@@ -18,7 +18,7 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 8;
+    public int Version => 9;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)

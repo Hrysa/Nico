@@ -27,6 +27,17 @@ public sealed record AssetImportOutcome(
     IReadOnlyList<AssetImportDiagnostic> Diagnostics,
     IReadOnlyList<AssetImportObject>? Objects = null);
 
+/// <summary>Describes completed work in one bounded asset-import batch.</summary>
+/// <param name="CompletedCount">Number of assets whose imports have completed.</param>
+/// <param name="TotalCount">Total number of assets in the batch.</param>
+/// <param name="Asset">Asset that most recently completed.</param>
+/// <param name="Outcome">Published or failed import result for that asset.</param>
+public sealed record AssetImportProgress(
+    int CompletedCount,
+    int TotalCount,
+    AssetMetadataRecord Asset,
+    AssetImportOutcome Outcome);
+
 /// <summary>Resolves references through the latest published loose import generation.</summary>
 public sealed class PublishedArtifactResolver : IAssetResolver
 {
@@ -159,12 +170,14 @@ public sealed class AssetImportPipeline
     /// <param name="target">Stable build target identifier.</param>
     /// <param name="maximumConcurrency">Maximum simultaneous importer executions.</param>
     /// <param name="cancellationToken">Cancellation request for pending and active imports.</param>
+    /// <param name="progress">Optional thread-safe receiver for completed-asset progress.</param>
     /// <returns>Import outcomes in the same order as the supplied records.</returns>
     public async Task<IReadOnlyList<AssetImportOutcome>> ImportAsync(
         IEnumerable<AssetMetadataRecord> records,
         string target,
         int maximumConcurrency,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<AssetImportProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentException.ThrowIfNullOrWhiteSpace(target);
@@ -172,6 +185,7 @@ public sealed class AssetImportPipeline
             throw new ArgumentOutOfRangeException(nameof(maximumConcurrency));
         var ordered = records.ToArray();
         var outcomes = new AssetImportOutcome[ordered.Length];
+        var completed = 0;
         using var gate = new SemaphoreSlim(maximumConcurrency, maximumConcurrency);
         var tasks = ordered.Select((record, index) => ImportOneAsync(record, index)).ToArray();
         await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -183,9 +197,25 @@ public sealed class AssetImportPipeline
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                outcomes[index] = await Task.Run(
-                    () => Import(record, target, cancellationToken), cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    outcomes[index] = await Task.Run(
+                        () => Import(record, target, cancellationToken), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    outcomes[index] = new AssetImportOutcome(
+                        record.Id, string.Empty, null, false, false, [], [],
+                        [new AssetImportDiagnostic(
+                            AssetDiagnosticSeverity.Error,
+                            "BATCH_IMPORT_EXCEPTION",
+                            exception.Message)],
+                        []);
+                }
+                var completedCount = Interlocked.Increment(ref completed);
+                progress?.Report(new AssetImportProgress(
+                    completedCount, ordered.Length, record, outcomes[index]));
             }
             finally
             {

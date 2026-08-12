@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Engine.Assets;
 using Engine.Core;
@@ -429,6 +430,55 @@ public class AssetMetadataStoreTests
         Assert.InRange(importer.MaximumConcurrency, 1, 2);
     }
 
+    /// <summary>Reports every completed batch item with monotonic aggregate counts.</summary>
+    [Fact]
+    public async Task ImportPipeline_Batch_ReportsCompletedAssetProgress()
+    {
+        using var temporary = new TemporaryDirectory();
+        for (var index = 0; index < 4; index++)
+            File.WriteAllText(Path.Combine(temporary.Path, $"Asset{index}.parallel"), index.ToString());
+        var database = new AssetDatabase(temporary.Path,
+            path => Path.GetExtension(path) == ".parallel" ? "parallel" : null);
+        var registry = new AssetImporterRegistry();
+        registry.Register(new ParallelImporter());
+        var pipeline = new AssetImportPipeline(database, registry);
+        var progress = new CollectingImportProgress();
+
+        await pipeline.ImportAsync(database.Assets, "test-x64", 2,
+            progress: progress);
+
+        var reports = progress.Reports.OrderBy(report => report.CompletedCount).ToArray();
+        Assert.Equal(4, reports.Length);
+        Assert.Equal([1, 2, 3, 4], reports.Select(report => report.CompletedCount));
+        Assert.All(reports, report => Assert.Equal(4, report.TotalCount));
+        Assert.All(reports, report => Assert.True(report.Outcome.Succeeded));
+    }
+
+    /// <summary>Contains one invalid asset without faulting unrelated imports in the batch.</summary>
+    [Fact]
+    public async Task ImportPipeline_Batch_ImporterResolutionFailure_IsAnAssetFailure()
+    {
+        using var temporary = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(temporary.Path, "Valid.raw"), "valid");
+        File.WriteAllText(Path.Combine(temporary.Path, "Invalid.unknown"), "invalid");
+        var database = new AssetDatabase(temporary.Path, path =>
+            Path.GetExtension(path) == ".raw" ? "raw" : "unknown");
+        var registry = new AssetImporterRegistry();
+        registry.Register(new RawAssetImporter());
+        var pipeline = new AssetImportPipeline(database, registry);
+        var progress = new CollectingImportProgress();
+
+        var outcomes = await pipeline.ImportAsync(database.Assets, "test-x64", 2,
+            progress: progress);
+
+        Assert.Equal(2, outcomes.Count);
+        Assert.Single(outcomes, outcome => outcome.Succeeded);
+        var failed = Assert.Single(outcomes, outcome => !outcome.Succeeded);
+        Assert.Contains(failed.Diagnostics,
+            diagnostic => diagnostic.Code == "BATCH_IMPORT_EXCEPTION");
+        Assert.Equal(2, progress.Reports.Count);
+    }
+
     /// <summary>Verifies simultaneous requests for one asset execute its importer only once.</summary>
     [Fact]
     public async Task ImportPipeline_SameAssetConcurrent_SerializesPublication()
@@ -720,5 +770,17 @@ public class AssetMetadataStoreTests
                 current = observed;
             }
         }
+    }
+
+    /// <summary>Collects concurrently reported importer progress for assertions.</summary>
+    private sealed class CollectingImportProgress : IProgress<AssetImportProgress>
+    {
+        private readonly ConcurrentQueue<AssetImportProgress> _reports = new();
+
+        /// <summary>Gets the thread-safe collection of received reports.</summary>
+        public IReadOnlyCollection<AssetImportProgress> Reports => _reports;
+
+        /// <inheritdoc/>
+        public void Report(AssetImportProgress value) => _reports.Enqueue(value);
     }
 }

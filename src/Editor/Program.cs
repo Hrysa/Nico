@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Concurrent;
 using Editor;
 using Engine.Assets;
 using Engine.Core;
@@ -38,12 +39,7 @@ logger.LogInformation("Starting Editor for game project {ProjectRoot}...", proje
 
 var assetDatabase = new AssetDatabase(project.RootPath, EditorAssetImporters.Select);
 var assetImporterRegistry = new AssetImporterRegistry();
-assetImporterRegistry.Register(new GlbModelImporter());
-assetImporterRegistry.Register(new CollisionMeshAssetImporter());
-assetImporterRegistry.Register(new TerrainAssetImporter());
-assetImporterRegistry.Register(new AnimationSetAssetImporter());
-assetImporterRegistry.Register(new StandardMaterialAssetImporter());
-assetImporterRegistry.Register(new ImageTextureAssetImporter());
+EditorAssetImporters.RegisterAll(assetImporterRegistry);
 var assetImportPipeline = new AssetImportPipeline(assetDatabase, assetImporterRegistry);
 using var runtimeResources = new RuntimeResourceManager(
     new PublishedArtifactResolver(assetDatabase, assetImportPipeline, "editor"),
@@ -213,6 +209,15 @@ CancellationTokenSource? playBuildCancellation = null;
 Task<GameScriptHost>? scriptSchemaBuildTask = null;
 CancellationTokenSource? scriptSchemaBuildCancellation = null;
 CompilationProgressDialog? compilationProgressDialog = null;
+AssetImportProgressDialog? assetImportProgressDialog = null;
+Task<IReadOnlyList<AssetImportOutcome>>? assetImportTask = null;
+CancellationTokenSource? assetImportCancellation = null;
+var assetImportProgress = new ConcurrentQueue<AssetImportProgress>();
+var queuedAssetImports = new Dictionary<AssetId, AssetMetadataRecord>();
+AssetMetadataRecord[] activeAssetImports = [];
+var assetBindings = new Queue<(MeshInstance3D Instance, AssetImportOutcome? MeshOutcome)>();
+var queuedReloadAllAssetsAfterImport = false;
+var activeReloadAllAssetsAfterImport = false;
 Node3D? editSelectionBeforePlay = null;
 var isPlaying = false;
 var isShuttingDown = false;
@@ -262,8 +267,6 @@ using var viewportRenderer = new EditorViewportRenderer(
 var gameRenderingService = new EditorGameRenderingService(viewportRenderer);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
-foreach (var assetMesh in sceneObjects)
-    LoadAssetMeshResources(assetMesh);
 DetachedToolWindow? detachedSceneWindow = null;
 DetachedToolWindow? detachedGameWindow = null;
 EditorViewportRenderer? detachedSceneRenderer = null;
@@ -420,6 +423,7 @@ editorView.Profiler.Click += () =>
         editorView.ProfilerPauseLabel.Text = "Record";
     }
 };
+QueueAssetImports(assetDatabase.Assets, reloadAllSceneAssets: true);
 RefreshVertices();
 
 /// <summary>Persists the current project-scoped dock layout with recoverable diagnostics.</summary>
@@ -829,6 +833,149 @@ void CloseCompilationProgress()
         overlay.Remove(compilationProgressDialog);
     compilationProgressDialog = null;
     RefreshVertices();
+}
+
+/// <summary>Queues asset records for bounded background import without blocking the editor thread.</summary>
+/// <param name="records">Current asset records to import.</param>
+/// <param name="reloadAllSceneAssets">Whether every scene mesh must bind after this batch.</param>
+void QueueAssetImports(
+    IReadOnlyList<AssetMetadataRecord> records,
+    bool reloadAllSceneAssets = false)
+{
+    for (var index = 0; index < records.Count; index++)
+        queuedAssetImports[records[index].Id] = records[index];
+    queuedReloadAllAssetsAfterImport |= reloadAllSceneAssets;
+    StartNextAssetImportBatch();
+}
+
+/// <summary>Starts the pending background-import batch when no earlier batch is active.</summary>
+void StartNextAssetImportBatch()
+{
+    if (assetImportTask is not null || queuedAssetImports.Count == 0 || isShuttingDown)
+        return;
+    var records = new List<AssetMetadataRecord>(queuedAssetImports.Count);
+    foreach (var pair in queuedAssetImports)
+        records.Add(pair.Value);
+    queuedAssetImports.Clear();
+    activeAssetImports = records.ToArray();
+    activeReloadAllAssetsAfterImport = queuedReloadAllAssetsAfterImport;
+    queuedReloadAllAssetsAfterImport = false;
+    while (assetImportProgress.TryDequeue(out _))
+    {
+    }
+    assetImportCancellation = new CancellationTokenSource();
+    var progress = new InlineProgress<AssetImportProgress>(assetImportProgress.Enqueue);
+    var workerCount = Math.Clamp(Environment.ProcessorCount - 1, 1, 4);
+    assetImportTask = assetImportPipeline.ImportAsync(
+        activeAssetImports, "editor", workerCount, assetImportCancellation.Token, progress);
+    if (assetImportProgressDialog is not null &&
+        ReferenceEquals(assetImportProgressDialog.Parent, overlay))
+        overlay.Remove(assetImportProgressDialog);
+    assetImportProgressDialog = new AssetImportProgressDialog(
+        width, height, activeAssetImports.Length) { Name = "AssetImportProgressDialog" };
+    overlay.Add(assetImportProgressDialog, Vector2.Zero);
+    uiEventRouter.MovePointer(lastMousePos);
+    window.RequestFrame();
+    logger.LogInformation("Started background import for {AssetCount} assets on {WorkerCount} workers",
+        activeAssetImports.Length, workerCount);
+}
+
+/// <summary>Applies background-import progress and completed publications on the editor thread.</summary>
+void UpdateAssetImports()
+{
+    AssetImportProgress? latestProgress = null;
+    while (assetImportProgress.TryDequeue(out var progress))
+        latestProgress = progress;
+    if (latestProgress is not null)
+    {
+        assetImportProgressDialog?.SetProgress(
+            latestProgress.CompletedCount,
+            latestProgress.TotalCount,
+            latestProgress.Asset.ProjectPath);
+        window.RequestFrame();
+    }
+    if (assetImportTask is not { IsCompleted: true } completedTask)
+        return;
+    assetImportTask = null;
+    assetImportCancellation?.Dispose();
+    assetImportCancellation = null;
+    try
+    {
+        var outcomes = completedTask.GetAwaiter().GetResult();
+        var outcomesByAsset = new Dictionary<AssetId, AssetImportOutcome>(outcomes.Count);
+        for (var index = 0; index < outcomes.Count; index++)
+        {
+            var outcome = outcomes[index];
+            outcomesByAsset[outcome.Asset] = outcome;
+            if (outcome.Succeeded)
+                continue;
+            for (var diagnosticIndex = 0;
+                 diagnosticIndex < outcome.Diagnostics.Count;
+                 diagnosticIndex++)
+            {
+                var diagnostic = outcome.Diagnostics[diagnosticIndex];
+                logger.LogError("Asset import {Asset}: {Code}: {Message}",
+                    outcome.Asset, diagnostic.Code, diagnostic.Message);
+            }
+        }
+        for (var index = 0; index < sceneObjects.Count; index++)
+        {
+            var instance = sceneObjects[index];
+            var affected = activeReloadAllAssetsAfterImport ||
+                outcomesByAsset.ContainsKey(instance.Mesh.Asset);
+            if (!affected)
+            {
+                for (var materialIndex = 0;
+                     materialIndex < instance.Materials.Count && !affected;
+                     materialIndex++)
+                    affected = outcomesByAsset.ContainsKey(instance.Materials[materialIndex].Asset);
+            }
+            if (!affected)
+                continue;
+            outcomesByAsset.TryGetValue(instance.Mesh.Asset, out var meshOutcome);
+            assetBindings.Enqueue((instance, meshOutcome));
+        }
+        logger.LogInformation("Completed background import for {AssetCount} assets",
+            outcomes.Count);
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Background asset import failed");
+    }
+    activeReloadAllAssetsAfterImport = false;
+    activeAssetImports = [];
+    if (assetImportProgressDialog is not null &&
+        ReferenceEquals(assetImportProgressDialog.Parent, overlay))
+        overlay.Remove(assetImportProgressDialog);
+    assetImportProgressDialog = null;
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+    StartNextAssetImportBatch();
+}
+
+/// <summary>Binds at most one completed scene resource per frame to avoid a long publication spike.</summary>
+void UpdateAssetBindings()
+{
+    if (!assetBindings.TryDequeue(out var binding))
+        return;
+    try
+    {
+        LoadAssetMeshResources(binding.Instance, binding.MeshOutcome);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(binding.Instance, binding.MeshOutcome, detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(binding.Instance, binding.MeshOutcome, detachedGameRenderer);
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Could not bind imported resources for {Node}",
+            binding.Instance.Name);
+    }
+    InvalidateViewports();
+    window.RequestFrame();
 }
 
 /// <summary>Mounts the active play scene's HUD above the Game viewport texture.</summary>
@@ -3015,15 +3162,26 @@ window.Update += delta =>
                 diagnostic.Path, diagnostic.Message);
         if (assetChanges.Count > 0)
         {
-            foreach (var asset in assetChanges.Select(change =>
-                         change.Current?.Id ?? change.Previous!.Id).Distinct())
-                runtimeResources.Invalidate(asset);
+            var changedRecords = new List<AssetMetadataRecord>(assetChanges.Count);
+            var invalidatedAssets = new HashSet<AssetId>();
+            for (var index = 0; index < assetChanges.Count; index++)
+            {
+                var change = assetChanges[index];
+                var asset = change.Current?.Id ?? change.Previous!.Id;
+                if (invalidatedAssets.Add(asset))
+                    runtimeResources.Invalidate(asset);
+                if (change.Current is not null)
+                    changedRecords.Add(change.Current);
+            }
+            QueueAssetImports(changedRecords);
             logger.LogInformation("Refreshed asset database with {ChangeCount} changes",
                 assetChanges.Count);
             RefreshFileSystem();
             StartScriptSchemaBuild();
         }
     }
+    UpdateAssetImports();
+    UpdateAssetBindings();
     UpdateScriptSchemaBuild();
     UpdatePlayModeStart(delta);
     if (pendingResizeTimestamp != 0)
@@ -3083,6 +3241,8 @@ window.Update += delta =>
         flyCamera.IsActive || scriptHost is not null || viewportRenderer.HasActiveAnimations ||
             playBuildTask is not null
             || scriptSchemaBuildTask is not null
+            || assetImportTask is not null
+            || assetBindings.Count > 0
             || pendingResizeTimestamp != 0
             || workspaceSaveTimestamp != 0
             || mainUIHost.RequiresContinuousUpdates
@@ -3092,6 +3252,22 @@ window.Update += delta =>
 logger.LogInformation("Running main loop...");
 window.Run();
 isShuttingDown = true;
+assetImportCancellation?.Cancel();
+if (assetImportTask is not null)
+{
+    try
+    {
+        assetImportTask.GetAwaiter().GetResult();
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Could not finish the pending asset import batch");
+    }
+}
+assetImportCancellation?.Dispose();
 SaveDockWorkspace();
 StopPlayMode();
 if (playBuildTask is not null)
