@@ -128,6 +128,35 @@ public sealed class DragDropTests
         Assert.Null(manager.DropIndicator);
     }
 
+    /// <summary>Verifies a drop target can replace the default full-target indicator bounds.</summary>
+    [Fact]
+    public void OverlayManager_CustomDropBounds_DrawsInsertionIndicator()
+    {
+        var root = CreateDragTree(out var source, out var target);
+        source.DragData = new UIDragData("node", "Node");
+        source.AllowedDragEffects = UIDragEffect.Move;
+        target.Drag += (_, dragEvent) =>
+        {
+            dragEvent.DropIndicatorBounds = new UIClipRect(140f, 48f, 220f, 50f);
+            dragEvent.Effect = UIDragEffect.Move;
+        };
+        var overlay = new Canvas { Width = 240f, Height = 100f };
+        root.Add(overlay, Vector2.Zero);
+        root.BuildDrawList();
+        var router = new UIEventRouter(root, () => { });
+        using var manager = new UIOverlayManager(overlay, router);
+
+        router.MovePointer(new Vector2(20f, 20f));
+        router.Press();
+        router.MovePointer(new Vector2(160f, 20f));
+        root.BuildDrawList();
+
+        Assert.NotNull(manager.DropIndicator);
+        Assert.Equal(80f, manager.DropIndicator!.Width);
+        Assert.Equal(2f, manager.DropIndicator.Height);
+        Assert.Equal(48f, manager.DropIndicator.Top);
+    }
+
     /// <summary>Creates two fixed panels used by drag tests.</summary>
     /// <param name="source">Created source panel.</param>
     /// <param name="target">Created drop panel.</param>

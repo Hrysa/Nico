@@ -1,4 +1,5 @@
 using System.Numerics;
+using Engine.Graphics;
 
 namespace Engine.UI;
 
@@ -106,6 +107,9 @@ public sealed class UIDragEventArgs
     /// <summary>Gets the pointer position relative to the current target.</summary>
     public Vector2 LocalPosition { get; private set; }
 
+    /// <summary>Gets or sets the host-coordinate bounds used by the shared drop indicator.</summary>
+    public UIClipRect? DropIndicatorBounds { get; set; }
+
     /// <summary>Gets or sets whether later route handlers are suppressed.</summary>
     public bool Handled { get; set; }
 
@@ -129,6 +133,7 @@ public sealed class UIDragEventArgs
         Effect = effect;
         Position = position;
         LocalPosition = position - new Vector2(target.Left, target.Top);
+        DropIndicatorBounds = null;
         RoutePhase = UIRoutePhase.Target;
         Handled = false;
     }

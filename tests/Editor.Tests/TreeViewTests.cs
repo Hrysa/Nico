@@ -1,3 +1,4 @@
+using System.Numerics;
 using Editor;
 using Engine.Assets;
 using Engine.Core;
@@ -9,6 +10,177 @@ namespace Editor.Tests;
 
 public class TreeViewTests
 {
+    /// <summary>Verifies row quarters resolve to semantic insertion positions inside TreeView.</summary>
+    /// <param name="rowFraction">Pointer position as a fraction of row height.</param>
+    /// <param name="expected">Expected semantic tree position.</param>
+    [Theory]
+    [InlineData(0.1f, TreeViewDropPosition.Above)]
+    [InlineData(0.5f, TreeViewDropPosition.Inside)]
+    [InlineData(0.9f, TreeViewDropPosition.Below)]
+    public void DragPosition_ContainerRow_ResolvesAboveInsideBelow(
+        float rowFraction, TreeViewDropPosition expected)
+    {
+        var parent = new Node { Name = "Parent" };
+        parent.AddChild(new Node { Name = "Child" });
+        var result = DragAcrossTreeRow(parent, rowFraction);
+
+        Assert.Equal(expected, result.Position);
+        Assert.Same(parent, result.Item);
+        if (expected == TreeViewDropPosition.Inside)
+            Assert.Same(parent, result.Parent);
+        else
+            Assert.Null(result.Parent);
+    }
+
+    /// <summary>Verifies a leaf row never reports an impossible inside destination.</summary>
+    [Fact]
+    public void DragPosition_LeafMiddle_ResolvesToAdjacentInsertion()
+    {
+        var leaf = new Node { Name = "Leaf" };
+
+        var result = DragAcrossTreeRow(leaf, 0.4f);
+
+        Assert.Equal(TreeViewDropPosition.Above, result.Position);
+        Assert.Null(result.Parent);
+        Assert.Equal(0, result.InsertionIndex);
+    }
+
+    /// <summary>Verifies a tree policy can expose inside drops for an empty logical node.</summary>
+    [Fact]
+    public void DragPosition_EmptyNodeAllowedByPolicy_ResolvesInside()
+    {
+        var leaf = new Node { Name = "Empty scene node" };
+
+        var result = DragAcrossTreeRow(leaf, 0.5f, static _ => true);
+
+        Assert.Equal(TreeViewDropPosition.Inside, result.Position);
+        Assert.Same(leaf, result.Parent);
+        Assert.Equal(0, result.InsertionIndex);
+    }
+
+    /// <summary>Verifies empty tree space resolves to the end of the root collection.</summary>
+    [Fact]
+    public void DragPosition_EmptySpace_ResolvesRootAppend()
+    {
+        var first = new Node { Name = "First" };
+        var root = new Canvas { Width = 400f, Height = 120f };
+        var source = new Panel(Color.Red, 60f, 60f)
+        {
+            DragData = new UIDragData("source"),
+            AllowedDragEffects = UIDragEffect.Move,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var tree = new TreeView(200f, 80f)
+        {
+            AllowDrop = true,
+            AllowItemDrop = true,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        tree.SetRoots([first]);
+        root.Add(source, Vector2.Zero);
+        root.Add(tree, new Vector2(120f, 0f));
+        root.BuildDrawList();
+        TreeViewDropTarget? resolved = null;
+        tree.Drag += (_, dragEvent) =>
+        {
+            if (dragEvent.RoutePhase == UIRoutePhase.Preview)
+                return;
+            resolved = tree.ResolveDropTarget(dragEvent);
+            dragEvent.Effect = UIDragEffect.Move;
+            dragEvent.Handled = true;
+        };
+        var router = new UIEventRouter(root, () => { });
+
+        router.MovePointer(new Vector2(20f, 20f));
+        router.Press();
+        router.MovePointer(new Vector2(tree.Left + 100f, tree.Top + 70f));
+
+        var result = Assert.IsType<TreeViewDropTarget>(resolved);
+        Assert.Null(result.Item);
+        Assert.Null(result.Parent);
+        Assert.Equal(1, result.InsertionIndex);
+    }
+
+    /// <summary>Projects typed drag and drop policy onto retained item containers.</summary>
+    [Fact]
+    public void ItemDragPolicy_ConfiguresAndRebindsVisibleRows()
+    {
+        var first = new Node { Name = "First" };
+        var second = new Node { Name = "Second" };
+        var tree = new TreeView(200f, 48f);
+        tree.SetRoots([first, second]);
+
+        tree.ItemDragData = item => new UIDragData(item, item.Name);
+        tree.ItemDragEffects = UIDragEffect.Copy | UIDragEffect.Move;
+        tree.AllowItemDrop = true;
+
+        var rows = tree.Children.OfType<TreeViewItem>().ToArray();
+        Assert.Equal(2, rows.Length);
+        Assert.All(rows, row => Assert.True(row.AllowDrop));
+        Assert.All(rows, row => Assert.Equal(
+            UIDragEffect.Copy | UIDragEffect.Move, row.AllowedDragEffects));
+        Assert.True(rows[0].DragData!.TryGet<Node>(out var payload));
+        Assert.Same(first, payload);
+
+        tree.SetRoots([second]);
+
+        var rebound = Assert.IsType<TreeViewItem>(tree.Children[0]);
+        Assert.True(rebound.DragData!.TryGet<Node>(out payload));
+        Assert.Same(second, payload);
+    }
+
+    /// <summary>Routes a drag over one tree row and returns TreeView's semantic result.</summary>
+    /// <param name="item">Logical row item.</param>
+    /// <param name="rowFraction">Vertical pointer fraction within the row.</param>
+    /// <param name="canDropInsideItem">Optional inside-drop policy.</param>
+    /// <returns>Resolved drop result.</returns>
+    private static TreeViewDropTarget DragAcrossTreeRow(
+        Node item,
+        float rowFraction,
+        Func<Node, bool>? canDropInsideItem = null)
+    {
+        var root = new Canvas { Width = 400f, Height = 120f };
+        var source = new Panel(Color.Red, 60f, 60f)
+        {
+            DragData = new UIDragData("source"),
+            AllowedDragEffects = UIDragEffect.Move,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var tree = new TreeView(200f, 80f)
+        {
+            AllowDrop = true,
+            AllowItemDrop = true,
+            CanDropInsideItem = canDropInsideItem,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        tree.SetRoots([item]);
+        root.Add(source, new Vector2(0f, 0f));
+        root.Add(tree, new Vector2(120f, 0f));
+        root.BuildDrawList();
+        var row = Assert.IsType<TreeViewItem>(tree.Children[0]);
+        TreeViewDropTarget? resolved = null;
+        tree.Drag += (_, dragEvent) =>
+        {
+            if (dragEvent.RoutePhase == UIRoutePhase.Preview)
+                return;
+            resolved = tree.ResolveDropTarget(dragEvent);
+            dragEvent.Effect = UIDragEffect.Move;
+            dragEvent.Handled = true;
+        };
+        var router = new UIEventRouter(root, () => { });
+
+        router.MovePointer(new Vector2(20f, 20f));
+        router.Press();
+        router.MovePointer(new Vector2(row.Left + row.Width * 0.5f,
+            row.Top + row.Height * rowFraction));
+
+        return Assert.IsType<TreeViewDropTarget>(resolved);
+    }
+
     /// <summary>Verifies a parent scroll viewer owns the bar for overflowing tree rows.</summary>
     [Fact]
     public void Overflow_ParentScrollViewerShowsVerticalBar()

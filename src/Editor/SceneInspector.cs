@@ -441,14 +441,21 @@ public sealed class SceneInspector : Panel
             if (components[componentIndex] is not ScriptComponent component)
                 continue;
             var currentIndex = scriptIndex++;
-            var scriptField = new TextField(Width - 24f, 30f, _theme)
+            var scriptField = new TextField(MathF.Max(0f, Width - 96f), 30f, _theme)
             {
-                Name = currentIndex == 0 ? "ScriptAssetField" : $"ScriptAssetField{currentIndex}",
+                Name = $"ScriptAssetField{currentIndex}",
                 Text = GetScriptDisplayName(component.ScriptId),
                 IsReadOnly = true,
                 Margin = new Thickness(12f, rowY, 0f, 0f)
             };
             AddChild(scriptField);
+            var remove = new Button(64f, 30f, "Remove", _theme)
+            {
+                Name = $"ScriptRemove{currentIndex}",
+                Margin = new Thickness(MathF.Max(12f, Width - 76f), rowY, 0f, 0f)
+            };
+            remove.Click += () => RemoveScript(node, component);
+            AddChild(remove);
             rowY += 38f;
             if (!TryResolveScript(component, out var script))
                 continue;
@@ -481,15 +488,25 @@ public sealed class SceneInspector : Panel
                 rowY += 38f;
             }
         }
-        if (scriptIndex != 0)
-            return;
         AddChild(new TextField(Width - 24f, 30f, _theme)
         {
             Name = "ScriptAssetField",
-            Placeholder = "No script attached",
+            Placeholder = scriptIndex == 0
+                ? "Drop script here" : "Drop another script here",
             IsReadOnly = true,
+            AllowDrop = true,
             Margin = new Thickness(12f, rowY, 0f, 0f)
         });
+    }
+
+    /// <summary>Removes one exact authored script component and refreshes its owner.</summary>
+    /// <param name="node">Component owner.</param>
+    /// <param name="component">Exact script entry represented by the row.</param>
+    private void RemoveScript(Node node, ScriptComponent component)
+    {
+        if (!node.RemoveComponent(component))
+            return;
+        NodeChanged?.Invoke(node);
     }
 
     /// <summary>Resolves a live script or creates an edit-mode schema instance.</summary>
@@ -603,6 +620,7 @@ public sealed class SceneInspector : Panel
             Name = "MaterialSlot0",
             Text = GetMaterialName(instance),
             IsReadOnly = true,
+            AllowDrop = true,
             Margin = new Thickness(12f, y + 30f, 0f, 0f)
         };
         RegisterRefresh(materialField, () => GetMaterialName(instance));
@@ -634,6 +652,7 @@ public sealed class SceneInspector : Panel
             Text = GetEffectiveMaterial(instance).BaseColorTexture?.ToString() ?? string.Empty,
             Placeholder = "No base-color texture",
             IsReadOnly = true,
+            AllowDrop = true,
             Margin = new Thickness(92f, y + 182f, 0f, 0f)
         };
         RegisterRefresh(textureField, () =>
@@ -770,10 +789,6 @@ public sealed class SceneInspector : Panel
     {
         if (InspectedNode is not { } node)
             return false;
-        var dropTarget = Children.OfType<TextField>()
-            .FirstOrDefault(element => element.Name == "ScriptAssetField");
-        if (dropTarget is not null)
-            dropTarget.Text = GetScriptDisplayName(scriptId);
         node.AddComponent(new ScriptComponent(scriptId));
         NodeChanged?.Invoke(node);
         return true;

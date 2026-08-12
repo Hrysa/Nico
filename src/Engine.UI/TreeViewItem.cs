@@ -142,6 +142,9 @@ public sealed class TreeViewItem : Button
     /// <param name="isSelected">Whether the node is selected.</param>
     /// <param name="width">Current row width.</param>
     /// <param name="height">Current row height.</param>
+    /// <param name="dragData">Typed payload exposed by this bound item.</param>
+    /// <param name="dragEffects">Operations allowed by this item.</param>
+    /// <param name="allowDrop">Whether this row accepts routed drops.</param>
     internal void Bind(
         Node item,
         int depth,
@@ -149,7 +152,10 @@ public sealed class TreeViewItem : Button
         string? displayText,
         bool isSelected,
         float width,
-        float height)
+        float height,
+        UIDragData? dragData,
+        UIDragEffect dragEffects,
+        bool allowDrop)
     {
         Item = item;
         Depth = depth;
@@ -166,6 +172,9 @@ public sealed class TreeViewItem : Button
         for (var index = 0; index < _columns.Count; index++)
             _columnTexts[index] = _columns[index].Value(item);
         IsSelected = isSelected;
+        DragData = dragData;
+        AllowedDragEffects = dragData is null ? UIDragEffect.None : dragEffects;
+        AllowDrop = allowDrop;
         InvalidateVisual();
     }
 

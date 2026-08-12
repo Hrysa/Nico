@@ -59,6 +59,9 @@ public sealed class UIEventRouter
     /// <summary>Gets the effect currently accepted by the drop target.</summary>
     public UIDragEffect DragEffect => _dragEffect;
 
+    /// <summary>Gets custom host-coordinate bounds supplied by the active drop target.</summary>
+    public UIClipRect? DropIndicatorBounds { get; private set; }
+
     /// <summary>Gets the latest host-relative pointer position.</summary>
     public Vector2 PointerPosition => _pointerPosition;
 
@@ -311,6 +314,7 @@ public sealed class UIEventRouter
                 DispatchDrag(previous, UIDragEventKind.Leave, position);
             _dropTarget = target;
             _dragEffect = UIDragEffect.None;
+            DropIndicatorBounds = null;
             if (target is not null)
                 _dragEffect = DispatchDrag(target, UIDragEventKind.Enter, position);
         }
@@ -341,6 +345,7 @@ public sealed class UIEventRouter
         _dragData = null;
         _allowedDragEffects = UIDragEffect.None;
         _dragEffect = UIDragEffect.None;
+        DropIndicatorBounds = null;
         _completingDrag = true;
         ReleasePointerCapture();
         _completingDrag = false;
@@ -402,7 +407,10 @@ public sealed class UIEventRouter
                 dragEvent.SetCurrentTarget(element, UIRoutePhase.Preview);
                 element.InvokePreviewDrag(dragEvent);
                 if (dragEvent.Handled)
+                {
+                    DropIndicatorBounds = dragEvent.DropIndicatorBounds;
                     return dragEvent.Effect & _allowedDragEffects;
+                }
             }
             if (IsRouteElementEligible(target))
             {
@@ -422,6 +430,7 @@ public sealed class UIEventRouter
                         break;
                 }
             }
+            DropIndicatorBounds = dragEvent.DropIndicatorBounds;
             return dragEvent.Effect & _allowedDragEffects;
         }
         finally

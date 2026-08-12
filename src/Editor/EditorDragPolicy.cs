@@ -2,6 +2,11 @@ using Engine.Core;
 
 namespace Editor;
 
+/// <summary>Identifies one editor tree item and the tree that originated its drag.</summary>
+/// <param name="Item">Dragged hierarchy or filesystem node.</param>
+/// <param name="FromHierarchy">Whether the source belongs to the scene hierarchy.</param>
+public sealed record EditorTreeDragData(Node Item, bool FromHierarchy);
+
 /// <summary>Defines which editor tree items may participate in asset and scene drag operations.</summary>
 public static class EditorDragPolicy
 {

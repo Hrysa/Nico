@@ -30,6 +30,43 @@ public class NodeTests
         Assert.Single(root.Children);
     }
 
+    /// <summary>Verifies ordered insertion can reorder siblings in both directions.</summary>
+    [Fact]
+    public void InsertChild_SameParent_ReordersUsingPreRemovalIndex()
+    {
+        var root = new Node();
+        var first = new Node { Name = "First" };
+        var second = new Node { Name = "Second" };
+        var third = new Node { Name = "Third" };
+        root.AddChild(first);
+        root.AddChild(second);
+        root.AddChild(third);
+
+        root.InsertChild(3, first);
+        Assert.Equal([second, third, first], root.Children);
+
+        root.InsertChild(0, first);
+        Assert.Equal([first, second, third], root.Children);
+    }
+
+    /// <summary>Verifies ordered insertion reparents a child at the requested destination index.</summary>
+    [Fact]
+    public void InsertChild_DifferentParent_InsertsAtRequestedIndex()
+    {
+        var previousParent = new Node();
+        var destination = new Node();
+        var child = new Node { Name = "Child" };
+        var sibling = new Node { Name = "Sibling" };
+        previousParent.AddChild(child);
+        destination.AddChild(sibling);
+
+        destination.InsertChild(0, child);
+
+        Assert.Empty(previousParent.Children);
+        Assert.Equal([child, sibling], destination.Children);
+        Assert.Same(destination, child.Parent);
+    }
+
     /// <summary>Verifies that 3D child transforms include their parent transform.</summary>
     [Fact]
     public void GetModelMatrix_IncludesParentTransform()

@@ -314,7 +314,6 @@ ContextMenu? fileSubmenu = null;
 ScenePickerDialog? scenePickerDialog = null;
 FileSystemCreateDialog? fileSystemCreateDialog = null;
 ConfirmationDialog? confirmationDialog = null;
-DragPreview? dragPreview = null;
 var fileSystemTree = editorView.FileSystemTree;
 var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
@@ -328,6 +327,7 @@ window.FrameProfiled += sample =>
 };
 AttachFileSystem(fileSystemTree);
 AttachInspector(inspector);
+ConfigureEditorDragDrop();
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
@@ -986,14 +986,11 @@ void CloseFileContextMenu()
         overlay.Remove(fileSystemCreateDialog);
     if (confirmationDialog is not null)
         overlay.Remove(confirmationDialog);
-    if (dragPreview is not null)
-        overlay.Remove(dragPreview);
     fileContextMenu = null;
     fileSubmenu = null;
     scenePickerDialog = null;
     fileSystemCreateDialog = null;
     confirmationDialog = null;
-    dragPreview = null;
     RefreshVertices();
 }
 
@@ -1283,8 +1280,8 @@ void OpenFileSystemEntry(Node item)
 
 /// <summary>Creates a scene node from a dragged imported mesh sub-asset.</summary>
 /// <param name="source">Dragged imported resource.</param>
-/// <param name="target">Hierarchy parent target, or null for the scene root.</param>
-void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
+/// <param name="dropTarget">Resolved hierarchy destination.</param>
+void InstantiateImportedMesh(ImportedSubAssetNode source, TreeViewDropTarget dropTarget)
 {
     if (source.ContentType is not "nico/static-mesh" and not "nico/skinned-mesh")
     {
@@ -1302,10 +1299,10 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
         Mesh = source.Reference,
         Name = source.Name[..source.Name.LastIndexOf(" [", StringComparison.Ordinal)]
     };
-    var destination = target ?? sceneRoot;
+    var destination = dropTarget.Parent ?? sceneRoot;
     try
     {
-        destination.AddChild(instance);
+        destination.InsertChild(dropTarget.InsertionIndex, instance);
         sceneObjects.Add(instance);
         viewportRenderer.SetSceneObjects(sceneObjects);
         viewportRenderer.SetSceneRoot(sceneRoot);
@@ -1332,8 +1329,8 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, Node? target)
 
 /// <summary>Instantiates a dragged GLB source as its complete imported node hierarchy.</summary>
 /// <param name="source">Dragged physical GLB file.</param>
-/// <param name="target">Hierarchy parent target, or null for the scene root.</param>
-void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
+/// <param name="dropTarget">Resolved hierarchy destination.</param>
+void InstantiateGlbPrimaryMesh(FileSystemNode source, TreeViewDropTarget dropTarget)
 {
     if (!Path.GetExtension(source.FullPath).Equals(".glb", StringComparison.OrdinalIgnoreCase))
         return;
@@ -1362,10 +1359,10 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, Node? target)
         logger.LogWarning("GLB {FilePath} has no importable mesh nodes", source.FullPath);
         return;
     }
-    var destination = target ?? sceneRoot;
+    var destination = dropTarget.Parent ?? sceneRoot;
     try
     {
-        destination.AddChild(model.Root);
+        destination.InsertChild(dropTarget.InsertionIndex, model.Root);
         for (var index = 0; index < model.Meshes.Count; index++)
         {
             var mesh = model.Meshes[index];
@@ -2411,28 +2408,18 @@ bool IsInSceneViewport(Vector2 screenPos)
         && screenPos.Y >= vpY && screenPos.Y <= vpY + vpH;
 }
 
-/// <summary>Returns whether a screen position is inside a UI element.</summary>
-/// <param name="element">Element whose bounds are tested.</param>
-/// <param name="position">Screen-space pointer position.</param>
-/// <returns>True when the position lies within the element.</returns>
-bool IsInside(UIElement element, Vector2 position)
-{
-    return position.X >= element.Left && position.X <= element.Right
-        && position.Y >= element.Top && position.Y <= element.Bottom;
-}
-
-/// <summary>Reparents one hierarchy node to a row target or the scene root.</summary>
+/// <summary>Reparents or reorders one hierarchy node at a resolved tree destination.</summary>
 /// <param name="source">Scene node being moved.</param>
-/// <param name="target">Drop target, or null for the hierarchy root.</param>
-void MoveHierarchyNode(Node source, Node? target)
+/// <param name="dropTarget">Resolved hierarchy destination.</param>
+void MoveHierarchyNode(Node source, TreeViewDropTarget dropTarget)
 {
     var activeRoot = GetActiveSceneRoot();
-    var destination = target ?? activeRoot;
-    if (ReferenceEquals(source, destination) || ReferenceEquals(source.Parent, destination))
+    var destination = dropTarget.Parent ?? activeRoot;
+    if (ReferenceEquals(source, destination))
         return;
     try
     {
-        destination.AddChild(source);
+        destination.InsertChild(dropTarget.InsertionIndex, source);
         hierarchyTree.SetRoots(activeRoot.Children);
         if (!ReferenceEquals(destination, activeRoot))
             hierarchyTree.Expand(destination);
@@ -2449,13 +2436,11 @@ void MoveHierarchyNode(Node source, Node? target)
 
 /// <summary>Moves one project file or folder into a destination folder.</summary>
 /// <param name="source">Filesystem entry being moved.</param>
-/// <param name="target">Drop target, or null for the project root.</param>
-void MoveFileSystemEntry(FileSystemNode source, FileSystemNode? target)
+/// <param name="dropTarget">Resolved filesystem tree destination.</param>
+void MoveFileSystemEntry(FileSystemNode source, TreeViewDropTarget dropTarget)
 {
-    var destinationDirectory = target is { IsDirectory: true }
-        ? target.FullPath
-        : target is not null ? Path.GetDirectoryName(target.FullPath) ?? project.RootPath
-        : project.RootPath;
+    var target = dropTarget.Parent as FileSystemNode;
+    var destinationDirectory = target?.FullPath ?? project.RootPath;
     var sourcePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source.FullPath));
     destinationDirectory = Path.TrimEndingDirectorySeparator(
         Path.GetFullPath(destinationDirectory));
@@ -2519,12 +2504,123 @@ bool TryAssignInspectorSubAsset(ImportedSubAssetNode source)
     };
 }
 
-Node? pendingDragItem = null;
-var pendingDragStart = Vector2.Zero;
-var pendingDragFromHierarchy = false;
-var primaryPointerDown = false;
+/// <summary>Connects editor trees and Inspector slots to the shared routed drag system.</summary>
+void ConfigureEditorDragDrop()
+{
+    hierarchyTree.ItemDragData = item => new UIDragData(
+        new EditorTreeDragData(item, true), item.Name);
+    hierarchyTree.ItemDragEffects = UIDragEffect.Move;
+    hierarchyTree.AllowItemDrop = true;
+    hierarchyTree.CanDropInsideItem = static _ => true;
+    hierarchyTree.AllowDrop = true;
+    hierarchyTree.Drag += HandleHierarchyDrag;
+
+    fileSystemTree.ItemDragData = item => EditorDragPolicy.CanStartFileSystemDrag(item)
+        ? new UIDragData(new EditorTreeDragData(item, false), item.Name) : null;
+    fileSystemTree.ItemDragEffects = UIDragEffect.Copy | UIDragEffect.Move;
+    fileSystemTree.AllowItemDrop = true;
+    fileSystemTree.CanDropInsideItem = static item =>
+        item is FileSystemNode { IsDirectory: true };
+    fileSystemTree.AllowDrop = true;
+    fileSystemTree.Drag += HandleFileSystemDrag;
+    inspector.Drag += HandleInspectorDrag;
+}
+
+/// <summary>Negotiates and commits hierarchy instantiation or reparenting.</summary>
+/// <param name="sender">Current routed receiver.</param>
+/// <param name="dragEvent">Typed routed drag event.</param>
+void HandleHierarchyDrag(UIElement sender, UIDragEventArgs dragEvent)
+{
+    if (dragEvent.RoutePhase == UIRoutePhase.Preview ||
+        !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) || payload is null)
+        return;
+    var dropTarget = hierarchyTree.ResolveDropTarget(dragEvent);
+    var effect = payload.Item switch
+    {
+        ImportedSubAssetNode imported when EditorDragPolicy.CanInstantiateInHierarchy(imported) =>
+            UIDragEffect.Copy,
+        FileSystemNode file when EditorDragPolicy.CanInstantiateInHierarchy(file) =>
+            UIDragEffect.Copy,
+        _ when payload.FromHierarchy => UIDragEffect.Move,
+        _ => UIDragEffect.None
+    };
+    if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+        dragEvent.Effect = effect;
+    else if (dragEvent.Kind == UIDragEventKind.Drop && effect != UIDragEffect.None)
+    {
+        if (payload.Item is ImportedSubAssetNode imported)
+            InstantiateImportedMesh(imported, dropTarget);
+        else if (payload.Item is FileSystemNode file)
+            InstantiateGlbPrimaryMesh(file, dropTarget);
+        else
+            MoveHierarchyNode(payload.Item, dropTarget);
+        dragEvent.Effect = effect;
+    }
+    dragEvent.Handled = true;
+}
+
+/// <summary>Negotiates and commits project-file moves through routed tree drops.</summary>
+/// <param name="sender">Current routed receiver.</param>
+/// <param name="dragEvent">Typed routed drag event.</param>
+void HandleFileSystemDrag(UIElement sender, UIDragEventArgs dragEvent)
+{
+    if (dragEvent.RoutePhase == UIRoutePhase.Preview ||
+        !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) ||
+        payload?.Item is not FileSystemNode file || payload.FromHierarchy)
+        return;
+    var dropTarget = fileSystemTree.ResolveDropTarget(dragEvent);
+    if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+        dragEvent.Effect = UIDragEffect.Move;
+    else if (dragEvent.Kind == UIDragEventKind.Drop)
+    {
+        MoveFileSystemEntry(file, dropTarget);
+        dragEvent.Effect = UIDragEffect.Move;
+    }
+    dragEvent.Handled = true;
+}
+
+/// <summary>Negotiates and commits typed asset drops on Inspector component slots.</summary>
+/// <param name="sender">Current routed receiver.</param>
+/// <param name="dragEvent">Typed routed drag event.</param>
+void HandleInspectorDrag(UIElement sender, UIDragEventArgs dragEvent)
+{
+    if (dragEvent.RoutePhase != UIRoutePhase.Bubble ||
+        !dragEvent.Data.TryGet<EditorTreeDragData>(out var payload) || payload is null ||
+        dragEvent.Target is not TextField field)
+        return;
+    var accepted = field.Name switch
+    {
+        "ScriptAssetField" when payload.Item is FileSystemNode file =>
+            Path.GetExtension(file.FullPath).Equals(".cs", StringComparison.OrdinalIgnoreCase),
+        "MaterialSlot0" when payload.Item is ImportedSubAssetNode imported =>
+            imported.ContentType == "nico/standard-material",
+        "MaterialBaseColorTexture" when payload.Item is ImportedSubAssetNode imported =>
+            imported.ContentType == "nico/texture2d",
+        _ => false
+    };
+    if (!accepted)
+        return;
+    if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+        dragEvent.Effect = UIDragEffect.Copy;
+    else if (dragEvent.Kind == UIDragEventKind.Drop)
+    {
+        var changed = payload.Item switch
+        {
+            FileSystemNode file => ScriptFileDrop.TryAttach(
+                file, inspector, assetDatabase),
+            ImportedSubAssetNode imported => TryAssignInspectorSubAsset(imported),
+            _ => false
+        };
+        if (changed)
+        {
+            dragEvent.Effect = UIDragEffect.Copy;
+            RefreshVertices();
+        }
+    }
+    dragEvent.Handled = true;
+}
+
 var sceneMouseNavigation = PointerButtons.None;
-var dragActive = false;
 
 mainUIHost.PreviewPointerMove = pointerEvent =>
 {
@@ -2556,27 +2652,6 @@ mainUIHost.PointerMoveProcessed = (pointerEvent, routed) =>
     var pos = pointerEvent.Position;
     if (dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId))
         editorView.Profiler.MovePointer(pos);
-    if (primaryPointerDown && pendingDragItem is not null &&
-        Vector2.DistanceSquared(pos, pendingDragStart) >= 25f)
-    {
-        if (!dragActive)
-        {
-            dragActive = true;
-            if (pendingDragFromHierarchy)
-                hierarchyTree.Select(pendingDragItem);
-            else
-                fileSystemTree.Select(pendingDragItem);
-            dragPreview = new DragPreview(string.IsNullOrWhiteSpace(pendingDragItem.Name)
-                    ? pendingDragItem.GetType().Name : pendingDragItem.Name)
-                { Name = "DragPreview" };
-            overlay.Add(dragPreview, pos + new Vector2(12f, 12f));
-        }
-        else if (dragPreview is not null)
-        {
-            overlay.SetPosition(dragPreview, pos + new Vector2(12f, 12f));
-        }
-        RefreshVertices();
-    }
     var scenePointerActive = selection.IsDragging ||
         uiEventRouter.CapturedElement is null &&
         (uiEventRouter.HoveredElement is ViewportPanel hoveredViewport &&
@@ -2603,49 +2678,10 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
         window.EndWindowDrag();
         if (flyCamera.IsActive || pointerEvent.Button != InputPointerButton.Primary)
             return UIHostPointerRouting.Consume;
-        primaryPointerDown = false;
-        if (dragActive && pendingDragItem is { } draggedItem)
-        {
-            var targetRow = uiEventRouter.HoveredElement as TreeViewItem;
-            if (draggedItem is ImportedSubAssetNode importedSource &&
-                IsInside(inspector, lastMousePos) && TryAssignInspectorSubAsset(importedSource))
-                RefreshVertices();
-            else if (draggedItem is ImportedSubAssetNode hierarchySource &&
-                     IsInside(hierarchyTree, lastMousePos) &&
-                     EditorDragPolicy.CanInstantiateInHierarchy(hierarchySource))
-                InstantiateImportedMesh(hierarchySource, targetRow?.Item);
-            else if (draggedItem is FileSystemNode fileSource)
-            {
-                if (IsInside(hierarchyTree, lastMousePos) &&
-                    EditorDragPolicy.CanInstantiateInHierarchy(fileSource))
-                    InstantiateGlbPrimaryMesh(fileSource, targetRow?.Item);
-                else if (ScriptFileDrop.TryAttach(
-                             fileSource, uiEventRouter.HoveredElement, inspector, assetDatabase))
-                {
-                    logger.LogInformation("Attached script from {ScriptPath} to {NodeName}",
-                        fileSource.FullPath, inspector.InspectedNode?.Name);
-                    RefreshVertices();
-                }
-                else if (IsInside(fileSystemTree, lastMousePos))
-                    MoveFileSystemEntry(fileSource, targetRow?.Item as FileSystemNode);
-            }
-            else if (pendingDragFromHierarchy &&
-                     IsInside(hierarchyTree, lastMousePos))
-                MoveHierarchyNode(draggedItem, targetRow?.Item);
-        }
-        if (dragPreview is not null)
-        {
-            overlay.Remove(dragPreview);
-            dragPreview = null;
-        }
         var consumedByGizmo = selection.PrimaryUp();
         renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
         window.RequestFrame();
-        pendingDragItem = null;
-        pendingDragFromHierarchy = false;
-        var suppressClick = consumedByGizmo || dragActive;
-        dragActive = false;
-        return suppressClick
+        return consumedByGizmo || uiEventRouter.IsDragging
             ? UIHostPointerRouting.RouteWithoutClick
             : UIHostPointerRouting.Route;
     }
@@ -2672,24 +2708,6 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
     }
     if (pointerEvent.Button != InputPointerButton.Primary)
         return UIHostPointerRouting.Consume;
-    primaryPointerDown = true;
-    pendingDragStart = lastMousePos;
-    dragActive = false;
-    pendingDragItem = null;
-    pendingDragFromHierarchy = false;
-    if (uiEventRouter.HoveredElement is TreeViewItem dragRow)
-    {
-        if (IsInside(hierarchyTree, lastMousePos))
-        {
-            pendingDragItem = dragRow.Item;
-            pendingDragFromHierarchy = true;
-        }
-        else if (IsInside(fileSystemTree, lastMousePos) &&
-                 EditorDragPolicy.CanStartFileSystemDrag(dragRow.Item))
-        {
-            pendingDragItem = dragRow.Item;
-        }
-    }
     if (hierarchyContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)
         CloseHierarchyContextMenu();
     if (fileContextMenu is not null && uiEventRouter.HoveredElement is not ContextMenuItem)

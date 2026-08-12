@@ -36,6 +36,54 @@ public sealed class TreeView : Panel, IScrollViewportContent
     private Node? _selectionAnchor;
     private string _typeAhead = string.Empty;
     private double _typeAheadElapsed;
+    private Func<Node, UIDragData?>? _itemDragData;
+    private readonly Dictionary<Node, UIDragData?> _itemDragDataCache = [];
+    private UIDragEffect _itemDragEffects = UIDragEffect.Copy;
+    private bool _allowItemDrop;
+
+    /// <summary>Gets or sets the policy deciding whether a row exposes an inside drop zone.</summary>
+    /// <remarks>When unset, <see cref="Node.CanHaveChildren"/> supplies the default policy.</remarks>
+    public Func<Node, bool>? CanDropInsideItem { get; set; }
+
+    /// <summary>Gets or sets the typed drag-data factory for each visible item row.</summary>
+    public Func<Node, UIDragData?>? ItemDragData
+    {
+        get => _itemDragData;
+        set
+        {
+            if (ReferenceEquals(_itemDragData, value))
+                return;
+            _itemDragData = value;
+            _itemDragDataCache.Clear();
+            RebuildRows();
+        }
+    }
+
+    /// <summary>Gets or sets the effects allowed by draggable item rows.</summary>
+    public UIDragEffect ItemDragEffects
+    {
+        get => _itemDragEffects;
+        set
+        {
+            if (_itemDragEffects == value)
+                return;
+            _itemDragEffects = value;
+            RebuildRows();
+        }
+    }
+
+    /// <summary>Gets or sets whether item rows can be routed drop targets.</summary>
+    public bool AllowItemDrop
+    {
+        get => _allowItemDrop;
+        set
+        {
+            if (_allowItemDrop == value)
+                return;
+            _allowItemDrop = value;
+            RebuildRows();
+        }
+    }
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -135,6 +183,62 @@ public sealed class TreeView : Panel, IScrollViewportContent
     /// <summary>Occurs after hierarchical display sorting changes.</summary>
     public event Action<int, TreeViewSortDirection>? SortChanged;
 
+    /// <summary>Resolves a routed pointer position into an above, inside, or below tree drop.</summary>
+    /// <param name="dragEvent">Drag event routed through this tree.</param>
+    /// <returns>The semantic destination and insertion index.</returns>
+    public TreeViewDropTarget ResolveDropTarget(UIDragEventArgs dragEvent)
+    {
+        ArgumentNullException.ThrowIfNull(dragEvent);
+        if (dragEvent.Target is not TreeViewItem row)
+        {
+            var emptyIndicatorY = _rows.Count > 0
+                ? MathF.Min(_rows[^1].Bottom, Bottom)
+                : Top;
+            dragEvent.DropIndicatorBounds = new UIClipRect(
+                Left, emptyIndicatorY - 1f, Right, emptyIndicatorY + 1f);
+            return new TreeViewDropTarget(null, TreeViewDropPosition.Inside, null, _roots.Count);
+        }
+
+        var localY = Math.Clamp(dragEvent.Position.Y - row.Top, 0f, row.Height);
+        var position = localY < row.Height * 0.25f
+            ? TreeViewDropPosition.Above
+            : localY > row.Height * 0.75f
+                ? TreeViewDropPosition.Below
+                : TreeViewDropPosition.Inside;
+        var canDropInside = CanDropInsideItem?.Invoke(row.Item) ?? row.Item.CanHaveChildren;
+        if (position == TreeViewDropPosition.Inside && !canDropInside)
+            position = localY < row.Height * 0.5f
+                ? TreeViewDropPosition.Above
+                : TreeViewDropPosition.Below;
+
+        if (position == TreeViewDropPosition.Inside)
+        {
+            dragEvent.DropIndicatorBounds = new UIClipRect(row.Left, row.Top, row.Right, row.Bottom);
+            return new TreeViewDropTarget(row.Item, position, row.Item, row.Item.Children.Count);
+        }
+
+        var siblings = row.Item.Parent?.Children ?? _roots;
+        var rowIndex = IndexOfNode(siblings, row.Item);
+        var insertionIndex = Math.Max(0, rowIndex + (position == TreeViewDropPosition.Below ? 1 : 0));
+        var indicatorY = position == TreeViewDropPosition.Above ? row.Top : row.Bottom;
+        dragEvent.DropIndicatorBounds = new UIClipRect(row.Left, indicatorY - 1f, row.Right, indicatorY + 1f);
+        return new TreeViewDropTarget(row.Item, position, row.Item.Parent, insertionIndex);
+    }
+
+    /// <summary>Finds a node by identity in an ordered collection without interface enumeration.</summary>
+    /// <param name="items">Collection to inspect.</param>
+    /// <param name="item">Node to find.</param>
+    /// <returns>Zero-based index, or -1 when absent.</returns>
+    private static int IndexOfNode(IReadOnlyList<Node> items, Node item)
+    {
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (ReferenceEquals(items[index], item))
+                return index;
+        }
+        return -1;
+    }
+
     /// <summary>
     /// Creates a node tree view.
     /// </summary>
@@ -158,6 +262,7 @@ public sealed class TreeView : Panel, IScrollViewportContent
         ArgumentNullException.ThrowIfNull(roots);
         _roots.Clear();
         _roots.AddRange(roots);
+        _itemDragDataCache.Clear();
         _expanded.Clear();
         _selectedItems.Clear();
         _selectedItem = null;
@@ -531,10 +636,25 @@ public sealed class TreeView : Panel, IScrollViewportContent
         {
             var (item, depth) = rows[index];
             _rows[rowIndex++].Bind(item, depth, _expanded.Contains(item),
-                _itemText?.Invoke(item), _selectedItems.Contains(item), Width, RowHeight);
+                _itemText?.Invoke(item), _selectedItems.Contains(item), Width, RowHeight,
+                GetItemDragData(item), ItemDragEffects, AllowItemDrop);
         }
         if (Width > 0f && Height > 0f)
             ArrangeRows(new Vector2(ContentWidth, ContentHeight));
+    }
+
+    /// <summary>Gets stable drag data for a logical item without allocating while rows recycle.</summary>
+    /// <param name="item">Logical row item.</param>
+    /// <returns>Cached typed drag data, or null when dragging is disabled.</returns>
+    private UIDragData? GetItemDragData(Node item)
+    {
+        if (_itemDragData is null)
+            return null;
+        if (_itemDragDataCache.TryGetValue(item, out var cached))
+            return cached;
+        var created = _itemDragData(item);
+        _itemDragDataCache.Add(item, created);
+        return created;
     }
 
     /// <summary>Resizes the retained row pool only when viewport capacity changes.</summary>

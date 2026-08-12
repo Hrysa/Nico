@@ -169,6 +169,41 @@ public class Node
         _children.Add(child);
     }
 
+    /// <summary>Inserts or moves a child at an ordered position.</summary>
+    /// <param name="index">Insertion index measured before removing an existing child.</param>
+    /// <param name="child">Child node to insert.</param>
+    public virtual void InsertChild(int index, Node child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+        if ((uint)index > (uint)_children.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (ReferenceEquals(child, this))
+            throw new InvalidOperationException("A node cannot be its own child.");
+
+        for (var ancestor = this; ancestor is not null; ancestor = ancestor._parent)
+        {
+            if (ReferenceEquals(ancestor, child))
+                throw new InvalidOperationException("Inserting this child would create a scene-graph cycle.");
+        }
+
+        if (ReferenceEquals(child._parent, this))
+        {
+            var previousIndex = _children.IndexOf(child);
+            if (previousIndex < index)
+                index--;
+            if (previousIndex == index)
+                return;
+            _children.RemoveAt(previousIndex);
+            _children.Insert(index, child);
+            return;
+        }
+
+        if (child._parent != null)
+            child._parent.RemoveChild(child);
+        child._parent = this;
+        _children.Insert(index, child);
+    }
+
     /// <summary>
     /// Removes a child node from this node.
     /// </summary>

@@ -369,20 +369,89 @@ public class SceneInspectorTests
             var script = Assert.IsType<AssetMetadataRecord>(database.FindByPath(path));
             inspector.ResolveScriptName = id => database.Find(id)?.ProjectPath;
             inspector.Bind(node);
-            var field = Assert.IsType<TextField>(
-                FindByName<TextField>(inspector, "ScriptAssetField"));
-
             var attached = ScriptFileDrop.TryAttach(
-                new FileSystemNode(path, isDirectory: false), field, inspector, database);
+                new FileSystemNode(path, isDirectory: false), inspector, database);
 
             Assert.True(attached);
             Assert.Equal(script.Id, node.ScriptId);
-            Assert.Equal(script.ProjectPath, field.Text);
+            Assert.Equal(script.ProjectPath, Assert.IsType<TextField>(
+                FindByName<TextField>(inspector, "ScriptAssetField0")).Text);
+            Assert.Equal(string.Empty, Assert.IsType<TextField>(
+                FindByName<TextField>(inspector, "ScriptAssetField")).Text);
         }
         finally
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    /// <summary>Displays every authored script plus a distinct slot for adding another one.</summary>
+    [Fact]
+    public void MultipleScripts_DisplayIndependentRowsAndAddSlot()
+    {
+        var first = new ScriptComponent(AssetId.New());
+        var second = new ScriptComponent(AssetId.New());
+        var node = new Node3D();
+        node.AddComponent(first);
+        node.AddComponent(second);
+        var inspector = new SceneInspector(320f, 620f)
+        {
+            ResolveScriptName = id => id == first.ScriptId ? "First.cs" : "Second.cs"
+        };
+
+        inspector.Bind(node);
+
+        Assert.Equal("First.cs", Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "ScriptAssetField0")).Text);
+        Assert.Equal("Second.cs", Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "ScriptAssetField1")).Text);
+        Assert.Equal("Drop another script here", Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "ScriptAssetField")).Placeholder);
+        Assert.NotNull(FindByName<Button>(inspector, "ScriptRemove0"));
+        Assert.NotNull(FindByName<Button>(inspector, "ScriptRemove1"));
+    }
+
+    /// <summary>Removes only the script represented by the clicked component row.</summary>
+    [Fact]
+    public void ScriptRemoveButton_RemovesExactComponentAndKeepsAddSlot()
+    {
+        var first = new ScriptComponent(AssetId.New());
+        var second = new ScriptComponent(AssetId.New());
+        var node = new Node3D();
+        node.AddComponent(first);
+        node.AddComponent(second);
+        var inspector = new SceneInspector(320f, 620f);
+        var changes = 0;
+        inspector.NodeChanged += _ => changes++;
+        inspector.Bind(node);
+
+        Assert.IsType<Button>(FindByName<Button>(
+            inspector, "ScriptRemove0")).InvokeClick();
+
+        Assert.DoesNotContain(first, node.Components);
+        Assert.Contains(second, node.Components);
+        Assert.Equal(1, changes);
+        Assert.NotNull(FindByName<TextField>(inspector, "ScriptAssetField0"));
+        Assert.NotNull(FindByName<TextField>(inspector, "ScriptAssetField"));
+    }
+
+    /// <summary>Attaches repeated drops as ordered independent script components.</summary>
+    [Fact]
+    public void AttachScript_MultipleCalls_AppendsComponents()
+    {
+        var first = AssetId.New();
+        var second = AssetId.New();
+        var node = new Node3D();
+        var inspector = new SceneInspector(320f, 620f);
+        inspector.Bind(node);
+
+        Assert.True(inspector.AttachScript(first));
+        Assert.True(inspector.AttachScript(second));
+
+        Assert.Equal(2, node.Components.Count);
+        Assert.Equal(first, Assert.IsType<ScriptComponent>(node.Components[0]).ScriptId);
+        Assert.Equal(second, Assert.IsType<ScriptComponent>(node.Components[1]).ScriptId);
+        Assert.NotNull(FindByName<TextField>(inspector, "ScriptAssetField"));
     }
 
     /// <summary>Verifies ordinary C# files cannot be attached as scene scripts.</summary>
@@ -398,11 +467,8 @@ public class SceneInspectorTests
             var node = new Node3D { Name = "Cube" };
             var inspector = new SceneInspector(300f, 500f);
             inspector.Bind(node);
-            var field = Assert.IsType<TextField>(
-                FindByName<TextField>(inspector, "ScriptAssetField"));
-
             var attached = ScriptFileDrop.TryAttach(
-                new FileSystemNode(path, isDirectory: false), field, inspector, database);
+                new FileSystemNode(path, isDirectory: false), inspector, database);
 
             Assert.False(attached);
             Assert.Null(node.ScriptId);

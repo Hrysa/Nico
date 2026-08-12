@@ -84,9 +84,11 @@ public sealed class UIOverlayManager : IDisposable
             _indicator = new DropIndicator(_theme.Accent);
             _overlay.Add(_indicator, Vector2.Zero);
         }
-        _indicator.Width = target.Width;
-        _indicator.Height = target.Height;
-        _overlay.SetPosition(_indicator, new Vector2(target.Left, target.Top));
+        var bounds = _router.DropIndicatorBounds ??
+            new Engine.Graphics.UIClipRect(target.Left, target.Top, target.Right, target.Bottom);
+        _indicator.Width = bounds.Right - bounds.Left;
+        _indicator.Height = bounds.Bottom - bounds.Top;
+        _overlay.SetPosition(_indicator, new Vector2(bounds.Left, bounds.Top));
     }
 
     /// <summary>Removes both drag preview and drop indicator.</summary>
