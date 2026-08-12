@@ -439,7 +439,12 @@ public sealed class AnimationController : IDisposable
         {
             var clip = clips[index];
             ArgumentNullException.ThrowIfNull(clip);
-            if (!_states.TryAdd(clip.Name, new AnimationState(this, clip.Name, clip)))
+            var state = new AnimationState(this, clip.Name, clip)
+            {
+                Speed = clip.DefaultSpeed,
+                Loop = clip.DefaultLoop
+            };
+            if (!_states.TryAdd(clip.Name, state))
                 throw new ArgumentException(
                     $"Animation clip name '{clip.Name}' is already registered.", nameof(clips));
         }

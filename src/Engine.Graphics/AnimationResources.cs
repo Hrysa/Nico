@@ -278,19 +278,36 @@ public sealed class AnimationClipResource
     /// <summary>Gets tracks by skeleton joint index.</summary>
     public IReadOnlyList<JointAnimationTrack?> Tracks => _tracks;
 
+    /// <summary>Gets the authored default signed playback-rate multiplier.</summary>
+    public float DefaultSpeed { get; }
+
+    /// <summary>Gets whether playback wraps by default.</summary>
+    public bool DefaultLoop { get; }
+
     /// <summary>Creates a validated animation clip.</summary>
     /// <param name="name">Imported clip name.</param>
     /// <param name="duration">Duration in seconds.</param>
     /// <param name="tracks">Tracks aligned to skeleton joints.</param>
-    public AnimationClipResource(string name, float duration, JointAnimationTrack?[] tracks)
+    /// <param name="defaultSpeed">Default signed playback-rate multiplier.</param>
+    /// <param name="defaultLoop">Whether playback wraps by default.</param>
+    public AnimationClipResource(
+        string name,
+        float duration,
+        JointAnimationTrack?[] tracks,
+        float defaultSpeed = 1f,
+        bool defaultLoop = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(tracks);
         if (!float.IsFinite(duration) || duration < 0f)
             throw new ArgumentOutOfRangeException(nameof(duration));
+        if (!float.IsFinite(defaultSpeed))
+            throw new ArgumentOutOfRangeException(nameof(defaultSpeed));
         Name = name;
         Duration = duration;
         _tracks = tracks.ToArray();
+        DefaultSpeed = defaultSpeed;
+        DefaultLoop = defaultLoop;
     }
 }
 

@@ -11,12 +11,16 @@ namespace Engine.Graphics;
 /// <param name="Clip">Exact imported clip name, or null for the first clip.</param>
 /// <param name="InPlace">Whether horizontal root motion is removed during binding.</param>
 /// <param name="RootMotionJoint">Explicit translated joint, or null for common-name detection.</param>
+/// <param name="Speed">Default signed playback-rate multiplier.</param>
+/// <param name="Loop">Whether playback wraps by default.</param>
 public readonly record struct AnimationSetEntry(
     string Alias,
     AssetReference Source,
     string? Clip = null,
     bool InPlace = false,
-    string? RootMotionJoint = null);
+    string? RootMotionJoint = null,
+    float Speed = 1f,
+    bool Loop = true);
 
 /// <summary>Stores project-owned stable aliases for animation clips from multiple sources.</summary>
 public sealed class AnimationSetResource
@@ -51,6 +55,9 @@ public sealed class AnimationSetResource
             if (!entry.InPlace && entry.RootMotionJoint is not null)
                 throw new ArgumentException(
                     "A root-motion joint requires in-place processing.", nameof(entries));
+            if (!float.IsFinite(entry.Speed))
+                throw new ArgumentException("Animation playback speed must be finite.",
+                    nameof(entries));
             if (!aliases.Add(entry.Alias))
                 throw new ArgumentException(
                     $"Animation alias '{entry.Alias}' is duplicated.", nameof(entries));
@@ -92,7 +99,8 @@ public sealed class AnimationSetResource
             result[index] = entry.InPlace
                 ? CreateInPlaceClip(entry, selected, target, meshNodeTransform)
                 : new AnimationClipResource(
-                    entry.Alias, selected.Duration, selected.Tracks.ToArray());
+                    entry.Alias, selected.Duration, selected.Tracks.ToArray(),
+                    entry.Speed, entry.Loop);
         }
         return result;
     }
@@ -104,7 +112,7 @@ public sealed class AnimationSetResource
         ArgumentNullException.ThrowIfNull(stream);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write(Encoding.ASCII.GetBytes(Magic));
-        writer.Write(2u);
+        writer.Write(3u);
         writer.Write(checked((uint)_entries.Length));
         for (var index = 0; index < _entries.Length; index++)
         {
@@ -119,7 +127,44 @@ public sealed class AnimationSetResource
             writer.Write(entry.RootMotionJoint is not null);
             if (entry.RootMotionJoint is not null)
                 writer.Write(entry.RootMotionJoint!);
+            writer.Write(entry.Speed);
+            writer.Write(entry.Loop);
         }
+    }
+
+    /// <summary>Writes the human-readable project-source representation.</summary>
+    /// <param name="stream">Writable source stream.</param>
+    public void SaveJson(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+        writer.WriteStartObject();
+        writer.WriteNumber("version", 3);
+        writer.WriteStartArray("entries");
+        for (var index = 0; index < _entries.Length; index++)
+        {
+            var entry = _entries[index];
+            writer.WriteStartObject();
+            writer.WriteString("alias", entry.Alias);
+            writer.WriteStartObject("source");
+            writer.WriteString("asset", entry.Source.Asset.Value);
+            writer.WriteString("subAsset", entry.Source.SubAsset);
+            writer.WriteEndObject();
+            if (entry.Clip is not null)
+                writer.WriteString("clip", entry.Clip);
+            if (entry.InPlace)
+                writer.WriteBoolean("inPlace", true);
+            if (entry.RootMotionJoint is not null)
+                writer.WriteString("rootMotionJoint", entry.RootMotionJoint);
+            if (entry.Speed != 1f)
+                writer.WriteNumber("speed", entry.Speed);
+            if (!entry.Loop)
+                writer.WriteBoolean("loop", false);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+        writer.Flush();
     }
 
     /// <summary>Reads one versioned Nico animation-set artifact.</summary>
@@ -134,7 +179,7 @@ public sealed class AnimationSetResource
         if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
             throw new InvalidDataException("Animation-set artifact has an invalid signature.");
         var version = reader.ReadUInt32();
-        if (version is not 1u and not 2u)
+        if (version is not 1u and not 2u and not 3u)
             throw new InvalidDataException("Animation-set artifact version is unsupported.");
         var count = checked((int)reader.ReadUInt32());
         var entries = new AnimationSetEntry[count];
@@ -149,8 +194,10 @@ public sealed class AnimationSetResource
             var inPlace = version >= 2u && reader.ReadBoolean();
             var rootMotionJoint = version >= 2u && reader.ReadBoolean()
                 ? reader.ReadString() : null;
+            var speed = version >= 3u ? reader.ReadSingle() : 1f;
+            var loop = version < 3u || reader.ReadBoolean();
             entries[index] = new AnimationSetEntry(
-                alias, source, clip, inPlace, rootMotionJoint);
+                alias, source, clip, inPlace, rootMotionJoint, speed, loop);
         }
         if (stream.CanSeek && stream.Position != stream.Length)
             throw new InvalidDataException("Animation-set artifact contains trailing data.");
@@ -183,7 +230,7 @@ public sealed class AnimationSetResource
         using var document = JsonDocument.Parse(stream);
         var root = document.RootElement;
         if (!root.TryGetProperty("version", out var version) ||
-            version.GetInt32() is not 1 and not 2)
+            version.GetInt32() is not 1 and not 2 and not 3)
             throw new InvalidDataException("Animation-set JSON version is unsupported.");
         if (!root.TryGetProperty("entries", out var entriesElement) ||
             entriesElement.ValueKind != JsonValueKind.Array)
@@ -207,9 +254,13 @@ public sealed class AnimationSetResource
                     out var rootMotionJointElement) &&
                 rootMotionJointElement.ValueKind != JsonValueKind.Null
                 ? rootMotionJointElement.GetString() : null;
+            var speed = element.TryGetProperty("speed", out var speedElement)
+                ? speedElement.GetSingle() : 1f;
+            var loop = !element.TryGetProperty("loop", out var loopElement) ||
+                loopElement.GetBoolean();
             entries[index++] = new AnimationSetEntry(alias,
                 new AssetReference(new AssetId(asset), subAsset), clip,
-                inPlace, rootMotionJoint);
+                inPlace, rootMotionJoint, speed, loop);
         }
         return new AnimationSetResource(entries);
     }
@@ -259,7 +310,8 @@ public sealed class AnimationSetResource
         tracks[jointIndex] = new JointAnimationTrack(
             new Vector3AnimationTrack(translation.Times, values, translation.Interpolation),
             sourceTrack.Rotation, sourceTrack.Scale);
-        return new AnimationClipResource(entry.Alias, source.Duration, tracks);
+        return new AnimationClipResource(
+            entry.Alias, source.Duration, tracks, entry.Speed, entry.Loop);
     }
 
     /// <summary>Resolves an explicit or conventional root-motion translation track.</summary>

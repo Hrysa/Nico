@@ -26,6 +26,9 @@ public static class EditorDockWorkspace
     /// <summary>Stable Profiler panel identifier.</summary>
     public const string ProfilerId = "editor.profiler";
 
+    /// <summary>Stable animation-set editor panel identifier.</summary>
+    public const string AnimationSetId = "editor.animation-set";
+
     /// <summary>Creates the safe default workspace used when no compatible persisted layout exists.</summary>
     /// <returns>Complete default Editor dock workspace.</returns>
     public static DockWorkspace CreateDefault()

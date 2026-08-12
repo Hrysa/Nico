@@ -20,6 +20,7 @@ public sealed class AnimationSetAuthoringTests
             AnimationSetAuthoring.Save(path,
                 [new AnimationSetEntry("Run", source, "Sprint")]);
 
+            Assert.StartsWith("{", File.ReadAllText(path).TrimStart(), StringComparison.Ordinal);
             using var stream = File.OpenRead(path);
             var loaded = AnimationSetResource.Load(stream);
             var entry = Assert.Single(loaded.Entries);

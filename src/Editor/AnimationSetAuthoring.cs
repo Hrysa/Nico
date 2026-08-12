@@ -17,7 +17,18 @@ public static class AnimationSetAuthoring
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("Animation-set path has no parent directory.");
         Directory.CreateDirectory(directory);
-        using var stream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        resource.Save(stream);
+        var temporaryPath = fullPath + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(
+                       temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                resource.SaveJson(stream);
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
     }
 }

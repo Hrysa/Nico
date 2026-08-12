@@ -120,9 +120,14 @@ var dockWorkspace = EditorDockWorkspace.Load(project.RootPath, out var dockResto
 if (dockRestoreError is not null)
     logger.LogWarning(dockRestoreError, "Could not restore the Editor dock workspace; using defaults");
 var dockWindowFactory = new EditorDockFloatingWindowFactory(secondaryWindows);
+var animationSetEditor = new AnimationSetEditor { Width = 0f, Height = 0f };
+var dockRegistry = EditorDockWorkspace.CreateRegistry(
+    editorView, allowViewportFloating: true);
+dockRegistry.Register(EditorDockWorkspace.AnimationSetId, "Animation Set",
+    () => animationSetEditor);
 using var dockSession = new DockSession(
     dockWorkspace,
-    EditorDockWorkspace.CreateRegistry(editorView, allowViewportFloating: true),
+    dockRegistry,
     dockWindowFactory,
     initializeFloatingWindows: false,
     mainCoordinates: window);
@@ -328,6 +333,14 @@ window.FrameProfiled += sample =>
 AttachFileSystem(fileSystemTree);
 AttachInspector(inspector);
 ConfigureEditorDragDrop();
+animationSetEditor.Saved += path =>
+{
+    assetDatabase.Refresh();
+    var record = assetDatabase.FindByPath(path);
+    if (record is not null)
+        assetImportPipeline.Import(record, "editor");
+    RefreshFileSystem();
+};
 RefreshFileSystem();
 AttachTitleBar(editorView.TitleBar);
 AttachPlayButton(editorView.PlayButton);
@@ -1251,6 +1264,23 @@ void OpenFileSystemEntry(Node item)
         LoadScene(node.FullPath, makeActive: true);
         return;
     }
+    if (Path.GetExtension(node.FullPath).Equals(
+            ".nanimset", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            animationSetEditor.Open(node.FullPath);
+            dockSession.OpenPanel(
+                EditorDockWorkspace.AnimationSetId, EditorDockWorkspace.SceneId);
+            RefreshVertices();
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                           UnauthorizedAccessException or ArgumentException)
+        {
+            logger.LogError(exception, "Could not open animation set {FilePath}", node.FullPath);
+        }
+        return;
+    }
     if (Path.GetExtension(node.FullPath).Equals(".glb", StringComparison.OrdinalIgnoreCase))
     {
         var record = assetDatabase.FindByPath(node.FullPath);
@@ -1819,6 +1849,53 @@ void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool s
     RefreshVertices();
 }
 
+/// <summary>Shows a project-scoped path dialog for a new animation-set asset.</summary>
+/// <param name="parentDirectory">Directory receiving the new asset.</param>
+void ShowAnimationSetPathDialog(string parentDirectory)
+{
+    CloseFileContextMenu();
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height, "Animation Set", relativeParent,
+        actionVerb: "Add") { Name = "AddAnimationSetDialog" };
+    dialog.CreateRequested += requestedName =>
+    {
+        var fileName = requestedName.EndsWith(".nanimset", StringComparison.OrdinalIgnoreCase)
+            ? requestedName : requestedName + ".nanimset";
+        var assetPath = Path.Combine(parentDirectory, fileName);
+        if (File.Exists(assetPath) || Directory.Exists(assetPath))
+        {
+            dialog.ShowError("An item with that name already exists.");
+            RefreshVertices();
+            return;
+        }
+        try
+        {
+            AnimationSetAuthoring.Save(assetPath, []);
+            assetDatabase.Refresh();
+            CloseFileContextMenu();
+            RefreshFileSystem();
+            animationSetEditor.Open(assetPath);
+            dockSession.OpenPanel(
+                EditorDockWorkspace.AnimationSetId, EditorDockWorkspace.SceneId);
+            RefreshVertices();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                           or ArgumentException or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not create animation set {AssetPath}", assetPath);
+            dialog.ShowError("Could not create this animation set.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    overlay.Add(dialog, Vector2.Zero);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
 /// <summary>Shows file types that can be created in the selected project directory.</summary>
 /// <param name="parentDirectory">Directory receiving the new file.</param>
 /// <param name="x">Submenu screen X position.</param>
@@ -1833,6 +1910,7 @@ void ShowAddFileSubmenu(string parentDirectory, float x, float y)
     var submenu = new ContextMenu(170f) { Name = "AddFileSubmenu" };
     submenu.AddItem("Add Scene", () => ShowScenePathDialog(parentDirectory,
         createDefaultScene: true, saveAction: false));
+    submenu.AddItem("Add Animation Set", () => ShowAnimationSetPathDialog(parentDirectory));
     submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
         createFolder: false));
     fileSubmenu = submenu;

@@ -44,7 +44,7 @@ public sealed class AnimationSetResourceTests
         var source = new AssetReference(AssetId.New(), "animation/Run");
         var expected = new AnimationSetResource(
         [
-            new AnimationSetEntry("Run", source, "Sprint", true, "Root"),
+            new AnimationSetEntry("Run", source, "Sprint", true, "Root", 1.5f, false),
             new AnimationSetEntry("Idle", source)
         ]);
         using var stream = new MemoryStream();
@@ -54,6 +54,49 @@ public sealed class AnimationSetResourceTests
         var actual = AnimationSetResource.Load(stream);
 
         Assert.Equal(expected.Entries, actual.Entries);
+    }
+
+    /// <summary>Round-trips the readable source encoding without losing authored options.</summary>
+    [Fact]
+    public void SaveJsonLoad_ValidSet_PreservesEntries()
+    {
+        var source = new AssetReference(AssetId.New(), "animation/Run");
+        var expected = new AnimationSetResource(
+        [
+            new AnimationSetEntry("Run", source, "Sprint", true, "Hips", 0.75f, false)
+        ]);
+        using var stream = new MemoryStream();
+
+        expected.SaveJson(stream);
+        stream.Position = 0;
+        var actual = AnimationSetResource.Load(stream);
+
+        Assert.Equal(expected.Entries, actual.Entries);
+    }
+
+    /// <summary>Propagates authored speed and loop defaults into bound controller state.</summary>
+    [Fact]
+    public void BindTo_PlaybackDefaults_ConfigureRegisteredState()
+    {
+        var reference = new AssetReference(AssetId.New(), "animation/Run");
+        var skeleton = new SkeletonResource(
+        [
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var source = CreateSource(skeleton, "ImportedRun", Vector3.Zero);
+        var set = new AnimationSetResource(
+        [
+            new AnimationSetEntry("Run", reference, Speed: 1.5f, Loop: false)
+        ]);
+        var clips = set.BindTo(skeleton, _ => source);
+        var skin = new SkinnedMeshResource(
+            new StaticMeshResource([], [], []), [], skeleton, clips);
+        using var controller = new AnimationController(skin);
+
+        var state = controller.GetOrCreate("Run");
+
+        Assert.Equal(1.5f, state.Speed);
+        Assert.False(state.Loop);
     }
 
     /// <summary>Loads version-one binary sets as entries with in-place processing disabled.</summary>
