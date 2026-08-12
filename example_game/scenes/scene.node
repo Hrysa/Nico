@@ -1,13 +1,13 @@
 {
   "formatVersion": 11,
-  "gameCameraId": "0fef56b9b7574ae6a0f8e9b63ab94174",
+  "gameCameraId": "b6272a1b9d4f48eeadfadc0f8492a2a8",
   "nodes": [
     {
-      "id": "abe8e7ad50f447d6ae58d281c6c51e49",
+      "id": "b53df15917874cd1b680aaa4afd587f3",
       "type": "assetMesh",
       "name": "SceneCube",
       "position": {
-        "x": 1.9573392,
+        "x": 0,
         "y": 0.5,
         "z": 0
       },
@@ -17,7 +17,7 @@
         "z": 0
       },
       "scale": {
-        "x": 1,
+        "x": 5,
         "y": 1,
         "z": 1
       },
@@ -69,7 +69,7 @@
       "children": []
     },
     {
-      "id": "0ea30038e62d40da82a80c5875c0c97f",
+      "id": "85a2d5256c7f4ffa85d14aa5a523d730",
       "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
@@ -159,7 +159,7 @@
       "children": []
     },
     {
-      "id": "0fef56b9b7574ae6a0f8e9b63ab94174",
+      "id": "b6272a1b9d4f48eeadfadc0f8492a2a8",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -190,7 +190,7 @@
       "children": []
     },
     {
-      "id": "aa39dc70c4684c31a0cf025493668964",
+      "id": "8e0f661e8ed140698292602195ea685d",
       "type": "custom",
       "name": "HUD",
       "position": {
@@ -226,7 +226,7 @@
       "children": []
     },
     {
-      "id": "87d97643c75949e5b732b5b6ed73c322",
+      "id": "37e245601b5c486aba5253c0134c870c",
       "type": "assetMesh",
       "name": "Plane 1",
       "position": {
@@ -297,7 +297,7 @@
       "children": []
     },
     {
-      "id": "91e3ce1458d549b781a873766db9ca71",
+      "id": "7741cddb3b0045b7b221728893c4fe30",
       "type": "directionalLight",
       "name": "Directional Light 1",
       "position": {

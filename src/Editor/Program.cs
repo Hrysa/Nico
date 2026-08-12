@@ -344,7 +344,12 @@ var assetEditors = new AssetEditorRegistry(
     assetDocuments, ResolveAssetDocument, ResolveAssetReferenceDisplayName);
 assetEditors.Register(new StandardMaterialInspectorFactory());
 var assetDropResolver = new AssetDropResolver(assetDatabase, assetImportPipeline);
+using var modelPreviewController = new InspectorModelPreviewController(
+    window, window.RequestFrame);
+mainUIHost.LayoutUpdated += modelPreviewController.Synchronize;
 var inspectorProviders = new InspectorProviderRegistry();
+inspectorProviders.Register(new ModelPreviewInspectorProvider(
+    assetDatabase, assetImportPipeline, modelPreviewController));
 inspectorProviders.Register(new AssetContentInspectorProvider(
     assetDatabase, assetEditors, () => inspector.Width - 24f));
 inspectorProviders.Register(new ImportedSubAssetInspectorProvider());
@@ -367,6 +372,7 @@ AttachInspector(inspector);
 ConfigureEditorDragDrop();
 animationSetEditor.ResolveFileAnimations = ResolveAnimationArtifacts;
 animationSetEditor.ResolveRootJoints = ResolveAnimationRootJoints;
+animationSetEditor.ResolveSourceDisplayName = ResolveAssetReferenceDisplayName;
 animationSetEditor.AddRequested += () =>
 {
     var added = fileSystemTree.SelectedItem switch
@@ -1861,7 +1867,8 @@ SkeletalAnimationResource LoadAnimationSource(AssetReference source)
     var skin = LoadRuntimeResource(source,
         new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
             new SkeletonResource([]), []));
-    return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray());
+    return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray(),
+        skin.MeshNodeTransform);
 }
 
 /// <summary>Loads one imported texture reference for a material override.</summary>
@@ -3213,6 +3220,7 @@ window.Update += delta =>
     viewportRenderer.UpdateAnimations(delta);
     detachedSceneRenderer?.UpdateAnimations(delta);
     detachedGameRenderer?.UpdateAnimations(delta);
+    modelPreviewController.Update(delta);
     var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
     var gameContinuous = scriptHost is not null;
     var sceneVisible = sceneViewport.IsEffectivelyVisible;
@@ -3239,6 +3247,7 @@ window.Update += delta =>
     dockSession.SynchronizeFloatingWindows();
     window.SetContinuousRendering(
         flyCamera.IsActive || scriptHost is not null || viewportRenderer.HasActiveAnimations ||
+            modelPreviewController.RequiresContinuousUpdates ||
             playBuildTask is not null
             || scriptSchemaBuildTask is not null
             || assetImportTask is not null

@@ -458,7 +458,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         var skin = LoadRuntimeResource(source,
             new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
                 new SkeletonResource([]), []));
-        return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray());
+        return new SkeletalAnimationResource(skin.Skeleton, skin.Animations.ToArray(),
+            skin.MeshNodeTransform);
     }
 
     /// <summary>Mounts the single authored HUD found in a loaded scene.</summary>

@@ -13,6 +13,7 @@ namespace Engine.Graphics;
 /// <param name="RootMotionJoint">Explicit translated joint, or null for common-name detection.</param>
 /// <param name="Speed">Default signed playback-rate multiplier.</param>
 /// <param name="Loop">Whether playback wraps by default.</param>
+/// <param name="Retarget">Skeleton binding strategy for this source.</param>
 public readonly record struct AnimationSetEntry(
     string Alias,
     AssetReference Source,
@@ -20,7 +21,8 @@ public readonly record struct AnimationSetEntry(
     bool InPlace = false,
     string? RootMotionJoint = null,
     float Speed = 1f,
-    bool Loop = true);
+    bool Loop = true,
+    AnimationRetargetMode Retarget = AnimationRetargetMode.Auto);
 
 /// <summary>Stores project-owned stable aliases for animation clips from multiple sources.</summary>
 public sealed class AnimationSetResource
@@ -58,6 +60,9 @@ public sealed class AnimationSetResource
             if (!float.IsFinite(entry.Speed))
                 throw new ArgumentException("Animation playback speed must be finite.",
                     nameof(entries));
+            if (!Enum.IsDefined(entry.Retarget))
+                throw new ArgumentOutOfRangeException(nameof(entries),
+                    "Animation retarget mode is unsupported.");
             if (!aliases.Add(entry.Alias))
                 throw new ArgumentException(
                     $"Animation alias '{entry.Alias}' is duplicated.", nameof(entries));
@@ -92,7 +97,7 @@ public sealed class AnimationSetResource
             var entry = _entries[index];
             var source = resolver(entry.Source) ?? throw new InvalidDataException(
                 $"Animation source '{entry.Source}' could not be resolved.");
-            var bound = source.BindTo(target);
+            var bound = source.BindTo(target, entry.Retarget, meshNodeTransform);
             var selected = FindClip(bound, entry.Clip) ?? throw new InvalidDataException(
                 $"Animation clip '{entry.Clip ?? "<first>"}' is missing from " +
                 $"source '{entry.Source}'.");
@@ -112,7 +117,7 @@ public sealed class AnimationSetResource
         ArgumentNullException.ThrowIfNull(stream);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write(Encoding.ASCII.GetBytes(Magic));
-        writer.Write(3u);
+        writer.Write(4u);
         writer.Write(checked((uint)_entries.Length));
         for (var index = 0; index < _entries.Length; index++)
         {
@@ -129,6 +134,7 @@ public sealed class AnimationSetResource
                 writer.Write(entry.RootMotionJoint!);
             writer.Write(entry.Speed);
             writer.Write(entry.Loop);
+            writer.Write((byte)entry.Retarget);
         }
     }
 
@@ -139,7 +145,7 @@ public sealed class AnimationSetResource
         ArgumentNullException.ThrowIfNull(stream);
         using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
         writer.WriteStartObject();
-        writer.WriteNumber("version", 3);
+        writer.WriteNumber("version", 4);
         writer.WriteStartArray("entries");
         for (var index = 0; index < _entries.Length; index++)
         {
@@ -150,6 +156,8 @@ public sealed class AnimationSetResource
             writer.WriteString("asset", entry.Source.Asset.Value);
             writer.WriteString("subAsset", entry.Source.SubAsset);
             writer.WriteEndObject();
+            if (entry.Clip is not null)
+                writer.WriteString("clip", entry.Clip);
             if (entry.InPlace)
                 writer.WriteBoolean("inPlace", true);
             if (entry.RootMotionJoint is not null)
@@ -158,6 +166,8 @@ public sealed class AnimationSetResource
                 writer.WriteNumber("speed", entry.Speed);
             if (!entry.Loop)
                 writer.WriteBoolean("loop", false);
+            if (entry.Retarget != AnimationRetargetMode.Auto)
+                writer.WriteString("retarget", entry.Retarget.ToString().ToLowerInvariant());
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
@@ -177,7 +187,7 @@ public sealed class AnimationSetResource
         if (Encoding.ASCII.GetString(reader.ReadBytes(8)) != Magic)
             throw new InvalidDataException("Animation-set artifact has an invalid signature.");
         var version = reader.ReadUInt32();
-        if (version is not 1u and not 2u and not 3u)
+        if (version is not 1u and not 2u and not 3u and not 4u)
             throw new InvalidDataException("Animation-set artifact version is unsupported.");
         var count = checked((int)reader.ReadUInt32());
         var entries = new AnimationSetEntry[count];
@@ -194,8 +204,10 @@ public sealed class AnimationSetResource
                 ? reader.ReadString() : null;
             var speed = version >= 3u ? reader.ReadSingle() : 1f;
             var loop = version < 3u || reader.ReadBoolean();
+            var retarget = version >= 4u
+                ? ReadRetargetMode(reader.ReadByte()) : AnimationRetargetMode.Auto;
             entries[index] = new AnimationSetEntry(
-                alias, source, clip, inPlace, rootMotionJoint, speed, loop);
+                alias, source, clip, inPlace, rootMotionJoint, speed, loop, retarget);
         }
         if (stream.CanSeek && stream.Position != stream.Length)
             throw new InvalidDataException("Animation-set artifact contains trailing data.");
@@ -228,7 +240,7 @@ public sealed class AnimationSetResource
         using var document = JsonDocument.Parse(stream);
         var root = document.RootElement;
         if (!root.TryGetProperty("version", out var version) ||
-            version.GetInt32() is not 1 and not 2 and not 3)
+            version.GetInt32() is not 1 and not 2 and not 3 and not 4)
             throw new InvalidDataException("Animation-set JSON version is unsupported.");
         if (!root.TryGetProperty("entries", out var entriesElement) ||
             entriesElement.ValueKind != JsonValueKind.Array)
@@ -256,11 +268,36 @@ public sealed class AnimationSetResource
                 ? speedElement.GetSingle() : 1f;
             var loop = !element.TryGetProperty("loop", out var loopElement) ||
                 loopElement.GetBoolean();
+            var retarget = element.TryGetProperty("retarget", out var retargetElement)
+                ? ParseRetargetMode(retargetElement.GetString())
+                : AnimationRetargetMode.Auto;
             entries[index++] = new AnimationSetEntry(alias,
                 new AssetReference(new AssetId(asset), subAsset), clip,
-                inPlace, rootMotionJoint, speed, loop);
+                inPlace, rootMotionJoint, speed, loop, retarget);
         }
         return new AnimationSetResource(entries);
+    }
+
+    /// <summary>Parses one readable retarget mode.</summary>
+    /// <param name="value">JSON mode text.</param>
+    /// <returns>Parsed mode.</returns>
+    private static AnimationRetargetMode ParseRetargetMode(string? value)
+    {
+        if (Enum.TryParse<AnimationRetargetMode>(value, ignoreCase: true, out var mode) &&
+            Enum.IsDefined(mode))
+            return mode;
+        throw new InvalidDataException($"Animation retarget mode '{value}' is unsupported.");
+    }
+
+    /// <summary>Validates one binary retarget mode value.</summary>
+    /// <param name="value">Serialized enum byte.</param>
+    /// <returns>Validated mode.</returns>
+    private static AnimationRetargetMode ReadRetargetMode(byte value)
+    {
+        var mode = (AnimationRetargetMode)value;
+        if (!Enum.IsDefined(mode))
+            throw new InvalidDataException("Animation retarget mode is unsupported.");
+        return mode;
     }
 
     /// <summary>Creates an aliased clip with rendered horizontal translation fixed at its first key.</summary>

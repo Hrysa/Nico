@@ -18,7 +18,7 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 9;
+    public int Version => 11;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
@@ -30,19 +30,23 @@ public sealed class GlbModelImporter : IAssetImporter
         using (document)
         {
             var hasMeshes = document.RootElement.TryGetProperty("meshes", out _);
+            var hasAnimations = document.RootElement.TryGetProperty(
+                "animations", out var sourceAnimations) &&
+                sourceAnimations.GetArrayLength() > 0;
             ModelRoot? model = null;
-            if (!hasMeshes || HasSkinnedMeshNode(document.RootElement))
+            if (!hasMeshes || hasAnimations || HasSkinnedMeshNode(document.RootElement))
             {
                 using var animationSource = context.OpenSource();
                 model = ModelRoot.ReadGLB(animationSource);
             }
             var artifacts = ImportMeshes(context, document.RootElement, binary, model).ToList();
-            if (!hasMeshes)
+            if (!hasMeshes || hasAnimations)
                 artifacts.AddRange(ImportStandaloneAnimations(
                     context, document.RootElement, binary, model!));
             artifacts.AddRange(ImportMaterials(context, document.RootElement));
             artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
-            var objects = ImportObjects(document.RootElement, animationsAreArtifacts: !hasMeshes);
+            var objects = ImportObjects(document.RootElement,
+                animationsAreArtifacts: hasAnimations);
             return new AssetImportResult(artifacts, [], [], objects);
         }
     }
@@ -417,7 +421,7 @@ public sealed class GlbModelImporter : IAssetImporter
         }
     }
 
-    /// <summary>Imports clips from a GLB that intentionally contains no geometry.</summary>
+    /// <summary>Imports clips as independently addressable artifacts regardless of geometry.</summary>
     /// <param name="context">Artifact output context.</param>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
@@ -433,12 +437,12 @@ public sealed class GlbModelImporter : IAssetImporter
             model.LogicalAnimations.Count == 0)
         {
             throw new InvalidDataException(
-                "A mesh-free GLB must contain a skin and at least one skeletal animation.");
+                "A skeletal-animation GLB must contain a skin and at least one animation.");
         }
         if (skins.GetArrayLength() != 1)
         {
             throw new InvalidDataException(
-                "Animation-only GLBs containing multiple skins are not supported.");
+                "Standalone animations from GLBs containing multiple skins are not supported.");
         }
         if (!root.TryGetProperty("nodes", out var nodes))
             throw new InvalidDataException("GLB skin requires nodes.");
@@ -654,9 +658,22 @@ public sealed class GlbModelImporter : IAssetImporter
         var globalBindBySource = new Matrix4x4[sourceNodes.Length];
         for (var sourceIndex = 0; sourceIndex < sourceNodes.Length; sourceIndex++)
         {
-            globalBindBySource[sourceIndex] = ComputeNodeWorldMatrix(
-                nodes, parentByNode, sourceNodes[sourceIndex], worldCache, worldStates) *
-                inverseMeshWorld;
+            if (skin.TryGetProperty("inverseBindMatrices", out _))
+            {
+                if (!Matrix4x4.Invert(inverseBindBySource[sourceIndex],
+                        out var bindWorld))
+                {
+                    throw new InvalidDataException(
+                        "GLB inverse bind matrix is not invertible.");
+                }
+                globalBindBySource[sourceIndex] = bindWorld * inverseMeshWorld;
+            }
+            else
+            {
+                globalBindBySource[sourceIndex] = ComputeNodeWorldMatrix(
+                    nodes, parentByNode, sourceNodes[sourceIndex], worldCache, worldStates) *
+                    inverseMeshWorld;
+            }
         }
         var joints = new ImportedJoint[sourceNodes.Length];
         var orderedNodeIndices = new int[sourceNodes.Length];
@@ -1502,7 +1519,7 @@ public sealed class GlbModelImporter : IAssetImporter
             writer.Flush();
         }
         WriteSkinnedMesh(output, [], [], [], [], [], [], [], [], -1,
-            skeleton with { MeshNodeTransform = Matrix4x4.Identity }, [animation]);
+            skeleton, [animation]);
     }
 
     /// <summary>Writes one imported animation clip.</summary>

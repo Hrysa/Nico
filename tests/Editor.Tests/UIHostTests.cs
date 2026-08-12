@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Globalization;
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using Editor;
 using Engine.Graphics;
 using Engine.UI;
@@ -10,6 +11,383 @@ namespace Editor.Tests;
 
 public class UIHostTests
 {
+    /// <summary>Verifies an Inspector model preview owns GPU resources only while active.</summary>
+    [Fact]
+    public void ModelPreview_Activation_RendersAndReleasesResources()
+    {
+        var services = new HostServices();
+        var mesh = new StaticMeshResource([
+            new ModelVertex(new Vector3(-1f, 0f, 0f), Vector3.UnitY, Vector2.Zero, Vector4.UnitX),
+            new ModelVertex(new Vector3(1f, 0f, 0f), Vector3.UnitY, Vector2.UnitX, Vector4.UnitX),
+            new ModelVertex(new Vector3(0f, 1f, 0f), Vector3.UnitY, Vector2.UnitY, Vector4.UnitX)
+        ], [0u, 1u, 2u], [new Submesh(0u, 3u, -1)]);
+        using var controller = new InspectorModelPreviewController(
+            services, services.RequestFrame);
+        var content = new ModelPreviewInspectorContent(
+            [new ModelPreviewMesh(mesh)], controller);
+        using var host = new UIHost(services, services, services, content, 300f, 280f);
+        host.Refresh();
+
+        content.Activate();
+        controller.Synchronize();
+        controller.Update(1d / 60d);
+
+        Assert.Equal(1, services.StaticMeshCreateCount);
+        Assert.Equal(1, services.ProceduralMeshCreateCount);
+        Assert.Equal(1, services.RenderViewCreateCount);
+        Assert.Equal(1, services.SceneSubmitCount);
+        Assert.False(controller.RequiresContinuousUpdates);
+
+        content.Deactivate();
+
+        Assert.Equal(2, services.MeshDestroyCount);
+        Assert.Equal(1, services.RenderViewDestroyCount);
+    }
+
+    /// <summary>Verifies a skinned preview advances its embedded clip continuously.</summary>
+    [Fact]
+    public void ModelPreview_EmbeddedAnimation_UpdatesSkinPalette()
+    {
+        var services = new HostServices();
+        var mesh = new StaticMeshResource([
+            new ModelVertex(Vector3.Zero, Vector3.UnitY, Vector2.Zero, Vector4.UnitX),
+            new ModelVertex(Vector3.UnitX, Vector3.UnitY, Vector2.UnitX, Vector4.UnitX),
+            new ModelVertex(Vector3.UnitY, Vector3.UnitY, Vector2.UnitY, Vector4.UnitX)
+        ], [0u, 1u, 2u], [new Submesh(0u, 3u, -1)]);
+        var skeleton = new SkeletonResource([
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var translation = new Vector3AnimationTrack(
+            [0f, 1f], [Vector3.Zero, Vector3.UnitY], AnimationInterpolation.Linear);
+        var clip = new AnimationClipResource("Idle", 1f,
+            [new JointAnimationTrack(translation, null, null)]);
+        var skinned = new SkinnedMeshResource(mesh, [
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX)
+        ], skeleton, [clip]);
+        using var controller = new InspectorModelPreviewController(
+            services, services.RequestFrame);
+        var content = new ModelPreviewInspectorContent(
+            [new ModelPreviewMesh(skinned)], controller);
+        using var host = new UIHost(services, services, services, content, 300f, 280f);
+        host.Refresh();
+
+        content.Activate();
+        controller.Synchronize();
+        var viewport = Assert.Single(content.Children.OfType<ViewportPanel>());
+        var camera = Assert.IsType<PerspectiveCamera>(viewport.Camera);
+        var initialCameraPosition = camera.Position;
+        var paletteUpdatesAfterActivation = services.SkinPaletteUpdateCount;
+        controller.Update(0.25d);
+
+        Assert.True(controller.RequiresContinuousUpdates);
+        Assert.Equal(1, services.SkinnedMeshCreateCount);
+        Assert.True(services.SkinPaletteUpdateCount > paletteUpdatesAfterActivation);
+        Assert.Equal(1, services.SceneSubmitCount);
+        Assert.Equal(0.25f, camera.Position.Y - initialCameraPosition.Y, 4);
+    }
+
+    /// <summary>Verifies preview framing fits wide model bounds inside a narrow Inspector.</summary>
+    [Fact]
+    public void ModelPreview_NarrowViewport_FramesCompleteModel()
+    {
+        var services = new HostServices();
+        var vertices = new[]
+        {
+            new ModelVertex(new Vector3(-10f, -1f, 0f), Vector3.UnitY,
+                Vector2.Zero, Vector4.UnitX),
+            new ModelVertex(new Vector3(10f, -1f, 0f), Vector3.UnitY,
+                Vector2.UnitX, Vector4.UnitX),
+            new ModelVertex(new Vector3(0f, 1f, 0f), Vector3.UnitY,
+                Vector2.UnitY, Vector4.UnitX)
+        };
+        var mesh = new StaticMeshResource(vertices, [0u, 1u, 2u],
+            [new Submesh(0u, 3u, -1)]);
+        using var controller = new InspectorModelPreviewController(
+            services, services.RequestFrame);
+        var content = new ModelPreviewInspectorContent(
+            [new ModelPreviewMesh(mesh)], controller);
+        using var host = new UIHost(services, services, services, content, 100f, 280f);
+        host.Refresh();
+        content.Activate();
+        controller.Synchronize();
+        var viewport = Assert.Single(content.Children.OfType<ViewportPanel>());
+        var camera = Assert.IsType<PerspectiveCamera>(viewport.Camera);
+        var viewProjection = camera.GetViewMatrix() * camera.GetProjectionMatrix();
+
+        for (var index = 0; index < vertices.Length; index++)
+        {
+            var clip = Vector4.Transform(new Vector4(vertices[index].Position, 1f),
+                viewProjection);
+            Assert.True(clip.W > 0f);
+            Assert.InRange(MathF.Abs(clip.X / clip.W), 0f, 0.91f);
+            Assert.InRange(MathF.Abs(clip.Y / clip.W), 0f, 0.91f);
+        }
+    }
+
+    /// <summary>Verifies camera framing uses evaluated skin bounds rather than raw vertex bounds.</summary>
+    [Fact]
+    public void ModelPreview_SkinPoseChangesScale_FramesRenderedPose()
+    {
+        var services = new HostServices();
+        var vertices = new[]
+        {
+            new ModelVertex(new Vector3(-0.5f, 0f, 0f), Vector3.UnitZ,
+                Vector2.Zero, Vector4.UnitX),
+            new ModelVertex(new Vector3(0.5f, 0f, 0f), Vector3.UnitZ,
+                Vector2.UnitX, Vector4.UnitX),
+            new ModelVertex(new Vector3(0f, 2f, 0f), Vector3.UnitZ,
+                Vector2.UnitY, Vector4.UnitX)
+        };
+        var mesh = new StaticMeshResource(vertices, [0u, 1u, 2u],
+            [new Submesh(0u, 3u, -1)]);
+        var skeleton = new SkeletonResource([
+            new SkeletonJoint("Root", -1,
+                new JointTransform(Vector3.Zero, Quaternion.Identity,
+                    new Vector3(100f)), Matrix4x4.Identity)
+        ]);
+        var influences = new[]
+        {
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX)
+        };
+        var skinned = new SkinnedMeshResource(
+            mesh, influences, skeleton, [], Matrix4x4.CreateScale(0.01f));
+        using var controller = new InspectorModelPreviewController(
+            services, services.RequestFrame);
+        var content = new ModelPreviewInspectorContent(
+            [new ModelPreviewMesh(skinned)], controller);
+        using var host = new UIHost(services, services, services, content, 300f, 280f);
+        host.Refresh();
+
+        content.Activate();
+        controller.Synchronize();
+
+        var viewport = Assert.Single(content.Children.OfType<ViewportPanel>());
+        var camera = Assert.IsType<PerspectiveCamera>(viewport.Camera);
+        Assert.True(camera.Position.Length() > 1f,
+            "Camera distance must fit the post-skinning model scale.");
+    }
+
+    /// <summary>Verifies standalone clips bind to the last activated compatible model.</summary>
+    [Fact]
+    public void ModelPreview_StandaloneAnimation_ReusesPreviousCompatibleModel()
+    {
+        var services = new HostServices();
+        var mesh = new StaticMeshResource([
+            new ModelVertex(Vector3.Zero, Vector3.UnitZ, Vector2.Zero, Vector4.UnitX),
+            new ModelVertex(Vector3.UnitX, Vector3.UnitZ, Vector2.UnitX, Vector4.UnitX),
+            new ModelVertex(Vector3.UnitY, Vector3.UnitZ, Vector2.UnitY, Vector4.UnitX)
+        ], [0u, 1u, 2u], [new Submesh(0u, 3u, -1)]);
+        var skeleton = new SkeletonResource([
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity)
+        ]);
+        var model = new SkinnedMeshResource(mesh, [
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX),
+            new SkinInfluence(0, 0, 0, 0, Vector4.UnitX)
+        ], skeleton, []);
+        var track = new Vector3AnimationTrack(
+            [0f, 1f], [Vector3.Zero, Vector3.UnitX], AnimationInterpolation.Linear);
+        var standalone = new SkeletalAnimationResource(skeleton, [
+            new AnimationClipResource("Walk", 1f,
+                [new JointAnimationTrack(track, null, null)])
+        ]);
+        using var controller = new InspectorModelPreviewController(
+            services, services.RequestFrame);
+        var content = new ModelPreviewInspectorContent(
+            [new ModelPreviewMesh(model)], controller,
+            previewModelName: "Hero.glb", rememberPreviewModel: true);
+        using (var host = new UIHost(
+                   services, services, services, content, 300f, 280f))
+        {
+            host.Refresh();
+            content.Activate();
+            content.Deactivate();
+        }
+
+        var accepted = controller.TryCreateRememberedModelPreview(
+            standalone, out var rebound, out var modelName);
+
+        Assert.True(accepted);
+        Assert.NotNull(rebound?.SkinnedMesh);
+        Assert.Equal("Walk", Assert.Single(rebound.SkinnedMesh.Animations).Name);
+        Assert.Equal("Hero.glb", modelName);
+    }
+
+    /// <summary>Verifies incompatible or absent models can fall back to an animated bone proxy.</summary>
+    [Fact]
+    public void ModelPreview_StandaloneAnimation_BuildsProceduralSkeleton()
+    {
+        var skeleton = new SkeletonResource([
+            new SkeletonJoint("Root", -1, JointTransform.Identity, Matrix4x4.Identity),
+            new SkeletonJoint("Child", 0,
+                new JointTransform(Vector3.UnitY, Quaternion.Identity, Vector3.One),
+                Matrix4x4.CreateTranslation(-Vector3.UnitY))
+        ]);
+        var rotation = new QuaternionAnimationTrack(
+            [0f, 1f], [Quaternion.Identity,
+                Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI * 0.5f)],
+            AnimationInterpolation.Linear);
+        var skeletonTransform = Matrix4x4.CreateRotationX(MathF.PI * 0.5f) *
+            Matrix4x4.CreateScale(0.01f);
+        var animation = new SkeletalAnimationResource(skeleton, [
+            new AnimationClipResource("Wave", 1f,
+                [null, new JointAnimationTrack(null, rotation, null)])
+        ], skeletonTransform);
+
+        var proxy = SkeletonPreviewMeshBuilder.Build(animation);
+
+        Assert.NotEmpty(proxy.Mesh.Vertices);
+        Assert.Equal(proxy.Mesh.Vertices.Length, proxy.Influences.Length);
+        Assert.Equal("Wave", Assert.Single(proxy.Animations).Name);
+        Assert.Equal(2, proxy.Skeleton.JointCount);
+        Assert.Equal(skeletonTransform, proxy.MeshNodeTransform);
+    }
+
+    /// <summary>Verifies real animation-only GLBs use a proxy then the prior compatible model.</summary>
+    [Fact]
+    public void ModelPreviewProvider_AnimationOnlyGlb_UsesFallbackChain()
+    {
+        var directory = Directory.CreateTempSubdirectory("nico-animation-preview-").FullName;
+        try
+        {
+            var sourceDirectory = Path.GetFullPath("../../example_game/models",
+                Path.GetDirectoryName(GetSourceFilePath())!);
+            CopyAsset(sourceDirectory, directory, "Ch03_nonPBR.glb");
+            CopyAsset(sourceDirectory, directory, "Breathing Idle.glb");
+            var database = new Engine.Assets.AssetDatabase(
+                directory, EditorAssetImporters.Select);
+            var importers = new Engine.Assets.AssetImporterRegistry();
+            EditorAssetImporters.RegisterAll(importers);
+            var pipeline = new Engine.Assets.AssetImportPipeline(database, importers);
+            var services = new HostServices();
+            using var controller = new InspectorModelPreviewController(
+                services, services.RequestFrame);
+            var provider = new ModelPreviewInspectorProvider(
+                database, pipeline, controller);
+            var animationPath = Path.Combine(directory, "Breathing Idle.glb");
+            var modelPath = Path.Combine(directory, "Ch03_nonPBR.glb");
+
+            var animationRecord = database.FindByPath(animationPath)!;
+            var animationOutcome = pipeline.Import(animationRecord, "editor");
+            var animationArtifact = Assert.Single(animationOutcome.Artifacts,
+                item => item.ContentType == "nico/skeletal-animation");
+            using (var stream = File.OpenRead(Path.Combine(
+                       animationOutcome.ArtifactDirectory!,
+                       animationArtifact.RelativePath)))
+            {
+                var animation = SkeletalAnimationResource.Load(stream);
+                var proxy = SkeletonPreviewMeshBuilder.Build(animation);
+                using var playback = new AnimationController(proxy);
+                playback.Play(proxy.Animations[0].Name);
+                playback.Advance(proxy.Animations[0].Duration * 0.5d);
+                var bounds = CalculateRenderedBounds(proxy, playback.Pose);
+                var extent = bounds.Maximum - bounds.Minimum;
+                Assert.True(extent.Y > extent.Z * 1.5f,
+                    $"Animated procedural humanoid preview is lying down: extent {extent}.");
+            }
+
+            Assert.True(provider.TryCreate(
+                new FileSystemNode(animationPath, false), out var fallbackDocument));
+            var fallback = Assert.IsType<ModelPreviewInspectorContent>(
+                fallbackDocument!.Content);
+            Assert.Equal("Procedural skeleton", fallback.PreviewModelName);
+            using (var host = new UIHost(
+                       services, services, services, fallback, 300f, 280f))
+            {
+                host.Refresh();
+                fallback.Activate();
+                controller.Synchronize();
+                controller.Update(1d / 60d);
+                fallback.Deactivate();
+            }
+
+            Assert.True(provider.TryCreate(
+                new FileSystemNode(modelPath, false), out var modelDocument));
+            var model = Assert.IsType<ModelPreviewInspectorContent>(modelDocument!.Content);
+            using (var host = new UIHost(
+                       services, services, services, model, 300f, 280f))
+            {
+                host.Refresh();
+                model.Activate();
+                model.Deactivate();
+            }
+
+            Assert.True(provider.TryCreate(
+                new FileSystemNode(animationPath, false), out var reboundDocument));
+            var rebound = Assert.IsType<ModelPreviewInspectorContent>(
+                reboundDocument!.Content);
+            Assert.Equal("Ch03_nonPBR.glb", rebound.PreviewModelName);
+            Assert.True(rebound.HasAnimation);
+            using (var host = new UIHost(
+                       services, services, services, rebound, 300f, 280f))
+            {
+                host.Refresh();
+                rebound.Activate();
+                controller.Synchronize();
+                controller.Update(1d / 60d);
+                rebound.Deactivate();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>Copies a source asset and its stable metadata into an isolated project.</summary>
+    /// <param name="sourceDirectory">Repository example-model directory.</param>
+    /// <param name="destinationDirectory">Temporary project root.</param>
+    /// <param name="fileName">Asset file name.</param>
+    private static void CopyAsset(
+        string sourceDirectory,
+        string destinationDirectory,
+        string fileName)
+    {
+        var source = Path.Combine(sourceDirectory, fileName);
+        var destination = Path.Combine(destinationDirectory, fileName);
+        File.Copy(source, destination);
+        File.Copy(source + ".meta", destination + ".meta");
+    }
+
+    /// <summary>CPU-skins a preview proxy and calculates its rendered bounds.</summary>
+    /// <param name="mesh">Preview mesh and skeleton.</param>
+    /// <param name="pose">Evaluated preview pose.</param>
+    /// <returns>Minimum and maximum rendered positions.</returns>
+    private static (Vector3 Minimum, Vector3 Maximum) CalculateRenderedBounds(
+        SkinnedMeshResource mesh, SkeletonPose pose)
+    {
+        var minimum = new Vector3(float.PositiveInfinity);
+        var maximum = new Vector3(float.NegativeInfinity);
+        var matrices = pose.SkinMatrices;
+        for (var index = 0; index < mesh.Mesh.Vertices.Length; index++)
+        {
+            var source = mesh.Mesh.Vertices[index].Position;
+            var influence = mesh.Influences[index];
+            var skinned =
+                Vector3.Transform(source, matrices[(int)influence.Joint0]) *
+                    influence.Weights.X +
+                Vector3.Transform(source, matrices[(int)influence.Joint1]) *
+                    influence.Weights.Y +
+                Vector3.Transform(source, matrices[(int)influence.Joint2]) *
+                    influence.Weights.Z +
+                Vector3.Transform(source, matrices[(int)influence.Joint3]) *
+                    influence.Weights.W;
+            var rendered = Vector3.Transform(skinned, mesh.MeshNodeTransform);
+            minimum = Vector3.Min(minimum, rendered);
+            maximum = Vector3.Max(maximum, rendered);
+        }
+        return (minimum, maximum);
+    }
+
+    /// <summary>Gets this source path independently of the test-host working directory.</summary>
+    /// <param name="path">Compiler-provided source path.</param>
+    /// <returns>Absolute test source path.</returns>
+    private static string GetSourceFilePath([CallerFilePath] string path = "") => path;
+
     /// <summary>Verifies a viewport texture follows retained layout movement after host refresh.</summary>
     [Fact]
     public void LayoutUpdated_MovedViewport_UpdatesPresentationQuad()
@@ -1399,6 +1777,30 @@ public class UIHostTests
         /// <summary>Gets the number of renderer clear-color assignments.</summary>
         internal int UiClearColorSetCount { get; private set; }
 
+        /// <summary>Gets the number of static preview meshes created.</summary>
+        internal int StaticMeshCreateCount { get; private set; }
+
+        /// <summary>Gets the number of procedural preview meshes created.</summary>
+        internal int ProceduralMeshCreateCount { get; private set; }
+
+        /// <summary>Gets the number of skinned preview meshes created.</summary>
+        internal int SkinnedMeshCreateCount { get; private set; }
+
+        /// <summary>Gets the number of skin palette uploads.</summary>
+        internal int SkinPaletteUpdateCount { get; private set; }
+
+        /// <summary>Gets the number of render views created.</summary>
+        internal int RenderViewCreateCount { get; private set; }
+
+        /// <summary>Gets the number of scene queues submitted.</summary>
+        internal int SceneSubmitCount { get; private set; }
+
+        /// <summary>Gets the number of retained meshes destroyed.</summary>
+        internal int MeshDestroyCount { get; private set; }
+
+        /// <summary>Gets the number of render views destroyed.</summary>
+        internal int RenderViewDestroyCount { get; private set; }
+
         /// <inheritdoc/>
         public bool IsRunning => true;
 
@@ -1531,22 +1933,36 @@ public class UIHostTests
         }
 
         /// <inheritdoc/>
-        public MeshHandle CreateMesh(MeshDescription description) => default;
+        public MeshHandle CreateMesh(MeshDescription description)
+        {
+            ProceduralMeshCreateCount++;
+            return new MeshHandle(10_000u + (ulong)ProceduralMeshCreateCount);
+        }
 
         /// <inheritdoc/>
         public MeshHandle CreateStaticMesh(
             StaticMeshResource mesh,
-            ResolvedStandardMaterial material) => default;
+            ResolvedStandardMaterial material)
+        {
+            StaticMeshCreateCount++;
+            return new MeshHandle((ulong)StaticMeshCreateCount);
+        }
 
         /// <inheritdoc/>
         public SkinnedMeshHandles CreateSkinnedMesh(
             SkinnedMeshResource mesh,
-            ResolvedStandardMaterial material) => default;
+            ResolvedStandardMaterial material)
+        {
+            SkinnedMeshCreateCount++;
+            return new SkinnedMeshHandles(
+                new MeshHandle((ulong)SkinnedMeshCreateCount),
+                new SkinPaletteHandle((ulong)SkinnedMeshCreateCount));
+        }
 
         /// <inheritdoc/>
         public void UpdateSkinPalette(
             SkinPaletteHandle palette,
-            ReadOnlySpan<Matrix4x4> matrices) { }
+            ReadOnlySpan<Matrix4x4> matrices) => SkinPaletteUpdateCount++;
 
         /// <inheritdoc/>
         public void DestroySkinPalette(SkinPaletteHandle palette) { }
@@ -1561,7 +1977,7 @@ public class UIHostTests
         public void UpdateMesh(MeshHandle mesh, MeshUpdate update) { }
 
         /// <inheritdoc/>
-        public void DestroyMesh(MeshHandle mesh) { }
+        public void DestroyMesh(MeshHandle mesh) => MeshDestroyCount++;
 
         /// <inheritdoc/>
         public void SubmitUI(UIDrawList drawList) => SubmitCount++;
@@ -1574,10 +1990,14 @@ public class UIHostTests
             UiClearColorSetCount++;
 
         /// <inheritdoc/>
-        public RenderViewHandle CreateRenderView(float width, float height) => default;
+        public RenderViewHandle CreateRenderView(float width, float height)
+        {
+            RenderViewCreateCount++;
+            return new RenderViewHandle((ulong)RenderViewCreateCount);
+        }
 
         /// <inheritdoc/>
-        public void DestroyRenderView(RenderViewHandle view) { }
+        public void DestroyRenderView(RenderViewHandle view) => RenderViewDestroyCount++;
 
         /// <inheritdoc/>
         public void ResizeRenderView(RenderViewHandle view, float width, float height)
@@ -1597,7 +2017,7 @@ public class UIHostTests
         public ViewportRenderContext CreateRenderContext(RenderViewHandle view) => new();
 
         /// <inheritdoc/>
-        public void Submit(RenderViewHandle view, RenderQueue renderQueue) { }
+        public void Submit(RenderViewHandle view, RenderQueue renderQueue) => SceneSubmitCount++;
 
         /// <inheritdoc/>
         public void DrawGroundGrid(

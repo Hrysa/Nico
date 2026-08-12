@@ -35,6 +35,7 @@ public sealed class AnimationSetResourceTests
         Assert.Equal("Run", entry.Alias);
         Assert.Equal(new AssetReference(asset, "animation/0"), entry.Source);
         Assert.Null(entry.Clip);
+        Assert.Equal(AnimationRetargetMode.Auto, entry.Retarget);
     }
 
     /// <summary>Round-trips stable aliases and explicit source clip references.</summary>
@@ -44,7 +45,8 @@ public sealed class AnimationSetResourceTests
         var source = new AssetReference(AssetId.New(), "animation/Run");
         var expected = new AnimationSetResource(
         [
-            new AnimationSetEntry("Run", source, "Sprint", true, "Root", 1.5f, false),
+            new AnimationSetEntry("Run", source, "Sprint", true, "Root", 1.5f, false,
+                AnimationRetargetMode.Humanoid),
             new AnimationSetEntry("Idle", source)
         ]);
         using var stream = new MemoryStream();
@@ -63,7 +65,8 @@ public sealed class AnimationSetResourceTests
         var source = new AssetReference(AssetId.New(), "animation/Run");
         var expected = new AnimationSetResource(
         [
-            new AnimationSetEntry("Run", source, null, true, "Hips", 0.75f, false)
+            new AnimationSetEntry("Run", source, "Sprint", true, "Hips", 0.75f, false,
+                AnimationRetargetMode.Humanoid)
         ]);
         using var stream = new MemoryStream();
 

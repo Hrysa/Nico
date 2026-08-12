@@ -20,6 +20,8 @@ public sealed class AnimationSetEditorTests
             [new AnimationSetEntry("Run", reference, null, true, "Hips")]);
         var editor = new AnimationSetEditor
         {
+            ResolveSourceDisplayName = source =>
+                $"models/Running.glb / {source.SubAsset}",
             ResolveRootJoints = _ => new AnimationRootJointOptions(
                 ["Root", "Hips"], "Hips")
         };
@@ -29,9 +31,13 @@ public sealed class AnimationSetEditorTests
         Assert.Equal(path, editor.Path);
         Assert.Equal("Run", Assert.Single(editor.Entries).Alias);
         Assert.Equal("Run", FindByName<TextField>(editor, "AnimationAlias")!.Text);
+        Assert.Equal("models/Running.glb / animation/0",
+            FindByName<TextField>(editor, "AnimationSource")!.Text);
         Assert.True(FindByName<CheckBox>(editor, "AnimationInPlace")!.IsChecked);
         Assert.True(FindByName<CheckBox>(editor, "AnimationLoop")!.IsChecked);
         Assert.Equal(1d, FindByName<NumericField>(editor, "AnimationSpeed")!.Value);
+        Assert.Equal("Auto",
+            FindByName<ComboBox>(editor, "AnimationRetarget")!.SelectedItem);
         Assert.Equal("Hips",
             FindByName<ComboBox>(editor, "AnimationRootMotionJoint")!.SelectedItem);
     }
@@ -57,6 +63,7 @@ public sealed class AnimationSetEditorTests
         editor.Saved += _ => saved = true;
 
         Assert.True(editor.Add(source));
+        FindByName<ComboBox>(editor, "AnimationRetarget")!.Select(2);
         editor.Save();
 
         Assert.True(saved);
@@ -67,6 +74,7 @@ public sealed class AnimationSetEditorTests
         Assert.Equal(reference, entry.Source);
         Assert.True(entry.InPlace);
         Assert.Equal("mixamorig:Hips", entry.RootMotionJoint);
+        Assert.Equal(AnimationRetargetMode.Humanoid, entry.Retarget);
     }
 
     /// <summary>Rejects non-animation imported artifacts from the animation set.</summary>

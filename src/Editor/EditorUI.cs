@@ -32,7 +32,8 @@ public static class EditorUI
             Name = "ProjectLabel",
             FontSize = theme.FontSize,
             ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f
+            PaddingLeft = 0f,
+            Margin = new Thickness(5f, 0f, 0f, 0f)
         };
         var windowMenu = new ContextMenu(180f, theme) { Name = "WindowMenu" };
         var windowPanelItems = new Dictionary<string, ContextMenuItem>(StringComparer.Ordinal)
@@ -60,7 +61,7 @@ public static class EditorUI
         };
         var viewMenu = new ContextMenu(180f, theme) { Name = "ViewMenu" };
         viewMenu.AddSubmenu("Scene Previews", previewMenu);
-        var titleMenuBar = new MenuBar(126f, titleBarHeight, theme)
+        var titleMenuBar = new MenuBar(0f, titleBarHeight, theme)
         {
             Name = "TitleMenuBar",
             BackgroundColor = theme.Canvas

@@ -19,6 +19,7 @@ public sealed class AnimationSetEditor : ContentControl
     private readonly TextField _aliasField;
     private readonly TextField _sourceField;
     private readonly NumericField _speedField;
+    private readonly ComboBox _retargetField;
     private readonly CheckBox _loopField;
     private readonly CheckBox _inPlaceField;
     private readonly ComboBox _rootMotionJointField;
@@ -42,6 +43,9 @@ public sealed class AnimationSetEditor : ContentControl
 
     /// <summary>Gets or sets the resolver supplying root-joint choices for an animation source.</summary>
     public Func<AssetReference, AnimationRootJointOptions>? ResolveRootJoints { get; set; }
+
+    /// <summary>Gets or sets the resolver formatting an animation source for display.</summary>
+    public Func<AssetReference, string>? ResolveSourceDisplayName { get; set; }
 
     /// <summary>Gets the currently opened source path, or null.</summary>
     public string? Path => _path;
@@ -90,6 +94,13 @@ public sealed class AnimationSetEditor : ContentControl
             Step = 0.1d,
             FormatString = "0.###"
         };
+        _retargetField = new ComboBox(0f, resolvedTheme.ControlHeight, resolvedTheme)
+        {
+            Name = "AnimationRetarget",
+            Width = 0f
+        };
+        _retargetField.SetItems(["Auto", "Exact", "Humanoid"]);
+        _retargetField.Select(0);
         _loopField = new CheckBox(120f, resolvedTheme.ControlHeight,
             "Loop", resolvedTheme) { Name = "AnimationLoop" };
         _inPlaceField = new CheckBox(180f, resolvedTheme.ControlHeight,
@@ -125,6 +136,10 @@ public sealed class AnimationSetEditor : ContentControl
         {
             Loop = value
         });
+        _retargetField.SelectionChanged += (_, _) => UpdateSelected(entry => entry with
+        {
+            Retarget = (AnimationRetargetMode)Math.Max(0, _retargetField.SelectedIndex)
+        });
         _inPlaceField.CheckedChanged += value => UpdateSelected(entry => entry with
         {
             InPlace = value,
@@ -141,6 +156,7 @@ public sealed class AnimationSetEditor : ContentControl
             FormRow("Alias", _aliasField, resolvedTheme),
             FormRow("Source", _sourceField, resolvedTheme),
             FormRow("Speed", _speedField, resolvedTheme),
+            FormRow("Retarget", _retargetField, resolvedTheme),
             _loopField,
             _inPlaceField,
             FormRow("Root joint", _rootMotionJointField, resolvedTheme),
@@ -324,8 +340,10 @@ public sealed class AnimationSetEditor : ContentControl
         {
             var entry = _entries[index];
             _aliasField.Text = entry.Alias;
-            _sourceField.Text = entry.Source.ToString();
+            _sourceField.Text = ResolveSourceDisplayName?.Invoke(entry.Source) ??
+                entry.Source.ToString();
             _speedField.Value = entry.Speed;
+            _retargetField.Select((int)entry.Retarget);
             _loopField.IsChecked = entry.Loop;
             _inPlaceField.IsChecked = entry.InPlace;
             PopulateRootJointChoices(entry.Source, entry.RootMotionJoint);
@@ -336,6 +354,7 @@ public sealed class AnimationSetEditor : ContentControl
             _aliasField.Text = string.Empty;
             _sourceField.Text = string.Empty;
             _speedField.Value = 1d;
+            _retargetField.Select(0);
             _loopField.IsChecked = true;
             _inPlaceField.IsChecked = false;
             _rootMotionJointField.SetItems(["Auto detect"]);
@@ -409,6 +428,7 @@ public sealed class AnimationSetEditor : ContentControl
         _entryList.IsEnabled = enabled;
         _aliasField.IsEnabled = enabled;
         _speedField.IsEnabled = enabled;
+        _retargetField.IsEnabled = enabled;
         _loopField.IsEnabled = enabled;
         _inPlaceField.IsEnabled = enabled;
         _rootMotionJointField.IsEnabled = enabled && _inPlaceField.IsChecked;

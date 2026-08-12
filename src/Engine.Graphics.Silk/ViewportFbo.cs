@@ -165,8 +165,23 @@ internal unsafe class ViewportFbo
         vk.UpdateDescriptorSets(device, 1, &writeDescriptor, 0, null);
     }
 
-    public void Destroy(Vk vk, Device device)
+    /// <summary>Destroys framebuffer resources and optionally returns its sampled-image descriptor.</summary>
+    /// <param name="vk">Vulkan API.</param>
+    /// <param name="device">Owning logical device.</param>
+    /// <param name="descriptorPool">Pool that allocated the viewport descriptor.</param>
+    /// <param name="releaseDescriptorSet">Whether this is final destruction rather than resize.</param>
+    public void Destroy(
+        Vk vk,
+        Device device,
+        DescriptorPool descriptorPool,
+        bool releaseDescriptorSet = true)
     {
+        if (releaseDescriptorSet && DescriptorSet.Handle != 0)
+        {
+            var descriptorSet = DescriptorSet;
+            vk.FreeDescriptorSets(device, descriptorPool, 1, &descriptorSet);
+            DescriptorSet = default;
+        }
         vk.DestroyFramebuffer(device, Framebuffer, null);
         vk.DestroySampler(device, Sampler, null);
         vk.DestroyImageView(device, MsaaColorView, null);
@@ -185,7 +200,7 @@ internal unsafe class ViewportFbo
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
     {
-        Destroy(vk, device);
+        Destroy(vk, device, descriptorPool, releaseDescriptorSet: false);
         Create(vk, device, fboRenderPass, colorFormat, depthFormat, samples, deviceLocalMemoryType,
             descriptorSetLayout, descriptorPool, allocateDescriptorSet: false);
         IsDirty = false;

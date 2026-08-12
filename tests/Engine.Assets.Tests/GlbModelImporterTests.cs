@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Engine.Core;
@@ -14,9 +15,9 @@ public sealed class GlbModelImporterTests : IDisposable
 
     /// <summary>Guards the cache contract for the current standard-material artifact format.</summary>
     [Fact]
-    public void Version_CurrentMaterialArtifactContract_IsNine()
+    public void Version_CurrentArtifactContract_IsEleven()
     {
-        Assert.Equal(9, new GlbModelImporter().Version);
+        Assert.Equal(11, new GlbModelImporter().Version);
     }
 
     /// <summary>Imports the example character and Run clip and verifies in-place hips binding.</summary>
@@ -74,38 +75,279 @@ public sealed class GlbModelImporterTests : IDisposable
         }
     }
 
-    /// <summary>Imports the MMO valley model with every node and mesh primitive preserved.</summary>
+    /// <summary>Auto binding retargets Mixamo rigs whose reference poses differ.</summary>
     [Fact]
-    public void Import_MmoValley_PreservesCompleteModelComposition()
+    public void Import_ExampleRun_AutoUsesHumanoidForDifferentMixamoBindPoses()
     {
-        var sourcePath = Path.GetFullPath("../../example_game/models/mmo_valley_phase5.glb",
+        var models = Path.GetFullPath("../../example_game/models",
             Path.GetDirectoryName(GetSourceFilePath())!);
-        Assert.True(File.Exists(sourcePath), $"Required regression asset is missing: {sourcePath}");
-        var staging = Path.Combine(_directory, "valley-staging");
+        var character = ImportSkinnedMesh(
+            Path.Combine(models, "Ch03_nonPBR.glb"), "mixamo-character");
+        var run = ImportAnimation(Path.Combine(models, "Running.glb"), "mixamo-run");
+        var humanoid = Assert.Single(run.BindTo(
+            character.Skeleton, AnimationRetargetMode.Humanoid,
+            character.MeshNodeTransform));
+        var automatic = Assert.Single(run.BindTo(
+            character.Skeleton, AnimationRetargetMode.Auto,
+            character.MeshNodeTransform));
+        Assert.True(HumanoidRig.TryDetect(character.Skeleton, out var rig));
+        var automaticPose = new SkeletonPose(character.Skeleton);
+        var humanoidPose = new SkeletonPose(character.Skeleton);
+
+        for (var sample = 0; sample <= 4; sample++)
+        {
+            var time = automatic.Duration * sample / 4f;
+            automaticPose.Evaluate(character.Skeleton, automatic, time);
+            humanoidPose.Evaluate(character.Skeleton, humanoid, time);
+            for (var boneIndex = 0;
+                 boneIndex <= (int)HumanoidBone.RightLittleDistal; boneIndex++)
+            {
+                var joint = rig!.GetJoint((HumanoidBone)boneIndex);
+                if (joint >= 0)
+                    AssertMatrixNearlyEqual(
+                        automaticPose.WorldTransforms[joint], humanoidPose.WorldTransforms[joint]);
+            }
+        }
+    }
+
+    /// <summary>Retargeted Mixamo previews stay upright and preserve horizontal locomotion.</summary>
+    [Fact]
+    public void Import_MixamoPreviews_PreserveUpAxisAndBindQuickly()
+    {
+        var models = Path.GetFullPath("../../example_game/models",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        var character = ImportSkinnedMesh(
+            Path.Combine(models, "Ch03_nonPBR.glb"), "preview-character");
+        var breathing = ImportAnimation(
+            Path.Combine(models, "Breathing Idle.glb"), "preview-breathing");
+        var running = ImportAnimation(
+            Path.Combine(models, "Running.glb"), "preview-running");
+        Assert.NotEqual(Matrix4x4.Identity, breathing.SkeletonTransform);
+        Assert.NotEqual(Matrix4x4.Identity, running.SkeletonTransform);
+        AssertMatrixNearlyEqual(
+            character.MeshNodeTransform, breathing.SkeletonTransform);
+        AssertMatrixNearlyEqual(
+            character.MeshNodeTransform, running.SkeletonTransform);
+        var stopwatch = Stopwatch.StartNew();
+        var breathingClip = Assert.Single(breathing.BindTo(
+            character.Skeleton, AnimationRetargetMode.Humanoid,
+            character.MeshNodeTransform));
+        var runningClip = Assert.Single(running.BindTo(
+            character.Skeleton, AnimationRetargetMode.Humanoid,
+            character.MeshNodeTransform));
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Two preview clips took {stopwatch.Elapsed.TotalMilliseconds:0} ms to bind.");
+
+        var hips = character.Skeleton.FindJoint("mixamorig:Hips");
+        var head = character.Skeleton.FindJoint("mixamorig:Head");
+        var pose = new SkeletonPose(character.Skeleton);
+        for (var sample = 0; sample <= 4; sample++)
+        {
+            pose.Evaluate(character.Skeleton, breathingClip,
+                breathingClip.Duration * sample / 4f);
+            var body = Vector3.Normalize(
+                Vector3.Transform(pose.WorldTransforms[head].Translation,
+                    character.MeshNodeTransform) -
+                Vector3.Transform(pose.WorldTransforms[hips].Translation,
+                    character.MeshNodeTransform));
+            Assert.True(Vector3.Dot(body, Vector3.UnitY) > 0.6f,
+                $"Breathing pose is tilted at sample {sample}: {body}.");
+            var bounds = CalculateRenderedBounds(character, pose);
+            var extent = bounds.Maximum - bounds.Minimum;
+            Assert.True(extent.Y > extent.Z * 1.5f,
+                $"Breathing mesh is lying down at sample {sample}: extent {extent}.");
+        }
+
+        pose.Evaluate(character.Skeleton, runningClip, 0f);
+        var start = Vector3.Transform(pose.WorldTransforms[hips].Translation,
+            character.MeshNodeTransform);
+        pose.Evaluate(character.Skeleton, runningClip, runningClip.Duration);
+        var travel = Vector3.Transform(pose.WorldTransforms[hips].Translation,
+            character.MeshNodeTransform) - start;
+        var horizontal = MathF.Sqrt(travel.X * travel.X + travel.Z * travel.Z);
+        Assert.True(horizontal > MathF.Abs(travel.Y) * 2f,
+            $"Running travel should remain horizontal, but was {travel}.");
+        var runningBounds = CalculateRenderedBounds(character, pose);
+        var runningExtent = runningBounds.Maximum - runningBounds.Minimum;
+        Assert.True(runningExtent.Y > runningExtent.Z * 1.5f,
+            $"Running mesh is lying down: extent {runningExtent}.");
+    }
+
+    /// <summary>Retargets the RPG Unreal-style block clip onto the example Mixamo character.</summary>
+    [Fact]
+    public void Import_RpgBlock_HumanoidRetargetsToMixamoCharacter()
+    {
+        var project = Path.GetFullPath("../../example_game",
+            Path.GetDirectoryName(GetSourceFilePath())!);
         var settings = JsonDocument.Parse("{}").RootElement.Clone();
-        var context = new AssetImportContext(sourcePath,
+        var characterStaging = Path.Combine(_directory, "humanoid-character-staging");
+        var animationStaging = Path.Combine(_directory, "humanoid-animation-staging");
+        var importer = new GlbModelImporter();
+        var characterResult = importer.Import(new AssetImportContext(
+            Path.Combine(project, "models", "Ch03_nonPBR.glb"),
             new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
-            "editor", staging, CancellationToken.None);
+            "editor", characterStaging, CancellationToken.None));
+        var animationResult = importer.Import(new AssetImportContext(
+            Path.Combine(project, "animations", "RPG-Character@Unarmed-Block.glb"),
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", animationStaging, CancellationToken.None));
+        var characterArtifact = Assert.Single(characterResult.Artifacts,
+            item => item.Key == "mesh/Mesh/0" && item.ContentType == "nico/skinned-mesh");
+        var animationArtifact = Assert.Single(animationResult.Artifacts,
+            item => item.Key == "animation/0" &&
+                item.ContentType == "nico/skeletal-animation");
+        using var characterStream = File.OpenRead(Path.Combine(
+            characterStaging, characterArtifact.RelativePath));
+        using var animationStream = File.OpenRead(Path.Combine(
+            animationStaging, animationArtifact.RelativePath));
+        var character = SkinnedMeshResource.Load(characterStream);
+        var animation = SkeletalAnimationResource.Load(animationStream);
 
-        var result = new GlbModelImporter().Import(context);
+        Assert.True(HumanoidRig.TryDetect(animation.Skeleton, out var sourceRig));
+        Assert.Equal(HumanoidRigPreset.Unreal, sourceRig!.Preset);
+        Assert.True(HumanoidRig.TryDetect(character.Skeleton, out var targetRig));
+        Assert.Equal(HumanoidRigPreset.Mixamo, targetRig!.Preset);
+        Assert.Throws<InvalidOperationException>(() =>
+            animation.BindTo(character.Skeleton, AnimationRetargetMode.Exact));
 
-        Assert.Equal(243, result.Artifacts.Count(item =>
-            item.Key.StartsWith("mesh/", StringComparison.Ordinal) &&
-            item.ContentType is "nico/static-mesh" or "nico/skinned-mesh"));
-        Assert.Equal(21, result.Artifacts.Count(item =>
-            item.Key.StartsWith("model-batch/", StringComparison.Ordinal)));
-        var nodes = result.Objects!.Where(item => item.Kind == "node").ToArray();
-        Assert.Equal(557, nodes.Length);
-        var firstMeshNode = Assert.Single(nodes, item => item.Name == "Aether_Crystal");
-        Assert.Equal(new Vector3(1650f, 556.3811f, -40f),
-            firstMeshNode.LocalTransform!.Value.Translation);
-        Assert.Equal("mesh/Cone/0", Assert.Single(firstMeshNode.ArtifactKeys!));
+        var clip = Assert.Single(animation.BindTo(
+            character.Skeleton, AnimationRetargetMode.Humanoid,
+            character.MeshNodeTransform));
+        var pose = new SkeletonPose(character.Skeleton);
+        pose.Evaluate(character.Skeleton, clip, clip.Duration * 0.5f);
+        var leftArm = character.Skeleton.FindJoint("mixamorig:LeftArm");
+        var leftFingerEnd = character.Skeleton.FindJoint("mixamorig:LeftHandIndex4");
+
+        Assert.NotNull(clip.Tracks[leftArm]?.Rotation);
+        Assert.Null(clip.Tracks[leftFingerEnd]);
+        Assert.True(IsFinite(pose.WorldTransforms[leftArm]));
+    }
+
+    /// <summary>Loads the authored locomotion set and binds all migrated RPG clips.</summary>
+    [Fact]
+    public void LocomotionSet_RpgSources_BindToExampleMixamoCharacter()
+    {
+        var project = Path.GetFullPath("../../example_game",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        using var setStream = File.OpenRead(Path.Combine(
+            project, "models", "Locomotion.nanimset"));
+        var set = AnimationSetResource.Load(setStream);
+        Assert.Equal(["Idle", "Run", "Block"],
+            set.Entries.Select(entry => entry.Alias));
+        Assert.All(set.Entries,
+            entry => Assert.Equal(AnimationRetargetMode.Humanoid, entry.Retarget));
+
+        var expectedSources = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Idle"] = "RPG-Character@Unarmed-Idle.glb",
+            ["Run"] = "RPG-Character@Unarmed-Run-Forward.glb",
+            ["Block"] = "RPG-Character@Unarmed-Block.glb"
+        };
+        var resolved = new Dictionary<AssetReference, SkeletalAnimationResource>();
+        for (var index = 0; index < set.Entries.Count; index++)
+        {
+            var entry = set.Entries[index];
+            var sourcePath = Path.Combine(
+                project, "animations", expectedSources[entry.Alias]);
+            Assert.Equal(ReadAssetId(sourcePath + ".meta"), entry.Source.Asset);
+            resolved.Add(entry.Source, ImportAnimation(sourcePath, $"set-{entry.Alias}"));
+        }
+        var characterStaging = Path.Combine(_directory, "set-character");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var characterResult = new GlbModelImporter().Import(new AssetImportContext(
+            Path.Combine(project, "models", "Ch03_nonPBR.glb"),
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", characterStaging, CancellationToken.None));
+        var characterArtifact = Assert.Single(characterResult.Artifacts,
+            item => item.Key == "mesh/Mesh/0" && item.ContentType == "nico/skinned-mesh");
+        using var characterStream = File.OpenRead(Path.Combine(
+            characterStaging, characterArtifact.RelativePath));
+        var character = SkinnedMeshResource.Load(characterStream);
+
+        var clips = set.BindTo(character.Skeleton,
+            reference => resolved.GetValueOrDefault(reference), character.MeshNodeTransform);
+
+        Assert.Equal(["Idle", "Run", "Block"], clips.Select(clip => clip.Name));
+        var run = clips[1];
+        var hips = character.Skeleton.FindJoint("mixamorig:Hips");
+        Assert.NotNull(run.Tracks[hips]?.Translation);
+        var pose = new SkeletonPose(character.Skeleton);
+        pose.Evaluate(character.Skeleton, run, 0f);
+        var anchor = Vector3.Transform(
+            pose.WorldTransforms[hips].Translation, character.MeshNodeTransform);
+        for (var sample = 1; sample <= 10; sample++)
+        {
+            pose.Evaluate(character.Skeleton, run, run.Duration * sample / 10f);
+            var position = Vector3.Transform(
+                pose.WorldTransforms[hips].Translation, character.MeshNodeTransform);
+            Assert.Equal(anchor.X, position.X, 3);
+            Assert.Equal(anchor.Z, position.Z, 3);
+        }
     }
 
     /// <summary>Gets this test source path independently of the test host working directory.</summary>
     /// <param name="path">Compiler-provided source path.</param>
     /// <returns>Absolute test source path.</returns>
     private static string GetSourceFilePath([CallerFilePath] string path = "") => path;
+
+    /// <summary>Checks that every matrix component is finite.</summary>
+    /// <param name="value">Matrix to inspect.</param>
+    /// <returns>True when the matrix contains no NaN or infinity.</returns>
+    private static bool IsFinite(Matrix4x4 value) =>
+        float.IsFinite(value.M11) && float.IsFinite(value.M12) &&
+        float.IsFinite(value.M13) && float.IsFinite(value.M14) &&
+        float.IsFinite(value.M21) && float.IsFinite(value.M22) &&
+        float.IsFinite(value.M23) && float.IsFinite(value.M24) &&
+        float.IsFinite(value.M31) && float.IsFinite(value.M32) &&
+        float.IsFinite(value.M33) && float.IsFinite(value.M34) &&
+        float.IsFinite(value.M41) && float.IsFinite(value.M42) &&
+        float.IsFinite(value.M43) && float.IsFinite(value.M44);
+
+    /// <summary>Reads an asset identifier from one project metadata sidecar.</summary>
+    /// <param name="path">Metadata path.</param>
+    /// <returns>Parsed asset identifier.</returns>
+    private static AssetId ReadAssetId(string path)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return new AssetId(document.RootElement.GetProperty("id").GetGuid());
+    }
+
+    /// <summary>Imports and loads the first standalone animation from one real GLB.</summary>
+    /// <param name="sourcePath">Animation GLB path.</param>
+    /// <param name="stagingName">Unique staging directory name.</param>
+    /// <returns>Loaded standalone animation resource.</returns>
+    private SkeletalAnimationResource ImportAnimation(
+        string sourcePath, string stagingName)
+    {
+        var staging = Path.Combine(_directory, stagingName);
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var result = new GlbModelImporter().Import(new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None));
+        var artifact = Assert.Single(result.Artifacts,
+            item => item.Key == "animation/0" &&
+                item.ContentType == "nico/skeletal-animation");
+        using var stream = File.OpenRead(Path.Combine(staging, artifact.RelativePath));
+        return SkeletalAnimationResource.Load(stream);
+    }
+
+    /// <summary>Imports and loads the first skinned mesh from one real GLB.</summary>
+    /// <param name="sourcePath">Model GLB path.</param>
+    /// <param name="stagingName">Unique staging directory name.</param>
+    /// <returns>Loaded skinned mesh resource.</returns>
+    private SkinnedMeshResource ImportSkinnedMesh(string sourcePath, string stagingName)
+    {
+        var staging = Path.Combine(_directory, stagingName);
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var result = new GlbModelImporter().Import(new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None));
+        var artifact = Assert.Single(result.Artifacts,
+            item => item.ContentType == "nico/skinned-mesh");
+        using var stream = File.OpenRead(Path.Combine(staging, artifact.RelativePath));
+        return SkinnedMeshResource.Load(stream);
+    }
 
     /// <summary>Imports indexed geometry and generates missing normals.</summary>
     [Fact]
@@ -202,7 +444,8 @@ public sealed class GlbModelImporterTests : IDisposable
 
         var result = new GlbModelImporter().Import(context);
 
-        var artifact = Assert.Single(result.Artifacts);
+        var artifact = Assert.Single(result.Artifacts,
+            item => item.ContentType == "nico/skinned-mesh");
         Assert.Equal("nico/skinned-mesh", artifact.ContentType);
         Assert.NotNull(result.Objects);
         var armatureNodes = result.Objects!.Where(item => item.Kind == "node").ToArray();
@@ -521,6 +764,59 @@ public sealed class GlbModelImporterTests : IDisposable
         };
         for (var index = 0; index < actualValues.Length; index++)
             Assert.Equal(expectedValues[index], actualValues[index], 4);
+    }
+
+    /// <summary>Asserts two matrices are equal within animation-import precision.</summary>
+    /// <param name="expected">Expected matrix.</param>
+    /// <param name="actual">Actual matrix.</param>
+    private static void AssertMatrixNearlyEqual(Matrix4x4 expected, Matrix4x4 actual)
+    {
+        var expectedValues = new[]
+        {
+            expected.M11, expected.M12, expected.M13, expected.M14,
+            expected.M21, expected.M22, expected.M23, expected.M24,
+            expected.M31, expected.M32, expected.M33, expected.M34,
+            expected.M41, expected.M42, expected.M43, expected.M44
+        };
+        var actualValues = new[]
+        {
+            actual.M11, actual.M12, actual.M13, actual.M14,
+            actual.M21, actual.M22, actual.M23, actual.M24,
+            actual.M31, actual.M32, actual.M33, actual.M34,
+            actual.M41, actual.M42, actual.M43, actual.M44
+        };
+        for (var index = 0; index < actualValues.Length; index++)
+            Assert.Equal(expectedValues[index], actualValues[index], 3);
+    }
+
+    /// <summary>CPU-skins a real imported mesh and calculates its rendered-space bounds.</summary>
+    /// <param name="mesh">Imported skinned mesh.</param>
+    /// <param name="pose">Evaluated pose for the same skeleton.</param>
+    /// <returns>Minimum and maximum rendered-space positions.</returns>
+    private static (Vector3 Minimum, Vector3 Maximum) CalculateRenderedBounds(
+        SkinnedMeshResource mesh, SkeletonPose pose)
+    {
+        var minimum = new Vector3(float.PositiveInfinity);
+        var maximum = new Vector3(float.NegativeInfinity);
+        var palette = pose.SkinMatrices;
+        for (var index = 0; index < mesh.Mesh.Vertices.Length; index++)
+        {
+            var source = mesh.Mesh.Vertices[index].Position;
+            var influence = mesh.Influences[index];
+            var skinned =
+                Vector3.Transform(source, palette[(int)influence.Joint0]) *
+                    influence.Weights.X +
+                Vector3.Transform(source, palette[(int)influence.Joint1]) *
+                    influence.Weights.Y +
+                Vector3.Transform(source, palette[(int)influence.Joint2]) *
+                    influence.Weights.Z +
+                Vector3.Transform(source, palette[(int)influence.Joint3]) *
+                    influence.Weights.W;
+            var rendered = Vector3.Transform(skinned, mesh.MeshNodeTransform);
+            minimum = Vector3.Min(minimum, rendered);
+            maximum = Vector3.Max(maximum, rendered);
+        }
+        return (minimum, maximum);
     }
 
     /// <summary>Writes one row-vector matrix using glTF's equivalent column-major sequence.</summary>

@@ -65,6 +65,23 @@ public class NavigationControlTests
         Assert.Same(menu.Owner, router.FocusedElement);
     }
 
+    /// <summary>Verifies automatic menu bars size each header from its text content.</summary>
+    [Fact]
+    public void MenuBar_AutoWidth_UsesHeaderContentWidths()
+    {
+        var bar = new MenuBar(0f, 30f);
+        bar.AddMenu("Window", new ContextMenu(140f));
+        bar.AddMenu("View", new ContextMenu(140f));
+
+        bar.Measure(new System.Numerics.Vector2(500f, 30f));
+        bar.Arrange(System.Numerics.Vector2.Zero, bar.DesiredSize);
+
+        Assert.Equal(bar.Headers.Sum(header => header.DesiredSize.X), bar.Width);
+        Assert.True(bar.Headers[0].Width > bar.Headers[1].Width);
+        Assert.Equal(bar.Headers[0].Right, bar.Headers[1].Left);
+        Assert.Equal(bar.Right, bar.Headers[1].Right);
+    }
+
     /// <summary>Verifies menu rows wrap with arrows and activate from Enter.</summary>
     [Fact]
     public void ContextMenu_Keyboard_NavigatesAndActivatesRows()

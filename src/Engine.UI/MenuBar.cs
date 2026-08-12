@@ -6,10 +6,12 @@ namespace Engine.UI;
 /// <summary>Hosts horizontal menu headers and their owned context-menu popups.</summary>
 public sealed class MenuBar : Panel
 {
-    private const float DefaultHeaderWidth = 72f;
     private readonly List<Button> _headers = [];
     private readonly List<ContextMenu> _menus = [];
     private readonly UITheme _theme;
+
+    /// <summary>Gets the content-sized menu header buttons.</summary>
+    public IReadOnlyList<Button> Headers => _headers;
 
     /// <summary>Creates an empty menu bar.</summary>
     /// <param name="width">Bar width.</param>
@@ -28,7 +30,7 @@ public sealed class MenuBar : Panel
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(menu);
-        var button = new Button(DefaultHeaderWidth, Height, header, _theme);
+        var button = new Button(Height, header, _theme, ButtonStyle.Header);
         button.Click += () => ToggleMenu(menu);
         var menuIndex = _headers.Count;
         button.Key += (_, keyEvent) => OnHeaderKey(menuIndex, keyEvent);
@@ -43,24 +45,30 @@ public sealed class MenuBar : Panel
     /// <inheritdoc/>
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
+        var desiredWidth = 0f;
+        var desiredHeight = 0f;
         for (var index = 0; index < _headers.Count; index++)
         {
-            _headers[index].Measure(new Vector2(DefaultHeaderWidth, Height));
+            _headers[index].Measure(new Vector2(availableSize.X, Height));
             _menus[index].Measure(new Vector2(_menus[index].Width, _menus[index].Height));
+            desiredWidth += _headers[index].DesiredSize.X;
+            desiredHeight = MathF.Max(desiredHeight, _headers[index].DesiredSize.Y);
         }
-        return availableSize;
+        return new Vector2(desiredWidth, desiredHeight);
     }
 
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
+        var x = 0f;
         for (var index = 0; index < _headers.Count; index++)
         {
-            var x = index * DefaultHeaderWidth;
+            var headerWidth = _headers[index].DesiredSize.X;
             _headers[index].Arrange(new Vector2(x, 0f),
-                new Vector2(DefaultHeaderWidth, contentSize.Y));
+                new Vector2(headerWidth, contentSize.Y));
             _menus[index].Arrange(new Vector2(x, contentSize.Y),
                 new Vector2(_menus[index].Width, _menus[index].Height));
+            x += headerWidth;
         }
     }
 

@@ -2814,6 +2814,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var poolInfo = new DescriptorPoolCreateInfo
         {
             SType = StructureType.DescriptorPoolCreateInfo,
+            Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
             PoolSizeCount = 1,
             PPoolSizes = &poolSize,
             MaxSets = maxTextureSets
@@ -3041,9 +3042,17 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var pixelSize = CalculateViewportPixelSize(width, height);
         var fbo = new ViewportFbo(id, pixelSize.Width, pixelSize.Height);
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
-        fbo.Create(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
-            deviceLocalMemoryType,
-            _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
+        try
+        {
+            fbo.Create(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat,
+                FindDepthFormat(), _msaaSamples, deviceLocalMemoryType,
+                _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
+        }
+        catch
+        {
+            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool);
+            throw;
+        }
         _viewportFbos[id] = fbo;
         _logger.LogInformation(
             "Viewport {Id} registered ({LogicalWidth}x{LogicalHeight} logical, {PixelWidth}x{PixelHeight} pixels, {Scale:F2}x scale)",
@@ -3060,7 +3069,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
         {
-            fbo.Destroy(_vk, _device);
+            fbo.Destroy(_vk, _device, _pipelines.TextureDescriptorPool);
             _viewportFbos.Remove(viewportId);
         }
 
@@ -4461,7 +4470,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         // Cleanup viewport FBOs and their vertex buffers
         foreach (var (id, fbo) in _viewportFbos)
-            fbo.Destroy(_vk!, _device);
+            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool);
         _viewportFbos.Clear();
 
         foreach (var buffers in _viewportQuadBuffers.Values)

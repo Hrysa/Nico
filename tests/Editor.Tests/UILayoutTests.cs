@@ -64,6 +64,19 @@ public sealed class UILayoutTests
         Assert.True(fileSystem.Height > fileSystemHeight);
     }
 
+    /// <summary>Verifies content-sized title menus end before the active document title begins.</summary>
+    [Fact]
+    public void EditorTitleBar_MenuHeaders_DoNotOverlapProjectLabel()
+    {
+        var view = EditorUI.BuildView(1280f, 720f);
+
+        Assert.Equal(
+            view.TitleMenuBar.Headers.Sum(header => header.DesiredSize.X),
+            view.TitleMenuBar.Width);
+        Assert.Equal(5f, view.ProjectLabel.Left - view.TitleMenuBar.Right);
+        Assert.True(view.TitleMenuBar.Headers[0].Width > view.TitleMenuBar.Headers[1].Width);
+    }
+
     /// <summary>Verifies canvas coordinates are owned and updated by the overlay container.</summary>
     [Fact]
     public void Canvas_SetPosition_MovesFloatingChild()
