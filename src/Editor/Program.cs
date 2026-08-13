@@ -1884,10 +1884,11 @@ void LoadAssetMeshResources(
             }
             var terrain = LoadRuntimeResource(meshReference,
                 new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
-            var (material, textureResource) = ResolveMeshMaterial(
+            var terrainMaterial = ResolveMeshMaterial(
                 meshReference, instance, 0, outcome);
             (targetRenderer ?? viewportRenderer).SetTerrainResource(
-                instance, terrain, terrainCollider, material, textureResource);
+                instance, terrain, terrainCollider, terrainMaterial.Material,
+                terrainMaterial.Texture);
             return;
         }
         if (meshArtifact.ContentType == "nico/skinned-mesh")
@@ -1906,17 +1907,17 @@ void LoadAssetMeshResources(
     instance.LocalBounds = new MeshBounds(importedMesh.BoundsMinimum, importedMesh.BoundsMaximum);
     var materialSlot = importedMesh.Submeshes.Count > 0
         ? importedMesh.Submeshes[0].MaterialSlot : -1;
-    var (material, textureResource) = ResolveMeshMaterial(
+    var meshMaterial = ResolveMeshMaterial(
         meshReference, instance, materialSlot, outcome);
     if (importedSkin is null)
     {
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
-            instance, importedMesh, material, textureResource);
+            instance, importedMesh, meshMaterial.Material, meshMaterial.Texture);
     }
     else
     {
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
-            instance, importedSkin, material, textureResource,
+            instance, importedSkin, meshMaterial.Material, meshMaterial.Texture,
             animations: null,
             sharedController: targetRenderer is null
                 ? null : viewportRenderer.AnimationService.Get(instance));

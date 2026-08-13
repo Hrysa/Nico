@@ -47,11 +47,11 @@ public static class TerrainMeshBuilder
         {
             for (var x = 0; x < terrain.Width; x++)
             {
-                var index = z * terrain.Width + x;
+                var positionIndex = z * terrain.Width + x;
                 var position = CreatePosition(terrain, horizontalSize, heightScale, center, x, z);
                 var color = CreateTerrainColor(terrain.GetHeight(x, z));
                 var uv = CreateTerrainUv(terrain, x, z);
-                vertices[index] = new ModelVertex(
+                vertices[positionIndex] = new ModelVertex(
                     position, Vector3.UnitY, uv, new Vector4(1f, 0f, 0f, 1f),
                     new Vector4(color, 1f));
             }
