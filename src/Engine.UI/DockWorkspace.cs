@@ -280,6 +280,15 @@ public sealed class DockWorkspace
         return false;
     }
 
+    /// <summary>Gets whether a panel exists in the main window tree.</summary>
+    /// <param name="tabId">Stable panel identifier.</param>
+    /// <returns>True when the panel is currently open in the main layout.</returns>
+    public bool ContainsTabInMain(string tabId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tabId);
+        return FindGroup(Root, tabId) is not null;
+    }
+
     /// <summary>Opens or selects a panel beside a stable anchor panel.</summary>
     /// <param name="tabId">Stable panel identifier.</param>
     /// <param name="title">Displayed tab title.</param>

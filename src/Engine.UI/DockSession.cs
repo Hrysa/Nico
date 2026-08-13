@@ -243,13 +243,36 @@ public sealed class DockSession : IDisposable
     /// <summary>Opens or activates one registered panel beside an optional stable anchor.</summary>
     /// <param name="panelId">Stable registered panel identifier.</param>
     /// <param name="anchorId">Preferred sibling panel identifier.</param>
-    /// <returns>True when the panel was registered and opened.</returns>
+    /// <returns>
+    /// True when the panel was registered and opened in the main dock layout or in a new
+    /// floating panel when it is not currently present in the main layout.
+    /// </returns>
     public bool OpenPanel(string panelId, string? anchorId = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(panelId);
         var title = _registry.GetTitle(panelId);
-        if (title is null || !Workspace.OpenTab(panelId, title, anchorId))
+        if (title is null)
+            return false;
+        if (Workspace.ContainsTab(panelId))
+        {
+            if (!Workspace.OpenTab(panelId, title, anchorId))
+                return false;
+        }
+        else
+        {
+            if (Workspace.ContainsTabInMain(panelId))
+                return false;
+            Workspace.FloatingRoots.Add(new FloatingDockRoot
+            {
+                Root = new DockTabGroup([new DockTab(panelId, title)], panelId),
+                Left = 320f,
+                Top = 180f,
+                Width = 640f,
+                Height = 480f
+            });
+        }
+        if (!Workspace.ContainsTab(panelId))
             return false;
         Refresh();
         return true;
