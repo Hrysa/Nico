@@ -508,7 +508,7 @@ public class SceneInspectorTests
         Assert.Null(FindByName<TextField>(inspector, "Collider0Radius"));
     }
 
-    /// <summary>Exposes an explicit editable mesh reference instead of inferred render geometry.</summary>
+    /// <summary>Exposes a typed mesh drop target instead of inferred render geometry.</summary>
     [Fact]
     public void Bind_MeshCollider_ShowsExplicitReferenceField()
     {
@@ -519,10 +519,31 @@ public class SceneInspectorTests
 
         inspector.Bind(node, collider);
 
-        var field = Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "Collider0Mesh"));
+        var field = Assert.IsType<AssetReferenceField>(
+            FindByName<AssetReferenceField>(inspector, "Collider0Mesh"));
         Assert.Equal(string.Empty, field.Text);
-        Assert.False(field.IsReadOnly);
+        Assert.True(field.IsReadOnly);
+        Assert.Equal("nico/static-mesh", field.AcceptedContentType);
+    }
+
+    /// <summary>Assigns terrain through the typed drop field and links render geometry.</summary>
+    [Fact]
+    public void Bind_TerrainCollider_DropReferenceLinksMeshAndTerrain()
+    {
+        var node = new MeshInstance3D();
+        var collider = new TerrainColliderComponent();
+        node.AddComponent(collider);
+        var inspector = new SceneInspector(320f, 1200f);
+        inspector.Bind(node, collider);
+        var field = Assert.IsType<AssetReferenceField>(
+            FindByName<AssetReferenceField>(inspector, "Collider0Terrain"));
+        var reference = new AssetReference(AssetId.New(), "main");
+
+        Assert.True(field.Assign(reference));
+
+        Assert.Equal(reference, collider.TerrainData);
+        Assert.Equal(reference, node.Mesh);
+        Assert.Equal("nico/terrain", field.AcceptedContentType);
     }
 
     /// <summary>Finds a named UI element recursively.</summary>

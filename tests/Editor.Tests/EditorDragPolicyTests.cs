@@ -24,6 +24,7 @@ public sealed class EditorDragPolicyTests
     [Theory]
     [InlineData("nico/static-mesh", true)]
     [InlineData("nico/skinned-mesh", true)]
+    [InlineData("nico/terrain", true)]
     [InlineData("nico/standard-material", false)]
     [InlineData("nico/texture2d", false)]
     public void CanInstantiateInHierarchy_ImportedArtifact_RequiresMesh(
@@ -42,6 +43,8 @@ public sealed class EditorDragPolicyTests
     [Theory]
     [InlineData("Character.glb", false, true)]
     [InlineData("Character.GLB", false, true)]
+    [InlineData("World.nterrain", false, true)]
+    [InlineData("World.NTERRAIN", false, true)]
     [InlineData("Character.png", false, false)]
     [InlineData("Folder.glb", true, false)]
     public void CanInstantiateInHierarchy_FileSystemEntry_RequiresGlbFile(

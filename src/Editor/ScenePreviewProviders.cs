@@ -107,7 +107,7 @@ internal sealed class CameraPreviewProvider : IScenePreviewProvider
 }
 
 /// <summary>Builds exact authored primitive collider wire geometry and invalid-asset warnings.</summary>
-internal sealed class ColliderPreviewProvider : IScenePreviewProvider
+internal sealed class ColliderPreviewProvider : IScenePreviewProvider, IScenePreviewAssetCache
 {
     private readonly Func<AssetReference, StaticMeshResource?>? _meshResolver;
     private readonly Func<AssetReference, TerrainResource?>? _terrainResolver;
@@ -129,6 +129,13 @@ internal sealed class ColliderPreviewProvider : IScenePreviewProvider
 
     /// <inheritdoc/>
     public bool Supports(object value) => value is ColliderComponent;
+
+    /// <inheritdoc/>
+    public void Invalidate(AssetReference reference)
+    {
+        _meshCache.Remove(reference);
+        _terrainCache.Remove(reference);
+    }
 
     /// <inheritdoc/>
     public void Build(Node3D node, object value, ScenePreviewPickingId pickingId,

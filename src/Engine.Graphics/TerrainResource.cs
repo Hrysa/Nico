@@ -6,7 +6,7 @@ namespace Engine.Graphics;
 public readonly record struct TerrainChunkRegion(
     int StartX, int StartZ, int QuadCountX, int QuadCountZ);
 
-/// <summary>Stores immutable normalized height samples for explicit terrain collision assets.</summary>
+/// <summary>Stores normalized height samples for explicit terrain render and collision assets.</summary>
 public sealed class TerrainResource
 {
     private const string Magic = "NTERR001";
@@ -51,6 +51,25 @@ public sealed class TerrainResource
         if ((uint)z >= (uint)Depth)
             throw new ArgumentOutOfRangeException(nameof(z));
         return _heights[z * Width + x];
+    }
+
+    /// <summary>Copies the complete row-major sample payload for editor-side mutation.</summary>
+    /// <returns>An independently owned height array.</returns>
+    public float[] CopyHeights() => (float[])_heights.Clone();
+
+    /// <summary>Replaces every sample in place while preserving grid dimensions and identity.</summary>
+    /// <param name="heights">Complete row-major replacement payload.</param>
+    public void UpdateHeights(ReadOnlySpan<float> heights)
+    {
+        if (heights.Length != _heights.Length)
+            throw new ArgumentException(
+                "Height count must equal width times depth.", nameof(heights));
+        for (var index = 0; index < heights.Length; index++)
+        {
+            if (!float.IsFinite(heights[index]))
+                throw new ArgumentOutOfRangeException(nameof(heights));
+        }
+        heights.CopyTo(_heights);
     }
 
     /// <summary>Samples the grid bilinearly using normalized coordinates.</summary>

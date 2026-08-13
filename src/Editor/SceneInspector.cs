@@ -34,6 +34,9 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets or sets the display-name resolver for a mesh material assignment.</summary>
     public Func<MeshInstance3D, string>? ResolveMaterialName { get; set; }
 
+    /// <summary>Gets or sets the display-name resolver for generic persistent assets.</summary>
+    public Func<AssetReference, string>? ResolveAssetReferenceName { get; set; }
+
     /// <summary>Gets or sets the reusable content factory for referenced assets.</summary>
     public Func<AssetReference, UIElement?>? CreateAssetInspectorContent { get; set; }
 
@@ -146,8 +149,10 @@ public sealed class SceneInspector : Panel
             scriptY = AddDirectionalLightSection(directionalLight, scriptY);
         if (node is MeshInstance3D meshInstance)
         {
-            AddMaterialSection(meshInstance, 236f);
-            scriptY = 580f;
+            var terrain = meshInstance.GetComponent<TerrainColliderComponent>();
+            scriptY = terrain?.TerrainData is { } terrainReference
+                ? AddTerrainAssetSection(terrainReference, 236f)
+                : AddMaterialSection(meshInstance, 236f);
         }
 
         scriptY = AddPhysicsSections(node, scriptY);
@@ -336,7 +341,7 @@ public sealed class SceneInspector : Panel
                 row += 38f;
                 break;
             case MeshColliderComponent mesh:
-                AddAssetReferenceRow("Mesh", prefix + "Mesh", row, () => mesh.Mesh,
+                AddAssetReferenceRow("Mesh", prefix + "Mesh", row, "nico/static-mesh", () => mesh.Mesh,
                     value => mesh.Mesh = value);
                 row += 38f;
                 if (mesh.Mesh is null)
@@ -348,7 +353,8 @@ public sealed class SceneInspector : Panel
                 break;
             case TerrainColliderComponent terrain:
                 AddAssetReferenceRow("Terrain", prefix + "Terrain", row,
-                    () => terrain.TerrainData, value => terrain.TerrainData = value);
+                    "nico/terrain",
+                    () => terrain.TerrainData, value => AssignTerrainData(terrain, value));
                 AddVector2Row("Size", prefix + "Size", row + 38f,
                     () => terrain.HorizontalSize, value => terrain.HorizontalSize = value);
                 AddFloatRow("Height", prefix + "Height", row + 76f,
@@ -759,7 +765,8 @@ public sealed class SceneInspector : Panel
     /// <summary>Adds slot-zero material assignment and embeds its shared asset editor.</summary>
     /// <param name="instance">Inspected mesh instance.</param>
     /// <param name="y">Section top.</param>
-    private void AddMaterialSection(MeshInstance3D instance, float y)
+    /// <returns>Top available for following component sections.</returns>
+    private float AddMaterialSection(MeshInstance3D instance, float y)
     {
         AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Material", _theme.TextPrimary));
         var materialField = new AssetReferenceField(
@@ -793,6 +800,28 @@ public sealed class SceneInspector : Panel
             content.HorizontalAlignment = HorizontalAlignment.Stretch;
             AddChild(content);
         }
+        return y + 344f;
+    }
+
+    /// <summary>Embeds the shared terrain asset editor above terrain collision settings.</summary>
+    /// <param name="reference">Referenced editable terrain source.</param>
+    /// <param name="y">Section top.</param>
+    /// <returns>Top available for following component sections.</returns>
+    private float AddTerrainAssetSection(AssetReference reference, float y)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+            "Terrain", _theme.TextPrimary));
+        if (CreateAssetInspectorContent?.Invoke(reference) is not { } content)
+        {
+            AddChild(CreateLabel(12f, y + 30f, Width - 24f, 26f,
+                "Terrain source is unavailable", _theme.Error));
+            return y + 64f;
+        }
+        content.Margin = new Thickness(12f, y + 30f, 12f, 0f);
+        content.Width = 0f;
+        content.HorizontalAlignment = HorizontalAlignment.Stretch;
+        AddChild(content);
+        return y + 30f + content.Height + 8f;
     }
 
     /// <summary>Formats the current slot-zero material ownership.</summary>
@@ -849,6 +878,18 @@ public sealed class SceneInspector : Panel
         NodeChanged?.Invoke(instance);
         Bind(instance);
         return true;
+    }
+
+    /// <summary>Assigns one terrain source to collision and matching visual geometry.</summary>
+    /// <param name="terrain">Terrain collider receiving the source.</param>
+    /// <param name="reference">Persistent terrain reference, or null.</param>
+    private static void AssignTerrainData(
+        TerrainColliderComponent terrain,
+        AssetReference? reference)
+    {
+        terrain.TerrainData = reference;
+        if (reference is { } value && terrain.Owner is MeshInstance3D instance)
+            instance.Mesh = value;
     }
 
 
@@ -973,53 +1014,48 @@ public sealed class SceneInspector : Panel
             ? "Choose exactly one layer bit." : null;
     }
 
-    /// <summary>Adds an editable explicit asset UUID with optional hash-delimited subasset.</summary>
+    /// <summary>Adds a typed drag/drop asset-reference field.</summary>
     /// <param name="label">Displayed label.</param><param name="name">Field name.</param>
-    /// <param name="y">Row position.</param><param name="read">Current reference reader.</param>
+    /// <param name="y">Row position.</param><param name="contentType">Accepted artifact type.</param>
+    /// <param name="read">Current reference reader.</param>
     /// <param name="apply">Reference writer.</param>
-    private void AddAssetReferenceRow(string label, string name, float y,
+    private void AddAssetReferenceRow(string label, string name, float y, string contentType,
         Func<AssetReference?> read, Action<AssetReference?> apply)
     {
         AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
-        var field = new TextField(Width - 90f, 30f, _theme)
+        var field = new AssetReferenceField(Width - 90f, 30f, contentType, reference =>
+        {
+            apply(reference);
+            if (InspectedNode is not { } inspected)
+                return false;
+            NodeChanged?.Invoke(inspected);
+            if (contentType == "nico/terrain")
+            {
+                var focused = FocusedComponent;
+                _cachedViews.Remove(inspected);
+                InspectedNode = null;
+                Bind(inspected, focused);
+            }
+            return true;
+        }, _theme)
         {
             Name = name,
-            Text = read()?.ToString() ?? string.Empty,
-            Placeholder = "Required asset UUID[#subasset]",
-            UpdateTrigger = TextUpdateTrigger.Commit,
-            Validator = text => TryParseAssetReference(text, out _) ? null :
-                "Enter an asset UUID with an optional #subasset.",
+            Text = GetAssetReferenceName(read()),
+            Placeholder = $"Drop required {label.ToLowerInvariant()} asset",
             Margin = new Thickness(78f, y, 0f, 0f)
         };
-        field.ValueUpdateRequested += text =>
-        {
-            if (!TryParseAssetReference(text, out var reference))
-                return;
-            apply(reference);
-            if (InspectedNode is { } inspected)
-                NodeChanged?.Invoke(inspected);
-        };
-        RegisterRefresh(field, () => read()?.ToString() ?? string.Empty);
-        _editForm.Register(field);
+        RegisterRefresh(field, () => GetAssetReferenceName(read()));
         AddChild(field);
     }
 
-    /// <summary>Parses an explicit asset reference entered in diagnostic form.</summary>
-    /// <param name="text">UUID followed by an optional hash and subasset.</param>
-    /// <param name="reference">Parsed reference.</param><returns>True when valid.</returns>
-    private static bool TryParseAssetReference(string text, out AssetReference? reference)
+    /// <summary>Formats one optional generic asset reference for an Inspector field.</summary>
+    /// <param name="reference">Optional reference.</param>
+    /// <returns>Resolved display name, diagnostic identity, or empty text.</returns>
+    private string GetAssetReferenceName(AssetReference? reference)
     {
-        var separator = text.IndexOf('#');
-        var assetText = separator < 0 ? text : text[..separator];
-        var subAsset = separator < 0 ? null : text[(separator + 1)..];
-        if (!AssetId.TryParse(assetText.Trim(), out var asset) ||
-            subAsset is not null && string.IsNullOrWhiteSpace(subAsset))
-        {
-            reference = null;
-            return false;
-        }
-        reference = new AssetReference(asset, subAsset?.Trim());
-        return true;
+        return reference is not { } value
+            ? string.Empty
+            : ResolveAssetReferenceName?.Invoke(value) ?? value.ToString();
     }
 
     /// <summary>Validates a finite scalar with optional sign constraints.</summary>

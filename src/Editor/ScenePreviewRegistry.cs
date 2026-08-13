@@ -31,6 +31,14 @@ public interface IScenePreviewProvider
         ScenePreviewList destination);
 }
 
+/// <summary>Invalidates provider-owned decoded asset previews after source edits.</summary>
+public interface IScenePreviewAssetCache
+{
+    /// <summary>Removes one persistent resource from the provider cache.</summary>
+    /// <param name="reference">Edited or reimported resource.</param>
+    void Invalidate(AssetReference reference);
+}
+
 /// <summary>Runs registered preview providers over a scene hierarchy without mutating it.</summary>
 public sealed class ScenePreviewRegistry
 {
@@ -65,6 +73,17 @@ public sealed class ScenePreviewRegistry
             _hiddenValues.Remove(value);
         else
             _hiddenValues.Add(value);
+    }
+
+    /// <summary>Invalidates decoded provider data for one edited asset output.</summary>
+    /// <param name="reference">Edited or reimported resource.</param>
+    public void InvalidateAsset(AssetReference reference)
+    {
+        for (var index = 0; index < _providers.Count; index++)
+        {
+            if (_providers[index] is IScenePreviewAssetCache cache)
+                cache.Invalidate(reference);
+        }
     }
 
     /// <summary>Builds all enabled previews beneath a scene root.</summary>

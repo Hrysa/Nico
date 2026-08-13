@@ -416,4 +416,42 @@ public class SceneFileStoreTests
             File.Delete(path);
         }
     }
+
+    /// <summary>Round-trips the linked render and collision references of a terrain object.</summary>
+    [Fact]
+    public void SaveAndLoad_TerrainMeshInstance_PreservesRenderableAndCollider()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"terrain-scene-{Guid.NewGuid():N}.node");
+        var reference = new AssetReference(AssetId.New(), "main");
+        var root = new Node3D();
+        var terrain = new MeshInstance3D { Name = "Terrain", Mesh = reference };
+        terrain.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = reference,
+            HorizontalSize = new Vector2(32f, 48f),
+            HeightScale = 8f
+        });
+        var camera = new PerspectiveCamera();
+        root.AddChild(terrain);
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+
+            var loaded = SceneFileStore.Load(path);
+
+            var loadedTerrain = Assert.IsType<MeshInstance3D>(loaded.Root.Children[0]);
+            Assert.Equal(reference, loadedTerrain.Mesh);
+            Assert.Same(loadedTerrain, Assert.Single(loaded.MeshInstances));
+            var collider = Assert.IsType<TerrainColliderComponent>(
+                Assert.Single(loadedTerrain.Components));
+            Assert.Equal(reference, collider.TerrainData);
+            Assert.Equal(new Vector2(32f, 48f), collider.HorizontalSize);
+            Assert.Equal(8f, collider.HeightScale);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

@@ -340,9 +340,27 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             outcome = pipeline.Import(record, "player");
             var meshArtifact = outcome.Artifacts.FirstOrDefault(artifact =>
                 artifact.Key == meshReference.SubAsset &&
-                artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
+                artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh" or
+                    "nico/terrain");
             if (!outcome.Succeeded || outcome.ArtifactDirectory is null || meshArtifact is null)
                 throw new InvalidDataException($"Mesh sub-asset '{meshReference}' is missing.");
+            if (meshArtifact.ContentType == "nico/terrain")
+            {
+                var collider = instance.GetComponent<TerrainColliderComponent>() ??
+                    throw new InvalidDataException(
+                        $"Terrain mesh '{meshReference}' requires a terrain collider.");
+                var terrain = LoadRuntimeResource(meshReference,
+                    new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
+                instance.LocalBounds = TerrainMeshBuilder.GetBounds(
+                    terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+                var terrainMesh = _window.CreateMesh(new MeshDescription(
+                    TerrainMeshBuilder.BuildVertices(
+                        terrain, collider.HorizontalSize, collider.HeightScale,
+                        collider.Center)));
+                _renderables.Add(new RuntimeRenderable(
+                    instance, terrainMesh, default, default, null));
+                return;
+            }
             if (meshArtifact.ContentType == "nico/skinned-mesh")
             {
                 skin = LoadRuntimeResource(meshReference,

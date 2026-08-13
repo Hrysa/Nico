@@ -21,17 +21,19 @@ public static class EditorDragPolicy
 
     /// <summary>Returns whether a File System row can instantiate a scene node.</summary>
     /// <param name="source">Candidate dragged item.</param>
-    /// <returns>True only for GLB sources and imported static or skinned meshes.</returns>
+    /// <returns>True for terrain/GLB sources and imported renderable resources.</returns>
     public static bool CanInstantiateInHierarchy(Node source)
     {
         ArgumentNullException.ThrowIfNull(source);
         return source switch
         {
             ImportedSubAssetNode imported =>
-                imported.ContentType is "nico/static-mesh" or "nico/skinned-mesh",
+                imported.ContentType is "nico/static-mesh" or "nico/skinned-mesh" or
+                    "nico/terrain",
             FileSystemNode file => !file.IsDirectory &&
-                Path.GetExtension(file.FullPath).Equals(".glb",
-                    StringComparison.OrdinalIgnoreCase),
+                Path.GetExtension(file.FullPath) is var extension &&
+                (extension.Equals(".glb", StringComparison.OrdinalIgnoreCase) ||
+                 extension.Equals(".nterrain", StringComparison.OrdinalIgnoreCase)),
             _ => false
         };
     }

@@ -1,4 +1,5 @@
 using Engine.Graphics;
+using System.Numerics;
 using Xunit;
 
 namespace Engine.Graphics.Tests;
@@ -44,5 +45,40 @@ public sealed class TerrainResourceTests
         Assert.Equal(2, dirty.Length);
         Assert.Equal(0, dirty[0].StartX);
         Assert.Equal(64, dirty[1].StartX);
+    }
+
+    /// <summary>Builds stable upward-wound triangles and exact scaled height bounds.</summary>
+    [Fact]
+    public void TerrainMeshBuilder_NonSquareGrid_BuildsSurfaceAndBounds()
+    {
+        var terrain = new TerrainResource(3, 2,
+            [0f, 0.25f, 0.5f, 0.5f, 0.75f, 1f]);
+
+        var vertices = TerrainMeshBuilder.BuildVertices(
+            terrain, new Vector2(8f, 4f), 3f);
+        var bounds = TerrainMeshBuilder.GetBounds(
+            terrain, new Vector2(8f, 4f), 3f);
+
+        Assert.Equal(12, vertices.Length);
+        Assert.Equal(new Vector3(-4f, 0f, -2f), bounds.Minimum);
+        Assert.Equal(new Vector3(4f, 3f, 2f), bounds.Maximum);
+        Assert.Equal(new Vector3(-4f, 0f, -2f), vertices[0].Position);
+        Assert.Equal(new Vector3(-4f, 1.5f, 2f), vertices[1].Position);
+        var normal = Vector3.Cross(
+            vertices[1].Position - vertices[0].Position,
+            vertices[2].Position - vertices[0].Position);
+        Assert.True(normal.Y > 0f);
+    }
+
+    /// <summary>Returns independently owned sample storage for editor documents.</summary>
+    [Fact]
+    public void CopyHeights_MutatedCopy_DoesNotChangeResource()
+    {
+        var terrain = new TerrainResource(2, 2, [0f, 0.25f, 0.5f, 1f]);
+
+        var copy = terrain.CopyHeights();
+        copy[0] = 1f;
+
+        Assert.Equal(0f, terrain.GetHeight(0, 0));
     }
 }

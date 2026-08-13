@@ -198,10 +198,12 @@ var hierarchyTree = editorView.HierarchyTree;
 var inspector = editorView.Inspector;
 inspector.ResolveScriptName = id => assetDatabase.Find(id)?.ProjectPath;
 inspector.ResolveMaterialName = ResolveMaterialDisplayName;
+inspector.ResolveAssetReferenceName = ResolveAssetReferenceDisplayName;
 hierarchyTree.SetRoots(sceneRoot.Children);
 
 GameScriptHost? scriptHost = null;
 PhysicsWorld? physicsWorld = null;
+Func<AssetReference, TerrainResource?>? liveTerrainResolver = null;
 GameScriptHost? scriptSchemaHost = null;
 LoadedScene? playScene = null;
 LoadedScene? pendingPlayScene = null;
@@ -306,11 +308,11 @@ void SynchronizeMainViewportPresentations()
 
 mainUIHost.LayoutUpdated += SynchronizeMainViewportPresentations;
 dockSession.MainHost.SplitResizeCompleted += ResizeViewportTargets;
+TerrainBrushController terrainBrush = null!;
 dockWindowFactory.RegisterLifecycle(
     EditorDockWorkspace.SceneId, OpenFloatingSceneViewport, CloseFloatingSceneViewport);
 dockWindowFactory.RegisterLifecycle(
     EditorDockWorkspace.GameId, OpenFloatingGameViewport, CloseFloatingGameViewport);
-dockSession.SynchronizeFloatingWindows();
 
 var uiEventRouter = mainUIHost.InputRouter;
 dockSession.AttachDragRouter(dockSession.MainHost, uiEventRouter, window, RefreshUI);
@@ -321,13 +323,17 @@ ScenePickerDialog? scenePickerDialog = null;
 FileSystemCreateDialog? fileSystemCreateDialog = null;
 ConfirmationDialog? confirmationDialog = null;
 var fileSystemTree = editorView.FileSystemTree;
+var terrainBrushSettings = new TerrainBrushSettings();
 using var assetDocuments = new AssetDocumentService(reference =>
 {
     assetDatabase.Refresh();
     runtimeResources.Invalidate(reference.Asset);
+    viewportRenderer.InvalidatePreviewAsset(reference);
+    detachedSceneRenderer?.InvalidatePreviewAsset(reference);
+    detachedGameRenderer?.InvalidatePreviewAsset(reference);
     foreach (var sceneObject in sceneObjects)
     {
-        if (sceneObject.Materials.Contains(reference))
+        if (sceneObject.Mesh.Asset == reference.Asset || sceneObject.Materials.Contains(reference))
         {
             LoadAssetMeshResources(sceneObject);
             if (detachedSceneRenderer is not null)
@@ -339,11 +345,31 @@ using var assetDocuments = new AssetDocumentService(reference =>
     InvalidateViewports();
 });
 assetDocuments.Register(new StandardMaterialDocumentFactory());
+assetDocuments.Register(new TerrainDocumentFactory());
 var editableAssetSources = new EditableAssetSourceRegistry();
 editableAssetSources.Register("nico/standard-material", "standard-material");
+editableAssetSources.Register("nico/terrain", "terrain");
 var assetEditors = new AssetEditorRegistry(
     assetDocuments, ResolveAssetDocument, ResolveAssetReferenceDisplayName);
 assetEditors.Register(new StandardMaterialInspectorFactory());
+assetEditors.Register(new TerrainInspectorFactory(terrainBrushSettings));
+liveTerrainResolver = reference => ResolveTerrainDocument(reference)?.Value;
+terrainBrush = new TerrainBrushController(
+    sceneCamera,
+    GetSceneGizmoViewport,
+    () => selection.SelectedNode,
+    ResolveTerrainDocument,
+    ApplyTerrainEdit,
+    SetTerrainBrushPreview,
+    terrainBrushSettings);
+selection.SelectionChanged += _ => terrainBrush.RefreshToolState();
+terrainBrushSettings.Changed += () =>
+{
+    terrainBrush.RefreshToolState();
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
+};
+dockSession.SynchronizeFloatingWindows();
 var assetDropResolver = new AssetDropResolver(assetDatabase, assetImportPipeline);
 using var modelPreviewController = new InspectorModelPreviewController(
     window, window.RequestFrame);
@@ -451,7 +477,15 @@ void SaveDockWorkspace()
 /// <param name="includePointerLook">Whether this host also needs standalone fly-camera pointer routing.</param>
 void ConfigureSceneViewportInput(UIHost host, IWindow inputWindow, bool includePointerLook)
 {
-    host.PreviewKey = keyEvent => sceneInputContext.RouteKey(host.InputRouter, keyEvent);
+    host.PreviewKey = keyEvent =>
+    {
+        if (keyEvent.IsPressed && keyEvent.Key == InputKey.Escape && terrainBrush.Cancel())
+        {
+            inputWindow.RequestFrame();
+            return true;
+        }
+        return sceneInputContext.RouteKey(host.InputRouter, keyEvent);
+    };
     host.PreviewTextInput = _ => sceneInputContext.RoutesText(host.InputRouter);
     host.PreviewTextComposition = _ => sceneInputContext.RoutesText(host.InputRouter);
     host.PreviewPointerWheel = pointerEvent =>
@@ -460,10 +494,35 @@ void ConfigureSceneViewportInput(UIHost host, IWindow inputWindow, bool includeP
         ApplyScenePinchGesture(pointerEvent, inputWindow);
     if (!includePointerLook)
         return;
-    host.PreviewPointerMove = pointerEvent => flyCamera.MovePointer(pointerEvent.Position);
-    host.PreviewPointerButton = _ => flyCamera.IsActive
-        ? UIHostPointerRouting.Consume
-        : UIHostPointerRouting.Route;
+    host.PreviewPointerMove = pointerEvent =>
+    {
+        if (terrainBrush.MovePointer(pointerEvent.Position))
+        {
+            inputWindow.RequestFrame();
+            return true;
+        }
+        return flyCamera.MovePointer(pointerEvent.Position);
+    };
+    host.PreviewPointerButton = pointerEvent =>
+    {
+        if (!pointerEvent.IsPressed && pointerEvent.Button == InputPointerButton.Primary &&
+            terrainBrush.PrimaryUp())
+        {
+            inputWindow.RequestFrame();
+            return UIHostPointerRouting.Consume;
+        }
+        if (pointerEvent.IsPressed && pointerEvent.Button == InputPointerButton.Primary &&
+            IsInsideSceneViewport(pointerEvent.Position) &&
+            terrainBrush.PrimaryDown(pointerEvent.Position))
+        {
+            selection.CancelInteraction();
+            inputWindow.RequestFrame();
+            return UIHostPointerRouting.Consume;
+        }
+        return flyCamera.IsActive
+            ? UIHostPointerRouting.Consume
+            : UIHostPointerRouting.Route;
+    };
 }
 
 /// <summary>Routes desktop wheel zoom or a macOS two-finger Scene camera gesture.</summary>
@@ -702,6 +761,7 @@ void StartPlayMode()
 {
     if (isPlaying || playBuildTask is not null)
         return;
+    terrainBrushSettings.IsEnabled = false;
     OpenDockPanel(EditorDockWorkspace.GameId, EditorDockWorkspace.SceneId);
     try
     {
@@ -1622,6 +1682,13 @@ void OpenFileSystemEntry(Node item)
 /// <param name="dropTarget">Resolved hierarchy destination.</param>
 void InstantiateImportedMesh(ImportedSubAssetNode source, TreeViewDropTarget dropTarget)
 {
+    if (source.ContentType == "nico/terrain")
+    {
+        var separator = source.Name.LastIndexOf(" [", StringComparison.Ordinal);
+        InsertTerrainNode(dropTarget.Parent ?? sceneRoot, dropTarget.InsertionIndex,
+            source.Reference, separator < 0 ? source.Name : source.Name[..separator]);
+        return;
+    }
     if (source.ContentType is not "nico/static-mesh" and not "nico/skinned-mesh")
     {
         logger.LogWarning("Imported {ContentType} cannot be placed in the Hierarchy",
@@ -1664,6 +1731,34 @@ void InstantiateImportedMesh(ImportedSubAssetNode source, TreeViewDropTarget dro
         instance.Parent?.RemoveChild(instance);
         throw;
     }
+}
+
+/// <summary>Instantiates a dragged terrain source as renderable static scene geometry.</summary>
+/// <param name="source">Dragged physical terrain file.</param>
+/// <param name="dropTarget">Resolved hierarchy destination.</param>
+void InstantiateTerrain(FileSystemNode source, TreeViewDropTarget dropTarget)
+{
+    if (!Path.GetExtension(source.FullPath).Equals(
+            ".nterrain", StringComparison.OrdinalIgnoreCase))
+        return;
+    var record = assetDatabase.FindByPath(source.FullPath);
+    if (record is null)
+    {
+        logger.LogWarning("Terrain asset metadata is unavailable for {FilePath}",
+            source.FullPath);
+        return;
+    }
+    var outcome = assetImportPipeline.Import(record, "editor");
+    if (!outcome.Succeeded || !outcome.Artifacts.Any(artifact =>
+            artifact.Key == "main" && artifact.ContentType == "nico/terrain"))
+    {
+        logger.LogWarning("Terrain asset {FilePath} has no valid main artifact",
+            source.FullPath);
+        return;
+    }
+    InsertTerrainNode(dropTarget.Parent ?? sceneRoot, dropTarget.InsertionIndex,
+        new AssetReference(record.Id, "main"),
+        Path.GetFileNameWithoutExtension(source.FullPath));
 }
 
 /// <summary>Instantiates a dragged GLB source as its complete imported node hierarchy.</summary>
@@ -1772,10 +1867,25 @@ void LoadAssetMeshResources(
         outcome = knownOutcome ?? assetImportPipeline.Import(record, "editor");
         var meshArtifact = outcome.Artifacts.FirstOrDefault(artifact =>
             artifact.Key == meshReference.SubAsset &&
-            artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh");
+            artifact.ContentType is "nico/static-mesh" or "nico/skinned-mesh" or
+                "nico/terrain");
         if (!outcome.Succeeded || outcome.ArtifactDirectory is null || meshArtifact is null)
         {
             logger.LogError("Mesh sub-asset {Reference} has no valid artifact", meshReference);
+            return;
+        }
+        if (meshArtifact.ContentType == "nico/terrain")
+        {
+            if (instance.GetComponent<TerrainColliderComponent>() is not { } terrainCollider)
+            {
+                logger.LogError("Terrain mesh {Reference} requires a terrain collider",
+                    meshReference);
+                return;
+            }
+            var terrain = LoadRuntimeResource(meshReference,
+                new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
+            (targetRenderer ?? viewportRenderer).SetTerrainResource(
+                instance, terrain, terrainCollider);
             return;
         }
         if (meshArtifact.ContentType == "nico/skinned-mesh")
@@ -1937,6 +2047,8 @@ StaticMeshResource ResolveCollisionMeshResource(AssetReference reference)
 /// <returns>The decoded terrain grid.</returns>
 TerrainResource ResolveTerrainResource(AssetReference reference)
 {
+    if (liveTerrainResolver?.Invoke(reference) is { } liveTerrain)
+        return liveTerrain;
     return LoadRuntimeResource(reference, new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
 }
 
@@ -2014,6 +2126,62 @@ ResolvedAssetDocument? ResolveAssetDocument(AssetReference reference)
     var location = new AssetDocumentLocation(reference,
         () => ResolveAssetReferenceDisplayName(reference), OpenCurrentContent, write);
     return new ResolvedAssetDocument(artifact.ContentType, location);
+}
+
+/// <summary>Gets the shared editable terrain document for one persistent reference.</summary>
+/// <param name="reference">Terrain source reference.</param>
+/// <returns>Shared terrain document, or null when unavailable or mistyped.</returns>
+TerrainDocument? ResolveTerrainDocument(AssetReference reference)
+{
+    var resolved = ResolveAssetDocument(reference);
+    if (resolved is null || resolved.ContentType != "nico/terrain")
+        return null;
+    return assetDocuments.GetOrLoad(resolved.Location, resolved.ContentType) as TerrainDocument;
+}
+
+/// <summary>Publishes live sculpt changes to every renderer and attached physics terrain.</summary>
+/// <param name="instance">Edited terrain scene instance.</param>
+/// <param name="collider">Terrain dimensions shared with collision.</param>
+/// <param name="terrain">Current edited height grid.</param>
+/// <param name="editRegion">Inclusive sample rectangle touched by the edit.</param>
+void ApplyTerrainEdit(
+    MeshInstance3D instance,
+    TerrainColliderComponent collider,
+    TerrainResource terrain,
+    TerrainEditRegion editRegion)
+{
+    viewportRenderer.UpdateTerrainResource(instance, terrain, collider);
+    detachedSceneRenderer?.UpdateTerrainResource(instance, terrain, collider);
+    detachedGameRenderer?.UpdateTerrainResource(instance, terrain, collider);
+    if (physicsWorld is not null)
+    {
+        try
+        {
+            physicsWorld.RebuildTerrain(instance, terrain, terrain.GetDirtyChunkRegions(
+                editRegion.MinimumX, editRegion.MinimumZ,
+                editRegion.MaximumX, editRegion.MaximumZ));
+        }
+        catch (InvalidOperationException)
+        {
+            // Edit-mode worlds are normally detached; the next Attach uses the saved resource.
+        }
+    }
+    if (collider.TerrainData is { } reference)
+    {
+        viewportRenderer.InvalidatePreviewAsset(reference);
+        detachedSceneRenderer?.InvalidatePreviewAsset(reference);
+    }
+    InvalidateViewports();
+}
+
+/// <summary>Publishes the current terrain brush ring to Scene renderers.</summary>
+/// <param name="preview">Brush geometry, or null to hide it.</param>
+void SetTerrainBrushPreview(TerrainBrushPreview? preview)
+{
+    viewportRenderer.SetTerrainBrushPreview(preview);
+    detachedSceneRenderer?.SetTerrainBrushPreview(preview);
+    renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+    window.RequestFrame();
 }
 
 /// <summary>Connects scene opening to the project filesystem tree.</summary>
@@ -2244,6 +2412,63 @@ void ShowMaterialPathDialog(string parentDirectory)
     RefreshVertices();
 }
 
+/// <summary>Shows a project-scoped path dialog for a new editable terrain asset.</summary>
+/// <param name="parentDirectory">Directory receiving the new asset.</param>
+/// <param name="created">Optional callback that places the new terrain in a scene.</param>
+void ShowTerrainPathDialog(
+    string parentDirectory,
+    Action<AssetReference, string>? created = null)
+{
+    CloseFileContextMenu();
+    CloseHierarchyContextMenu();
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height, "Terrain", relativeParent,
+        actionVerb: "Add") { Name = "AddTerrainDialog" };
+    dialog.CreateRequested += requestedName =>
+    {
+        var fileName = requestedName.EndsWith(".nterrain", StringComparison.OrdinalIgnoreCase)
+            ? requestedName : requestedName + ".nterrain";
+        var assetPath = Path.Combine(parentDirectory, fileName);
+        if (File.Exists(assetPath) || Directory.Exists(assetPath))
+        {
+            dialog.ShowError("An item with that name already exists.");
+            RefreshVertices();
+            return;
+        }
+        try
+        {
+            TerrainAuthoring.SaveFlat(assetPath);
+            assetDatabase.Refresh();
+            var record = assetDatabase.FindByPath(assetPath)
+                ?? throw new InvalidOperationException("Terrain metadata was not created.");
+            var outcome = assetImportPipeline.Import(record, "editor");
+            if (!outcome.Succeeded || !outcome.Artifacts.Any(artifact =>
+                    artifact.Key == "main" && artifact.ContentType == "nico/terrain"))
+                throw new InvalidDataException("Terrain import failed.");
+            CloseFileContextMenu();
+            RefreshFileSystem();
+            created?.Invoke(new AssetReference(record.Id, "main"),
+                Path.GetFileNameWithoutExtension(assetPath));
+            RefreshVertices();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                           or ArgumentException or InvalidOperationException or
+                                           NotSupportedException)
+        {
+            logger.LogError(exception, "Could not create terrain {AssetPath}", assetPath);
+            dialog.ShowError("Could not create this terrain.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    overlay.Add(dialog, Vector2.Zero);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
 /// <summary>Shows file types that can be created in the selected project directory.</summary>
 /// <param name="parentDirectory">Directory receiving the new file.</param>
 /// <param name="x">Submenu screen X position.</param>
@@ -2260,6 +2485,7 @@ void ShowAddFileSubmenu(string parentDirectory, float x, float y)
         createDefaultScene: true, saveAction: false));
     submenu.AddItem("Add Animation Set", () => ShowAnimationSetPathDialog(parentDirectory));
     submenu.AddItem("Add Material", () => ShowMaterialPathDialog(parentDirectory));
+    submenu.AddItem("Add Terrain", () => ShowTerrainPathDialog(parentDirectory));
     submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
         createFolder: false));
     fileSubmenu = submenu;
@@ -2448,6 +2674,75 @@ void AddSceneNode(Node parent, AssetReference? mesh, string displayName)
     hierarchyTree.Select(child);
     CloseHierarchyContextMenu();
     CloseFileContextMenu();
+}
+
+/// <summary>Adds one renderable and collidable terrain at the end of a hierarchy parent.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+/// <param name="reference">Persistent terrain source.</param>
+/// <param name="displayName">Terrain node display name.</param>
+void AddTerrainNode(Node parent, AssetReference reference, string displayName)
+{
+    InsertTerrainNode(parent, parent.Children.Count, reference, displayName);
+}
+
+/// <summary>Inserts one renderable and collidable terrain into the authored hierarchy.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+/// <param name="insertionIndex">Requested child insertion index.</param>
+/// <param name="reference">Persistent terrain source.</param>
+/// <param name="displayName">Terrain node display name.</param>
+void InsertTerrainNode(
+    Node parent,
+    int insertionIndex,
+    AssetReference reference,
+    string displayName)
+{
+    if (isPlaying)
+    {
+        logger.LogWarning("Terrain cannot be added while Play mode is active");
+        return;
+    }
+    var instance = new MeshInstance3D
+    {
+        Name = string.IsNullOrWhiteSpace(displayName)
+            ? $"Terrain {createdObjectIndex++}" : displayName,
+        Mesh = reference
+    };
+    instance.AddComponent(new TerrainColliderComponent
+    {
+        TerrainData = reference,
+        HorizontalSize = new Vector2(20f, 20f),
+        HeightScale = 5f
+    });
+    try
+    {
+        parent.InsertChild(insertionIndex, instance);
+        sceneObjects.Add(instance);
+        viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
+        LoadAssetMeshResources(instance);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedGameRenderer);
+        hierarchyTree.SetRoots(sceneRoot.Children);
+        if (!ReferenceEquals(parent, sceneRoot))
+            hierarchyTree.Expand(parent);
+        selection.Select(instance);
+        FrameSceneCamera([instance]);
+        CloseHierarchyContextMenu();
+        CloseFileContextMenu();
+        InvalidateViewports();
+        logger.LogInformation("Added terrain {TerrainName} from {TerrainReference}",
+            instance.Name, reference);
+    }
+    catch
+    {
+        sceneObjects.Remove(instance);
+        instance.Parent?.RemoveChild(instance);
+        viewportRenderer.SetSceneObjects(sceneObjects);
+        viewportRenderer.SetSceneRoot(sceneRoot);
+        throw;
+    }
 }
 
 /// <summary>Adds an editable directional light below one hierarchy node.</summary>
@@ -2651,6 +2946,9 @@ void ShowHierarchyContextMenu()
     objectMenu.AddItem("Add Sphere", () => AddSceneNode(target, BuiltInAssets.SphereMesh, "Sphere"));
     objectMenu.AddItem("Add Capsule", () => AddSceneNode(target, BuiltInAssets.CapsuleMesh, "Capsule"));
     objectMenu.AddItem("Add Cylinder", () => AddSceneNode(target, BuiltInAssets.CylinderMesh, "Cylinder"));
+    objectMenu.AddItem("Add Terrain", () => ShowTerrainPathDialog(
+        project.RootPath, (reference, name) => AddTerrainNode(target, reference, name)),
+        !isPlaying);
     objectMenu.AddItem("Add Directional Light", () => AddDirectionalLight(target));
     menu.AddSubmenu("Add 3D Object", objectMenu);
 
@@ -2964,8 +3262,12 @@ void HandleHierarchyDrag(UIElement sender, UIDragEventArgs dragEvent)
     {
         if (payload.Item is ImportedSubAssetNode imported)
             InstantiateImportedMesh(imported, dropTarget);
-        else if (payload.Item is FileSystemNode file)
-            InstantiateGlbPrimaryMesh(file, dropTarget);
+        else if (payload.Item is FileSystemNode file &&
+                 Path.GetExtension(file.FullPath).Equals(
+                     ".nterrain", StringComparison.OrdinalIgnoreCase))
+            InstantiateTerrain(file, dropTarget);
+        else if (payload.Item is FileSystemNode modelFile)
+            InstantiateGlbPrimaryMesh(modelFile, dropTarget);
         else
             MoveHierarchyNode(payload.Item, dropTarget);
         dragEvent.Effect = effect;
@@ -3052,6 +3354,12 @@ mainUIHost.PreviewPointerMove = pointerEvent =>
         window.RequestFrame();
         return true;
     }
+    if (terrainBrush.MovePointer(pointerEvent.Position))
+    {
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        return true;
+    }
     return flyCamera.MovePointer(pointerEvent.Position);
 };
 
@@ -3086,6 +3394,12 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
         else if (pointerEvent.Button == InputPointerButton.Middle)
             sceneMouseNavigation &= ~PointerButtons.Middle;
         window.EndWindowDrag();
+        if (pointerEvent.Button == InputPointerButton.Primary && terrainBrush.PrimaryUp())
+        {
+            renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+            window.RequestFrame();
+            return UIHostPointerRouting.Consume;
+        }
         if (flyCamera.IsActive || pointerEvent.Button != InputPointerButton.Primary)
             return UIHostPointerRouting.Consume;
         var consumedByGizmo = selection.PrimaryUp();
@@ -3098,6 +3412,14 @@ mainUIHost.PreviewPointerButton = pointerEvent =>
     if (flyCamera.IsActive)
         return UIHostPointerRouting.Consume;
     var inSceneViewport = IsInsideSceneViewport(pointerEvent.Position);
+    if (inSceneViewport && pointerEvent.Button == InputPointerButton.Primary &&
+        terrainBrush.PrimaryDown(pointerEvent.Position))
+    {
+        selection.CancelInteraction();
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        return UIHostPointerRouting.Consume;
+    }
     if (inSceneViewport && pointerEvent.Button == InputPointerButton.Secondary)
     {
         sceneMouseNavigation |= PointerButtons.Secondary;
@@ -3153,6 +3475,12 @@ mainUIHost.PreviewKey = keyEvent =>
 {
     Debug.Input(LogLevel.Debug, "Key: key={Key}, pressed={Pressed}, repeat={Repeat}",
         keyEvent.Key, keyEvent.IsPressed, keyEvent.IsRepeat);
+    if (keyEvent.IsPressed && keyEvent.Key == InputKey.Escape && terrainBrush.Cancel())
+    {
+        renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
+        window.RequestFrame();
+        return true;
+    }
     return sceneInputContext.RouteKey(uiEventRouter, keyEvent);
 };
 mainUIHost.PreviewTextInput = _ => sceneInputContext.RoutesText(uiEventRouter);

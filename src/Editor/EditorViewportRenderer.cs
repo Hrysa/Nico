@@ -33,6 +33,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private readonly SceneAnimationRegistry _animationRegistry;
     private GizmoViewport _lastSceneViewport;
     private ScenePreviewPickingId? _hoveredPreview;
+    private TerrainBrushPreview? _terrainBrushPreview;
     private Vertex[] _sceneOverlayVertices = [];
     private bool _hasSubmittedSceneOverlay;
     private bool _disposed;
@@ -159,6 +160,20 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _previewRegistry.SetCategoryVisible(category, visible);
     }
 
+    /// <summary>Invalidates cached preview geometry decoded from one edited asset.</summary>
+    /// <param name="reference">Edited or reimported asset output.</param>
+    public void InvalidatePreviewAsset(AssetReference reference)
+    {
+        _previewRegistry.InvalidateAsset(reference);
+    }
+
+    /// <summary>Changes the current Scene terrain-brush ring.</summary>
+    /// <param name="preview">Current brush preview, or null to hide it.</param>
+    public void SetTerrainBrushPreview(TerrainBrushPreview? preview)
+    {
+        _terrainBrushPreview = preview;
+    }
+
     /// <summary>Transfers reusable static GPU resources between corresponding scene copies.</summary>
     /// <param name="source">Current scene instances.</param>
     /// <param name="destination">Replacement scene instances in matching clone order.</param>
@@ -275,6 +290,55 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         }
     }
 
+    /// <summary>Creates or replaces a dynamic colored terrain surface.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Current height samples.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    public void SetTerrainResource(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(collider);
+        if (_assetMeshes.Remove(instance, out var previous))
+            DestroyAssetMeshResource(previous);
+        var vertices = TerrainMeshBuilder.BuildVertices(
+            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+        var handle = _renderer.CreateMesh(new MeshDescription(vertices, ResourceUsage.Dynamic));
+        instance.LocalBounds = TerrainMeshBuilder.GetBounds(
+            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+        _assetMeshes.Add(instance, new AssetMeshGpuResource(
+            instance, handle, default, default, null, isTerrain: true,
+            terrainVertices: vertices));
+    }
+
+    /// <summary>Updates a retained dynamic terrain surface without changing its identity.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Current height samples.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    public void UpdateTerrainResource(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(collider);
+        if (!_assetMeshes.TryGetValue(instance, out var resource) || !resource.IsTerrain)
+        {
+            SetTerrainResource(instance, terrain, collider);
+            return;
+        }
+        TerrainMeshBuilder.FillVertices(
+            terrain, collider.HorizontalSize, collider.HeightScale,
+            resource.TerrainVertices!, collider.Center);
+        _renderer.UpdateMesh(resource.Mesh, resource.TerrainUpdate!);
+        instance.LocalBounds = TerrainMeshBuilder.GetBounds(
+            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+    }
+
     /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>
     /// <param name="instance">Persistent scene instance.</param>
     /// <param name="mesh">Imported skinned mesh.</param>
@@ -370,6 +434,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _sceneCamera.UpdateViewport(sceneViewport.Width, sceneViewport.Height);
         _selection.Update(pointerPosition);
         _previewRegistry.Build(_sceneRoot, _selection.SelectedNode, _previews, _hoveredPreview);
+        AddTerrainBrushPreview();
         _hoveredPreview = PickPreview(pointerPosition);
         RenderSceneViewport();
         var overlayVertexCount = ScenePreviewOverlayBuilder.Build(
@@ -383,6 +448,33 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _renderer.SubmitTransient(new TransientGeometry(
             _sceneOverlayVertices, overlayVertexCount, clip));
         _hasSubmittedSceneOverlay = overlayVertexCount > 0;
+    }
+
+    /// <summary>Adds the active terrain brush as an always-visible world-space ring.</summary>
+    private void AddTerrainBrushPreview()
+    {
+        if (_terrainBrushPreview is not { } preview)
+            return;
+        const int segments = 48;
+        var color = new Vector4(1f, 0.62f, 0.08f, 1f);
+        var pickingId = new ScenePreviewPickingId(
+            ulong.MaxValue, preview.Node, preview.Component);
+        var previous = Vector3.Transform(
+            preview.LocalCenter + new Vector3(preview.LocalRadiusX, 0.015f, 0f),
+            preview.Transform);
+        for (var index = 1; index <= segments; index++)
+        {
+            var angle = MathF.Tau * index / segments;
+            var current = Vector3.Transform(
+                preview.LocalCenter + new Vector3(
+                    MathF.Cos(angle) * preview.LocalRadiusX,
+                    0.015f,
+                    MathF.Sin(angle) * preview.LocalRadiusZ),
+                preview.Transform);
+            _previews.AddLine(new ScenePreviewLine(previous, current, color,
+                ScenePreviewDepthMode.AlwaysVisible, pickingId));
+            previous = current;
+        }
     }
 
     /// <summary>Finds the closest selectable preview line near one pointer position.</summary>
@@ -662,6 +754,15 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <summary>Gets whether this renderer advances and disposes the controller.</summary>
         internal bool OwnsAnimation { get; }
 
+        /// <summary>Gets whether the handle uses the mutable colored terrain path.</summary>
+        internal bool IsTerrain { get; }
+
+        /// <summary>Gets reusable terrain vertices for allocation-free sculpt updates.</summary>
+        internal Vertex[]? TerrainVertices { get; }
+
+        /// <summary>Gets the stable full-range terrain mesh update.</summary>
+        internal MeshUpdate? TerrainUpdate { get; }
+
         /// <summary>Gets or sets the pose revision most recently uploaded.</summary>
         internal ulong UploadedPoseRevision { get; set; }
 
@@ -671,10 +772,14 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
         /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
+        /// <param name="isTerrain">Whether this is a mutable colored terrain mesh.</param>
+        /// <param name="terrainVertices">Optional reusable terrain upload storage.</param>
         /// <param name="instance">Owning scene mesh instance.</param>
         internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
             TextureHandle texture, SkinPaletteHandle palette,
-            AnimationController? animation, bool ownsAnimation = false)
+            AnimationController? animation, bool ownsAnimation = false,
+            bool isTerrain = false,
+            Vertex[]? terrainVertices = null)
         {
             Instance = instance;
             Mesh = mesh;
@@ -682,6 +787,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             Palette = palette;
             Animation = animation;
             OwnsAnimation = ownsAnimation;
+            IsTerrain = isTerrain;
+            TerrainVertices = terrainVertices;
+            TerrainUpdate = terrainVertices is null ? null : new MeshUpdate(0, terrainVertices);
         }
     }
 }
