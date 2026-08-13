@@ -34,6 +34,12 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal PipelineLayout SkinnedModelLayout;
     internal DescriptorSetLayout SkinPaletteDescriptorSetLayout;
     internal DescriptorPool SkinPaletteDescriptorPool;
+    internal ShaderModule ShadowVertexShader;
+    internal ShaderModule SkinnedShadowVertexShader;
+    internal Pipeline ShadowPipeline;
+    internal Pipeline SkinnedShadowPipeline;
+    internal PipelineLayout ShadowLayout;
+    internal PipelineLayout SkinnedShadowLayout;
     internal ShaderModule GridVertexShader;
     internal ShaderModule GridFragmentShader;
     internal PipelineLayout GridLayout;
@@ -71,6 +77,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(ModelDoubleSidedPipeline);
         DestroyPipeline(SkinnedModelPipeline);
         DestroyPipeline(SkinnedModelDoubleSidedPipeline);
+        DestroyPipeline(ShadowPipeline);
+        DestroyPipeline(SkinnedShadowPipeline);
         DestroyPipeline(ViewportPipeline);
         DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);
@@ -78,6 +86,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipelineLayout(GridLayout);
         DestroyPipelineLayout(ModelLayout);
         DestroyPipelineLayout(SkinnedModelLayout);
+        DestroyPipelineLayout(ShadowLayout);
+        DestroyPipelineLayout(SkinnedShadowLayout);
         DestroyPipelineLayout(ViewportLayout);
         DestroyPipelineLayout(UiLayout);
 
@@ -102,6 +112,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyShaderModule(ModelFragmentShader);
         DestroyShaderModule(SkinnedModelVertexShader);
         DestroyShaderModule(SkinnedModelFragmentShader);
+        DestroyShaderModule(ShadowVertexShader);
+        DestroyShaderModule(SkinnedShadowVertexShader);
         DestroyShaderModule(UiVertexShader);
         DestroyShaderModule(UiFragmentShader);
         DestroyShaderModule(UiShapeVertexShader);

@@ -11,6 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 internal unsafe class ViewportFbo
 {
+    public const uint ShadowResolution = 2048;
     public uint Id { get; }
     public uint Width { get; private set; }
     public uint Height { get; private set; }
@@ -29,6 +30,12 @@ internal unsafe class ViewportFbo
     public Framebuffer Framebuffer;
     public Sampler Sampler;
     public DescriptorSet DescriptorSet;
+    public Image ShadowImage;
+    public DeviceMemory ShadowMemory;
+    public ImageView ShadowView;
+    public Framebuffer ShadowFramebuffer;
+    public Sampler ShadowSampler;
+    public DescriptorSet ShadowDescriptorSet;
 
     public ViewportFbo(uint id, uint width, uint height)
     {
@@ -46,9 +53,10 @@ internal unsafe class ViewportFbo
     }
 
     public void Create(
-        Vk vk, Device device, RenderPass fboRenderPass,
+        Vk vk, Device device, RenderPass fboRenderPass, RenderPass shadowRenderPass,
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool,
+        DescriptorSetLayout shadowDescriptorSetLayout, DescriptorPool shadowDescriptorPool,
         bool allocateDescriptorSet = true)
     {
         // ── Color image ────────────────────────────────────────
@@ -163,6 +171,107 @@ internal unsafe class ViewportFbo
             DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &imageInfoDesc
         };
         vk.UpdateDescriptorSets(device, 1, &writeDescriptor, 0, null);
+
+        var shadowInfo = new ImageCreateInfo
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Format = depthFormat,
+            Extent = new Extent3D
+            {
+                Width = ShadowResolution, Height = ShadowResolution, Depth = 1
+            },
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Samples = SampleCountFlags.Count1Bit,
+            Tiling = ImageTiling.Optimal,
+            Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit,
+            SharingMode = SharingMode.Exclusive,
+            InitialLayout = ImageLayout.Undefined
+        };
+        vk.CreateImage(device, &shadowInfo, null, out ShadowImage);
+        vk.GetImageMemoryRequirements(device, ShadowImage, out var shadowMemoryRequirements);
+        var shadowAllocation = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = shadowMemoryRequirements.Size,
+            MemoryTypeIndex = deviceLocalMemoryType
+        };
+        vk.AllocateMemory(device, in shadowAllocation, null, out ShadowMemory);
+        vk.BindImageMemory(device, ShadowImage, ShadowMemory, 0);
+        var shadowViewInfo = new ImageViewCreateInfo
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = ShadowImage,
+            ViewType = ImageViewType.Type2D,
+            Format = depthFormat,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.DepthBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            }
+        };
+        vk.CreateImageView(device, in shadowViewInfo, null, out ShadowView);
+        var shadowAttachment = ShadowView;
+        var shadowFramebufferInfo = new FramebufferCreateInfo
+        {
+            SType = StructureType.FramebufferCreateInfo,
+            RenderPass = shadowRenderPass,
+            AttachmentCount = 1,
+            PAttachments = &shadowAttachment,
+            Width = ShadowResolution,
+            Height = ShadowResolution,
+            Layers = 1
+        };
+        vk.CreateFramebuffer(device, &shadowFramebufferInfo, null, out ShadowFramebuffer);
+        var shadowSamplerInfo = new SamplerCreateInfo
+        {
+            SType = StructureType.SamplerCreateInfo,
+            MagFilter = Filter.Nearest,
+            MinFilter = Filter.Nearest,
+            AddressModeU = SamplerAddressMode.ClampToBorder,
+            AddressModeV = SamplerAddressMode.ClampToBorder,
+            AddressModeW = SamplerAddressMode.ClampToBorder,
+            BorderColor = BorderColor.FloatOpaqueWhite,
+            MipmapMode = SamplerMipmapMode.Nearest,
+            MaxLod = 1f
+        };
+        vk.CreateSampler(device, in shadowSamplerInfo, null, out ShadowSampler);
+        if (allocateDescriptorSet)
+        {
+            var shadowLayout = shadowDescriptorSetLayout;
+            var shadowSetInfo = new DescriptorSetAllocateInfo
+            {
+                SType = StructureType.DescriptorSetAllocateInfo,
+                DescriptorPool = shadowDescriptorPool,
+                DescriptorSetCount = 1,
+                PSetLayouts = &shadowLayout
+            };
+            var shadowAllocationResult = vk.AllocateDescriptorSets(
+                device, in shadowSetInfo, out ShadowDescriptorSet);
+            if (shadowAllocationResult != Result.Success)
+                throw new InvalidOperationException(
+                    $"Failed to allocate viewport {Id} shadow descriptor: {shadowAllocationResult}");
+        }
+        var shadowDescriptorInfo = new DescriptorImageInfo
+        {
+            Sampler = ShadowSampler,
+            ImageView = ShadowView,
+            ImageLayout = ImageLayout.DepthStencilReadOnlyOptimal
+        };
+        var shadowWrite = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = ShadowDescriptorSet,
+            DstBinding = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            PImageInfo = &shadowDescriptorInfo
+        };
+        vk.UpdateDescriptorSets(device, 1, &shadowWrite, 0, null);
     }
 
     /// <summary>Destroys framebuffer resources and optionally returns its sampled-image descriptor.</summary>
@@ -174,6 +283,7 @@ internal unsafe class ViewportFbo
         Vk vk,
         Device device,
         DescriptorPool descriptorPool,
+        DescriptorPool shadowDescriptorPool,
         bool releaseDescriptorSet = true)
     {
         if (releaseDescriptorSet && DescriptorSet.Handle != 0)
@@ -182,6 +292,22 @@ internal unsafe class ViewportFbo
             vk.FreeDescriptorSets(device, descriptorPool, 1, &descriptorSet);
             DescriptorSet = default;
         }
+        if (releaseDescriptorSet && ShadowDescriptorSet.Handle != 0)
+        {
+            var shadowDescriptor = ShadowDescriptorSet;
+            vk.FreeDescriptorSets(device, shadowDescriptorPool, 1, &shadowDescriptor);
+            ShadowDescriptorSet = default;
+        }
+        if (ShadowFramebuffer.Handle != 0)
+            vk.DestroyFramebuffer(device, ShadowFramebuffer, null);
+        if (ShadowSampler.Handle != 0)
+            vk.DestroySampler(device, ShadowSampler, null);
+        if (ShadowView.Handle != 0)
+            vk.DestroyImageView(device, ShadowView, null);
+        if (ShadowImage.Handle != 0)
+            vk.DestroyImage(device, ShadowImage, null);
+        if (ShadowMemory.Handle != 0)
+            vk.FreeMemory(device, ShadowMemory, null);
         vk.DestroyFramebuffer(device, Framebuffer, null);
         vk.DestroySampler(device, Sampler, null);
         vk.DestroyImageView(device, MsaaColorView, null);
@@ -196,13 +322,15 @@ internal unsafe class ViewportFbo
     }
 
     public void Recreate(
-        Vk vk, Device device, RenderPass fboRenderPass,
+        Vk vk, Device device, RenderPass fboRenderPass, RenderPass shadowRenderPass,
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
-        DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool)
+        DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool,
+        DescriptorSetLayout shadowDescriptorSetLayout, DescriptorPool shadowDescriptorPool)
     {
-        Destroy(vk, device, descriptorPool, releaseDescriptorSet: false);
-        Create(vk, device, fboRenderPass, colorFormat, depthFormat, samples, deviceLocalMemoryType,
-            descriptorSetLayout, descriptorPool, allocateDescriptorSet: false);
+        Destroy(vk, device, descriptorPool, shadowDescriptorPool, releaseDescriptorSet: false);
+        Create(vk, device, fboRenderPass, shadowRenderPass, colorFormat, depthFormat, samples,
+            deviceLocalMemoryType, descriptorSetLayout, descriptorPool,
+            shadowDescriptorSetLayout, shadowDescriptorPool, allocateDescriptorSet: false);
         IsDirty = false;
     }
 }

@@ -151,6 +151,20 @@ public class SceneScriptRuntimeTests
         runtime.Update(1d / 60d);
         Assert.False(script.SecondaryPointerHeld);
         Assert.False(input.MouseCaptured);
+
+        input.MovePointer(new System.Numerics.Vector2(100f, 100f),
+            new System.Numerics.Vector2(86f, 75f));
+        input.SetPointerButton(InputPointerButton.Secondary, true);
+        runtime.Update(1d / 60d);
+        Assert.True(input.MouseCaptured);
+
+        input.MovePointer(new System.Numerics.Vector2(14f, 25f),
+            new System.Numerics.Vector2(-86f, -75f));
+        input.MovePointer(new System.Numerics.Vector2(18f, 27f),
+            new System.Numerics.Vector2(4f, 2f));
+        runtime.Update(1d / 60d);
+
+        Assert.Equal(new System.Numerics.Vector2(4f, 2f), script.PointerDelta);
     }
 
     /// <summary>Verifies scripts can directly play a controller supplied by the active scene.</summary>

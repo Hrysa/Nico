@@ -39,6 +39,8 @@
     <EmbeddedResource Include="../Shaders/model.frag.spv" LogicalName="model.frag.spv" />
     <EmbeddedResource Include="../Shaders/skinned_model.vert.spv" LogicalName="skinned_model.vert.spv" />
     <EmbeddedResource Include="../Shaders/skinned_model.frag.spv" LogicalName="skinned_model.frag.spv" />
+    <EmbeddedResource Include="../Shaders/shadow.vert.spv" LogicalName="shadow.vert.spv" />
+    <EmbeddedResource Include="../Shaders/skinned_shadow.vert.spv" LogicalName="skinned_shadow.vert.spv" />
     <EmbeddedResource Include="Assets/codicon.ttf" LogicalName="codicon.ttf" />
   </ItemGroup>
 

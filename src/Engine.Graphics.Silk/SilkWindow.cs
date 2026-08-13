@@ -146,11 +146,13 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private readonly Dictionary<uint, VertexT[][]> _uploadedViewportQuadVertices = new();
     private readonly Dictionary<uint, List<RenderCommand>> _pendingViewportDraws = new();
     private readonly Dictionary<uint, SceneLighting> _pendingViewportLighting = new();
+    private readonly Dictionary<uint, DirectionalShadowSettings> _pendingViewportShadows = new();
     private readonly Dictionary<uint, RenderOutputSettings> _pendingViewportOutput = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private readonly HashSet<uint> _pendingViewportRenders = [];
     private uint _nextViewportId = 1;
     private RenderPass _fboRenderPass;
+    private RenderPass _shadowRenderPass;
 
     // 2D overlay vertices (drawn on top of everything in swapchain pass)
     private Vertex[] _overlayVertices = [];
@@ -664,12 +666,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _vk!, _device, MaxFramesInFlight, FindMemoryType, _logger);
         CreateSwapchain();
         CreateFboRenderPass();
+        CreateShadowRenderPass();
         CreateRenderPass();
         CreateGraphicsPipeline();
         CreateUiShapePipeline();
         CreateFboGraphicsPipeline();
         CreateModelPipeline();
         CreateSkinnedModelPipeline();
+        CreateShadowPipelines();
         _persistentTextures = new PersistentTextureStore(_vk!, _device, FindMemoryType,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorPool);
@@ -2209,12 +2213,13 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         {
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout
         };
         var modelLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 3,
+            SetLayoutCount = 4,
             PSetLayouts = descriptorLayouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
@@ -2418,6 +2423,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.SkinPaletteDescriptorSetLayout
         };
         var pushConstantRange = new PushConstantRange
@@ -2428,7 +2434,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var pipelineLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 4,
+            SetLayoutCount = 5,
             PSetLayouts = layouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
@@ -2575,6 +2581,162 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     {
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to {operation}: {result}");
+    }
+
+    /// <summary>Creates static and skinned depth-only directional shadow pipelines.</summary>
+    private void CreateShadowPipelines()
+    {
+        _logger.LogDebug("Creating directional shadow pipelines");
+        var pushConstantRange = new PushConstantRange
+        {
+            StageFlags = ShaderStageFlags.VertexBit,
+            Size = (uint)sizeof(ShadowPushConstants)
+        };
+        var staticLayoutInfo = new PipelineLayoutCreateInfo
+        {
+            SType = StructureType.PipelineLayoutCreateInfo,
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
+        };
+        Check(_vk!.CreatePipelineLayout(_device, &staticLayoutInfo, null,
+            out _pipelines.ShadowLayout), "create shadow pipeline layout");
+        var skinnedLayouts = stackalloc DescriptorSetLayout[]
+        {
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.SkinPaletteDescriptorSetLayout
+        };
+        var skinnedLayoutInfo = new PipelineLayoutCreateInfo
+        {
+            SType = StructureType.PipelineLayoutCreateInfo,
+            SetLayoutCount = 5,
+            PSetLayouts = skinnedLayouts,
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
+        };
+        Check(_vk.CreatePipelineLayout(_device, &skinnedLayoutInfo, null,
+            out _pipelines.SkinnedShadowLayout), "create skinned shadow pipeline layout");
+        _pipelines.ShadowVertexShader = CreateShaderModule("shadow.vert.spv");
+        _pipelines.SkinnedShadowVertexShader = CreateShaderModule("skinned_shadow.vert.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+        try
+        {
+            var staticAttribute = new VertexInputAttributeDescription
+            {
+                Binding = 0,
+                Location = 0,
+                Format = Format.R32G32B32Sfloat,
+                Offset = 0
+            };
+            var skinnedAttributes = stackalloc VertexInputAttributeDescription[]
+            {
+                new() { Binding = 0, Location = 0, Format = Format.R32G32B32Sfloat, Offset = 0 },
+                new() { Binding = 0, Location = 5, Format = Format.R32G32B32A32Uint,
+                    Offset = sizeof(float) * 16u },
+                new() { Binding = 0, Location = 6, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 16u + sizeof(uint) * 4u }
+            };
+            var binding = new VertexInputBindingDescription
+            {
+                Binding = 0,
+                Stride = ForwardModelVertex.Stride,
+                InputRate = VertexInputRate.Vertex
+            };
+            var vertexInput = new PipelineVertexInputStateCreateInfo
+            {
+                SType = StructureType.PipelineVertexInputStateCreateInfo,
+                VertexBindingDescriptionCount = 1,
+                PVertexBindingDescriptions = &binding,
+                VertexAttributeDescriptionCount = 1,
+                PVertexAttributeDescriptions = &staticAttribute
+            };
+            var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+            {
+                SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                Topology = PrimitiveTopology.TriangleList
+            };
+            var dynamicStates = stackalloc[]
+            {
+                DynamicState.Viewport, DynamicState.Scissor, DynamicState.DepthBias
+            };
+            var dynamicState = new PipelineDynamicStateCreateInfo
+            {
+                SType = StructureType.PipelineDynamicStateCreateInfo,
+                DynamicStateCount = 3,
+                PDynamicStates = dynamicStates
+            };
+            var viewportState = new PipelineViewportStateCreateInfo
+            {
+                SType = StructureType.PipelineViewportStateCreateInfo,
+                ViewportCount = 1,
+                ScissorCount = 1
+            };
+            var rasterizer = new PipelineRasterizationStateCreateInfo
+            {
+                SType = StructureType.PipelineRasterizationStateCreateInfo,
+                PolygonMode = PolygonMode.Fill,
+                CullMode = CullModeFlags.None,
+                FrontFace = FrontFace.CounterClockwise,
+                DepthBiasEnable = true,
+                LineWidth = 1f
+            };
+            var multisampling = new PipelineMultisampleStateCreateInfo
+            {
+                SType = StructureType.PipelineMultisampleStateCreateInfo,
+                RasterizationSamples = SampleCountFlags.Count1Bit
+            };
+            var depthStencil = new PipelineDepthStencilStateCreateInfo
+            {
+                SType = StructureType.PipelineDepthStencilStateCreateInfo,
+                DepthTestEnable = true,
+                DepthWriteEnable = true,
+                DepthCompareOp = CompareOp.LessOrEqual
+            };
+            var blending = new PipelineColorBlendStateCreateInfo
+            {
+                SType = StructureType.PipelineColorBlendStateCreateInfo
+            };
+            var stage = new PipelineShaderStageCreateInfo
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = ShaderStageFlags.VertexBit,
+                Module = _pipelines.ShadowVertexShader,
+                PName = (byte*)entryPointName
+            };
+            var pipelineInfo = new GraphicsPipelineCreateInfo
+            {
+                SType = StructureType.GraphicsPipelineCreateInfo,
+                StageCount = 1,
+                PStages = &stage,
+                PVertexInputState = &vertexInput,
+                PInputAssemblyState = &inputAssembly,
+                PViewportState = &viewportState,
+                PRasterizationState = &rasterizer,
+                PMultisampleState = &multisampling,
+                PDepthStencilState = &depthStencil,
+                PColorBlendState = &blending,
+                PDynamicState = &dynamicState,
+                Layout = _pipelines.ShadowLayout,
+                RenderPass = _shadowRenderPass,
+                Subpass = 0
+            };
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                out _pipelines.ShadowPipeline), "create static shadow pipeline");
+            binding.Stride = SkinnedForwardModelVertex.Stride;
+            vertexInput.VertexAttributeDescriptionCount = 3;
+            vertexInput.PVertexAttributeDescriptions = skinnedAttributes;
+            stage.Module = _pipelines.SkinnedShadowVertexShader;
+            pipelineInfo.Layout = _pipelines.SkinnedShadowLayout;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                out _pipelines.SkinnedShadowPipeline), "create skinned shadow pipeline");
+        }
+        finally
+        {
+            SilkMarshal.Free(entryPointName);
+        }
+        _logger.LogInformation("Directional shadow pipelines created");
     }
 
     /// <summary>
@@ -2845,6 +3007,65 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _logger.LogInformation("FBO render pass created ({Samples} MSAA + resolve + depth)", _msaaSamples);
     }
 
+    /// <summary>Creates the sampled depth-only render pass used by directional shadows.</summary>
+    private void CreateShadowRenderPass()
+    {
+        var attachment = new AttachmentDescription
+        {
+            Format = FindDepthFormat(),
+            Samples = SampleCountFlags.Count1Bit,
+            LoadOp = AttachmentLoadOp.Clear,
+            StoreOp = AttachmentStoreOp.Store,
+            StencilLoadOp = AttachmentLoadOp.DontCare,
+            StencilStoreOp = AttachmentStoreOp.DontCare,
+            InitialLayout = ImageLayout.Undefined,
+            FinalLayout = ImageLayout.DepthStencilReadOnlyOptimal
+        };
+        var depthReference = new AttachmentReference
+        {
+            Attachment = 0,
+            Layout = ImageLayout.DepthStencilAttachmentOptimal
+        };
+        var subpass = new SubpassDescription
+        {
+            PipelineBindPoint = PipelineBindPoint.Graphics,
+            PDepthStencilAttachment = &depthReference
+        };
+        var dependencies = stackalloc SubpassDependency[]
+        {
+            new()
+            {
+                SrcSubpass = Vk.SubpassExternal,
+                DstSubpass = 0,
+                SrcStageMask = PipelineStageFlags.FragmentShaderBit,
+                DstStageMask = PipelineStageFlags.EarlyFragmentTestsBit,
+                SrcAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask = AccessFlags.DepthStencilAttachmentWriteBit
+            },
+            new()
+            {
+                SrcSubpass = 0,
+                DstSubpass = Vk.SubpassExternal,
+                SrcStageMask = PipelineStageFlags.LateFragmentTestsBit,
+                DstStageMask = PipelineStageFlags.FragmentShaderBit,
+                SrcAccessMask = AccessFlags.DepthStencilAttachmentWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit
+            }
+        };
+        var renderPassInfo = new RenderPassCreateInfo
+        {
+            SType = StructureType.RenderPassCreateInfo,
+            AttachmentCount = 1,
+            PAttachments = &attachment,
+            SubpassCount = 1,
+            PSubpasses = &subpass,
+            DependencyCount = 2,
+            PDependencies = dependencies
+        };
+        Check(_vk!.CreateRenderPass(_device, &renderPassInfo, null, out _shadowRenderPass),
+            "create directional shadow render pass");
+    }
+
     private void CreateTexturePipeline()
     {
         _logger.LogDebug("Creating texture pipeline");
@@ -3108,13 +3329,17 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var deviceLocalMemoryType = FindMemoryType(0xFFFFFFFF, MemoryPropertyFlags.DeviceLocalBit);
         try
         {
-            fbo.Create(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat,
+            fbo.Create(_vk!, _device, _fboRenderPass, _shadowRenderPass,
+                _swapchainManager!.ImageFormat,
                 FindDepthFormat(), _msaaSamples, deviceLocalMemoryType,
-                _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
+                _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool,
+                _pipelines.ModelTextureDescriptorSetLayout,
+                _pipelines.ModelTextureDescriptorPool);
         }
         catch
         {
-            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool);
+            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool,
+                _pipelines.ModelTextureDescriptorPool);
             throw;
         }
         _viewportFbos[id] = fbo;
@@ -3133,7 +3358,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
         {
-            fbo.Destroy(_vk, _device, _pipelines.TextureDescriptorPool);
+            fbo.Destroy(_vk, _device, _pipelines.TextureDescriptorPool,
+                _pipelines.ModelTextureDescriptorPool);
             _viewportFbos.Remove(viewportId);
         }
 
@@ -3149,6 +3375,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         _pendingViewportDraws.Remove(viewportId);
         _pendingViewportLighting.Remove(viewportId);
+        _pendingViewportShadows.Remove(viewportId);
         _pendingViewportOutput.Remove(viewportId);
         _pendingGridDraws.Remove(viewportId);
         _pendingViewportRenders.Remove(viewportId);
@@ -3221,6 +3448,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (!_pendingViewportDraws.ContainsKey(viewportId))
             _pendingViewportDraws[viewportId] = [];
         _pendingViewportLighting[viewportId] = renderQueue.Lighting;
+        _pendingViewportShadows[viewportId] = renderQueue.Shadows;
         _pendingViewportOutput[viewportId] = renderQueue.Output;
 
         foreach (var command in renderQueue.CommandSpan)
@@ -3467,9 +3695,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             if (fbo.IsDirty)
             {
                 _logger.LogDebug("Recreating viewport {Id} FBO ({Width}x{Height})", id, fbo.Width, fbo.Height);
-                fbo.Recreate(_vk!, _device, _fboRenderPass, _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
+                fbo.Recreate(_vk!, _device, _fboRenderPass, _shadowRenderPass,
+                    _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
                     deviceLocalMemoryType,
-                    _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool);
+                    _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool,
+                    _pipelines.ModelTextureDescriptorSetLayout,
+                    _pipelines.ModelTextureDescriptorPool);
             }
         }
     }
@@ -3998,12 +4229,29 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         // ═══════════════════════════════════════════════════════════════
 
         var clearValues = stackalloc ClearValue[2];
-        var modelDescriptorSets = stackalloc DescriptorSet[3];
-        var skinnedDescriptorSets = stackalloc DescriptorSet[4];
+        var modelDescriptorSets = stackalloc DescriptorSet[4];
+        var skinnedDescriptorSets = stackalloc DescriptorSet[5];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty || !_pendingViewportRenders.Remove(viewportId))
                 continue;
+
+            var hasDraws = _pendingViewportDraws.TryGetValue(viewportId, out var draws) &&
+                draws.Count > 0;
+            var lighting = _pendingViewportLighting.TryGetValue(viewportId,
+                out var submittedLighting) ? submittedLighting : SceneLighting.None;
+            var shadowSettings = _pendingViewportShadows.TryGetValue(viewportId,
+                out var submittedShadows) ? submittedShadows : DirectionalShadowSettings.None;
+            var lightViewProjection = Matrix4x4.Identity;
+            var shadowStrength = 0f;
+            if (hasDraws && shadowSettings.IsEnabled && lighting.Intensity > 0f)
+            {
+                lightViewProjection = CreateDirectionalShadowMatrix(
+                    draws![0].PushConstants, lighting, shadowSettings.MaxDistance);
+                RecordDirectionalShadowPass(commandBuffer, fbo, draws,
+                    lightViewProjection, shadowSettings);
+                shadowStrength = shadowSettings.Strength;
+            }
 
             clearValues[0] = new ClearValue
             {
@@ -4063,13 +4311,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             }
 
             // Replay pending draws
-            if (_pendingViewportDraws.TryGetValue(viewportId, out var draws) && draws.Count > 0)
+            if (hasDraws)
             {
-                var lighting = _pendingViewportLighting.TryGetValue(viewportId,
-                    out var submittedLighting) ? submittedLighting : SceneLighting.None;
                 _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.ViewportPipeline);
 
-                foreach (var draw in draws)
+                foreach (var draw in draws!)
                 {
                     if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
                     {
@@ -4096,12 +4342,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             skinned.NormalTexture);
                         skinnedDescriptorSets[2] = _persistentTextures.GetDescriptor(
                             skinned.MetallicRoughnessTexture);
-                        skinnedDescriptorSets[3] = skinned.PaletteDescriptor;
+                        skinnedDescriptorSets[3] = fbo.ShadowDescriptorSet;
+                        skinnedDescriptorSets[4] = skinned.PaletteDescriptor;
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.SkinnedModelLayout, 0, 4,
+                            _pipelines.SkinnedModelLayout, 0, 5,
                             skinnedDescriptorSets, 0, null);
                         var skinnedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting, skinned.Metallic, skinned.Roughness);
+                            draw.PushConstants, lighting, skinned.Metallic, skinned.Roughness,
+                            lightViewProjection, shadowStrength);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
                             ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
                             0, (uint)sizeof(ModelPushConstants),
@@ -4130,10 +4378,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             indexed.NormalTexture);
                         modelDescriptorSets[2] = _persistentTextures.GetDescriptor(
                             indexed.MetallicRoughnessTexture);
+                        modelDescriptorSets[3] = fbo.ShadowDescriptorSet;
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.ModelLayout, 0, 3, modelDescriptorSets, 0, null);
+                            _pipelines.ModelLayout, 0, 4, modelDescriptorSets, 0, null);
                         var indexedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting, indexed.Metallic, indexed.Roughness);
+                            draw.PushConstants, lighting, indexed.Metallic, indexed.Roughness,
+                            lightViewProjection, shadowStrength);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
                             ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
                             0, (uint)sizeof(ModelPushConstants),
@@ -4156,11 +4406,144 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     _vk.CmdDraw(commandBuffer, binding.VertexCount, 1, 0, 0);
                 }
 
-                draws.Clear();
+                draws!.Clear();
             }
 
             _vk.CmdEndRenderPass(commandBuffer);
         }
+    }
+
+    /// <summary>Records static and skinned casters into one view's directional shadow map.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="fbo">View owning the shadow target.</param>
+    /// <param name="draws">Submitted scene draws.</param>
+    /// <param name="lightViewProjection">World-to-shadow clip transform.</param>
+    /// <param name="settings">Active shadow settings.</param>
+    private void RecordDirectionalShadowPass(
+        CommandBuffer commandBuffer,
+        ViewportFbo fbo,
+        List<RenderCommand> draws,
+        Matrix4x4 lightViewProjection,
+        DirectionalShadowSettings settings)
+    {
+        var clearValue = new ClearValue
+        {
+            DepthStencil = new ClearDepthStencilValue { Depth = 1f }
+        };
+        var beginInfo = new RenderPassBeginInfo
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = _shadowRenderPass,
+            Framebuffer = fbo.ShadowFramebuffer,
+            RenderArea = new Rect2D
+            {
+                Extent = new Extent2D
+                {
+                    Width = ViewportFbo.ShadowResolution,
+                    Height = ViewportFbo.ShadowResolution
+                }
+            },
+            ClearValueCount = 1,
+            PClearValues = &clearValue
+        };
+        _vk!.CmdBeginRenderPass(commandBuffer, &beginInfo, SubpassContents.Inline);
+        var viewport = new Viewport
+        {
+            Width = ViewportFbo.ShadowResolution,
+            Height = ViewportFbo.ShadowResolution,
+            MinDepth = 0f,
+            MaxDepth = 1f
+        };
+        _vk.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+        var scissor = new Rect2D
+        {
+            Extent = new Extent2D
+            {
+                Width = ViewportFbo.ShadowResolution,
+                Height = ViewportFbo.ShadowResolution
+            }
+        };
+        _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+        _vk.CmdSetDepthBias(commandBuffer, settings.DepthBias, 0f, settings.SlopeBias);
+        for (var index = 0; index < draws.Count; index++)
+        {
+            var draw = draws[index];
+            if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
+            {
+                if (!draw.SkinPalette.IsValid)
+                    continue;
+                var binding = _persistentSkinnedMeshes.GetBinding(
+                    draw.Mesh, draw.SkinPalette, _activeFrameIndex);
+                if (binding.IndexCount == 0)
+                    continue;
+                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                    _pipelines.SkinnedShadowPipeline);
+                var vertexBuffer = binding.VertexBuffer;
+                var offset = 0UL;
+                _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+                _vk.CmdBindIndexBuffer(commandBuffer, binding.IndexBuffer, 0, IndexType.Uint32);
+                var paletteDescriptor = binding.PaletteDescriptor;
+                _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                    _pipelines.SkinnedShadowLayout, 4, 1, &paletteDescriptor, 0, null);
+                var constants = new ShadowPushConstants
+                {
+                    Model = draw.PushConstants.Model,
+                    LightViewProjection = lightViewProjection
+                };
+                _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedShadowLayout,
+                    ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants), &constants);
+                _vk.CmdDrawIndexed(commandBuffer, binding.IndexCount, 1, 0, 0, 0);
+                continue;
+            }
+            if (!_persistentIndexedMeshes!.Contains(draw.Mesh))
+                continue;
+            var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
+            if (indexed.IndexCount == 0)
+                continue;
+            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                _pipelines.ShadowPipeline);
+            var indexedVertexBuffer = indexed.VertexBuffer;
+            var indexedOffset = 0UL;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                &indexedVertexBuffer, &indexedOffset);
+            _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0, IndexType.Uint32);
+            var indexedConstants = new ShadowPushConstants
+            {
+                Model = draw.PushConstants.Model,
+                LightViewProjection = lightViewProjection
+            };
+            _vk.CmdPushConstants(commandBuffer, _pipelines.ShadowLayout,
+                ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants),
+                &indexedConstants);
+            _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
+        }
+        _vk.CmdEndRenderPass(commandBuffer);
+    }
+
+    /// <summary>Builds a camera-centered directional-light shadow transform.</summary>
+    /// <param name="camera">Camera transforms from one submitted draw.</param>
+    /// <param name="lighting">Resolved directional light.</param>
+    /// <param name="maxDistance">Square world-space shadow coverage.</param>
+    /// <returns>Combined light view and Vulkan-corrected projection.</returns>
+    private static Matrix4x4 CreateDirectionalShadowMatrix(
+        PushConstants camera,
+        SceneLighting lighting,
+        float maxDistance)
+    {
+        var inverseView = Matrix4x4.Invert(camera.View, out var inverse)
+            ? inverse : Matrix4x4.Identity;
+        var cameraPosition = inverseView.Translation;
+        var cameraForward = Vector3.Normalize(Vector3.TransformNormal(-Vector3.UnitZ, inverseView));
+        var center = cameraPosition + cameraForward * (maxDistance * 0.3f);
+        var directionToLight = Vector3.Normalize(lighting.DirectionToLight);
+        var up = MathF.Abs(Vector3.Dot(directionToLight, Vector3.UnitY)) > 0.95f
+            ? Vector3.UnitZ : Vector3.UnitY;
+        var view = Matrix4x4.CreateLookAt(
+            center + directionToLight * maxDistance, center, up);
+        var projection = Matrix4x4.CreateOrthographic(
+            maxDistance * 2f, maxDistance * 2f, 0.1f, maxDistance * 3f);
+        projection.M22 = -projection.M22;
+        return view * projection;
     }
 
     private void RecordSwapchainPass(CommandBuffer commandBuffer, uint imageIndex)
@@ -4598,7 +4981,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         // Cleanup viewport FBOs and their vertex buffers
         foreach (var (id, fbo) in _viewportFbos)
-            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool);
+            fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool,
+                _pipelines.ModelTextureDescriptorPool);
         _viewportFbos.Clear();
 
         foreach (var buffers in _viewportQuadBuffers.Values)
@@ -4652,6 +5036,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _pipelines?.Dispose();
         if (_device.Handle != 0 && _fboRenderPass.Handle != 0)
             _vk.DestroyRenderPass(_device, _fboRenderPass, null);
+        if (_device.Handle != 0 && _shadowRenderPass.Handle != 0)
+            _vk.DestroyRenderPass(_device, _shadowRenderPass, null);
 
         if (_device.Handle != 0 && _renderPass.Handle != 0)
             _vk.DestroyRenderPass(_device, _renderPass, null);

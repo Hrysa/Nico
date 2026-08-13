@@ -50,7 +50,7 @@ public sealed class SceneLightingTests
         Assert.InRange(Vector3.Distance(Vector3.UnitX, actual.DirectionToLight), 0f, 0.00001f);
     }
 
-    /// <summary>Packs resolved lighting after the three renderer-independent matrices.</summary>
+    /// <summary>Packs combined camera and light transforms with resolved lighting.</summary>
     [Fact]
     public void ModelPushConstants_Create_PreservesTransformsAndLighting()
     {
@@ -63,15 +63,17 @@ public sealed class SceneLightingTests
         var lighting = new SceneLighting(Vector3.UnitY,
             new Vector3(0.2f, 0.4f, 0.6f), 3f, 0.25f);
 
-        var actual = ModelPushConstants.Create(transforms, lighting, 0.35f, 0.65f);
+        var lightViewProjection = Matrix4x4.CreateTranslation(4f, 5f, 6f);
+        var actual = ModelPushConstants.Create(
+            transforms, lighting, 0.35f, 0.65f, lightViewProjection, 0.8f);
 
         Assert.Equal(transforms.Model, actual.Model);
-        Assert.Equal(transforms.View, actual.View);
-        Assert.Equal(transforms.Projection, actual.Projection);
+        Assert.Equal(transforms.View * transforms.Projection, actual.ViewProjection);
+        Assert.Equal(lightViewProjection, actual.LightViewProjection);
         Assert.Equal(new Vector4(0f, 1f, 0f, 3f), actual.LightDirectionIntensity);
         Assert.Equal(new Vector4(0.2f, 0.4f, 0.6f, 0.25f), actual.LightColorAmbient);
         Assert.Equal(new Vector4(Matrix4x4.Invert(transforms.View, out var inverseView)
             ? inverseView.Translation : Vector3.Zero, 0.35f), actual.CameraPositionMetallic);
-        Assert.Equal(new Vector4(0.65f, 0f, 0f, 0f), actual.MaterialFactors);
+        Assert.Equal(new Vector4(0.65f, 0.8f, 0f, 0f), actual.MaterialFactors);
     }
 }

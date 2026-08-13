@@ -62,6 +62,72 @@ public enum RenderPipelineStage
     PostProcess
 }
 
+/// <summary>Configures one directional-light shadow-map pass.</summary>
+public readonly record struct DirectionalShadowSettings
+{
+    /// <summary>Creates validated directional shadow settings.</summary>
+    /// <param name="maxDistance">World-space shadow coverage around the camera.</param>
+    /// <param name="depthBias">Constant raster depth bias.</param>
+    /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
+    /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    private DirectionalShadowSettings(
+        float maxDistance,
+        float depthBias,
+        float slopeBias,
+        float strength)
+    {
+        MaxDistance = maxDistance;
+        DepthBias = depthBias;
+        SlopeBias = slopeBias;
+        Strength = strength;
+    }
+
+    /// <summary>Gets whether this configuration requests shadow rendering.</summary>
+    public bool IsEnabled => Strength > 0f;
+
+    /// <summary>Gets world-space shadow coverage around the camera.</summary>
+    public float MaxDistance { get; }
+
+    /// <summary>Gets constant raster depth bias.</summary>
+    public float DepthBias { get; }
+
+    /// <summary>Gets slope-scaled raster depth bias.</summary>
+    public float SlopeBias { get; }
+
+    /// <summary>Gets direct-light shadow attenuation from zero to one.</summary>
+    public float Strength { get; }
+
+    /// <summary>Gets disabled shadow rendering.</summary>
+    public static DirectionalShadowSettings None { get; } = default;
+
+    /// <summary>Gets balanced defaults for the built-in forward pipeline.</summary>
+    public static DirectionalShadowSettings Default { get; } =
+        new(30f, 1.25f, 1.75f, 1f);
+
+    /// <summary>Creates validated directional shadow settings.</summary>
+    /// <param name="maxDistance">World-space shadow coverage around the camera.</param>
+    /// <param name="depthBias">Constant raster depth bias.</param>
+    /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
+    /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    /// <returns>Validated shadow settings.</returns>
+    public static DirectionalShadowSettings Create(
+        float maxDistance,
+        float depthBias,
+        float slopeBias,
+        float strength)
+    {
+        if (!float.IsFinite(maxDistance) || maxDistance <= 0f)
+            throw new ArgumentOutOfRangeException(nameof(maxDistance));
+        if (!float.IsFinite(depthBias) || depthBias < 0f)
+            throw new ArgumentOutOfRangeException(nameof(depthBias));
+        if (!float.IsFinite(slopeBias) || slopeBias < 0f)
+            throw new ArgumentOutOfRangeException(nameof(slopeBias));
+        if (!float.IsFinite(strength) || strength < 0f || strength > 1f)
+            throw new ArgumentOutOfRangeException(nameof(strength));
+        return new DirectionalShadowSettings(maxDistance, depthBias, slopeBias, strength);
+    }
+}
+
 /// <summary>Provides backend-independent state shared by one pipeline execution.</summary>
 public struct RenderPipelineContext
 {
@@ -213,6 +279,31 @@ public sealed class ForwardOpaqueRenderPass : RenderPipelinePass
     public override void Execute(ref RenderPipelineContext context) => context.SubmitScene();
 }
 
+/// <summary>Requests a directional shadow map before opaque forward rendering.</summary>
+public sealed class DirectionalShadowRenderPass : RenderPipelinePass
+{
+    private readonly DirectionalShadowSettings _settings;
+
+    /// <summary>Creates a shadow pass using the built-in settings.</summary>
+    public DirectionalShadowRenderPass() : this(DirectionalShadowSettings.Default)
+    {
+    }
+
+    /// <summary>Creates a shadow pass using explicit settings.</summary>
+    /// <param name="settings">Validated shadow-map settings.</param>
+    public DirectionalShadowRenderPass(DirectionalShadowSettings settings)
+        : base(RenderPipelineStage.Shadows)
+    {
+        if (!settings.IsEnabled)
+            throw new ArgumentException("A shadow pass requires enabled settings.", nameof(settings));
+        _settings = settings;
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) =>
+        context.Queue.Shadows = _settings;
+}
+
 /// <summary>Provides the engine's initial configurable forward render pipeline.</summary>
 public sealed class BasicForwardRenderPipeline : RenderPipeline
 {
@@ -222,7 +313,7 @@ public sealed class BasicForwardRenderPipeline : RenderPipeline
     /// <summary>Creates shadow, depth, opaque, transparent, and post-process stages.</summary>
     public BasicForwardRenderPipeline()
         : base(
-            new EmptyRenderPipelinePass(RenderPipelineStage.Shadows),
+            new DirectionalShadowRenderPass(),
             new EmptyRenderPipelinePass(RenderPipelineStage.DepthPrepass),
             new ForwardOpaqueRenderPass(),
             new EmptyRenderPipelinePass(RenderPipelineStage.Transparent),

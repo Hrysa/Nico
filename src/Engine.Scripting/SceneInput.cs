@@ -15,6 +15,8 @@ public sealed class SceneInput : IDisposable
     private Vector2 _pointerPosition;
     private Vector2 _pointerDelta;
     private bool _hasLegacyPointerPosition;
+    private bool _pointerCaptured;
+    private bool _discardNextPointerDelta;
     private bool _disposed;
 
     /// <summary>Creates keyboard and pointer state backed by an optional runtime input source.</summary>
@@ -85,6 +87,11 @@ public sealed class SceneInput : IDisposable
     /// <param name="captured">True to hide and capture the pointer; false to restore it.</param>
     public void SetPointerCaptured(bool captured)
     {
+        if (_pointerCaptured == captured)
+            return;
+        _pointerCaptured = captured;
+        _discardNextPointerDelta = true;
+        _hasLegacyPointerPosition = false;
         _source?.SetMouseCaptured(captured);
     }
 
@@ -140,6 +147,11 @@ public sealed class SceneInput : IDisposable
     private void HandlePointerMoved(PointerMoveEvent pointerEvent)
     {
         _pointerPosition = pointerEvent.Position;
+        if (_discardNextPointerDelta)
+        {
+            _discardNextPointerDelta = false;
+            return;
+        }
         _pointerDelta += pointerEvent.Delta;
     }
 
@@ -155,6 +167,13 @@ public sealed class SceneInput : IDisposable
     /// <param name="position">Logical host position.</param>
     private void HandleLegacyPointerMoved(Vector2 position)
     {
+        if (_discardNextPointerDelta)
+        {
+            _pointerPosition = position;
+            _hasLegacyPointerPosition = true;
+            _discardNextPointerDelta = false;
+            return;
+        }
         if (_hasLegacyPointerPosition)
             _pointerDelta += position - _pointerPosition;
         _pointerPosition = position;

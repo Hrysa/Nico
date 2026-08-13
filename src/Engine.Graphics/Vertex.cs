@@ -90,22 +90,22 @@ public struct PushConstants
     public Matrix4x4 Projection;
 }
 
-/// <summary>Stores model transforms and basic forward-lighting parameters.</summary>
+/// <summary>Stores model transforms, shadow projection, and forward-lighting parameters.</summary>
 public struct ModelPushConstants
 {
     /// <summary>Object-to-world transform.</summary>
     public Matrix4x4 Model;
-    /// <summary>World-to-camera transform.</summary>
-    public Matrix4x4 View;
-    /// <summary>Camera projection transform.</summary>
-    public Matrix4x4 Projection;
+    /// <summary>Combined world-to-camera and camera projection transform.</summary>
+    public Matrix4x4 ViewProjection;
+    /// <summary>Combined world-to-light and light projection transform.</summary>
+    public Matrix4x4 LightViewProjection;
     /// <summary>XYZ direction toward light and W direct intensity.</summary>
     public Vector4 LightDirectionIntensity;
     /// <summary>RGB linear light color and W ambient intensity.</summary>
     public Vector4 LightColorAmbient;
     /// <summary>XYZ world-space camera position and W metallic factor.</summary>
     public Vector4 CameraPositionMetallic;
-    /// <summary>X roughness factor; remaining channels are reserved.</summary>
+    /// <summary>X roughness factor and Y shadow strength.</summary>
     public Vector4 MaterialFactors;
 
     /// <summary>Combines camera/object constants with one queue's lighting.</summary>
@@ -113,26 +113,40 @@ public struct ModelPushConstants
     /// <param name="lighting">Resolved scene lighting.</param>
     /// <param name="metallic">Material metallic factor.</param>
     /// <param name="roughness">Material roughness factor.</param>
+    /// <param name="lightViewProjection">World-to-shadow clip transform.</param>
+    /// <param name="shadowStrength">Direct-light shadow attenuation.</param>
     /// <returns>Constants consumed by static and skinned forward shaders.</returns>
     public static ModelPushConstants Create(
         PushConstants transforms,
         SceneLighting lighting,
         float metallic = 0f,
-        float roughness = 1f)
+        float roughness = 1f,
+        Matrix4x4 lightViewProjection = default,
+        float shadowStrength = 0f)
     {
         var cameraPosition = Matrix4x4.Invert(transforms.View, out var inverseView)
             ? inverseView.Translation : Vector3.Zero;
         return new ModelPushConstants
         {
             Model = transforms.Model,
-            View = transforms.View,
-            Projection = transforms.Projection,
+            ViewProjection = transforms.View * transforms.Projection,
+            LightViewProjection = lightViewProjection,
             LightDirectionIntensity = new Vector4(lighting.DirectionToLight, lighting.Intensity),
             LightColorAmbient = new Vector4(lighting.Color, lighting.AmbientIntensity),
             CameraPositionMetallic = new Vector4(cameraPosition, Math.Clamp(metallic, 0f, 1f)),
-            MaterialFactors = new Vector4(Math.Clamp(roughness, 0f, 1f), 0f, 0f, 0f)
+            MaterialFactors = new Vector4(
+                Math.Clamp(roughness, 0f, 1f), Math.Clamp(shadowStrength, 0f, 1f), 0f, 0f)
         };
     }
+}
+
+/// <summary>Stores one object's transform for a directional shadow depth pass.</summary>
+public struct ShadowPushConstants
+{
+    /// <summary>Object-to-world transform.</summary>
+    public Matrix4x4 Model;
+    /// <summary>Combined world-to-light and light projection transform.</summary>
+    public Matrix4x4 LightViewProjection;
 }
 
 /// <summary>Stores texture transforms and presentation-effect parameters.</summary>

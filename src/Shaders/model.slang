@@ -1,8 +1,8 @@
 struct PushConstants
 {
     row_major float4x4 model;
-    row_major float4x4 view;
-    row_major float4x4 projection;
+    row_major float4x4 viewProjection;
+    row_major float4x4 lightViewProjection;
     float4 lightDirectionIntensity;
     float4 lightColorAmbient;
     float4 cameraPositionMetallic;
@@ -20,6 +20,9 @@ Sampler2D normalTexture;
 
 [[vk::binding(0, 2)]]
 Sampler2D metallicRoughnessTexture;
+
+[[vk::binding(0, 3)]]
+Sampler2D shadowMap;
 
 struct VertexInput
 {
@@ -45,7 +48,7 @@ VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     float4 worldPosition = mul(float4(input.position, 1.0), pc.model);
-    output.position = mul(mul(worldPosition, pc.view), pc.projection);
+    output.position = mul(worldPosition, pc.viewProjection);
     output.worldPosition = worldPosition.xyz;
     output.worldNormal = normalize(mul(float4(input.normal, 0.0), pc.model).xyz);
     output.worldTangent = float4(
@@ -75,6 +78,31 @@ float3 FresnelSchlick(float cosine, float3 reflectance)
 {
     return reflectance + (float3(1.0, 1.0, 1.0) - reflectance) *
         pow(saturate(1.0 - cosine), 5.0);
+}
+
+float ShadowVisibility(float3 worldPosition, float normalDotLight)
+{
+    if (pc.materialFactors.y <= 0.0)
+        return 1.0;
+    float4 lightClip = mul(float4(worldPosition, 1.0), pc.lightViewProjection);
+    float3 projected = lightClip.xyz / lightClip.w;
+    float2 uv = projected.xy * 0.5 + 0.5;
+    if (projected.z <= 0.0 || projected.z >= 1.0 ||
+        any(uv < float2(0.0, 0.0)) || any(uv > float2(1.0, 1.0)))
+        return 1.0;
+    float bias = max(0.0015 * (1.0 - normalDotLight), 0.00035);
+    float occluded = 0.0;
+    const float texel = 1.0 / 2048.0;
+    for (int y = 0; y <= 1; y++)
+    {
+        for (int x = 0; x <= 1; x++)
+        {
+            float2 offset = (float2(x, y) - 0.5) * texel;
+            float depth = shadowMap.Sample(uv + offset).r;
+            occluded += projected.z - bias > depth ? 1.0 : 0.0;
+        }
+    }
+    return 1.0 - pc.materialFactors.y * occluded / 4.0;
 }
 
 [shader("fragment")]
@@ -110,9 +138,11 @@ float4 fragmentMain(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_
         max(4.0 * normalDotView * normalDotLight, 0.0001);
     float3 diffuseWeight = (float3(1.0, 1.0, 1.0) - fresnel) * (1.0 - metallic);
     float3 radiance = pc.lightColorAmbient.rgb * pc.lightDirectionIntensity.w;
+    float visibility = ShadowVisibility(input.worldPosition, normalDotLight);
     float3 direct = (diffuseWeight * surfaceColor.rgb / 3.14159265 + specular) *
-        radiance * normalDotLight;
+        radiance * normalDotLight * visibility;
     float3 ambient = (surfaceColor.rgb * (1.0 - metallic) + reflectance * 0.25) *
         pc.lightColorAmbient.rgb * pc.lightColorAmbient.w;
-    return float4(ambient + direct, surfaceColor.a);
+    float ambientVisibility = lerp(1.0, visibility, 0.5);
+    return float4(ambient * ambientVisibility + direct, surfaceColor.a);
 }

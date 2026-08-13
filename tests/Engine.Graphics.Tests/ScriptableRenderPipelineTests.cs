@@ -14,10 +14,28 @@ public sealed class ScriptableRenderPipelineTests
 
         Assert.Equal(5, passes.Length);
         Assert.Equal(RenderPipelineStage.Shadows, passes[0].Stage);
+        Assert.IsType<DirectionalShadowRenderPass>(passes[0]);
         Assert.Equal(RenderPipelineStage.DepthPrepass, passes[1].Stage);
         Assert.Equal(RenderPipelineStage.Opaque, passes[2].Stage);
         Assert.Equal(RenderPipelineStage.Transparent, passes[3].Stage);
         Assert.Equal(RenderPipelineStage.PostProcess, passes[4].Stage);
+    }
+
+    /// <summary>Applies validated directional shadow settings at the SRP boundary.</summary>
+    [Fact]
+    public void DirectionalShadowPass_Render_PublishesSettingsToBackend()
+    {
+        var settings = DirectionalShadowSettings.Create(80f, 1f, 2f, 0.7f);
+        var pipeline = new RenderPipeline(
+            new DirectionalShadowRenderPass(settings), new ForwardOpaqueRenderPass());
+        var submitter = new RecordingSubmitter();
+        var queue = new RenderQueue();
+
+        pipeline.Render(submitter, new RenderViewHandle(1), queue);
+
+        Assert.Equal(settings, queue.Shadows);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            DirectionalShadowSettings.Create(0f, 1f, 2f, 1f));
     }
 
     /// <summary>Runs setup, execution, and cleanup in configured pass order.</summary>

@@ -23,6 +23,9 @@ public sealed class RenderQueue
     /// <summary>Gets or sets lighting applied to model submissions in this queue.</summary>
     public SceneLighting Lighting { get; set; } = SceneLighting.None;
 
+    /// <summary>Gets or sets directional shadow rendering requested by the active pipeline.</summary>
+    public DirectionalShadowSettings Shadows { get; set; } = DirectionalShadowSettings.None;
+
     /// <summary>Gets or sets presentation effects applied to this rendered view.</summary>
     public RenderOutputSettings Output { get; set; } = RenderOutputSettings.None;
 
@@ -62,6 +65,7 @@ public sealed class RenderQueue
     public void Clear()
     {
         _commands.Clear();
+        Shadows = DirectionalShadowSettings.None;
         Output = RenderOutputSettings.None;
     }
 }
