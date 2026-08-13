@@ -90,7 +90,8 @@ var options = new WindowOptions
     CustomTitleBar = true,
     IsEventDriven = true,
     TargetFrameRate = 120d,
-    PresentationMode = PresentationModePreference.Immediate
+    PresentationMode = PresentationModePreference.Immediate,
+    MsaaSamples = 1
 };
 
 logger.LogInformation("Initializing window...");
@@ -294,7 +295,7 @@ void SynchronizeMainViewportPresentations()
             renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
     }
     viewportRenderer.SynchronizeSceneVisibility(
-        detachedSceneWindow is null && sceneViewport.IsEffectivelyVisible);
+        detachedSceneWindow is null && sceneViewportPresentation.IsPresented);
     if (detachedGameWindow is null)
     {
         gameViewportPresentation.Synchronize(window, out var gameTargetResized);
@@ -360,7 +361,7 @@ var requestedFileSystemExpansion = new HashSet<string>(StringComparer.Ordinal);
 var createdObjectIndex = 1;
 var profilerRefreshPending = 0;
 long workspaceSaveTimestamp = 0;
-CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+SetProfilerEnabled(!editorView.Profiler.IsPaused);
 window.FrameProfiled += sample =>
 {
     if (dockWorkspace.IsTabSelected(EditorDockWorkspace.ProfilerId) &&
@@ -425,7 +426,7 @@ editorView.Profiler.Click += () =>
 {
     if (editorView.Profiler.SelectFrame(lastMousePos))
     {
-        CpuProfiler.Enabled = false;
+        SetProfilerEnabled(false);
         editorView.ProfilerPauseLabel.Text = "Record";
     }
 };
@@ -753,7 +754,8 @@ void UpdatePlayModeStart(double deltaTime)
                 LoadAssetMeshResources(assetMesh);
         }
         candidateHost.LoadScene(candidateScene.Root, window,
-            viewportRenderer.AnimationService, gameRenderingService);
+            viewportRenderer.AnimationService, gameRenderingService,
+            new SceneAssetRegistry(path => assetDatabase.FindByPath(path)?.Id));
         candidatePhysicsWorld = new PhysicsWorld(
             ResolveCollisionMeshResource, ResolveTerrainResource);
         candidatePhysicsWorld.EnableInterpolation = true;
@@ -1124,7 +1126,7 @@ void ToggleProfiler()
     if (!dockSession.OpenPanel(
             EditorDockWorkspace.ProfilerId, EditorDockWorkspace.GameId))
         return;
-    CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+    SetProfilerEnabled(!editorView.Profiler.IsPaused);
     ResizeEditor(width, height);
     window.RequestFrame();
 }
@@ -1155,7 +1157,7 @@ void SetDockPanelVisible(string panelId, bool visible)
         return;
     }
     if (visible && panelId == EditorDockWorkspace.ProfilerId)
-        CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+        SetProfilerEnabled(!editorView.Profiler.IsPaused);
     ResizeEditor(width, height);
     ResizeViewportTargets();
     window.RequestFrame();
@@ -1186,8 +1188,16 @@ void SynchronizeWindowMenuChecks()
 void ToggleProfilerPause()
 {
     editorView.Profiler.SetPaused(!editorView.Profiler.IsPaused);
-    CpuProfiler.Enabled = !editorView.Profiler.IsPaused;
+    SetProfilerEnabled(!editorView.Profiler.IsPaused);
     editorView.ProfilerPauseLabel.Text = editorView.Profiler.IsPaused ? "Record" : "Pause";
+}
+
+/// <summary>Enables or disables all frame instrumentation owned by the Profiler.</summary>
+/// <param name="enabled">Whether new CPU and GPU measurements should be captured.</param>
+void SetProfilerEnabled(bool enabled)
+{
+    CpuProfiler.Enabled = enabled;
+    GpuProfiling.Enabled = enabled;
 }
 
 /// <summary>Closes the hierarchy's object-creation menu.</summary>
@@ -1826,10 +1836,9 @@ void LoadAssetMeshResources(
 /// <param name="skin">Target skinned resource.</param>
 /// <returns>Stable aliased clips bound to the target skeleton.</returns>
 AnimationClipResource[] ResolveAnimationSetClips(
-    AnimationSet animationSet,
+    AssetReference setReference,
     SkinnedMeshResource skin)
 {
-    var setReference = animationSet.Reference;
     var setRecord = assetDatabase.Find(setReference.Asset)
         ?? throw new FileNotFoundException(
             $"Animation set asset '{setReference.Asset}' is missing.");
@@ -3223,7 +3232,10 @@ window.Update += delta =>
     modelPreviewController.Update(delta);
     var sceneContinuous = flyCamera.IsActive || scriptHost is not null;
     var gameContinuous = scriptHost is not null;
-    var sceneVisible = sceneViewport.IsEffectivelyVisible;
+    var sceneVisible = detachedSceneWindow is null
+        ? sceneViewportPresentation.IsPresented
+        : sceneViewport.IsEffectivelyVisible && sceneViewport.Width > 0f &&
+            sceneViewport.Height > 0f;
     var gameVisible = gameViewport.IsEffectivelyVisible;
     viewportRenderer.SynchronizeSceneVisibility(
         detachedSceneWindow is null && sceneVisible);
@@ -3238,7 +3250,7 @@ window.Update += delta =>
         && gameVisible && (gameContinuous || gameInvalid))
         viewportRenderer.RenderGame(gameViewport);
     secondaryWindows.PumpFrames();
-    if (detachedSceneWindow is null && sceneViewport.IsEffectivelyVisible &&
+    if (detachedSceneWindow is null && sceneViewportPresentation.IsPresented &&
         renderScheduler.Consume(RenderInvalidation.SceneViewport))
         viewportRenderer.RenderScene(sceneViewport, lastMousePos);
     if (detachedGameWindow is null && gameViewport.IsEffectivelyVisible &&

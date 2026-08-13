@@ -8,15 +8,11 @@ namespace ExampleGame;
 /// <summary>Moves a dynamic character relative to an independently orbiting third-person camera.</summary>
 public sealed partial class ThirdPersonController : SceneScript
 {
-    private static readonly AnimationSet LocomotionAnimations = new(new AssetReference(
-        new AssetId(Guid.Parse("019ff038-6e1e-7a7d-bd1d-01a67bb65285")), "main"));
     private const float DegreesToRadians = MathF.PI / 180f;
     private const float MinimumPitch = -80f * DegreesToRadians;
     private const float MaximumPitch = 80f * DegreesToRadians;
     private RigidBodyComponent _body = null!;
     private PerspectiveCamera? _camera;
-    private AnimationController _animation = null!;
-    private bool _isRunning;
     private float _cameraYaw;
     private float _cameraPitch = -45f * DegreesToRadians;
     private bool _cameraOrbitActive;
@@ -51,9 +47,6 @@ public sealed partial class ThirdPersonController : SceneScript
         _body.LinearDamping = 0.1f;
         if (Owner.GetComponent<ColliderComponent>() is null)
             AddDefaultCollider();
-        _animation = Scene.Animation.Bind(Owner, LocomotionAnimations);
-        _animation.TryPlay("Idle", out _, 0f);
-
         _camera = Scene.FindNode<PerspectiveCamera>("GameCamera");
         if (_camera is not null && Owner is Node3D owner3D)
         {
@@ -90,10 +83,8 @@ public sealed partial class ThirdPersonController : SceneScript
         }
         _body.LinearVelocity = velocity;
 
-        var isMoving = movement.LengthSquared() > float.Epsilon;
-        if (isMoving)
+        if (movement.LengthSquared() > float.Epsilon)
             Owner.Rotation = Owner.Rotation with { Y = MathF.Atan2(movement.X, movement.Z) };
-        UpdateLocomotionAnimation(isMoving);
     }
 
     /// <inheritdoc />
@@ -136,17 +127,6 @@ public sealed partial class ThirdPersonController : SceneScript
         var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
         var movement = right * horizontal + forward * vertical;
         return movement.LengthSquared() > 1f ? Vector3.Normalize(movement) : movement;
-    }
-
-    /// <summary>Cross-fades between stable locomotion aliases when movement changes.</summary>
-    /// <param name="isMoving">Whether horizontal movement input is active.</param>
-    private void UpdateLocomotionAnimation(bool isMoving)
-    {
-        if (_isRunning == isMoving)
-            return;
-        _isRunning = isMoving;
-        _animation.TryPlay(isMoving ? "Run" : "Idle", out _,
-            isMoving ? 0.15f : 0.2f);
     }
 
     /// <summary>Applies right-pointer drag to the independent camera orbit.</summary>

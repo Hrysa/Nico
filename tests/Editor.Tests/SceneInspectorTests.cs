@@ -237,8 +237,8 @@ public class SceneInspectorTests
 
             Assert.True(attached);
             Assert.Equal(script.Id, node.ScriptId);
-            Assert.Equal(script.ProjectPath, Assert.IsType<TextField>(
-                FindByName<TextField>(inspector, "ScriptAssetField0")).Text);
+            Assert.Equal(Path.GetFileName(script.ProjectPath), Assert.IsType<Label>(
+                FindByName<Label>(inspector, "ScriptHeader0")).Text);
             Assert.Equal(string.Empty, Assert.IsType<TextField>(
                 FindByName<TextField>(inspector, "ScriptAssetField")).Text);
         }
@@ -264,19 +264,21 @@ public class SceneInspectorTests
 
         inspector.Bind(node);
 
-        Assert.Equal("First.cs", Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "ScriptAssetField0")).Text);
-        Assert.Equal("Second.cs", Assert.IsType<TextField>(
-            FindByName<TextField>(inspector, "ScriptAssetField1")).Text);
+        Assert.Equal("First.cs", Assert.IsType<Label>(
+            FindByName<Label>(inspector, "ScriptHeader0")).Text);
+        Assert.Equal("Second.cs", Assert.IsType<Label>(
+            FindByName<Label>(inspector, "ScriptHeader1")).Text);
+        Assert.Null(FindByName<TextField>(inspector, "ScriptAssetField0"));
+        Assert.Null(FindByName<TextField>(inspector, "ScriptAssetField1"));
         Assert.Equal("Drop another script here", Assert.IsType<TextField>(
             FindByName<TextField>(inspector, "ScriptAssetField")).Placeholder);
-        Assert.NotNull(FindByName<Button>(inspector, "ScriptRemove0"));
-        Assert.NotNull(FindByName<Button>(inspector, "ScriptRemove1"));
+        Assert.NotNull(FindByName<Button>(inspector, "Script0Settings"));
+        Assert.NotNull(FindByName<Button>(inspector, "Script1Settings"));
     }
 
     /// <summary>Removes only the script represented by the clicked component row.</summary>
     [Fact]
-    public void ScriptRemoveButton_RemovesExactComponentAndKeepsAddSlot()
+    public void ScriptSettingsMenu_Remove_RemovesExactComponentAndKeepsAddSlot()
     {
         var first = new ScriptComponent(AssetId.New());
         var second = new ScriptComponent(AssetId.New());
@@ -288,14 +290,106 @@ public class SceneInspectorTests
         inspector.NodeChanged += _ => changes++;
         inspector.Bind(node);
 
-        Assert.IsType<Button>(FindByName<Button>(
-            inspector, "ScriptRemove0")).InvokeClick();
+        var settings = Assert.IsType<Button>(FindByName<Button>(
+            inspector, "Script0Settings"));
+        settings.InvokeClick();
+        var menu = Assert.IsType<ContextMenu>(FindByName<ContextMenu>(
+            inspector, "Script0SettingsMenu"));
+        Assert.True(menu.IsOpen);
+        Assert.Equal("Remove", Assert.Single(menu.Items).LabelText);
+        menu.Items[0].InvokeClick();
 
         Assert.DoesNotContain(first, node.Components);
         Assert.Contains(second, node.Components);
         Assert.Equal(1, changes);
-        Assert.NotNull(FindByName<TextField>(inspector, "ScriptAssetField0"));
+        Assert.NotNull(FindByName<Label>(inspector, "ScriptHeader0"));
         Assert.NotNull(FindByName<TextField>(inspector, "ScriptAssetField"));
+    }
+
+    /// <summary>Dragging a script filename title changes persistent component order.</summary>
+    [Fact]
+    public void ScriptHeader_DragBelowAnotherScript_ReordersComponents()
+    {
+        var first = new ScriptComponent(AssetId.New());
+        var second = new ScriptComponent(AssetId.New());
+        var node = new Node3D();
+        node.AddComponent(first);
+        node.AddComponent(new BoxColliderComponent());
+        node.AddComponent(second);
+        var inspector = new SceneInspector(320f, 900f)
+        {
+            ResolveScriptName = id => id == first.ScriptId
+                ? "scripts/First.cs" : "scripts/Second.cs"
+        };
+        var changes = 0;
+        inspector.NodeChanged += _ => changes++;
+        inspector.Bind(node);
+        inspector.BuildDrawList();
+        var firstHeader = Assert.IsType<Label>(FindByName<Label>(
+            inspector, "ScriptHeader0"));
+        var secondHeader = Assert.IsType<Label>(FindByName<Label>(
+            inspector, "ScriptHeader1"));
+        var router = new UIEventRouter(inspector, () => { });
+
+        router.MovePointer(new Vector2(firstHeader.Left + 8f, firstHeader.Top + 8f));
+        router.Press();
+        router.MovePointer(new Vector2(secondHeader.Left + 8f, secondHeader.Bottom - 2f));
+        router.Release(invokeClick: true);
+
+        Assert.Same(second, node.Components[1]);
+        Assert.Same(first, node.Components[2]);
+        Assert.Equal(1, changes);
+    }
+
+    /// <summary>Provides settings menus for physics components and removes the selected instance.</summary>
+    [Fact]
+    public void PhysicsComponentSettingsMenu_Remove_RemovesExactComponent()
+    {
+        var body = new RigidBodyComponent();
+        var collider = new BoxColliderComponent();
+        var node = new Node3D();
+        node.AddComponent(body);
+        node.AddComponent(collider);
+        var inspector = new SceneInspector(320f, 620f);
+        var changes = 0;
+        inspector.NodeChanged += _ => changes++;
+        inspector.Bind(node);
+
+        Assert.NotNull(FindByName<Button>(inspector, "RigidBody0Settings"));
+        Assert.IsType<Button>(FindByName<Button>(
+            inspector, "Collider1Settings")).InvokeClick();
+        var menu = Assert.IsType<ContextMenu>(FindByName<ContextMenu>(
+            inspector, "Collider1SettingsMenu"));
+        menu.Items[0].InvokeClick();
+
+        Assert.Contains(body, node.Components);
+        Assert.DoesNotContain(collider, node.Components);
+        Assert.Equal(1, changes);
+    }
+
+    /// <summary>Hosts component menus on the Editor overlay used for popup placement.</summary>
+    [Fact]
+    public void EditorView_ComponentSettingsMenu_UsesOverlayCanvas()
+    {
+        var view = EditorUI.BuildView(1280f, 720f);
+        var node = new Node3D();
+        node.AddComponent(new RigidBodyComponent());
+
+        view.Inspector.Bind(node);
+        var settings = Assert.IsType<Button>(FindByName<Button>(
+            view.Inspector, "RigidBody0Settings"));
+        settings.InvokeClick();
+        var menu = Assert.IsType<ContextMenu>(FindByName<ContextMenu>(
+            view.Overlay, "RigidBody0SettingsMenu"));
+
+        Assert.Same(view.Overlay, menu.Parent);
+        Assert.True(menu.IsOpen);
+        view.Root.BuildDrawList();
+        Assert.Equal(140f, menu.Width);
+        Assert.True(menu.Left >= view.Overlay.Left + 8f);
+        Assert.True(menu.Right <= view.Overlay.Right - 8f);
+        Assert.True(menu.Top >= view.Overlay.Top + 8f);
+        Assert.True(menu.Bottom <= view.Overlay.Bottom - 8f);
     }
 
     /// <summary>Attaches repeated drops as ordered independent script components.</summary>

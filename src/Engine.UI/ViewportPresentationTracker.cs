@@ -14,6 +14,10 @@ public sealed class ViewportPresentationTracker
     private bool _visible;
     private bool _synchronized;
 
+    /// <summary>Gets whether the viewport currently has a visible, non-empty presentation.</summary>
+    public bool IsPresented => _synchronized && _visible && _renderView.IsValid &&
+        _bounds.Right > _bounds.Left && _bounds.Bottom > _bounds.Top;
+
     /// <summary>Creates a presentation tracker for one viewport element.</summary>
     /// <param name="viewport">Viewport whose absolute arranged bounds drive presentation.</param>
     public ViewportPresentationTracker(ViewportPanel viewport)
@@ -45,7 +49,8 @@ public sealed class ViewportPresentationTracker
             return false;
         }
 
-        var visible = _viewport.IsEffectivelyVisible;
+        var visible = _viewport.IsEffectivelyVisible &&
+            _viewport.Width > 0f && _viewport.Height > 0f;
         var ownershipChanged = !_synchronized || !ReferenceEquals(_renderer, renderer) ||
             _renderView != renderView;
         var bounds = new UIClipRect(

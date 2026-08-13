@@ -1,30 +1,7 @@
 {
-  "formatVersion": 3,
+  "formatVersion": 11,
   "gameCameraId": "4448007c8d554027a713942fc8562044",
   "nodes": [
-    {
-      "id": "4ace162e5e10432e842bc5d2e2d6c272",
-      "type": "cube",
-      "name": "SceneCube",
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      },
-      "scriptId": null,
-      "camera": null,
-      "children": []
-    },
     {
       "id": "4448007c8d554027a713942fc8562044",
       "type": "perspectiveCamera",

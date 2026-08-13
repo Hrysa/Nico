@@ -79,9 +79,11 @@ public sealed class GameScriptHost : IDisposable
     /// <param name="inputSource">Optional gameplay input source.</param>
     /// <param name="animationService">Optional runtime animation-controller service.</param>
     /// <param name="renderingService">Optional active game-view pipeline service.</param>
+    /// <param name="assetService">Optional active project asset service.</param>
     public void LoadScene(Node root, IInputSource? inputSource = null,
         ISceneAnimationService? animationService = null,
-        ISceneRenderingService? renderingService = null)
+        ISceneRenderingService? renderingService = null,
+        ISceneAssetService? assetService = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(root);
@@ -93,7 +95,7 @@ public sealed class GameScriptHost : IDisposable
             if (_catalog is null && Enumerate(root).Any(HasScriptComponent))
                 throw new InvalidOperationException("The compiled game has no script asset catalog.");
             runtime.Attach(root, (IScriptTypeCatalog?)_catalog ?? EmptyScriptTypeCatalog.Instance,
-                inputSource, animationService, renderingService);
+                inputSource, animationService, renderingService, assetService);
             runtime.Start();
             _runtime = runtime;
         }

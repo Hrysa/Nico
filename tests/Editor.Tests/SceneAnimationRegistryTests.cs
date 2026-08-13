@@ -43,12 +43,12 @@ public sealed class SceneAnimationRegistryTests
     {
         var node = new MeshInstance3D { Name = "Body" };
         var reference = new AssetReference(AssetId.New(), "main");
-        var animationSet = new AnimationSet(reference);
+        var animationSet = new Asset<AnimationSetResource>(reference);
         var callbackCount = 0;
         using var registry = new SceneAnimationRegistry((boundNode, boundSet, controller) =>
         {
             Assert.Same(node, boundNode);
-            Assert.Equal(animationSet, boundSet);
+            Assert.Equal(animationSet.Reference, boundSet);
             controller.RegisterClips([new AnimationClipResource("Run", 1f, [])]);
             callbackCount++;
         });
@@ -60,6 +60,26 @@ public sealed class SceneAnimationRegistryTests
         Assert.Same(controller, bound);
         Assert.True(controller.TryGet("Run", out _));
         Assert.Equal(1, callbackCount);
+    }
+
+    /// <summary>Resolves normalized project paths to typed primary artifact references.</summary>
+    [Fact]
+    public void Assets_FindByPath_NormalizesSeparatorsAndDefaultsToMainArtifact()
+    {
+        var id = AssetId.New();
+        var resolvedPath = string.Empty;
+        var assets = new SceneAssetRegistry(path =>
+        {
+            resolvedPath = path;
+            return id;
+        });
+
+        var animationSet = assets.FindByPath<AnimationSetResource>(
+            @"models\Locomotion.nanimset");
+
+        Assert.Equal("models/Locomotion.nanimset", resolvedPath);
+        Assert.Equal(id, animationSet.Reference.Asset);
+        Assert.Equal("main", animationSet.Reference.SubAsset);
     }
 
     /// <summary>Creates one empty-skeleton controller suitable for registry identity tests.</summary>

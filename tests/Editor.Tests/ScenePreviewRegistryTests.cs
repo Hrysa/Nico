@@ -139,6 +139,40 @@ public class ScenePreviewRegistryTests
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
     }
 
+    /// <summary>Verifies capsule diagnostics include symmetric sides and the authored total height.</summary>
+    [Fact]
+    public void Build_CapsuleCollider_PublishesSymmetricCompleteWireframe()
+    {
+        var node = new Node3D();
+        node.AddComponent(new CapsuleColliderComponent { Radius = 0.5f, Height = 2f });
+        var registry = ScenePreviewRegistry.CreateDefault();
+        var previews = new ScenePreviewList();
+
+        registry.Build(node, node, previews);
+
+        Assert.Contains(previews.Lines, line => IsVerticalSide(line, 0.5f, 0f));
+        Assert.Contains(previews.Lines, line => IsVerticalSide(line, -0.5f, 0f));
+        Assert.Contains(previews.Lines, line => IsVerticalSide(line, 0f, 0.5f));
+        Assert.Contains(previews.Lines, line => IsVerticalSide(line, 0f, -0.5f));
+        Assert.Contains(previews.Lines, line => MathF.Abs(line.Start.Y + 1f) < 0.0001f ||
+            MathF.Abs(line.End.Y + 1f) < 0.0001f);
+        Assert.Contains(previews.Lines, line => MathF.Abs(line.Start.Y - 1f) < 0.0001f ||
+            MathF.Abs(line.End.Y - 1f) < 0.0001f);
+    }
+
+    /// <summary>Checks for one full straight capsule side at the requested lateral position.</summary>
+    /// <param name="line">Preview line candidate.</param>
+    /// <param name="x">Expected X coordinate.</param>
+    /// <param name="z">Expected Z coordinate.</param>
+    /// <returns>True when the line spans both hemisphere equators.</returns>
+    private static bool IsVerticalSide(ScenePreviewLine line, float x, float z)
+    {
+        const float epsilon = 0.0001f;
+        return MathF.Abs(line.Start.X - x) < epsilon && MathF.Abs(line.End.X - x) < epsilon &&
+            MathF.Abs(line.Start.Z - z) < epsilon && MathF.Abs(line.End.Z - z) < epsilon &&
+            MathF.Abs(line.Start.Y + 0.5f) < epsilon && MathF.Abs(line.End.Y - 0.5f) < epsilon;
+    }
+
     /// <summary>Verifies overlay tessellation reuses its retained vertex destination after warmup.</summary>
     [Fact]
     public void OverlayBuild_AfterWarmup_DoesNotAllocate()

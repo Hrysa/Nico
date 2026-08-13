@@ -376,8 +376,12 @@ public sealed class ProfilerView : Panel
     private void UpdateDisplay(FrameProfileSample sample, bool updateCallTree)
     {
         var state = IsPaused ? "PAUSED    " : string.Empty;
+        var gpu = sample.Gpu is { } gpuSample
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"    GPU {gpuSample.FrameMilliseconds:F2} ms (View {gpuSample.ViewportMilliseconds:F2}, UI {gpuSample.CompositionMilliseconds:F2}, frame {gpuSample.FrameNumber})")
+            : string.Empty;
         _summary = string.Create(CultureInfo.InvariantCulture,
-            $"{state}Frame {sample.FrameNumber}    Time {sample.CpuMilliseconds:F2} ms    Update {sample.UpdateMilliseconds:F2} ms    Render {sample.RenderMilliseconds:F2} ms    GC Alloc {FormatBytes(sample.GcAllocatedBytes)}");
+            $"{state}Frame {sample.FrameNumber}    Time {sample.CpuMilliseconds:F2} ms    Update {sample.UpdateMilliseconds:F2} ms    Render {sample.RenderMilliseconds:F2} ms{gpu}    GC Alloc {FormatBytes(sample.GcAllocatedBytes)}");
         _cpuCaption = string.Create(CultureInfo.InvariantCulture,
             $"Frame Time    scale {MathF.Max(33.33f, GetMaximumCpu()):F1} ms    green cap = call tree");
         _gcCaption = $"GC Alloc    scale {FormatBytes(Math.Max(1024L, GetMaximumGc()))}";

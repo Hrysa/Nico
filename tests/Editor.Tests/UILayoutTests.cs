@@ -180,6 +180,43 @@ public sealed class UILayoutTests
         Assert.Equal(40f, popup.Top);
     }
 
+    /// <summary>Constrains popup placement to the overlay intersection with a safe inset.</summary>
+    [Fact]
+    public void Canvas_PlacePopup_IntersectsWorkAreaAndAppliesMargin()
+    {
+        var canvas = new Canvas
+        {
+            Width = 200f,
+            Height = 100f,
+            PopupWorkAreaProvider = new FixedWorkAreaProvider(
+                new UIPopupWorkArea(-20f, -20f, 400f, 300f))
+        };
+        var owner = new Panel(Color.Red, 20f, 20f)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var popup = new Popup(Color.Black, Color.White, 80f, 30f)
+        {
+            Owner = owner,
+            ConstraintMargin = 8f,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        canvas.Add(owner, new Vector2(180f, 80f));
+        canvas.Add(popup, Vector2.Zero);
+        canvas.BuildDrawList();
+
+        canvas.PlacePopup(popup);
+        canvas.BuildDrawList();
+
+        Assert.Equal(PopupPlacement.Above, popup.ActualPlacement);
+        Assert.True(popup.Left >= 8f);
+        Assert.True(popup.Right <= 192f);
+        Assert.True(popup.Top >= 8f);
+        Assert.True(popup.Bottom <= 92f);
+    }
+
     /// <summary>Verifies popup work-area DPI conversion is reversible.</summary>
     [Fact]
     public void PopupWorkArea_DpiConversion_RoundTrips()

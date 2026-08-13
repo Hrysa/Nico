@@ -26,6 +26,7 @@ public static class EditorUI
         const float inspectorWidth = 300f;
         const float viewportToolbarHeight = 36f;
         var workspaceHeight = MathF.Max(0f, height - titleBarHeight - bottomDockHeight);
+        var overlay = new Canvas { Name = "Overlay" };
 
         var projectLabel = new Label("scene.node", 180f, titleBarHeight)
         {
@@ -146,7 +147,8 @@ public static class EditorUI
         {
             Name = "SceneInspector",
             Width = 0f,
-            Height = 0f
+            Height = 0f,
+            PopupOverlay = overlay
         };
 
         var viewportWidth = MathF.Max(0f, width - hierarchyWidth - inspectorWidth - (separatorWidth * 2f));
@@ -246,7 +248,7 @@ public static class EditorUI
                     shell.FlexShrink = 0f;
                 })
             ]).Named("MainLayout"),
-            UI.Ref(new Canvas { Name = "Overlay" }, out var overlay)
+            overlay
         ], backgroundColor: theme.Canvas).Named("Background").Configure(root =>
             root.ForegroundColor = theme.TextPrimary);
         background.Measure(new Vector2(width, height));

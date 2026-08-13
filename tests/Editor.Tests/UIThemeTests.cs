@@ -177,21 +177,23 @@ public class UIThemeTests
         Assert.Equal(new UIClipRect(button.Left, button.Top, button.Right, button.Bottom), text.Clip);
     }
 
-    /// <summary>Verifies a surface paints one fill and four inset border edges.</summary>
+    /// <summary>Verifies a rounded surface paints an outer border and inset fill.</summary>
     [Fact]
-    public void Surface_WithBorder_EmitsFiveRectangles()
+    public void Surface_WithBorder_EmitsRoundedBorderAndFill()
     {
         var surface = new Surface(UITheme.Dark.Surface, UITheme.Dark.Border, 100f, 50f);
 
         var commands = surface.BuildDrawList().Commands;
 
-        Assert.Equal(1, commands.Count(command => command.Type == UIDrawCommandType.RoundedRectangle));
-        Assert.Equal(4, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
+        Assert.Equal(2, commands.Count(command =>
+            command.Type == UIDrawCommandType.RoundedRectangle));
+        Assert.DoesNotContain(commands,
+            command => command.Type == UIDrawCommandType.Rectangle);
     }
 
-    /// <summary>Verifies transparent dock surfaces omit redundant full-panel fill geometry.</summary>
+    /// <summary>Verifies transparent rounded surfaces emit only their border geometry.</summary>
     [Fact]
-    public void Surface_WithoutBackground_EmitsOnlyBorderRectangles()
+    public void Surface_WithoutBackground_EmitsOnlyRoundedBorder()
     {
         var surface = new Surface(UITheme.Dark.Surface, UITheme.Dark.Border, 100f, 50f)
         {
@@ -200,9 +202,10 @@ public class UIThemeTests
 
         var commands = surface.BuildDrawList().Commands;
 
-        Assert.Equal(4, commands.Count(command => command.Type == UIDrawCommandType.Rectangle));
-        Assert.DoesNotContain(commands,
+        Assert.Single(commands,
             command => command.Type == UIDrawCommandType.RoundedRectangle);
+        Assert.DoesNotContain(commands,
+            command => command.Type == UIDrawCommandType.Rectangle);
     }
 
     /// <summary>Verifies panel corners are rounded with theme radius by default.</summary>
@@ -422,6 +425,20 @@ public class UIThemeTests
                 && command.Text == "A" && command.CaretIndex == 1);
         Assert.DoesNotContain(commands,
             command => command.Type == UIDrawCommandType.Text && command.Text.Contains('|'));
+    }
+
+    /// <summary>Verifies text fields paint their default border and fill with rounded corners.</summary>
+    [Fact]
+    public void TextField_DefaultStyle_PaintsRoundedCorners()
+    {
+        var field = new TextField(200f, 30f);
+
+        var drawList = field.BuildDrawList();
+
+        Assert.Equal(UITheme.Dark.PanelCornerRadius, field.CornerRadius);
+        Assert.True(drawList.Commands.Count(command =>
+            command.Type == UIDrawCommandType.RoundedRectangle &&
+            command.CornerRadius > 0f) >= 2);
     }
 
     /// <summary>Verifies a focused long value keeps its editable tail and caret visible.</summary>

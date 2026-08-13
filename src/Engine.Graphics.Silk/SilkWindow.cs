@@ -41,7 +41,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private SurfaceKHR _surface;
     private PhysicalDevice _physicalDevice;
     private SampleCountFlags _msaaSamples = SampleCountFlags.Count1Bit;
-    private int _requestedMsaaSamples = 4;
+    private int _requestedMsaaSamples = 1;
     private Device _device;
     private Queue _graphicsQueue;
     private Queue _presentQueue;
@@ -80,6 +80,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private long _profileAllocationStart;
     private double _profileUpdateMilliseconds;
     private ulong _profileFrameNumber;
+    private GpuFrameProfile? _completedGpuProfile;
+#if DEBUG_GRAPHICS_SILK
+    private VulkanGpuProfiler? _gpuProfiler;
+#endif
 #if DEBUG_GC_ALLOC
     private long _frameAllocationStart;
     private int _frameGen0CollectionStart;
@@ -518,7 +522,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (options.MsaaSamples is not (0 or 1 or 2 or 4 or 8))
             throw new ArgumentOutOfRangeException(nameof(options),
                 "MSAA samples must be zero, one, two, four, or eight.");
-        _requestedMsaaSamples = options.MsaaSamples == 0 ? 4 : options.MsaaSamples;
+        _requestedMsaaSamples = options.MsaaSamples == 0 ? 1 : options.MsaaSamples;
         _requestedWidth = options.Width;
         _requestedHeight = options.Height;
         _logger.LogInformation("Creating window '{Title}' ({Width}x{Height}) [Vulkan]", options.Title, options.Width, options.Height);
@@ -637,6 +641,20 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _pipelines = new PipelineResources(_vk!, _device);
         _frameScheduler = new FrameScheduler(
             _vk!, _device, _graphicsQueue, _graphicsQueueFamily);
+#if DEBUG_GRAPHICS_SILK
+        var deviceProperties = _vk!.GetPhysicalDeviceProperties(_physicalDevice);
+        var timestampValidBits = GetGraphicsTimestampValidBits();
+        if (deviceProperties.Limits.TimestampComputeAndGraphics && timestampValidBits > 0)
+        {
+            _gpuProfiler = new VulkanGpuProfiler(
+                _vk, _device, (int)MaxFramesInFlight,
+                deviceProperties.Limits.TimestampPeriod, timestampValidBits);
+        }
+        else
+        {
+            _logger.LogWarning("GPU timestamp profiling is unsupported by this device");
+        }
+#endif
         _persistentVertices = new PersistentVertexArena(_vk!, _device, FindMemoryType, _logger);
         _persistentIndexedMeshes = new PersistentIndexedMeshStore(
             _vk!, _device, FindMemoryType, _logger);
@@ -782,7 +800,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 _profileUpdateMilliseconds,
                 renderMilliseconds,
                 profiledAllocatedBytes);
-            PublishProfileFrame(frame);
+            PublishProfileFrame(frame, _completedGpuProfile);
+            _completedGpuProfile = null;
 #if DEBUG_GC_ALLOC
             var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
             var allocatedBytes = Math.Max(0L, allocationEnd - _frameAllocationStart);
@@ -805,14 +824,14 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
     /// <summary>Publishes a completed frame with its managed instrumentation tree.</summary>
     /// <param name="frame">Completed frame timing.</param>
-    private void PublishProfileFrame(PendingProfileFrame frame)
+    private void PublishProfileFrame(PendingProfileFrame frame, GpuFrameProfile? gpu)
     {
         if (!CpuProfiler.Enabled)
         {
-            FrameProfiled?.Invoke(frame.ToSample([]));
+            FrameProfiled?.Invoke(frame.ToSample([], gpu));
             return;
         }
-        FrameProfiled?.Invoke(frame.ToSample(CpuProfiler.EndFrame()));
+        FrameProfiled?.Invoke(frame.ToSample(CpuProfiler.EndFrame(), gpu));
     }
 
     private void OnClosing()
@@ -1342,6 +1361,21 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             return SampleCountFlags.Count2Bit;
         return SampleCountFlags.Count1Bit;
     }
+
+#if DEBUG_GRAPHICS_SILK
+    /// <summary>Gets the timestamp precision exposed by the selected graphics queue family.</summary>
+    /// <returns>Number of valid low-order timestamp bits, or zero when unsupported.</returns>
+    private uint GetGraphicsTimestampValidBits()
+    {
+        uint count = 0;
+        _vk!.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, &count, null);
+        var properties = new QueueFamilyProperties[count];
+        fixed (QueueFamilyProperties* pointer = properties)
+            _vk.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, &count, pointer);
+        return _graphicsQueueFamily < count
+            ? properties[_graphicsQueueFamily].TimestampValidBits : 0;
+    }
+#endif
 
     private bool IsDeviceSuitable(PhysicalDevice device)
     {
@@ -3774,6 +3808,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         // ── Begin frame (waits for previous frame's fence) ──
         var frameIndex = _frameScheduler!.BeginFrame();
         _activeFrameIndex = frameIndex;
+#if DEBUG_GRAPHICS_SILK
+        _gpuProfiler?.Collect(frameIndex);
+        _completedGpuProfile = _gpuProfiler?.TakeLatest();
+#endif
         _transientArena!.Reset(frameIndex);
         foreach (var mesh in _retiredMeshes[frameIndex])
         {
@@ -3828,8 +3866,30 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var (cmdBuffer, sem) = _frameScheduler.BeginPass();
         renderFinishedSemaphore = sem;
 
+#if DEBUG_GRAPHICS_SILK
+        var profileGpu = GpuProfiling.Enabled && _gpuProfiler is not null;
+        if (profileGpu)
+        {
+            _gpuProfiler!.BeginFrame(cmdBuffer, frameIndex);
+            _gpuProfiler.BeginViewport(cmdBuffer, frameIndex);
+        }
+#endif
         RecordFboPass(cmdBuffer);
+#if DEBUG_GRAPHICS_SILK
+        if (profileGpu)
+        {
+            _gpuProfiler!.EndViewport(cmdBuffer, frameIndex);
+            _gpuProfiler.BeginComposition(cmdBuffer, frameIndex);
+        }
+#endif
         RecordSwapchainPass(cmdBuffer, imageIndex);
+#if DEBUG_GRAPHICS_SILK
+        if (profileGpu)
+        {
+            _gpuProfiler!.EndComposition(cmdBuffer, frameIndex);
+            _gpuProfiler.EndFrame(cmdBuffer, frameIndex, _profileFrameNumber);
+        }
+#endif
 
         _frameScheduler.EndPass(cmdBuffer);
         _frameScheduler.PrepareCurrentFenceForSubmission();
@@ -4465,6 +4525,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         CleanupSwapchain();
 
+#if DEBUG_GRAPHICS_SILK
+        _gpuProfiler?.Destroy();
+        _gpuProfiler = null;
+#endif
         // Destroy frame scheduler
         _frameScheduler?.Destroy();
 
@@ -4686,7 +4750,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         /// <summary>Creates the public frame snapshot with its instrumented call tree.</summary>
         /// <param name="callTree">Instrumented method hierarchy.</param>
         /// <returns>Completed public profiler sample.</returns>
-        internal FrameProfileSample ToSample(CpuProfileMarker[] callTree)
+        internal FrameProfileSample ToSample(
+            CpuProfileMarker[] callTree, GpuFrameProfile? gpu)
         {
             return new FrameProfileSample(
                 FrameNumber,
@@ -4694,7 +4759,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 UpdateMilliseconds,
                 RenderMilliseconds,
                 GcAllocatedBytes,
-                callTree);
+                callTree,
+                gpu);
         }
     }
 

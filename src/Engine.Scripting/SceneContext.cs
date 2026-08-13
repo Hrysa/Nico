@@ -14,6 +14,9 @@ public sealed class SceneContext
     /// <summary>Gets frame-stable keyboard and pointer input for the active scene.</summary>
     public SceneInput Input { get; }
 
+    /// <summary>Gets typed project-asset lookup for the active scene.</summary>
+    public ISceneAssetService Assets { get; }
+
     /// <summary>Gets runtime skeletal-animation controllers for the active scene.</summary>
     public ISceneAnimationService Animation { get; }
 
@@ -24,7 +27,7 @@ public sealed class SceneContext
     /// Creates a scene context for a root node.
     /// </summary>
     /// <param name="root">Synthetic scene root.</param>
-    public SceneContext(Node root) : this(root, null, null, null)
+    public SceneContext(Node root) : this(root, null, null, null, null)
     {
     }
 
@@ -33,13 +36,16 @@ public sealed class SceneContext
     /// <param name="inputSource">Runtime input source, or null for headless use.</param>
     /// <param name="animationService">Runtime animation service, or null when unavailable.</param>
     /// <param name="renderingService">Runtime game-view pipeline service, or null when unavailable.</param>
+    /// <param name="assetService">Project asset service, or null when detached.</param>
     internal SceneContext(Node root, IInputSource? inputSource,
         ISceneAnimationService? animationService,
-        ISceneRenderingService? renderingService)
+        ISceneRenderingService? renderingService,
+        ISceneAssetService? assetService)
     {
         ArgumentNullException.ThrowIfNull(root);
         Root = root;
         Input = new SceneInput(inputSource);
+        Assets = assetService ?? EmptySceneAssetService.Instance;
         Animation = animationService ?? EmptySceneAnimationService.Instance;
         Rendering = renderingService ?? new DetachedSceneRenderingService();
     }

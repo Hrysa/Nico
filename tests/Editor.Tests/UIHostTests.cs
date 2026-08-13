@@ -451,10 +451,30 @@ public class UIHostTests
         host.LayoutUpdated += () => tracker.Synchronize(services);
         host.Refresh();
 
+        Assert.True(tracker.IsPresented);
         parent.IsVisible = false;
         host.Refresh();
 
         Assert.False(viewport.IsEffectivelyVisible);
+        Assert.False(tracker.IsPresented);
+        Assert.NotNull(services.LastViewportQuad);
+        Assert.All(services.LastViewportQuad!, vertex => Assert.Equal(0f, vertex.Opacity));
+    }
+
+    /// <summary>Verifies a collapsed viewport is not considered presented for rendering.</summary>
+    [Fact]
+    public void LayoutUpdated_ZeroSizedViewport_IsNotPresented()
+    {
+        var services = new HostServices();
+        var viewport = new ViewportPanel(0f, 0f, Color.Black)
+        {
+            RenderView = new RenderViewHandle(1)
+        };
+        var tracker = new ViewportPresentationTracker(viewport);
+
+        tracker.Synchronize(services);
+
+        Assert.False(tracker.IsPresented);
         Assert.NotNull(services.LastViewportQuad);
         Assert.All(services.LastViewportQuad!, vertex => Assert.Equal(0f, vertex.Opacity));
     }

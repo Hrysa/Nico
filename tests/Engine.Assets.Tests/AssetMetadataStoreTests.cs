@@ -593,6 +593,28 @@ public class AssetMetadataStoreTests
         Assert.True(Directory.Exists(second.ArtifactDirectory));
     }
 
+    /// <summary>Verifies loose runtime resolution imports an unpublished source on demand.</summary>
+    [Fact]
+    public void ImportingArtifactResolver_UnpublishedAsset_ImportsAndResolvesArtifact()
+    {
+        using var temporary = new TemporaryDirectory();
+        File.WriteAllBytes(Path.Combine(temporary.Path, "Data.fail"), [1]);
+        var database = new AssetDatabase(temporary.Path,
+            path => Path.GetExtension(path) == ".fail" ? "controlled" : null);
+        var registry = new AssetImporterRegistry();
+        registry.Register(new ControlledImporter());
+        var pipeline = new AssetImportPipeline(database, registry);
+        var record = Assert.Single(database.Assets);
+        var resolver = new ImportingArtifactResolver(database, pipeline, "player");
+
+        var resolved = resolver.Resolve(new AssetReference(record.Id, "main"));
+
+        Assert.Equal("test/content", resolved.ContentType);
+        var location = Assert.IsType<LooseFileAssetLocation>(resolved.Location);
+        Assert.True(File.Exists(location.Path));
+        Assert.NotNull(pipeline.TryGetLatestPublished(record, "player"));
+    }
+
     /// <summary>Verifies a failed generation leaves the last successful artifact available.</summary>
     [Fact]
     public void ImportPipeline_ImporterFailure_PreservesSuccessfulGeneration()

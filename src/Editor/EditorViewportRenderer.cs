@@ -95,7 +95,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         SceneSelectionController selection,
         Func<AssetReference, StaticMeshResource?>? previewMeshResolver = null,
         Func<AssetReference, TerrainResource?>? previewTerrainResolver = null,
-        Func<AnimationSet, SkinnedMeshResource, AnimationClipResource[]>?
+        Func<AssetReference, SkinnedMeshResource, AnimationClipResource[]>?
             animationSetResolver = null,
         RenderPipeline? renderPipeline = null)
     {
@@ -358,7 +358,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="pointerPosition">Pointer position in the same window.</param>
     public void RenderScene(ViewportPanel sceneViewport, Vector2 pointerPosition)
     {
-        if (!sceneViewport.IsEffectivelyVisible)
+        if (!sceneViewport.IsEffectivelyVisible ||
+            sceneViewport.Width <= 0f || sceneViewport.Height <= 0f)
         {
             ClearSceneOverlay();
             return;

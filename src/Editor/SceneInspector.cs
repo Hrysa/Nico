@@ -46,6 +46,9 @@ public sealed class SceneInspector : Panel
     /// <summary>Gets the active Inspector edit-form scope.</summary>
     public UIEditForm EditForm => _editForm;
 
+    /// <summary>Gets or sets the host canvas used for floating component menus.</summary>
+    public Canvas? PopupOverlay { get; set; }
+
     /// <summary>Occurs after an Inspector field changes the selected node.</summary>
     public event Action<Node>? NodeChanged;
 
@@ -278,7 +281,7 @@ public sealed class SceneInspector : Panel
     /// <param name="index">Unique component display index.</param><returns>Following section top.</returns>
     private float AddRigidBodySection(RigidBodyComponent body, float y, int index)
     {
-        AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Rigid Body", _theme.TextPrimary));
+        AddComponentHeader(body.Owner!, body, "Rigid Body", $"RigidBody{index}", y);
         AddFloatRow("Mass", $"RigidBody{index}Mass", y + 30f, () => body.Mass,
             value => body.Mass = value, positive: true);
         AddFloatRow("Gravity", $"RigidBody{index}Gravity", y + 68f,
@@ -294,10 +297,10 @@ public sealed class SceneInspector : Panel
     private float AddColliderSection(ColliderComponent collider, float y, int index)
     {
         var prefix = $"Collider{index}";
-        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+        AddComponentHeader(collider.Owner!, collider,
             GetColliderDisplayName(collider) +
             (ReferenceEquals(collider, FocusedComponent) ? " (Selected)" : string.Empty),
-            _theme.TextPrimary));
+            prefix, y);
         AddVectorRow("Center", prefix + "Center", y + 30f, () => collider.Center,
             value => collider.Center = value, radiansAsDegrees: false);
         var row = y + 68f;
@@ -383,6 +386,53 @@ public sealed class SceneInspector : Panel
         };
         AddChild(trigger);
         return row + 194f;
+    }
+
+    /// <summary>Adds a component heading with an owner-anchored settings menu.</summary>
+    /// <param name="node">Component owner.</param>
+    /// <param name="component">Exact component represented by the section.</param>
+    /// <param name="title">Displayed section title.</param>
+    /// <param name="namePrefix">Stable control-name prefix.</param>
+    /// <param name="y">Section top.</param>
+    private Label AddComponentHeader(Node node, Component component, string title,
+        string namePrefix, float y)
+    {
+        var header = CreateLabel(12f, y, MathF.Max(0f, Width - 60f), 26f,
+            title, _theme.TextPrimary);
+        AddChild(header);
+        var settings = new Button(26f, 26f, _theme.Surface)
+        {
+            Name = namePrefix + "Settings",
+            Content = new Icon(IconKind.Settings, 16f),
+            Margin = new Thickness(MathF.Max(12f, Width - 38f), y, 0f, 0f)
+        };
+        var menu = new ContextMenu(140f, _theme)
+        {
+            Name = namePrefix + "SettingsMenu",
+            Owner = settings,
+            Placement = PopupPlacement.Below,
+            ConstraintMargin = 8f,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        menu.AddItem("Remove", () => RemoveComponent(node, component));
+        menu.Close();
+        settings.Click += () =>
+        {
+            if (menu.IsOpen)
+                menu.Close();
+            else
+            {
+                menu.Open();
+                PopupOverlay?.PlacePopup(menu);
+            }
+        };
+        AddChild(settings);
+        if (PopupOverlay is { } overlay)
+            overlay.Add(menu, Vector2.Zero);
+        else
+            AddChild(menu);
+        return header;
     }
 
     /// <summary>Gets a human-readable concrete collider heading.</summary>
@@ -489,22 +539,13 @@ public sealed class SceneInspector : Panel
             if (components[componentIndex] is not ScriptComponent component)
                 continue;
             var currentIndex = scriptIndex++;
-            var scriptField = new TextField(MathF.Max(0f, Width - 96f), 30f, _theme)
-            {
-                Name = $"ScriptAssetField{currentIndex}",
-                Text = GetScriptDisplayName(component.ScriptId),
-                IsReadOnly = true,
-                Margin = new Thickness(12f, rowY, 0f, 0f)
-            };
-            AddChild(scriptField);
-            var remove = new Button(64f, 30f, "Remove", _theme)
-            {
-                Name = $"ScriptRemove{currentIndex}",
-                Margin = new Thickness(MathF.Max(12f, Width - 76f), rowY, 0f, 0f)
-            };
-            remove.Click += () => RemoveScript(node, component);
-            AddChild(remove);
-            rowY += 38f;
+            var title = Path.GetFileName(GetScriptDisplayName(component.ScriptId));
+            var header = AddComponentHeader(node, component,
+                string.IsNullOrWhiteSpace(title) ? "Script" : title,
+                $"Script{currentIndex}", rowY);
+            header.Name = $"ScriptHeader{currentIndex}";
+            ConfigureScriptReorder(node, component, header);
+            rowY += 30f;
             if (!TryResolveScript(component, out var script))
                 continue;
             var descriptors = script.ObservedProperties;
@@ -547,10 +588,68 @@ public sealed class SceneInspector : Panel
         });
     }
 
-    /// <summary>Removes one exact authored script component and refreshes its owner.</summary>
+    /// <summary>Configures one script title as a move handle and insertion target.</summary>
+    /// <param name="node">Script component owner.</param>
+    /// <param name="component">Script represented by the title.</param>
+    /// <param name="header">Title receiving drag behavior.</param>
+    private void ConfigureScriptReorder(Node node, ScriptComponent component, Label header)
+    {
+        header.DragData = new UIDragData(
+            new ScriptComponentDragData(node, component), header.Text);
+        header.AllowedDragEffects = UIDragEffect.Move;
+        header.AllowDrop = true;
+        header.Drag += (_, dragEvent) => HandleScriptReorderDrag(
+            node, component, header, dragEvent);
+    }
+
+    /// <summary>Negotiates and commits script-component insertion around one title.</summary>
+    /// <param name="node">Drop-target owner.</param>
+    /// <param name="target">Script represented by the drop-target title.</param>
+    /// <param name="header">Drop-target title.</param>
+    /// <param name="dragEvent">Current routed drag event.</param>
+    private void HandleScriptReorderDrag(Node node, ScriptComponent target, Label header,
+        UIDragEventArgs dragEvent)
+    {
+        if (!dragEvent.Data.TryGet<ScriptComponentDragData>(out var payload) || payload is null ||
+            !ReferenceEquals(payload.Owner, node) || ReferenceEquals(payload.Component, target))
+            return;
+        var insertAfter = dragEvent.LocalPosition.Y >= header.Height * 0.5f;
+        var targetIndex = IndexOfComponent(node, target);
+        if (targetIndex < 0)
+            return;
+        dragEvent.DropIndicatorBounds = new UIClipRect(
+            header.Left, insertAfter ? header.Bottom - 1f : header.Top,
+            header.Right, insertAfter ? header.Bottom + 1f : header.Top + 2f);
+        if (dragEvent.Kind is UIDragEventKind.Enter or UIDragEventKind.Over)
+            dragEvent.Effect = UIDragEffect.Move;
+        else if (dragEvent.Kind == UIDragEventKind.Drop &&
+                 node.MoveComponent(payload.Component, targetIndex + (insertAfter ? 1 : 0)))
+        {
+            NodeChanged?.Invoke(node);
+            dragEvent.Effect = UIDragEffect.Move;
+        }
+        dragEvent.Handled = true;
+    }
+
+    /// <summary>Finds one component's authored-order index without interface enumeration.</summary>
     /// <param name="node">Component owner.</param>
-    /// <param name="component">Exact script entry represented by the row.</param>
-    private void RemoveScript(Node node, ScriptComponent component)
+    /// <param name="component">Component to locate.</param>
+    /// <returns>Zero-based index, or minus one when absent.</returns>
+    private static int IndexOfComponent(Node node, Component component)
+    {
+        var components = node.Components;
+        for (var index = 0; index < components.Count; index++)
+        {
+            if (ReferenceEquals(components[index], component))
+                return index;
+        }
+        return -1;
+    }
+
+    /// <summary>Removes one exact authored component and refreshes its owner.</summary>
+    /// <param name="node">Component owner.</param>
+    /// <param name="component">Exact component represented by the section.</param>
+    private void RemoveComponent(Node node, Component component)
     {
         if (!node.RemoveComponent(component))
             return;
@@ -1418,4 +1517,9 @@ public sealed class SceneInspector : Panel
         UIElement[] Children,
         Func<bool>[] RefreshBindings,
         ScriptFieldBinding[] ScriptBindings);
+
+    /// <summary>Identifies one Inspector script-title reorder operation.</summary>
+    /// <param name="Owner">Component owner.</param>
+    /// <param name="Component">Exact script component being moved.</param>
+    private sealed record ScriptComponentDragData(Node Owner, ScriptComponent Component);
 }

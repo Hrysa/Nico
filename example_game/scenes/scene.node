@@ -109,6 +109,14 @@
           "collider": null
         },
         {
+          "type": "script",
+          "enabled": true,
+          "scriptId": "6d10c319-2445-4c70-a83a-cb51a89165d1",
+          "properties": [],
+          "rigidBody": null,
+          "collider": null
+        },
+        {
           "type": "boxCollider",
           "enabled": true,
           "scriptId": null,

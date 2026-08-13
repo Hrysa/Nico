@@ -255,6 +255,29 @@ public class Node
         return true;
     }
 
+    /// <summary>Moves one attached component to a requested authored-order index.</summary>
+    /// <param name="component">Attached component to move.</param>
+    /// <param name="destinationIndex">Insertion index before removal adjustment.</param>
+    /// <returns>True when component order changed.</returns>
+    public bool MoveComponent(Component component, int destinationIndex)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        if (!ReferenceEquals(component.Owner, this))
+            return false;
+        var sourceIndex = _components.IndexOf(component);
+        if (sourceIndex < 0)
+            return false;
+        destinationIndex = Math.Clamp(destinationIndex, 0, _components.Count);
+        if (sourceIndex < destinationIndex)
+            destinationIndex--;
+        if (sourceIndex == destinationIndex)
+            return false;
+        _components.RemoveAt(sourceIndex);
+        _components.Insert(destinationIndex, component);
+        Changed?.Invoke(NodeChangeKind.Components);
+        return true;
+    }
+
     /// <summary>Returns the first attached component assignable to a requested type.</summary>
     /// <typeparam name="T">Requested component type.</typeparam>
     /// <returns>The first matching component, or null.</returns>

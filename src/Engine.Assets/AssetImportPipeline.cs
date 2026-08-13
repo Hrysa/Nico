@@ -80,6 +80,49 @@ public sealed class PublishedArtifactResolver : IAssetResolver
     }
 }
 
+/// <summary>Imports loose project assets on demand before resolving their published artifacts.</summary>
+public sealed class ImportingArtifactResolver : IAssetResolver
+{
+    private readonly AssetDatabase _database;
+    private readonly AssetImportPipeline _pipeline;
+    private readonly string _target;
+
+    /// <summary>Creates a resolver for a loose project whose sources remain available.</summary>
+    /// <param name="database">Asset identity database.</param>
+    /// <param name="pipeline">Artifact import pipeline.</param>
+    /// <param name="target">Stable import target.</param>
+    public ImportingArtifactResolver(
+        AssetDatabase database,
+        AssetImportPipeline pipeline,
+        string target)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        _database = database;
+        _pipeline = pipeline;
+        _target = target;
+    }
+
+    /// <inheritdoc/>
+    public ResolvedAsset Resolve(AssetReference reference)
+    {
+        var record = _database.Find(reference.Asset)
+            ?? throw new FileNotFoundException($"Asset '{reference.Asset}' is missing.");
+        var outcome = _pipeline.Import(record, _target);
+        if (!outcome.Succeeded || outcome.ArtifactDirectory is null)
+            throw new InvalidDataException($"Asset '{reference.Asset}' failed to import.");
+        var requestedKey = reference.SubAsset ?? "main";
+        var artifact = outcome.Artifacts.FirstOrDefault(candidate => candidate.Key == requestedKey)
+            ?? throw new FileNotFoundException($"Sub-asset '{reference}' is missing.");
+        return new ResolvedAsset(
+            new LooseFileAssetLocation(Path.Combine(
+                outcome.ArtifactDirectory, artifact.RelativePath)),
+            artifact.ContentType,
+            outcome.Fingerprint);
+    }
+}
+
 /// <summary>Executes importers and atomically publishes fingerprinted artifact generations.</summary>
 public sealed class AssetImportPipeline
 {

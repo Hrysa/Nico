@@ -36,7 +36,10 @@ public enum IconKind
     Play,
 
     /// <summary>Draws a square debug-stop symbol.</summary>
-    Stop
+    Stop,
+
+    /// <summary>Draws a settings gear.</summary>
+    Settings
 }
 
 /// <summary>Displays a texture-backed image or a bundled Visual Studio Code Codicon glyph.</summary>
@@ -51,6 +54,7 @@ public sealed class Icon : UIElement
     private const string DebugStopGlyph = "\uEAD7";
     private const string RemoveGlyph = "\uEB3B";
     private const string PlayGlyph = "\uEB2C";
+    private const string SettingsGlyph = "\uEB51";
     private IconKind _kind;
     private TextureHandle _texture;
 
@@ -146,6 +150,7 @@ public sealed class Icon : UIElement
             IconKind.Search => SearchGlyph,
             IconKind.Play => PlayGlyph,
             IconKind.Stop => DebugStopGlyph,
+            IconKind.Settings => SettingsGlyph,
             _ => null
         };
         if (glyph is null)

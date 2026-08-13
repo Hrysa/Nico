@@ -94,6 +94,21 @@ public sealed class ProfilerViewTests
             command => command.Text?.Contains("Frame 7  Time 5.00 ms  GC 512 B") == true);
     }
 
+    /// <summary>Verifies completed Vulkan pass timings appear in the live summary.</summary>
+    [Fact]
+    public void AddSample_GpuTiming_PaintsPassBreakdown()
+    {
+        var profiler = new ProfilerView { Width = 1200f, Height = 260f };
+        profiler.AddSample(new FrameProfileSample(
+            9, 5d, 2d, 3d, 0L, null,
+            new GpuFrameProfile(7, 4.5d, 1.25d, 3.0d)));
+
+        var commands = profiler.BuildDrawList().Commands;
+
+        Assert.Contains(commands, command =>
+            command.Text?.Contains("GPU 4.50 ms (View 1.25, UI 3.00, frame 7)") == true);
+    }
+
     /// <summary>Verifies the sampled-frame cap becomes white while its bar is active.</summary>
     [Fact]
     public void MovePointer_SampledHistoryBar_PaintsWhiteActiveCap()

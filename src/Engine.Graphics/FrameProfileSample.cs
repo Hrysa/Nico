@@ -1,5 +1,23 @@
 namespace Engine.Graphics;
 
+/// <summary>Describes completed Vulkan GPU work for one rendered frame.</summary>
+/// <param name="FrameNumber">Original frame measured by the delayed GPU query.</param>
+/// <param name="FrameMilliseconds">Total recorded GPU command duration.</param>
+/// <param name="ViewportMilliseconds">Offscreen viewport rendering duration.</param>
+/// <param name="CompositionMilliseconds">Swapchain and UI composition duration.</param>
+public readonly record struct GpuFrameProfile(
+    ulong FrameNumber,
+    double FrameMilliseconds,
+    double ViewportMilliseconds,
+    double CompositionMilliseconds);
+
+/// <summary>Controls optional backend GPU instrumentation independently of CPU profiling.</summary>
+public static class GpuProfiling
+{
+    /// <summary>Gets or sets whether supported graphics backends collect GPU timestamps.</summary>
+    public static bool Enabled { get; set; }
+}
+
 /// <summary>Describes managed CPU work and allocation observed for one rendered frame.</summary>
 /// <param name="FrameNumber">Monotonic rendered-frame number.</param>
 /// <param name="CpuMilliseconds">Combined update and render CPU duration.</param>
@@ -7,10 +25,12 @@ namespace Engine.Graphics;
 /// <param name="RenderMilliseconds">Render submission duration.</param>
 /// <param name="GcAllocatedBytes">Managed bytes allocated on the profiled thread between update start and render completion.</param>
 /// <param name="CpuMarkers">Captured pre-order instrumented method hierarchy.</param>
+/// <param name="Gpu">Most recently completed GPU query, which retains its original frame number.</param>
 public readonly record struct FrameProfileSample(
     ulong FrameNumber,
     double CpuMilliseconds,
     double UpdateMilliseconds,
     double RenderMilliseconds,
     long GcAllocatedBytes,
-    CpuProfileMarker[]? CpuMarkers = null);
+    CpuProfileMarker[]? CpuMarkers = null,
+    GpuFrameProfile? Gpu = null);

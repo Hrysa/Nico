@@ -41,13 +41,26 @@ public class Surface : Panel
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        base.Paint(drawList);
         var thickness = Math.Clamp(BorderThickness, 0f, MathF.Min(Width, Height) / 2f);
-        if (thickness <= 0f)
+        if (thickness <= 0f || CornerRadius <= 0f || CornerMode != BoxCornerMode.All)
+        {
+            base.Paint(drawList);
+            if (thickness <= 0f)
+                return;
+            drawList.AddRectangle(Left, Top, Right, Top + thickness, BorderColor);
+            drawList.AddRectangle(Left, Bottom - thickness, Right, Bottom, BorderColor);
+            drawList.AddRectangle(Left, Top + thickness, Left + thickness, Bottom - thickness, BorderColor);
+            drawList.AddRectangle(Right - thickness, Top + thickness, Right, Bottom - thickness, BorderColor);
             return;
-        drawList.AddRectangle(Left, Top, Right, Top + thickness, BorderColor);
-        drawList.AddRectangle(Left, Bottom - thickness, Right, Bottom, BorderColor);
-        drawList.AddRectangle(Left, Top + thickness, Left + thickness, Bottom - thickness, BorderColor);
-        drawList.AddRectangle(Right - thickness, Top + thickness, Right, Bottom - thickness, BorderColor);
+        }
+
+        var radius = MathF.Min(CornerRadius, MathF.Min(Width, Height) * 0.5f);
+        drawList.AddRoundedRectangle(Left, Top, Right, Bottom, radius, BorderColor);
+        if (!PaintBackground || !HasBackgroundColor || Width <= thickness * 2f ||
+            Height <= thickness * 2f)
+            return;
+        drawList.AddRoundedRectangle(
+            Left + thickness, Top + thickness, Right - thickness, Bottom - thickness,
+            MathF.Max(0f, radius - thickness), BackgroundColor);
     }
 }

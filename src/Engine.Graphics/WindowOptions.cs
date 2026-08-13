@@ -45,7 +45,7 @@ public struct WindowOptions
 
     /// <summary>
     /// Gets or sets requested viewport MSAA samples: 1, 2, 4, or 8.
-    /// Zero selects the default of four.
+    /// Zero selects the default of one.
     /// </summary>
     public int MsaaSamples { get; set; }
 }

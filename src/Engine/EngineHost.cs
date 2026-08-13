@@ -24,7 +24,15 @@ public static class EngineHost
     public static EngineApplication CreateWindow(string title, int width, int height)
     {
         var window = new SilkWindow();
-        window.Initialize(new WindowOptions { Title = title, Width = width, Height = height });
+        window.Initialize(new WindowOptions
+        {
+            Title = title,
+            Width = width,
+            Height = height,
+            TargetFrameRate = 120d,
+            PresentationMode = PresentationModePreference.Immediate,
+            MsaaSamples = 1
+        });
         return new EngineApplication(window, width, height);
     }
 }
@@ -407,15 +415,14 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <summary>Resolves and registers a script-selected animation set.</summary>
     /// <param name="database">Project asset database.</param>
     /// <param name="pipeline">Player import pipeline.</param>
-    /// <param name="animationSet">Script-facing animation-set reference.</param>
+    /// <param name="setReference">Resolved animation-set artifact reference.</param>
     /// <param name="controller">Target runtime controller.</param>
     private void BindAnimationSet(
         AssetDatabase database,
         AssetImportPipeline pipeline,
-        AnimationSet animationSet,
+        AssetReference setReference,
         AnimationController controller)
     {
-        var setReference = animationSet.Reference;
         var setRecord = database.Find(setReference.Asset) ?? throw new FileNotFoundException(
             $"Animation set asset '{setReference.Asset}' is missing.");
         var setOutcome = pipeline.Import(setRecord, "player");
@@ -508,7 +515,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         AssetImportPipeline pipeline)
     {
         var manager = new RuntimeResourceManager(
-            new PublishedArtifactResolver(database, pipeline, "player"),
+            new ImportingArtifactResolver(database, pipeline, "player"),
             new AssetStorageRouter(new MountedVirtualFileSystem()),
             unusedCapacity: 128);
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<StaticMeshResource>(
@@ -770,7 +777,9 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         _scriptRuntime = new SceneScriptRuntime();
         try
         {
-            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window, _animationService, this);
+            var assets = new SceneAssetRegistry(path => database.FindByPath(path)?.Id);
+            _scriptRuntime.Attach(sceneRoot, _scriptCatalog, _window, _animationService, this,
+                assets);
             _scriptRuntime.Start();
         }
         catch

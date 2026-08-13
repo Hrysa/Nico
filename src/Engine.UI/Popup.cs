@@ -31,6 +31,15 @@ public class Popup : Surface
     /// <summary>Gets or sets whether the overlay host clamps this popup inside its arranged bounds.</summary>
     public bool ConstrainToOverlayBounds { get; set; } = true;
 
+    /// <summary>Gets or sets the minimum inset retained inside constrained popup bounds.</summary>
+    public float ConstraintMargin
+    {
+        get;
+        set => field = value >= 0f && float.IsFinite(value)
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(value));
+    }
+
     /// <summary>Gets or sets the preferred placement relative to the owner.</summary>
     public PopupPlacement Placement { get; set; } = PopupPlacement.Below;
 

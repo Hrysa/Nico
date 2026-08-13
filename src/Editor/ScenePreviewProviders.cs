@@ -310,16 +310,34 @@ internal static class PreviewWire
         AddHorizontalCircle(destination, transform, radius, halfStraight, color, pickingId);
         for (var axis = 0; axis < 2; axis++)
         {
-            var previous = Vector3.Zero;
-            for (var index = 0; index <= CircleSegments; index++)
+            for (var side = -1; side <= 1; side += 2)
             {
-                var angle = -MathF.PI * .5f + index * MathF.PI / CircleSegments;
-                var lateral = MathF.Cos(angle) * radius;
-                var y = MathF.Sin(angle) * radius + (angle < 0f ? -halfStraight : halfStraight);
-                var point = axis == 0 ? new Vector3(lateral, y, 0f) : new Vector3(0f, y, lateral);
-                if (index > 0)
+                var previous = new Vector3(0f, -halfStraight - radius, 0f);
+                for (var index = 1; index <= CircleSegments / 2; index++)
+                {
+                    var angle = -MathF.PI * .5f + index * MathF.PI / CircleSegments;
+                    var lateral = side * MathF.Cos(angle) * radius;
+                    var point = axis == 0
+                        ? new Vector3(lateral, -halfStraight + MathF.Sin(angle) * radius, 0f)
+                        : new Vector3(0f, -halfStraight + MathF.Sin(angle) * radius, lateral);
                     AddTransformed(destination, transform, previous, point, color, pickingId);
-                previous = point;
+                    previous = point;
+                }
+                var topEquator = axis == 0
+                    ? new Vector3(side * radius, halfStraight, 0f)
+                    : new Vector3(0f, halfStraight, side * radius);
+                AddTransformed(destination, transform, previous, topEquator, color, pickingId);
+                previous = topEquator;
+                for (var index = 1; index <= CircleSegments / 2; index++)
+                {
+                    var angle = index * MathF.PI / CircleSegments;
+                    var lateral = side * MathF.Cos(angle) * radius;
+                    var point = axis == 0
+                        ? new Vector3(lateral, halfStraight + MathF.Sin(angle) * radius, 0f)
+                        : new Vector3(0f, halfStraight + MathF.Sin(angle) * radius, lateral);
+                    AddTransformed(destination, transform, previous, point, color, pickingId);
+                    previous = point;
+                }
             }
         }
     }

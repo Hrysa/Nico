@@ -59,6 +59,21 @@ public sealed class Canvas : Panel
                 : new Vector2(owner.Left, owner.Bottom);
         var workArea = PopupWorkAreaProvider?.GetWorkArea(anchor) ??
             new UIPopupWorkArea(0f, 0f, Width, Height);
+        if (popup.ConstrainToOverlayBounds)
+        {
+            var left = Math.Clamp(workArea.Left, 0f, Width);
+            var top = Math.Clamp(workArea.Top, 0f, Height);
+            var right = Math.Clamp(workArea.Right, left, Width);
+            var bottom = Math.Clamp(workArea.Bottom, top, Height);
+            var margin = MathF.Min(popup.ConstraintMargin,
+                MathF.Min((right - left) * 0.5f, (bottom - top) * 0.5f));
+            workArea = new UIPopupWorkArea(
+                left + margin,
+                top + margin,
+                right - margin,
+                bottom - margin,
+                workArea.DpiScale);
+        }
         var position = placement == PopupPlacement.Pointer
             ? pointerPosition
             : owner is null
