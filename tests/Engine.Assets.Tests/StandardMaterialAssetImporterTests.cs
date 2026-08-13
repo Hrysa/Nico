@@ -41,11 +41,15 @@ public sealed class StandardMaterialAssetImporterTests : IDisposable
     public void Import_TexturedSource_ReportsTextureDependency()
     {
         var sourcePath = Path.Combine(_directory, "textured.nmat");
-        var texture = new AssetReference(AssetId.New(), "main");
+        var baseColorTexture = new AssetReference(AssetId.New(), "base");
+        var normalTexture = new AssetReference(AssetId.New(), "normal");
+        var metallicRoughnessTexture = new AssetReference(AssetId.New(), "metal-rough");
         using (var stream = File.Create(sourcePath))
             StandardMaterialAssetCodec.Save(stream, new StandardMaterialAsset
             {
-                BaseColorTexture = texture
+                BaseColorTexture = baseColorTexture,
+                NormalTexture = normalTexture,
+                MetallicRoughnessTexture = metallicRoughnessTexture
             });
         var metadata = new AssetMetadata(1, AssetId.New(), "standard-material",
             JsonDocument.Parse("{}").RootElement.Clone());
@@ -54,7 +58,9 @@ public sealed class StandardMaterialAssetImporterTests : IDisposable
 
         var result = new StandardMaterialAssetImporter().Import(context);
 
-        Assert.Equal(texture, Assert.Single(result.Dependencies));
+        Assert.Equal(
+            [baseColorTexture, normalTexture, metallicRoughnessTexture],
+            result.Dependencies);
     }
 
     /// <summary>Removes temporary importer artifacts.</summary>

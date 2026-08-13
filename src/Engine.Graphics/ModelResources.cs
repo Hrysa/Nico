@@ -69,26 +69,32 @@ public struct ForwardModelVertex
     /// <summary>Gets or sets primary texture coordinates.</summary>
     public Vector2 TexCoord;
 
+    /// <summary>Gets or sets tangent direction and handedness.</summary>
+    public Vector4 Tangent;
+
     /// <summary>Gets or sets the linear base-color multiplier.</summary>
     public Vector4 BaseColor;
 
     /// <summary>Gets the packed byte stride.</summary>
-    public static uint Stride => sizeof(float) * 12u;
+    public static uint Stride => sizeof(float) * 16u;
 
     /// <summary>Creates one packed forward vertex.</summary>
     /// <param name="position">Object-space position.</param>
     /// <param name="normal">Object-space normal.</param>
     /// <param name="texCoord">Primary texture coordinates.</param>
+    /// <param name="tangent">Tangent direction and handedness.</param>
     /// <param name="baseColor">Linear base-color multiplier.</param>
     public ForwardModelVertex(
         Vector3 position,
         Vector3 normal,
         Vector2 texCoord,
+        Vector4 tangent,
         Vector4 baseColor)
     {
         Position = position;
         Normal = normal;
         TexCoord = texCoord;
+        Tangent = tangent;
         BaseColor = baseColor;
     }
 }
@@ -103,6 +109,8 @@ public struct SkinnedForwardModelVertex
     public Vector3 Normal;
     /// <summary>Gets or sets primary texture coordinates.</summary>
     public Vector2 TexCoord;
+    /// <summary>Gets or sets tangent direction and handedness.</summary>
+    public Vector4 Tangent;
     /// <summary>Gets or sets the linear base-color multiplier.</summary>
     public Vector4 BaseColor;
     /// <summary>Gets or sets four joint indices as unsigned integer components.</summary>
@@ -111,12 +119,13 @@ public struct SkinnedForwardModelVertex
     public Vector4 Weights;
 
     /// <summary>Gets the packed byte stride.</summary>
-    public static uint Stride => sizeof(float) * 16u + sizeof(uint) * 4u;
+    public static uint Stride => sizeof(float) * 20u + sizeof(uint) * 4u;
 
     /// <summary>Creates one packed skinned forward vertex.</summary>
     /// <param name="position">Bind-pose position.</param>
     /// <param name="normal">Bind-pose normal.</param>
     /// <param name="texCoord">Primary texture coordinates.</param>
+    /// <param name="tangent">Tangent direction and handedness.</param>
     /// <param name="baseColor">Linear base-color multiplier.</param>
     /// <param name="joints">Four joint indices.</param>
     /// <param name="weights">Four normalized joint weights.</param>
@@ -124,6 +133,7 @@ public struct SkinnedForwardModelVertex
         Vector3 position,
         Vector3 normal,
         Vector2 texCoord,
+        Vector4 tangent,
         Vector4 baseColor,
         UIntVector4 joints,
         Vector4 weights)
@@ -131,6 +141,7 @@ public struct SkinnedForwardModelVertex
         Position = position;
         Normal = normal;
         TexCoord = texCoord;
+        Tangent = tangent;
         BaseColor = baseColor;
         Joints = joints;
         Weights = weights;
@@ -383,8 +394,14 @@ public sealed class ResolvedStandardMaterial
     /// <summary>Gets or sets an optional renderer-owned base-color texture.</summary>
     public TextureHandle BaseColorTexture { get; set; }
 
+    /// <summary>Gets or sets an optional renderer-owned normal map texture.</summary>
+    public TextureHandle NormalTexture { get; set; }
+
+    /// <summary>Gets or sets an optional renderer-owned metallic/roughness texture.</summary>
+    public TextureHandle MetallicRoughnessTexture { get; set; }
+
     /// <summary>Gets or sets metallic response in the range zero through one.</summary>
-    public float Metallic { get; set; } = 1f;
+    public float Metallic { get; set; }
 
     /// <summary>Gets or sets surface roughness in the range zero through one.</summary>
     public float Roughness { get; set; } = 1f;
@@ -392,19 +409,25 @@ public sealed class ResolvedStandardMaterial
     /// <summary>Gets or sets whether back-face culling is disabled.</summary>
     public bool DoubleSided { get; set; }
 
-    /// <summary>Resolves persistent material values with an optional GPU texture.</summary>
+    /// <summary>Resolves persistent material values with optional GPU textures.</summary>
     /// <param name="source">Persistent material resource.</param>
-    /// <param name="texture">Renderer-owned texture handle.</param>
+    /// <param name="baseColorTexture">Renderer-owned base-color texture handle.</param>
+    /// <param name="normalTexture">Renderer-owned normal-map texture handle.</param>
+    /// <param name="metallicRoughnessTexture">Renderer-owned metallic/roughness texture handle.</param>
     /// <returns>A renderer-ready material.</returns>
     public static ResolvedStandardMaterial Resolve(
         StandardMaterialAsset source,
-        TextureHandle texture = default)
+        TextureHandle baseColorTexture = default,
+        TextureHandle normalTexture = default,
+        TextureHandle metallicRoughnessTexture = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         return new ResolvedStandardMaterial
         {
             BaseColor = source.BaseColor,
-            BaseColorTexture = texture,
+            BaseColorTexture = baseColorTexture,
+            NormalTexture = normalTexture,
+            MetallicRoughnessTexture = metallicRoughnessTexture,
             Metallic = source.Metallic,
             Roughness = source.Roughness,
             DoubleSided = source.DoubleSided

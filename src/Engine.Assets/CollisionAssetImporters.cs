@@ -88,8 +88,13 @@ public sealed class StandardMaterialAssetImporter : IAssetImporter
         using (var source = context.OpenSource())
         using (var destination = context.CreateArtifact("material.nmat"))
             source.CopyTo(destination);
-        var dependencies = material.BaseColorTexture is { } texture
-            ? new[] { texture } : [];
+        var dependencies = new List<AssetReference>(3);
+        if (material.BaseColorTexture is { } baseColorTexture)
+            dependencies.Add(baseColorTexture);
+        if (material.NormalTexture is { } normalTexture)
+            dependencies.Add(normalTexture);
+        if (material.MetallicRoughnessTexture is { } metallicRoughnessTexture)
+            dependencies.Add(metallicRoughnessTexture);
         return new AssetImportResult(
             [new AssetArtifact("main", "nico/standard-material", "material.nmat")],
             dependencies, []);

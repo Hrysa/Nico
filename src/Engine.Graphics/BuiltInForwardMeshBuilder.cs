@@ -49,7 +49,7 @@ public static class BuiltInForwardMeshBuilder
         {
             var source = mesh.Vertices[index];
             vertices[index] = new ForwardModelVertex(source.Position, source.Normal,
-                source.TexCoord, source.Color * material.BaseColor);
+                source.TexCoord, source.Tangent, source.Color * material.BaseColor);
         }
         return vertices;
     }
@@ -73,6 +73,7 @@ public static class BuiltInForwardMeshBuilder
                 source.Position,
                 source.Normal,
                 source.TexCoord,
+                source.Tangent,
                 source.Color * material.BaseColor,
                 new UIntVector4(influence.Joint0, influence.Joint1,
                     influence.Joint2, influence.Joint3),

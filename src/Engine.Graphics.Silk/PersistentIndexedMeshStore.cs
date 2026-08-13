@@ -34,21 +34,33 @@ internal unsafe sealed class PersistentIndexedMeshStore
     /// <param name="handle">Renderer-owned mesh handle.</param>
     /// <param name="vertices">Compact shaded vertices.</param>
     /// <param name="indices">Triangle-list indices.</param>
-    /// <param name="texture">Sampled base-color texture.</param>
+    /// <param name="baseColorTexture">Sampled base-color texture.</param>
+    /// <param name="normalTexture">Sampled tangent-space normal texture.</param>
+    /// <param name="metallicRoughnessTexture">Sampled metallic-roughness texture.</param>
+    /// <param name="metallic">Material metallic factor.</param>
+    /// <param name="roughness">Material roughness factor.</param>
+    /// <param name="doubleSided">Whether back-face culling is disabled.</param>
     public void Add(
         MeshHandle handle,
         ForwardModelVertex[] vertices,
         uint[] indices,
-        TextureHandle texture)
+        TextureHandle baseColorTexture,
+        TextureHandle normalTexture,
+        TextureHandle metallicRoughnessTexture,
+        float metallic,
+        float roughness,
+        bool doubleSided)
     {
         ArgumentNullException.ThrowIfNull(vertices);
         ArgumentNullException.ThrowIfNull(indices);
         if (vertices.Length == 0 || indices.Length == 0)
         {
-            _resources.Add(handle, new Resource(vertices, indices, texture));
+            _resources.Add(handle, new Resource(vertices, indices, baseColorTexture,
+                normalTexture, metallicRoughnessTexture, metallic, roughness, doubleSided));
             return;
         }
-        var resource = new Resource(vertices, indices, texture)
+        var resource = new Resource(vertices, indices, baseColorTexture,
+            normalTexture, metallicRoughnessTexture, metallic, roughness, doubleSided)
         {
             VertexBuffer = CreateBuffer(checked((ulong)vertices.Length * ForwardModelVertex.Stride),
                 BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit,
@@ -76,7 +88,9 @@ internal unsafe sealed class PersistentIndexedMeshStore
         if (!_resources.TryGetValue(handle, out var resource))
             throw new ArgumentOutOfRangeException(nameof(handle), handle, "Mesh resource was not found.");
         return new Binding(resource.VertexBuffer, resource.IndexBuffer,
-            checked((uint)resource.Indices.Length), resource.Texture);
+            checked((uint)resource.Indices.Length), resource.BaseColorTexture,
+            resource.NormalTexture, resource.MetallicRoughnessTexture,
+            resource.Metallic, resource.Roughness, resource.DoubleSided);
     }
 
     /// <summary>Removes a resource for fence-safe retirement.</summary>
@@ -215,7 +229,12 @@ internal unsafe sealed class PersistentIndexedMeshStore
     {
         internal ForwardModelVertex[] Vertices { get; }
         internal uint[] Indices { get; }
-        internal TextureHandle Texture { get; }
+        internal TextureHandle BaseColorTexture { get; }
+        internal TextureHandle NormalTexture { get; }
+        internal TextureHandle MetallicRoughnessTexture { get; }
+        internal float Metallic { get; }
+        internal float Roughness { get; }
+        internal bool DoubleSided { get; }
         internal Silk.NET.Vulkan.Buffer VertexBuffer;
         internal DeviceMemory VertexMemory;
         internal Silk.NET.Vulkan.Buffer IndexBuffer;
@@ -227,11 +246,21 @@ internal unsafe sealed class PersistentIndexedMeshStore
         internal Resource(
             ForwardModelVertex[] vertices,
             uint[] indices,
-            TextureHandle texture)
+            TextureHandle baseColorTexture,
+            TextureHandle normalTexture,
+            TextureHandle metallicRoughnessTexture,
+            float metallic,
+            float roughness,
+            bool doubleSided)
         {
             Vertices = vertices;
             Indices = indices;
-            Texture = texture;
+            BaseColorTexture = baseColorTexture;
+            NormalTexture = normalTexture;
+            MetallicRoughnessTexture = metallicRoughnessTexture;
+            Metallic = metallic;
+            Roughness = roughness;
+            DoubleSided = doubleSided;
         }
 
         /// <summary>Destroys Vulkan buffer resources.</summary>
@@ -254,10 +283,20 @@ internal unsafe sealed class PersistentIndexedMeshStore
     /// <param name="VertexBuffer">Vertex buffer.</param>
     /// <param name="IndexBuffer">Index buffer.</param>
     /// <param name="IndexCount">Number of indices.</param>
-    /// <param name="Texture">Sampled base-color texture.</param>
+    /// <param name="BaseColorTexture">Sampled base-color texture.</param>
+    /// <param name="NormalTexture">Sampled tangent-space normal texture.</param>
+    /// <param name="MetallicRoughnessTexture">Sampled metallic-roughness texture.</param>
+    /// <param name="Metallic">Material metallic factor.</param>
+    /// <param name="Roughness">Material roughness factor.</param>
+    /// <param name="DoubleSided">Whether back-face culling is disabled.</param>
     internal readonly record struct Binding(
         Silk.NET.Vulkan.Buffer VertexBuffer,
         Silk.NET.Vulkan.Buffer IndexBuffer,
         uint IndexCount,
-        TextureHandle Texture);
+        TextureHandle BaseColorTexture,
+        TextureHandle NormalTexture,
+        TextureHandle MetallicRoughnessTexture,
+        float Metallic,
+        float Roughness,
+        bool DoubleSided);
 }

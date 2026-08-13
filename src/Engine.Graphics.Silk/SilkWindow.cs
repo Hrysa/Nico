@@ -138,6 +138,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private uint _nextTextureHandle = 1;
     private uint _nextPaletteHandle = 1;
     private TextureHandle _defaultModelTexture;
+    private TextureHandle _defaultNormalTexture;
+    private TextureHandle _defaultMetallicRoughnessTexture;
     private readonly Dictionary<uint, VertexT[]> _viewportQuadVertices = new();
     private readonly Dictionary<uint, ulong> _viewportQuadGenerations = new();
     private readonly Dictionary<uint, ulong[]> _uploadedViewportQuadGenerations = new();
@@ -678,6 +680,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _logger);
         _defaultModelTexture = CreateTexture(new TextureResource(1, 1,
             [255, 255, 255, 255], TextureColorSpace.Srgb));
+        _defaultNormalTexture = CreateTexture(new TextureResource(1, 1,
+            [128, 128, 255, 255], TextureColorSpace.Linear));
+        _defaultMetallicRoughnessTexture = CreateTexture(new TextureResource(1, 1,
+            [255, 255, 255, 255], TextureColorSpace.Linear));
         CreateGridPipeline();
         CreateFramebuffers();
         CreateSyncObjects();
@@ -2199,12 +2205,17 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
             Size = (uint)sizeof(ModelPushConstants)
         };
-        var descriptorLayout = _pipelines.ModelTextureDescriptorSetLayout;
+        var descriptorLayouts = stackalloc DescriptorSetLayout[]
+        {
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout
+        };
         var modelLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 1,
-            PSetLayouts = &descriptorLayout,
+            SetLayoutCount = 3,
+            PSetLayouts = descriptorLayouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
         };
@@ -2261,6 +2272,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 {
                     Binding = 0, Location = 3, Format = Format.R32G32B32A32Sfloat,
                     Offset = sizeof(float) * 8u
+                },
+                new VertexInputAttributeDescription
+                {
+                    Binding = 0, Location = 4, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 12u
                 }
             };
             fixed (PipelineShaderStageCreateInfo* stagePointer = stages)
@@ -2345,6 +2361,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 if (result != Result.Success)
                     throw new InvalidOperationException(
                         $"Failed to create indexed model pipeline: {result}");
+                rasterizer.CullMode = CullModeFlags.None;
+                result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                    null, out _pipelines.ModelDoubleSidedPipeline);
+                if (result != Result.Success)
+                    throw new InvalidOperationException(
+                        $"Failed to create double-sided model pipeline: {result}");
             }
         }
         finally
@@ -2394,6 +2416,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var layouts = stackalloc DescriptorSetLayout[]
         {
             _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.SkinPaletteDescriptorSetLayout
         };
         var pushConstantRange = new PushConstantRange
@@ -2404,7 +2428,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var pipelineLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 2,
+            SetLayoutCount = 4,
             PSetLayouts = layouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
@@ -2448,17 +2472,19 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     Offset = sizeof(float) * 6u },
                 new() { Binding = 0, Location = 3, Format = Format.R32G32B32A32Sfloat,
                     Offset = sizeof(float) * 8u },
-                new() { Binding = 0, Location = 4, Format = Format.R32G32B32A32Uint,
+                new() { Binding = 0, Location = 4, Format = Format.R32G32B32A32Sfloat,
                     Offset = sizeof(float) * 12u },
-                new() { Binding = 0, Location = 5, Format = Format.R32G32B32A32Sfloat,
-                    Offset = sizeof(float) * 12u + sizeof(uint) * 4u }
+                new() { Binding = 0, Location = 5, Format = Format.R32G32B32A32Uint,
+                    Offset = sizeof(float) * 16u },
+                new() { Binding = 0, Location = 6, Format = Format.R32G32B32A32Sfloat,
+                    Offset = sizeof(float) * 16u + sizeof(uint) * 4u }
             };
             var vertexInput = new PipelineVertexInputStateCreateInfo
             {
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &binding,
-                VertexAttributeDescriptionCount = 6,
+                VertexAttributeDescriptionCount = 7,
                 PVertexAttributeDescriptions = attributes
             };
             var inputAssembly = new PipelineInputAssemblyStateCreateInfo
@@ -2530,6 +2556,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
                 null, out _pipelines.SkinnedModelPipeline),
                 "create skinned model pipeline");
+            rasterizer.CullMode = CullModeFlags.None;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                null, out _pipelines.SkinnedModelDoubleSidedPipeline),
+                "create double-sided skinned model pipeline");
         }
         finally
         {
@@ -3218,11 +3248,21 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     {
         var handle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
         var vertices = BuiltInForwardMeshBuilder.BuildIndexedVertices(mesh, material);
-        var texture = material.BaseColorTexture.IsValid
+        var baseColorTexture = material.BaseColorTexture.IsValid
             ? material.BaseColorTexture : _defaultModelTexture;
-        ValidateOwner(texture);
-        _persistentTextures!.GetDescriptor(texture);
-        _persistentIndexedMeshes!.Add(handle, vertices, mesh.Indices, texture);
+        var normalTexture = material.NormalTexture.IsValid
+            ? material.NormalTexture : _defaultNormalTexture;
+        var metallicRoughnessTexture = material.MetallicRoughnessTexture.IsValid
+            ? material.MetallicRoughnessTexture : _defaultMetallicRoughnessTexture;
+        ValidateOwner(baseColorTexture);
+        ValidateOwner(normalTexture);
+        ValidateOwner(metallicRoughnessTexture);
+        _persistentTextures!.GetDescriptor(baseColorTexture);
+        _persistentTextures.GetDescriptor(normalTexture);
+        _persistentTextures.GetDescriptor(metallicRoughnessTexture);
+        _persistentIndexedMeshes!.Add(handle, vertices, mesh.Indices, baseColorTexture,
+            normalTexture, metallicRoughnessTexture, material.Metallic, material.Roughness,
+            material.DoubleSided);
         return handle;
     }
 
@@ -3236,13 +3276,22 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var meshHandle = new MeshHandle(CreateOwnedHandle(_nextMeshHandle++));
         var paletteHandle = new SkinPaletteHandle(CreateOwnedHandle(_nextPaletteHandle++));
         var vertices = BuiltInForwardMeshBuilder.BuildSkinnedVertices(mesh, material);
-        var texture = material.BaseColorTexture.IsValid
+        var baseColorTexture = material.BaseColorTexture.IsValid
             ? material.BaseColorTexture : _defaultModelTexture;
-        ValidateOwner(texture);
-        _persistentTextures!.GetDescriptor(texture);
+        var normalTexture = material.NormalTexture.IsValid
+            ? material.NormalTexture : _defaultNormalTexture;
+        var metallicRoughnessTexture = material.MetallicRoughnessTexture.IsValid
+            ? material.MetallicRoughnessTexture : _defaultMetallicRoughnessTexture;
+        ValidateOwner(baseColorTexture);
+        ValidateOwner(normalTexture);
+        ValidateOwner(metallicRoughnessTexture);
+        _persistentTextures!.GetDescriptor(baseColorTexture);
+        _persistentTextures.GetDescriptor(normalTexture);
+        _persistentTextures.GetDescriptor(metallicRoughnessTexture);
         var pose = new SkeletonPose(mesh.Skeleton);
         _persistentSkinnedMeshes!.Add(meshHandle, paletteHandle, vertices, mesh.Mesh.Indices,
-            texture, pose.SkinMatrices);
+            baseColorTexture, normalTexture, metallicRoughnessTexture,
+            material.Metallic, material.Roughness, material.DoubleSided, pose.SkinMatrices);
         return new SkinnedMeshHandles(meshHandle, paletteHandle);
     }
 
@@ -3281,7 +3330,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     public void DestroyTexture(TextureHandle texture)
     {
         ValidateOwner(texture);
-        if (texture == _defaultModelTexture)
+        if (texture == _defaultModelTexture || texture == _defaultNormalTexture ||
+            texture == _defaultMetallicRoughnessTexture)
             throw new InvalidOperationException("The renderer default texture cannot be destroyed.");
         if (!_pendingTextureRetirements.Add(texture))
             throw new InvalidOperationException("The texture is already pending destruction.");
@@ -3948,7 +3998,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         // ═══════════════════════════════════════════════════════════════
 
         var clearValues = stackalloc ClearValue[2];
-        var skinnedDescriptorSets = stackalloc DescriptorSet[2];
+        var modelDescriptorSets = stackalloc DescriptorSet[3];
+        var skinnedDescriptorSets = stackalloc DescriptorSet[4];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty || !_pendingViewportRenders.Remove(viewportId))
@@ -4025,10 +4076,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                         if (!draw.SkinPalette.IsValid)
                             throw new InvalidOperationException(
                                 "A skinned mesh draw requires a joint palette.");
-                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.SkinnedModelPipeline);
                         var skinned = _persistentSkinnedMeshes.GetBinding(
                             draw.Mesh, draw.SkinPalette, _activeFrameIndex);
+                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                            skinned.DoubleSided
+                                ? _pipelines.SkinnedModelDoubleSidedPipeline
+                                : _pipelines.SkinnedModelPipeline);
                         if (skinned.IndexCount == 0)
                             continue;
                         var skinnedVertexBuffer = skinned.VertexBuffer;
@@ -4037,14 +4090,18 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             &skinnedVertexBuffer, &skinnedOffset);
                         _vk.CmdBindIndexBuffer(commandBuffer, skinned.IndexBuffer, 0,
                             IndexType.Uint32);
-                        var textureDescriptor = _persistentTextures.GetDescriptor(skinned.Texture);
-                        skinnedDescriptorSets[0] = textureDescriptor;
-                        skinnedDescriptorSets[1] = skinned.PaletteDescriptor;
+                        skinnedDescriptorSets[0] = _persistentTextures.GetDescriptor(
+                            skinned.BaseColorTexture);
+                        skinnedDescriptorSets[1] = _persistentTextures.GetDescriptor(
+                            skinned.NormalTexture);
+                        skinnedDescriptorSets[2] = _persistentTextures.GetDescriptor(
+                            skinned.MetallicRoughnessTexture);
+                        skinnedDescriptorSets[3] = skinned.PaletteDescriptor;
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.SkinnedModelLayout, 0, 2,
+                            _pipelines.SkinnedModelLayout, 0, 4,
                             skinnedDescriptorSets, 0, null);
                         var skinnedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting);
+                            draw.PushConstants, lighting, skinned.Metallic, skinned.Roughness);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
                             ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
                             0, (uint)sizeof(ModelPushConstants),
@@ -4054,9 +4111,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     }
                     if (_persistentIndexedMeshes!.Contains(draw.Mesh))
                     {
-                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.ModelPipeline);
                         var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
+                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                            indexed.DoubleSided
+                                ? _pipelines.ModelDoubleSidedPipeline
+                                : _pipelines.ModelPipeline);
                         if (indexed.IndexCount == 0)
                             continue;
                         var indexedVertexBuffer = indexed.VertexBuffer;
@@ -4065,11 +4124,16 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             &indexedVertexBuffer, &indexedOffset);
                         _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0,
                             IndexType.Uint32);
-                        var modelDescriptor = _persistentTextures.GetDescriptor(indexed.Texture);
+                        modelDescriptorSets[0] = _persistentTextures.GetDescriptor(
+                            indexed.BaseColorTexture);
+                        modelDescriptorSets[1] = _persistentTextures.GetDescriptor(
+                            indexed.NormalTexture);
+                        modelDescriptorSets[2] = _persistentTextures.GetDescriptor(
+                            indexed.MetallicRoughnessTexture);
                         _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.ModelLayout, 0, 1, &modelDescriptor, 0, null);
+                            _pipelines.ModelLayout, 0, 3, modelDescriptorSets, 0, null);
                         var indexedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting);
+                            draw.PushConstants, lighting, indexed.Metallic, indexed.Roughness);
                         _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
                             ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
                             0, (uint)sizeof(ModelPushConstants),

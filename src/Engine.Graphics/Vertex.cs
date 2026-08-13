@@ -103,20 +103,36 @@ public struct ModelPushConstants
     public Vector4 LightDirectionIntensity;
     /// <summary>RGB linear light color and W ambient intensity.</summary>
     public Vector4 LightColorAmbient;
+    /// <summary>XYZ world-space camera position and W metallic factor.</summary>
+    public Vector4 CameraPositionMetallic;
+    /// <summary>X roughness factor; remaining channels are reserved.</summary>
+    public Vector4 MaterialFactors;
 
     /// <summary>Combines camera/object constants with one queue's lighting.</summary>
     /// <param name="transforms">Object and camera transforms.</param>
     /// <param name="lighting">Resolved scene lighting.</param>
+    /// <param name="metallic">Material metallic factor.</param>
+    /// <param name="roughness">Material roughness factor.</param>
     /// <returns>Constants consumed by static and skinned forward shaders.</returns>
-    public static ModelPushConstants Create(PushConstants transforms, SceneLighting lighting) =>
-        new()
+    public static ModelPushConstants Create(
+        PushConstants transforms,
+        SceneLighting lighting,
+        float metallic = 0f,
+        float roughness = 1f)
+    {
+        var cameraPosition = Matrix4x4.Invert(transforms.View, out var inverseView)
+            ? inverseView.Translation : Vector3.Zero;
+        return new ModelPushConstants
         {
             Model = transforms.Model,
             View = transforms.View,
             Projection = transforms.Projection,
             LightDirectionIntensity = new Vector4(lighting.DirectionToLight, lighting.Intensity),
-            LightColorAmbient = new Vector4(lighting.Color, lighting.AmbientIntensity)
+            LightColorAmbient = new Vector4(lighting.Color, lighting.AmbientIntensity),
+            CameraPositionMetallic = new Vector4(cameraPosition, Math.Clamp(metallic, 0f, 1f)),
+            MaterialFactors = new Vector4(Math.Clamp(roughness, 0f, 1f), 0f, 0f, 0f)
         };
+    }
 }
 
 /// <summary>Stores texture transforms and presentation-effect parameters.</summary>

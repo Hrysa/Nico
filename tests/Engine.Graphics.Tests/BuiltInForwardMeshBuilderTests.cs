@@ -36,6 +36,8 @@ public class BuiltInForwardMeshBuilderTests
         Assert.Equal(3, vertices.Length);
         Assert.Equal(source.Select(vertex => vertex.Position),
             vertices.Select(vertex => vertex.Position));
+        Assert.Equal(source.Select(vertex => vertex.Tangent),
+            vertices.Select(vertex => vertex.Tangent));
         Assert.All(vertices, vertex => Assert.Equal(Vector4.One, vertex.BaseColor));
     }
 

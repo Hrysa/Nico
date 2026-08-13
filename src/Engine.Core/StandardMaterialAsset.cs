@@ -12,6 +12,12 @@ public sealed class StandardMaterialAsset
     /// <summary>Gets or sets the optional persistent base-color texture.</summary>
     public AssetReference? BaseColorTexture { get; set; }
 
+    /// <summary>Gets or sets the optional persistent normal map texture.</summary>
+    public AssetReference? NormalTexture { get; set; }
+
+    /// <summary>Gets or sets the optional persistent metallic-roughness texture.</summary>
+    public AssetReference? MetallicRoughnessTexture { get; set; }
+
     /// <summary>Gets or sets metallic response in the range zero through one.</summary>
     public float Metallic { get; set; }
 
@@ -29,6 +35,8 @@ public sealed class StandardMaterialAsset
         {
             BaseColor = BaseColor,
             BaseColorTexture = BaseColorTexture,
+            NormalTexture = NormalTexture,
+            MetallicRoughnessTexture = MetallicRoughnessTexture,
             Metallic = Metallic,
             Roughness = Roughness,
             DoubleSided = DoubleSided
@@ -64,6 +72,18 @@ public static class StandardMaterialAssetCodec
             writer.Write(texture.Asset.Value.ToByteArray());
             writer.Write(texture.SubAsset ?? string.Empty);
         }
+        writer.Write(material.NormalTexture.HasValue);
+        if (material.NormalTexture is { } normalTexture)
+        {
+            writer.Write(normalTexture.Asset.Value.ToByteArray());
+            writer.Write(normalTexture.SubAsset ?? string.Empty);
+        }
+        writer.Write(material.MetallicRoughnessTexture.HasValue);
+        if (material.MetallicRoughnessTexture is { } roughnessTexture)
+        {
+            writer.Write(roughnessTexture.Asset.Value.ToByteArray());
+            writer.Write(roughnessTexture.SubAsset ?? string.Empty);
+        }
     }
 
     /// <summary>Reads one standard-material artifact.</summary>
@@ -97,6 +117,8 @@ public static class StandardMaterialAssetCodec
                 material.BaseColorTexture = new AssetReference(new AssetId(guid),
                     string.IsNullOrEmpty(subAsset) ? null : subAsset);
             }
+            material.NormalTexture = ReadOptionalTextureReference(reader, stream);
+            material.MetallicRoughnessTexture = ReadOptionalTextureReference(reader, stream);
             if (stream.CanSeek && stream.Position != stream.Length)
                 throw new InvalidDataException("Standard material artifact payload length is invalid.");
             Validate(material);
@@ -125,4 +147,29 @@ public static class StandardMaterialAssetCodec
     /// <param name="value">Candidate scalar.</param>
     /// <returns>True when finite and normalized.</returns>
     private static bool IsUnit(float value) => float.IsFinite(value) && value is >= 0f and <= 1f;
+
+    /// <summary>Reads an optional texture asset reference from the input stream.</summary>
+    /// <param name="reader">Stream reader for serialized values.</param>
+    /// <param name="stream">Underlying stream used for end-of-payload checks.</param>
+    /// <returns>The decoded reference, or null when omitted.</returns>
+    private static AssetReference? ReadOptionalTextureReference(
+        BinaryReader reader,
+        Stream stream)
+    {
+        if (!stream.CanSeek || stream.Position == stream.Length)
+            return null;
+        if (!reader.ReadBoolean())
+            return null;
+
+        var bytes = reader.ReadBytes(16);
+        if (bytes.Length != 16)
+            throw new InvalidDataException("Material texture asset ID is truncated.");
+        var guid = new Guid(bytes);
+        if (guid == Guid.Empty)
+            throw new InvalidDataException("Material texture asset ID is empty.");
+
+        var subAsset = reader.ReadString();
+        return new AssetReference(new AssetId(guid),
+            string.IsNullOrEmpty(subAsset) ? null : subAsset);
+    }
 }

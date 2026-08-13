@@ -396,6 +396,10 @@ public sealed class GlbModelImporterTests : IDisposable
         Assert.True(material.DoubleSided);
         Assert.Equal(new AssetReference(metadata.Id, "texture/0"),
             material.BaseColorTexture);
+        Assert.Equal(new AssetReference(metadata.Id, "texture/0"),
+            material.NormalTexture);
+        Assert.Equal(new AssetReference(metadata.Id, "texture/0"),
+            material.MetallicRoughnessTexture);
         var textureArtifact = Assert.Single(result.Artifacts, item =>
             item.ContentType == "nico/texture2d");
         Assert.Equal("texture/0", textureArtifact.Key);
@@ -582,7 +586,9 @@ public sealed class GlbModelImporterTests : IDisposable
              "materials":[{"name":"Blue","doubleSided":true,
                "pbrMetallicRoughness":{"baseColorFactor":[0.25,0.5,0.75,1],
                "metallicFactor":0.2,"roughnessFactor":0.6,
-               "baseColorTexture":{"index":0}}}],
+               "baseColorTexture":{"index":0},
+               "metallicRoughnessTexture":{"index":0}},
+               "normalTexture":{"index":0}}],
              "images":[{"bufferView":3,"mimeType":"image/png"}],
              "textures":[{"source":0}],
              "meshes":[{"name":"Triangle","primitives":[{"attributes":{"POSITION":0,"COLOR_0":2},

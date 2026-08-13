@@ -262,30 +262,38 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="instance">Persistent scene instance.</param>
     /// <param name="mesh">Imported indexed mesh.</param>
     /// <param name="material">Imported standard material.</param>
-    /// <param name="texture">Optional imported base-color texture.</param>
+    /// <param name="baseColorTexture">Optional imported base-color texture.</param>
+    /// <param name="normalTexture">Optional imported normal-map texture.</param>
+    /// <param name="metallicRoughnessTexture">Optional imported metallic-roughness texture.</param>
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         StaticMeshResource mesh,
         StandardMaterialAsset material,
-        TextureResource? texture = null)
+        TextureResource? baseColorTexture = null,
+        TextureResource? normalTexture = null,
+        TextureResource? metallicRoughnessTexture = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(material);
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
-        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
+        var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
+        var metallicRoughnessHandle = CreateMaterialTexture(
+            metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
             var meshHandle = _renderer.CreateStaticMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
+                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
+                    normalHandle, metallicRoughnessHandle));
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
-                instance, meshHandle, textureHandle, default, null));
+                instance, meshHandle, baseColorHandle, normalHandle,
+                metallicRoughnessHandle, default, null));
         }
         catch
         {
-            if (textureHandle.IsValid)
-                _renderer.DestroyTexture(textureHandle);
+            DestroyMaterialTextures(baseColorHandle, normalHandle, metallicRoughnessHandle);
             throw;
         }
     }
@@ -307,13 +315,17 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="terrain">Current height samples.</param>
     /// <param name="collider">Terrain dimensions shared with collision.</param>
     /// <param name="material">Material assigned to the terrain surface.</param>
-    /// <param name="texture">Optional base-color texture.</param>
+    /// <param name="baseColorTexture">Optional base-color texture.</param>
+    /// <param name="normalTexture">Optional normal-map texture.</param>
+    /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture.</param>
     public void SetTerrainResource(
         MeshInstance3D instance,
         TerrainResource terrain,
         TerrainColliderComponent collider,
         StandardMaterialAsset material,
-        TextureResource? texture = null)
+        TextureResource? baseColorTexture = null,
+        TextureResource? normalTexture = null,
+        TextureResource? metallicRoughnessTexture = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(terrain);
@@ -323,20 +335,24 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             DestroyAssetMeshResource(previous);
         var mesh = TerrainMeshBuilder.BuildStaticMesh(
             terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
-        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
+        var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
+        var metallicRoughnessHandle = CreateMaterialTexture(
+            metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
             var handle = _renderer.CreateStaticMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
+                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
+                    normalHandle, metallicRoughnessHandle));
             instance.LocalBounds = TerrainMeshBuilder.GetBounds(
                 terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
-                instance, handle, textureHandle, default, null, isTerrain: true));
+                instance, handle, baseColorHandle, normalHandle, metallicRoughnessHandle,
+                default, null, isTerrain: true));
         }
         catch
         {
-            if (textureHandle.IsValid)
-                _renderer.DestroyTexture(textureHandle);
+            DestroyMaterialTextures(baseColorHandle, normalHandle, metallicRoughnessHandle);
             throw;
         }
     }
@@ -358,29 +374,38 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="terrain">Current height samples.</param>
     /// <param name="collider">Terrain dimensions shared with collision.</param>
     /// <param name="material">Material assigned to the terrain surface.</param>
-    /// <param name="texture">Optional base-color texture.</param>
+    /// <param name="baseColorTexture">Optional base-color texture.</param>
+    /// <param name="normalTexture">Optional normal-map texture.</param>
+    /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture.</param>
     public void UpdateTerrainResource(
         MeshInstance3D instance,
         TerrainResource terrain,
         TerrainColliderComponent collider,
         StandardMaterialAsset material,
-        TextureResource? texture = null)
+        TextureResource? baseColorTexture = null,
+        TextureResource? normalTexture = null,
+        TextureResource? metallicRoughnessTexture = null)
     {
-        SetTerrainResource(instance, terrain, collider, material, texture);
+        SetTerrainResource(instance, terrain, collider, material, baseColorTexture,
+            normalTexture, metallicRoughnessTexture);
     }
 
     /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>
     /// <param name="instance">Persistent scene instance.</param>
     /// <param name="mesh">Imported skinned mesh.</param>
     /// <param name="material">Imported standard material.</param>
-    /// <param name="texture">Optional imported base-color texture.</param>
+    /// <param name="baseColorTexture">Optional imported base-color texture.</param>
+    /// <param name="normalTexture">Optional imported normal-map texture.</param>
+    /// <param name="metallicRoughnessTexture">Optional imported metallic-roughness texture.</param>
     /// <param name="animations">Optional standalone clips already bound to this skeleton.</param>
     /// <param name="sharedController">Optional controller owned by another viewport renderer.</param>
     public void SetAssetMeshResource(
         MeshInstance3D instance,
         SkinnedMeshResource mesh,
         StandardMaterialAsset material,
-        TextureResource? texture = null,
+        TextureResource? baseColorTexture = null,
+        TextureResource? normalTexture = null,
+        TextureResource? metallicRoughnessTexture = null,
         AnimationClipResource[]? animations = null,
         AnimationController? sharedController = null)
     {
@@ -389,11 +414,15 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         ArgumentNullException.ThrowIfNull(material);
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
-        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
+        var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
+        var metallicRoughnessHandle = CreateMaterialTexture(
+            metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
             var handles = _renderer.CreateSkinnedMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
+                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
+                    normalHandle, metallicRoughnessHandle));
             var playbackResource = animations is null
                 ? mesh
                 : new SkinnedMeshResource(mesh.Mesh, mesh.Influences, mesh.Skeleton,
@@ -404,14 +433,13 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             if (ownsController)
                 _animationRegistry.Register(instance, controller);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
-                instance, handles.Mesh, textureHandle, handles.Palette, controller,
-                ownsController)
+                instance, handles.Mesh, baseColorHandle, normalHandle,
+                metallicRoughnessHandle, handles.Palette, controller, ownsController)
                 { UploadedPoseRevision = controller.PoseRevision });
         }
         catch
         {
-            if (textureHandle.IsValid)
-                _renderer.DestroyTexture(textureHandle);
+            DestroyMaterialTextures(baseColorHandle, normalHandle, metallicRoughnessHandle);
             throw;
         }
     }
@@ -737,8 +765,38 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         if (resource.Palette.IsValid)
             _renderer.DestroySkinPalette(resource.Palette);
         _renderer.DestroyMesh(resource.Mesh);
-        if (resource.Texture.IsValid)
-            _renderer.DestroyTexture(resource.Texture);
+        DestroyMaterialTextures(resource.BaseColorTexture, resource.NormalTexture,
+            resource.MetallicRoughnessTexture);
+    }
+
+    /// <summary>Creates one renderer texture with the material slot's required color space.</summary>
+    /// <param name="texture">Optional decoded texture.</param>
+    /// <param name="colorSpace">Required sample interpretation.</param>
+    /// <returns>The renderer-owned handle, or an invalid handle when omitted.</returns>
+    private TextureHandle CreateMaterialTexture(
+        TextureResource? texture,
+        TextureColorSpace colorSpace)
+    {
+        return texture is null
+            ? default
+            : _renderer.CreateTexture(texture with { ColorSpace = colorSpace });
+    }
+
+    /// <summary>Destroys all renderer-owned texture handles for one material.</summary>
+    /// <param name="baseColorTexture">Optional base-color texture handle.</param>
+    /// <param name="normalTexture">Optional normal-map texture handle.</param>
+    /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
+    private void DestroyMaterialTextures(
+        TextureHandle baseColorTexture,
+        TextureHandle normalTexture,
+        TextureHandle metallicRoughnessTexture)
+    {
+        if (baseColorTexture.IsValid)
+            _renderer.DestroyTexture(baseColorTexture);
+        if (normalTexture.IsValid)
+            _renderer.DestroyTexture(normalTexture);
+        if (metallicRoughnessTexture.IsValid)
+            _renderer.DestroyTexture(metallicRoughnessTexture);
     }
 
     /// <summary>Adds static or skinned imported geometry to one queue.</summary>
@@ -762,7 +820,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
 
     /// <summary>Groups renderer handles owned for one imported scene instance.</summary>
     /// <param name="Mesh">Indexed mesh handle.</param>
-    /// <param name="Texture">Optional sampled texture handle.</param>
+    /// <param name="BaseColorTexture">Optional base-color texture handle.</param>
+    /// <param name="NormalTexture">Optional normal-map texture handle.</param>
+    /// <param name="MetallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
     /// <param name="Palette">Optional joint-palette handle.</param>
     private sealed class AssetMeshGpuResource
     {
@@ -772,8 +832,14 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <summary>Gets the indexed mesh handle.</summary>
         internal MeshHandle Mesh { get; }
 
-        /// <summary>Gets the optional sampled texture handle.</summary>
-        internal TextureHandle Texture { get; }
+        /// <summary>Gets the optional base-color texture handle.</summary>
+        internal TextureHandle BaseColorTexture { get; }
+
+        /// <summary>Gets the optional normal-map texture handle.</summary>
+        internal TextureHandle NormalTexture { get; }
+
+        /// <summary>Gets the optional metallic-roughness texture handle.</summary>
+        internal TextureHandle MetallicRoughnessTexture { get; }
 
         /// <summary>Gets the optional joint-palette handle.</summary>
         internal SkinPaletteHandle Palette { get; }
@@ -792,20 +858,25 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
 
         /// <summary>Creates renderer resources for one scene mesh instance.</summary>
         /// <param name="mesh">Indexed mesh handle.</param>
-        /// <param name="texture">Optional sampled texture handle.</param>
+        /// <param name="baseColorTexture">Optional base-color texture handle.</param>
+        /// <param name="normalTexture">Optional normal-map texture handle.</param>
+        /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
         /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
         /// <param name="isTerrain">Whether this is a mutable colored terrain mesh.</param>
         /// <param name="instance">Owning scene mesh instance.</param>
         internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
-            TextureHandle texture, SkinPaletteHandle palette,
+            TextureHandle baseColorTexture, TextureHandle normalTexture,
+            TextureHandle metallicRoughnessTexture, SkinPaletteHandle palette,
             AnimationController? animation, bool ownsAnimation = false,
             bool isTerrain = false)
         {
             Instance = instance;
             Mesh = mesh;
-            Texture = texture;
+            BaseColorTexture = baseColorTexture;
+            NormalTexture = normalTexture;
+            MetallicRoughnessTexture = metallicRoughnessTexture;
             Palette = palette;
             Animation = animation;
             OwnsAnimation = ownsAnimation;

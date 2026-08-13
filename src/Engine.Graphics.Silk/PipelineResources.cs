@@ -23,12 +23,14 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal ShaderModule ModelVertexShader;
     internal ShaderModule ModelFragmentShader;
     internal Pipeline ModelPipeline;
+    internal Pipeline ModelDoubleSidedPipeline;
     internal PipelineLayout ModelLayout;
     internal DescriptorSetLayout ModelTextureDescriptorSetLayout;
     internal DescriptorPool ModelTextureDescriptorPool;
     internal ShaderModule SkinnedModelVertexShader;
     internal ShaderModule SkinnedModelFragmentShader;
     internal Pipeline SkinnedModelPipeline;
+    internal Pipeline SkinnedModelDoubleSidedPipeline;
     internal PipelineLayout SkinnedModelLayout;
     internal DescriptorSetLayout SkinPaletteDescriptorSetLayout;
     internal DescriptorPool SkinPaletteDescriptorPool;
@@ -66,7 +68,9 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(TexturePipeline);
         DestroyPipeline(GridPipeline);
         DestroyPipeline(ModelPipeline);
+        DestroyPipeline(ModelDoubleSidedPipeline);
         DestroyPipeline(SkinnedModelPipeline);
+        DestroyPipeline(SkinnedModelDoubleSidedPipeline);
         DestroyPipeline(ViewportPipeline);
         DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);

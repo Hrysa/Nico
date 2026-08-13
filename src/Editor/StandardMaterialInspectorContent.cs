@@ -15,8 +15,7 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
     private readonly List<Action> _refresh = [];
     private readonly List<TextField> _colorFields = [];
     private readonly List<UIElement> _wideEditors = [];
-    private AssetReferenceField? _textureField;
-    private Button? _clearTextureButton;
+    private readonly List<TextureEditorRow> _textureEditors = [];
     private Label? _status;
     private bool _active;
 
@@ -30,7 +29,7 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
         StandardMaterialDocument document,
         Func<AssetReference, string> displayName,
         UITheme? theme = null)
-        : base(new Color(0f, 0f, 0f), width, 266f)
+        : base(new Color(0f, 0f, 0f), width, 326f)
     {
         _document = document ?? throw new ArgumentNullException(nameof(document));
         _displayName = displayName ?? throw new ArgumentNullException(nameof(displayName));
@@ -89,51 +88,22 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
             value => _document.Value.Metallic = Math.Clamp(value, 0f, 1f));
         AddFloat("Roughness", "MaterialRoughness", 76f, () => _document.Value.Roughness,
             value => _document.Value.Roughness = Math.Clamp(value, 0f, 1f));
-        AddChild(Label("Texture", 114f));
-        var textureWidth = _document.IsEditable ? Width - left - 58f : Width - left;
-        var texture = new AssetReferenceField(textureWidth, 30f, "nico/texture2d", reference =>
-        {
-            if (!_document.IsEditable)
-                return false;
-            _document.Value.BaseColorTexture = reference;
-            _document.MarkDirty();
-            _document.Save();
-            return true;
-        }, _theme)
-        {
-            Name = "MaterialBaseColorTexture",
-            Text = _document.Value.BaseColorTexture is { } reference
-                ? _displayName(reference) : string.Empty,
-            Placeholder = "No base-color texture",
-            IsEnabled = _document.IsEditable,
-            Margin = new Thickness(left, 114f, 0f, 0f)
-        };
-        _textureField = texture;
-        AddChild(texture);
-        if (_document.IsEditable)
-        {
-            var clearTexture = new Button(54f, 30f, "Clear", _theme)
-            {
-                Name = "MaterialBaseColorTextureClear",
-                Margin = new Thickness(Width - 54f, 114f, 0f, 0f)
-            };
-            _clearTextureButton = clearTexture;
-            clearTexture.Click += () =>
-            {
-                _document.Value.BaseColorTexture = null;
-                _document.MarkDirty();
-                _document.Save();
-            };
-            AddChild(clearTexture);
-        }
-        _refresh.Add(() => texture.Text = _document.Value.BaseColorTexture is { } reference
-            ? _displayName(reference) : string.Empty);
+        AddTexture("Base Map", "MaterialBaseColorTexture", "No base-color texture", 114f,
+            () => _document.Value.BaseColorTexture,
+            value => _document.Value.BaseColorTexture = value);
+        AddTexture("Normal", "MaterialNormalTexture", "No normal map", 152f,
+            () => _document.Value.NormalTexture,
+            value => _document.Value.NormalTexture = value);
+        AddTexture("Metal/Rgh", "MaterialMetallicRoughnessTexture",
+            "No metallic-roughness map", 190f,
+            () => _document.Value.MetallicRoughnessTexture,
+            value => _document.Value.MetallicRoughnessTexture = value);
         var doubleSided = new ToggleButton(Width - left, 30f, "Double Sided", _theme)
         {
             Name = "MaterialDoubleSided",
             IsChecked = _document.Value.DoubleSided,
             IsEnabled = _document.IsEditable,
-            Margin = new Thickness(left, 152f, 0f, 0f)
+            Margin = new Thickness(left, 228f, 0f, 0f)
         };
         _wideEditors.Add(doubleSided);
         if (_document.IsEditable)
@@ -143,14 +113,14 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
             _document.MarkDirty();
             _document.Save();
         };
-        AddChild(Label("Sides", 152f));
+        AddChild(Label("Sides", 228f));
         AddChild(doubleSided);
         _refresh.Add(() => doubleSided.IsChecked = _document.Value.DoubleSided);
         _status = new Label(string.Empty, Width, 30f)
         {
             Name = "MaterialDocumentStatus",
             ForegroundColor = _theme.TextMuted,
-            Margin = new Thickness(0f, 198f, 0f, 0f)
+            Margin = new Thickness(0f, 274f, 0f, 0f)
         };
         AddChild(_status);
         _refresh.Add(() =>
@@ -161,6 +131,62 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
             _status.ForegroundColor = _document.LastError is null
                 ? _theme.TextMuted : _theme.Error;
         });
+    }
+
+    /// <summary>Adds one generic texture-reference material property.</summary>
+    /// <param name="label">Property label.</param>
+    /// <param name="name">Element name.</param>
+    /// <param name="placeholder">Empty-value hint.</param>
+    /// <param name="y">Row top.</param>
+    /// <param name="read">Current reference reader.</param>
+    /// <param name="write">Reference writer.</param>
+    private void AddTexture(
+        string label,
+        string name,
+        string placeholder,
+        float y,
+        Func<AssetReference?> read,
+        Action<AssetReference?> write)
+    {
+        const float left = 82f;
+        AddChild(Label(label, y));
+        var textureWidth = _document.IsEditable ? Width - left - 58f : Width - left;
+        var texture = new AssetReferenceField(textureWidth, 30f, "nico/texture2d", reference =>
+        {
+            if (!_document.IsEditable)
+                return false;
+            write(reference);
+            _document.MarkDirty();
+            _document.Save();
+            return true;
+        }, _theme)
+        {
+            Name = name,
+            Text = read() is { } reference ? _displayName(reference) : string.Empty,
+            Placeholder = placeholder,
+            IsEnabled = _document.IsEditable,
+            Margin = new Thickness(left, y, 0f, 0f)
+        };
+        AddChild(texture);
+        Button? clear = null;
+        if (_document.IsEditable)
+        {
+            clear = new Button(54f, 30f, "Clear", _theme)
+            {
+                Name = $"{name}Clear",
+                Margin = new Thickness(Width - 54f, y, 0f, 0f)
+            };
+            clear.Click += () =>
+            {
+                write(null);
+                _document.MarkDirty();
+                _document.Save();
+            };
+            AddChild(clear);
+        }
+        _textureEditors.Add(new TextureEditorRow(texture, clear, y));
+        _refresh.Add(() => texture.Text = read() is { } reference
+            ? _displayName(reference) : string.Empty);
     }
 
     /// <summary>Adds one bounded floating-point material property.</summary>
@@ -211,15 +237,18 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
         var wideWidth = MathF.Max(0f, contentSize.X - left);
         for (var index = 0; index < _wideEditors.Count; index++)
             SetWidth(_wideEditors[index], wideWidth);
-        if (_textureField is not null)
-            SetWidth(_textureField, MathF.Max(0f,
-                wideWidth - (_clearTextureButton is null ? 0f : 58f)));
-        if (_clearTextureButton is not null)
+        for (var index = 0; index < _textureEditors.Count; index++)
         {
-            var margin = new Thickness(
-                MathF.Max(0f, contentSize.X - 54f), 114f, 0f, 0f);
-            if (_clearTextureButton.Margin != margin)
-                _clearTextureButton.Margin = margin;
+            var row = _textureEditors[index];
+            SetWidth(row.Field, MathF.Max(0f,
+                wideWidth - (row.ClearButton is null ? 0f : 58f)));
+            if (row.ClearButton is not null)
+            {
+                var margin = new Thickness(
+                    MathF.Max(0f, contentSize.X - 54f), row.Y, 0f, 0f);
+                if (row.ClearButton.Margin != margin)
+                    row.ClearButton.Margin = margin;
+            }
         }
         if (_status is not null)
             SetWidth(_status, contentSize.X);
@@ -307,4 +336,13 @@ public sealed class StandardMaterialInspectorContent : Panel, IInspectorContentL
         2 => value with { Z = component },
         _ => value with { W = component }
     };
+
+    /// <summary>Tracks one responsive texture-reference row.</summary>
+    /// <param name="Field">Asset-reference field.</param>
+    /// <param name="ClearButton">Optional clear action.</param>
+    /// <param name="Y">Row top.</param>
+    private readonly record struct TextureEditorRow(
+        AssetReferenceField Field,
+        Button? ClearButton,
+        float Y);
 }

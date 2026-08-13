@@ -46,14 +46,24 @@ internal unsafe sealed class PersistentSkinnedMeshStore
     /// <param name="paletteHandle">Renderer-owned palette handle.</param>
     /// <param name="vertices">Packed skinned vertices.</param>
     /// <param name="indices">Triangle-list indices.</param>
-    /// <param name="texture">Sampled base-color texture.</param>
+    /// <param name="baseColorTexture">Sampled base-color texture.</param>
+    /// <param name="normalTexture">Sampled tangent-space normal texture.</param>
+    /// <param name="metallicRoughnessTexture">Sampled metallic-roughness texture.</param>
+    /// <param name="metallic">Material metallic factor.</param>
+    /// <param name="roughness">Material roughness factor.</param>
+    /// <param name="doubleSided">Whether back-face culling is disabled.</param>
     /// <param name="bindPalette">Initial bind-pose skin matrices.</param>
     public void Add(
         MeshHandle meshHandle,
         SkinPaletteHandle paletteHandle,
         SkinnedForwardModelVertex[] vertices,
         uint[] indices,
-        TextureHandle texture,
+        TextureHandle baseColorTexture,
+        TextureHandle normalTexture,
+        TextureHandle metallicRoughnessTexture,
+        float metallic,
+        float roughness,
+        bool doubleSided,
         ReadOnlySpan<Matrix4x4> bindPalette)
     {
         ArgumentNullException.ThrowIfNull(vertices);
@@ -61,7 +71,8 @@ internal unsafe sealed class PersistentSkinnedMeshStore
         if (bindPalette.Length == 0)
             throw new ArgumentException("A skinned mesh requires at least one joint.", nameof(bindPalette));
         var palette = bindPalette.ToArray();
-        var resource = new Resource(vertices, indices, texture, paletteHandle, palette,
+        var resource = new Resource(vertices, indices, baseColorTexture, normalTexture,
+            metallicRoughnessTexture, metallic, roughness, doubleSided, paletteHandle, palette,
             new FrameVertexBuffers(_vk, _device, FrameCount,
                 checked((uint)palette.Length), "skin palette", _findMemoryType, _logger,
                 BufferUsageFlags.StorageBufferBit));
@@ -130,7 +141,9 @@ internal unsafe sealed class PersistentSkinnedMeshStore
         if (meshResource.Palette.Length != paletteResource.Palette.Length)
             throw new InvalidOperationException("Skinned mesh and palette joint counts do not match.");
         return new Binding(meshResource.VertexBuffer, meshResource.IndexBuffer,
-            checked((uint)meshResource.Indices.Length), meshResource.Texture,
+            checked((uint)meshResource.Indices.Length), meshResource.BaseColorTexture,
+            meshResource.NormalTexture, meshResource.MetallicRoughnessTexture,
+            meshResource.Metallic, meshResource.Roughness, meshResource.DoubleSided,
             paletteResource.DescriptorSets[frameIndex]);
     }
 
@@ -338,7 +351,12 @@ internal unsafe sealed class PersistentSkinnedMeshStore
     {
         internal SkinnedForwardModelVertex[] Vertices { get; }
         internal uint[] Indices { get; }
-        internal TextureHandle Texture { get; }
+        internal TextureHandle BaseColorTexture { get; }
+        internal TextureHandle NormalTexture { get; }
+        internal TextureHandle MetallicRoughnessTexture { get; }
+        internal float Metallic { get; }
+        internal float Roughness { get; }
+        internal bool DoubleSided { get; }
         internal SkinPaletteHandle PaletteHandle { get; }
         internal Matrix4x4[] Palette { get; }
         internal FrameVertexBuffers PaletteBuffers { get; }
@@ -360,14 +378,24 @@ internal unsafe sealed class PersistentSkinnedMeshStore
         internal Resource(
             SkinnedForwardModelVertex[] vertices,
             uint[] indices,
-            TextureHandle texture,
+            TextureHandle baseColorTexture,
+            TextureHandle normalTexture,
+            TextureHandle metallicRoughnessTexture,
+            float metallic,
+            float roughness,
+            bool doubleSided,
             SkinPaletteHandle paletteHandle,
             Matrix4x4[] palette,
             FrameVertexBuffers paletteBuffers)
         {
             Vertices = vertices;
             Indices = indices;
-            Texture = texture;
+            BaseColorTexture = baseColorTexture;
+            NormalTexture = normalTexture;
+            MetallicRoughnessTexture = metallicRoughnessTexture;
+            Metallic = metallic;
+            Roughness = roughness;
+            DoubleSided = doubleSided;
             PaletteHandle = paletteHandle;
             Palette = palette;
             PaletteBuffers = paletteBuffers;
@@ -400,12 +428,22 @@ internal unsafe sealed class PersistentSkinnedMeshStore
     /// <param name="VertexBuffer">Vertex buffer.</param>
     /// <param name="IndexBuffer">Index buffer.</param>
     /// <param name="IndexCount">Index count.</param>
-    /// <param name="Texture">Texture handle.</param>
+    /// <param name="BaseColorTexture">Base-color texture handle.</param>
+    /// <param name="NormalTexture">Normal-map texture handle.</param>
+    /// <param name="MetallicRoughnessTexture">Metallic-roughness texture handle.</param>
+    /// <param name="Metallic">Material metallic factor.</param>
+    /// <param name="Roughness">Material roughness factor.</param>
+    /// <param name="DoubleSided">Whether back-face culling is disabled.</param>
     /// <param name="PaletteDescriptor">Palette descriptor set.</param>
     internal readonly record struct Binding(
         Silk.NET.Vulkan.Buffer VertexBuffer,
         Silk.NET.Vulkan.Buffer IndexBuffer,
         uint IndexCount,
-        TextureHandle Texture,
+        TextureHandle BaseColorTexture,
+        TextureHandle NormalTexture,
+        TextureHandle MetallicRoughnessTexture,
+        float Metallic,
+        float Roughness,
+        bool DoubleSided,
         DescriptorSet PaletteDescriptor);
 }

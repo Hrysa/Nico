@@ -873,12 +873,25 @@ public sealed class GlbModelImporter : IAssetImporter
             var roughness = pbr.ValueKind != JsonValueKind.Undefined &&
                 pbr.TryGetProperty("roughnessFactor", out var roughnessElement)
                 ? roughnessElement.GetSingle() : 1f;
-            var textureSlot = -1;
+            var baseColorTextureSlot = -1;
+            var normalTextureSlot = -1;
+            var metallicRoughnessTextureSlot = -1;
             if (pbr.ValueKind != JsonValueKind.Undefined &&
                 pbr.TryGetProperty("baseColorTexture", out var texture) &&
                 texture.TryGetProperty("index", out var textureIndex))
             {
-                textureSlot = textureIndex.GetInt32();
+                baseColorTextureSlot = textureIndex.GetInt32();
+            }
+            if (material.TryGetProperty("normalTexture", out var normalTexture) &&
+                normalTexture.TryGetProperty("index", out var normalTextureIndex))
+            {
+                normalTextureSlot = normalTextureIndex.GetInt32();
+            }
+            if (pbr.ValueKind != JsonValueKind.Undefined &&
+                pbr.TryGetProperty("metallicRoughnessTexture", out var metalRoughTexture) &&
+                metalRoughTexture.TryGetProperty("index", out var metalRoughTextureIndex))
+            {
+                metallicRoughnessTextureSlot = metalRoughTextureIndex.GetInt32();
             }
             var doubleSided = material.TryGetProperty("doubleSided", out var doubleSidedElement) &&
                 doubleSidedElement.GetBoolean();
@@ -891,8 +904,14 @@ public sealed class GlbModelImporter : IAssetImporter
                     Metallic = metallic,
                     Roughness = roughness,
                     DoubleSided = doubleSided,
-                    BaseColorTexture = textureSlot >= 0
-                        ? new AssetReference(context.Metadata.Id, $"texture/{textureSlot}")
+                    BaseColorTexture = baseColorTextureSlot >= 0
+                        ? new AssetReference(context.Metadata.Id, $"texture/{baseColorTextureSlot}")
+                        : null,
+                    NormalTexture = normalTextureSlot >= 0
+                        ? new AssetReference(context.Metadata.Id, $"texture/{normalTextureSlot}")
+                        : null,
+                    MetallicRoughnessTexture = metallicRoughnessTextureSlot >= 0
+                        ? new AssetReference(context.Metadata.Id, $"texture/{metallicRoughnessTextureSlot}")
                         : null
                 });
             }

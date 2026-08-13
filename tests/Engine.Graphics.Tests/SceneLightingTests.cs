@@ -63,12 +63,15 @@ public sealed class SceneLightingTests
         var lighting = new SceneLighting(Vector3.UnitY,
             new Vector3(0.2f, 0.4f, 0.6f), 3f, 0.25f);
 
-        var actual = ModelPushConstants.Create(transforms, lighting);
+        var actual = ModelPushConstants.Create(transforms, lighting, 0.35f, 0.65f);
 
         Assert.Equal(transforms.Model, actual.Model);
         Assert.Equal(transforms.View, actual.View);
         Assert.Equal(transforms.Projection, actual.Projection);
         Assert.Equal(new Vector4(0f, 1f, 0f, 3f), actual.LightDirectionIntensity);
         Assert.Equal(new Vector4(0.2f, 0.4f, 0.6f, 0.25f), actual.LightColorAmbient);
+        Assert.Equal(new Vector4(Matrix4x4.Invert(transforms.View, out var inverseView)
+            ? inverseView.Translation : Vector3.Zero, 0.35f), actual.CameraPositionMetallic);
+        Assert.Equal(new Vector4(0.65f, 0f, 0f, 0f), actual.MaterialFactors);
     }
 }

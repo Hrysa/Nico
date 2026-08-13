@@ -208,15 +208,28 @@ public sealed class InspectorProviderTests : IDisposable
             CreateEditableLocation(reference, path), resource, _ => { });
         var content = new StandardMaterialInspectorContent(
             300f, document, reference => reference.ToString());
-        var texture = new AssetReference(AssetId.New(), "main");
-        var field = Assert.IsType<AssetReferenceField>(
+        var baseColorTexture = new AssetReference(AssetId.New(), "base");
+        var normalTexture = new AssetReference(AssetId.New(), "normal");
+        var metallicRoughnessTexture = new AssetReference(AssetId.New(), "metal-rough");
+        var baseColorField = Assert.IsType<AssetReferenceField>(
             FindByName<AssetReferenceField>(content, "MaterialBaseColorTexture"));
+        var normalField = Assert.IsType<AssetReferenceField>(
+            FindByName<AssetReferenceField>(content, "MaterialNormalTexture"));
+        var metallicRoughnessField = Assert.IsType<AssetReferenceField>(
+            FindByName<AssetReferenceField>(content, "MaterialMetallicRoughnessTexture"));
 
-        Assert.Equal("nico/texture2d", field.AcceptedContentType);
-        Assert.True(field.Assign(texture));
-        Assert.Equal(texture, document.Value.BaseColorTexture);
+        Assert.Equal("nico/texture2d", baseColorField.AcceptedContentType);
+        Assert.True(baseColorField.Assign(baseColorTexture));
+        Assert.True(normalField.Assign(normalTexture));
+        Assert.True(metallicRoughnessField.Assign(metallicRoughnessTexture));
+        Assert.Equal(baseColorTexture, document.Value.BaseColorTexture);
+        Assert.Equal(normalTexture, document.Value.NormalTexture);
+        Assert.Equal(metallicRoughnessTexture, document.Value.MetallicRoughnessTexture);
         using var stream = File.OpenRead(path);
-        Assert.Equal(texture, StandardMaterialAssetCodec.Load(stream).BaseColorTexture);
+        var saved = StandardMaterialAssetCodec.Load(stream);
+        Assert.Equal(baseColorTexture, saved.BaseColorTexture);
+        Assert.Equal(normalTexture, saved.NormalTexture);
+        Assert.Equal(metallicRoughnessTexture, saved.MetallicRoughnessTexture);
     }
 
     /// <summary>Keeps imported material content visible while disabling every mutating control.</summary>

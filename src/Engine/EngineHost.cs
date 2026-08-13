@@ -309,8 +309,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             if (renderable.Palette.IsValid)
                 _window.DestroySkinPalette(renderable.Palette);
             _window.DestroyMesh(renderable.Mesh);
-            if (renderable.Texture.IsValid)
-                _window.DestroyTexture(renderable.Texture);
+            DestroyMaterialTextures(renderable.BaseColorTexture, renderable.NormalTexture,
+                renderable.MetallicRoughnessTexture);
         }
         _renderables.Clear();
         _window.Dispose();
@@ -353,15 +353,10 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
                     new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
                 instance.LocalBounds = TerrainMeshBuilder.GetBounds(
                     terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
-                var terrainMesh = _window.CreateMesh(new MeshDescription(
-                    TerrainMeshBuilder.BuildVertices(
-                        terrain, collider.HorizontalSize, collider.HeightScale,
-                        collider.Center)));
-                _renderables.Add(new RuntimeRenderable(
-                    instance, terrainMesh, default, default, null));
-                return;
+                mesh = TerrainMeshBuilder.BuildStaticMesh(
+                    terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
             }
-            if (meshArtifact.ContentType == "nico/skinned-mesh")
+            else if (meshArtifact.ContentType == "nico/skinned-mesh")
             {
                 skin = LoadRuntimeResource(meshReference,
                     new SkinnedMeshResource(new StaticMeshResource([], [], []), [],
@@ -394,40 +389,74 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             material = CloneMaterial(LoadRuntimeResource(
                 materialReference, new StandardMaterialAsset()));
         }
-        var textureHandle = default(TextureHandle);
-        if (material.BaseColorTexture is { } textureReference)
-        {
-            var texture = LoadRuntimeResource(textureReference,
-                new TextureResource(0, 0, [], TextureColorSpace.Linear));
-            textureHandle = _window.CreateTexture(texture);
-        }
+        var baseColorHandle = CreateMaterialTexture(
+            material.BaseColorTexture, TextureColorSpace.Srgb);
+        var normalHandle = CreateMaterialTexture(
+            material.NormalTexture, TextureColorSpace.Linear);
+        var metallicRoughnessHandle = CreateMaterialTexture(
+            material.MetallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
             if (skin is null)
             {
                 var meshHandle = _window.CreateStaticMesh(
-                    mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
+                    mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
+                        normalHandle, metallicRoughnessHandle));
                 _renderables.Add(new RuntimeRenderable(
-                    instance, meshHandle, textureHandle, default, null));
+                    instance, meshHandle, baseColorHandle, normalHandle,
+                    metallicRoughnessHandle, default, null));
             }
             else
             {
                 var controller = new AnimationController(skin);
                 var handles = _window.CreateSkinnedMesh(
-                    skin, ResolvedStandardMaterial.Resolve(material, textureHandle));
+                    skin, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
+                        normalHandle, metallicRoughnessHandle));
                 _window.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
                 _animationService!.Register(instance, controller);
                 _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
-                    textureHandle, handles.Palette, controller)
+                    baseColorHandle, normalHandle, metallicRoughnessHandle,
+                    handles.Palette, controller)
                     { UploadedPoseRevision = controller.PoseRevision });
             }
         }
         catch
         {
-            if (textureHandle.IsValid)
-                _window.DestroyTexture(textureHandle);
+            DestroyMaterialTextures(baseColorHandle, normalHandle, metallicRoughnessHandle);
             throw;
         }
+    }
+
+    /// <summary>Loads and creates one material texture with slot-correct color interpretation.</summary>
+    /// <param name="reference">Optional persistent texture reference.</param>
+    /// <param name="colorSpace">Required sample interpretation.</param>
+    /// <returns>The renderer-owned texture handle, or an invalid handle when omitted.</returns>
+    private TextureHandle CreateMaterialTexture(
+        AssetReference? reference,
+        TextureColorSpace colorSpace)
+    {
+        if (reference is not { } textureReference)
+            return default;
+        var texture = LoadRuntimeResource(textureReference,
+            new TextureResource(0, 0, [], colorSpace));
+        return _window.CreateTexture(texture with { ColorSpace = colorSpace });
+    }
+
+    /// <summary>Destroys all renderer-owned textures associated with one material.</summary>
+    /// <param name="baseColorTexture">Optional base-color texture handle.</param>
+    /// <param name="normalTexture">Optional normal-map texture handle.</param>
+    /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
+    private void DestroyMaterialTextures(
+        TextureHandle baseColorTexture,
+        TextureHandle normalTexture,
+        TextureHandle metallicRoughnessTexture)
+    {
+        if (baseColorTexture.IsValid)
+            _window.DestroyTexture(baseColorTexture);
+        if (normalTexture.IsValid)
+            _window.DestroyTexture(normalTexture);
+        if (metallicRoughnessTexture.IsValid)
+            _window.DestroyTexture(metallicRoughnessTexture);
     }
 
     /// <summary>Resolves and registers a script-selected animation set.</summary>
@@ -711,7 +740,9 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <summary>Groups one runtime scene instance with renderer resources and playback state.</summary>
     /// <param name="Instance">Scene mesh instance.</param>
     /// <param name="Mesh">Static or skinned mesh handle.</param>
-    /// <param name="Texture">Optional texture handle.</param>
+    /// <param name="BaseColorTexture">Optional base-color texture handle.</param>
+    /// <param name="NormalTexture">Optional normal-map texture handle.</param>
+    /// <param name="MetallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
     /// <param name="Palette">Optional joint palette.</param>
     /// <param name="Animation">Optional animation controller.</param>
     private sealed class RuntimeRenderable
@@ -722,8 +753,14 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         /// <summary>Gets the static or skinned mesh handle.</summary>
         internal MeshHandle Mesh { get; }
 
-        /// <summary>Gets the optional texture handle.</summary>
-        internal TextureHandle Texture { get; }
+        /// <summary>Gets the optional base-color texture handle.</summary>
+        internal TextureHandle BaseColorTexture { get; }
+
+        /// <summary>Gets the optional normal-map texture handle.</summary>
+        internal TextureHandle NormalTexture { get; }
+
+        /// <summary>Gets the optional metallic-roughness texture handle.</summary>
+        internal TextureHandle MetallicRoughnessTexture { get; }
 
         /// <summary>Gets the optional joint-palette handle.</summary>
         internal SkinPaletteHandle Palette { get; }
@@ -737,15 +774,21 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         /// <summary>Creates retained resources for one scene mesh instance.</summary>
         /// <param name="instance">Scene mesh instance.</param>
         /// <param name="mesh">Static or skinned mesh handle.</param>
-        /// <param name="texture">Optional texture handle.</param>
+        /// <param name="baseColorTexture">Optional base-color texture handle.</param>
+        /// <param name="normalTexture">Optional normal-map texture handle.</param>
+        /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
         internal RuntimeRenderable(MeshInstance3D instance, MeshHandle mesh,
-            TextureHandle texture, SkinPaletteHandle palette, AnimationController? animation)
+            TextureHandle baseColorTexture, TextureHandle normalTexture,
+            TextureHandle metallicRoughnessTexture, SkinPaletteHandle palette,
+            AnimationController? animation)
         {
             Instance = instance;
             Mesh = mesh;
-            Texture = texture;
+            BaseColorTexture = baseColorTexture;
+            NormalTexture = normalTexture;
+            MetallicRoughnessTexture = metallicRoughnessTexture;
             Palette = palette;
             Animation = animation;
         }
