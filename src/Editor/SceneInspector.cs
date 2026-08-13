@@ -150,9 +150,13 @@ public sealed class SceneInspector : Panel
         if (node is MeshInstance3D meshInstance)
         {
             var terrain = meshInstance.GetComponent<TerrainColliderComponent>();
-            scriptY = terrain?.TerrainData is { } terrainReference
-                ? AddTerrainAssetSection(terrainReference, 236f)
-                : AddMaterialSection(meshInstance, 236f);
+            if (terrain?.TerrainData is { } terrainReference)
+            {
+                scriptY = AddTerrainAssetSection(terrainReference, 236f);
+                scriptY = AddMaterialSection(meshInstance, scriptY);
+            }
+            else
+                scriptY = AddMaterialSection(meshInstance, 236f);
         }
 
         scriptY = AddPhysicsSections(node, scriptY);

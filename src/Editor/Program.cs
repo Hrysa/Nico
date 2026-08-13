@@ -1884,8 +1884,10 @@ void LoadAssetMeshResources(
             }
             var terrain = LoadRuntimeResource(meshReference,
                 new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
+            var (material, textureResource) = ResolveMeshMaterial(
+                meshReference, instance, 0, outcome);
             (targetRenderer ?? viewportRenderer).SetTerrainResource(
-                instance, terrain, terrainCollider);
+                instance, terrain, terrainCollider, material, textureResource);
             return;
         }
         if (meshArtifact.ContentType == "nico/skinned-mesh")
@@ -1902,30 +1904,10 @@ void LoadAssetMeshResources(
         }
     }
     instance.LocalBounds = new MeshBounds(importedMesh.BoundsMinimum, importedMesh.BoundsMaximum);
-    var material = new StandardMaterialAsset();
-    TextureResource? textureResource = null;
     var materialSlot = importedMesh.Submeshes.Count > 0
         ? importedMesh.Submeshes[0].MaterialSlot : -1;
-    var defaultMaterialArtifact = outcome?.Artifacts.FirstOrDefault(artifact =>
-        artifact.Key == $"material/{materialSlot}");
-    if (instance.Materials.Count == 0 && defaultMaterialArtifact is not null)
-        instance.Materials.Add(new AssetReference(meshReference.Asset, defaultMaterialArtifact.Key));
-    var materialReference = instance.Materials.FirstOrDefault();
-    var materialRecord = materialReference.Asset.Value == Guid.Empty
-        ? null : assetDatabase.Find(materialReference.Asset);
-    var materialOutcome = materialRecord is null
-        ? null
-        : materialReference.Asset == meshReference.Asset
-            ? outcome : assetImportPipeline.Import(materialRecord, "editor");
-    var materialArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
-        artifact.Key == materialReference.SubAsset &&
-        artifact.ContentType == "nico/standard-material");
-    if (materialArtifact is not null)
-    {
-        material = CloneMaterial(LoadRuntimeResource(
-            materialReference, new StandardMaterialAsset()));
-    }
-    textureResource = ResolveTextureResource(material.BaseColorTexture);
+    var (material, textureResource) = ResolveMeshMaterial(
+        meshReference, instance, materialSlot, outcome);
     if (importedSkin is null)
     {
         (targetRenderer ?? viewportRenderer).SetAssetMeshResource(
@@ -2007,6 +1989,47 @@ TextureResource? ResolveTextureResource(AssetReference? reference)
         return null;
     return LoadRuntimeResource(textureReference,
         new TextureResource(0, 0, [], TextureColorSpace.Linear));
+}
+
+/// <summary>Resolves one mesh's active material and optional base-color texture.</summary>
+/// <param name="meshReference">Imported mesh reference.</param>
+/// <param name="instance">Scene instance receiving the resolved material.</param>
+/// <param name="materialSlot">Mesh material slot used for default artifact discovery.</param>
+/// <param name="outcome">Optional already-imported mesh pipeline outcome.</param>
+/// <returns>Resolved material and optional decoded texture.</returns>
+(StandardMaterialAsset Material, TextureResource? Texture) ResolveMeshMaterial(
+    AssetReference meshReference,
+    MeshInstance3D instance,
+    int materialSlot,
+    AssetImportOutcome? outcome = null)
+{
+    var resolvedMaterial = new StandardMaterialAsset();
+    var defaultMaterialArtifact = outcome?.Artifacts.FirstOrDefault(artifact =>
+        artifact.Key == $"material/{materialSlot}" &&
+        artifact.ContentType == "nico/standard-material");
+    if (instance.Materials.Count == 0 && defaultMaterialArtifact is not null)
+        instance.Materials.Add(new AssetReference(meshReference.Asset, defaultMaterialArtifact.Key));
+    var materialReference = instance.Materials.FirstOrDefault();
+    if (materialReference.Asset.Value == Guid.Empty)
+        return (resolvedMaterial, null);
+    var materialRecord = assetDatabase.Find(materialReference.Asset);
+    if (materialRecord is null)
+        return (resolvedMaterial, null);
+    var materialOutcome = materialReference.Asset == meshReference.Asset
+        ? outcome ?? assetImportPipeline.Import(materialRecord, "editor")
+        : assetImportPipeline.Import(materialRecord, "editor");
+    if (materialOutcome is null || !materialOutcome.Succeeded ||
+        materialOutcome.ArtifactDirectory is null)
+    {
+        return (resolvedMaterial, null);
+    }
+    var materialArtifact = materialOutcome.Artifacts.FirstOrDefault(artifact =>
+        artifact.Key == materialReference.SubAsset &&
+        artifact.ContentType == "nico/standard-material");
+    if (materialArtifact is null)
+        return (resolvedMaterial, null);
+    resolvedMaterial = CloneMaterial(LoadRuntimeResource(materialReference, new StandardMaterialAsset()));
+    return (resolvedMaterial, ResolveTextureResource(resolvedMaterial.BaseColorTexture));
 }
 
 /// <summary>Loads a decoded resource through the shared zero-reference LRU.</summary>
@@ -2150,9 +2173,10 @@ void ApplyTerrainEdit(
     TerrainResource terrain,
     TerrainEditRegion editRegion)
 {
-    viewportRenderer.UpdateTerrainResource(instance, terrain, collider);
-    detachedSceneRenderer?.UpdateTerrainResource(instance, terrain, collider);
-    detachedGameRenderer?.UpdateTerrainResource(instance, terrain, collider);
+    var (material, textureResource) = ResolveMeshMaterial(instance.Mesh, instance, 0);
+    viewportRenderer.UpdateTerrainResource(instance, terrain, collider, material, textureResource);
+    detachedSceneRenderer?.UpdateTerrainResource(instance, terrain, collider, material, textureResource);
+    detachedGameRenderer?.UpdateTerrainResource(instance, terrain, collider, material, textureResource);
     if (physicsWorld is not null)
     {
         try

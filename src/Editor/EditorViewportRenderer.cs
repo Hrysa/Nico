@@ -299,22 +299,49 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         TerrainResource terrain,
         TerrainColliderComponent collider)
     {
+        SetTerrainResource(instance, terrain, collider, new StandardMaterialAsset());
+    }
+
+    /// <summary>Creates or replaces a static terrain surface with optional material values.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Current height samples.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    /// <param name="material">Material assigned to the terrain surface.</param>
+    /// <param name="texture">Optional base-color texture.</param>
+    public void SetTerrainResource(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider,
+        StandardMaterialAsset material,
+        TextureResource? texture = null)
+    {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(terrain);
         ArgumentNullException.ThrowIfNull(collider);
+        ArgumentNullException.ThrowIfNull(material);
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
-        var vertices = TerrainMeshBuilder.BuildVertices(
+        var mesh = TerrainMeshBuilder.BuildStaticMesh(
             terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
-        var handle = _renderer.CreateMesh(new MeshDescription(vertices, ResourceUsage.Dynamic));
-        instance.LocalBounds = TerrainMeshBuilder.GetBounds(
-            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
-        _assetMeshes.Add(instance, new AssetMeshGpuResource(
-            instance, handle, default, default, null, isTerrain: true,
-            terrainVertices: vertices));
+        var textureHandle = texture is null ? default : _renderer.CreateTexture(texture);
+        try
+        {
+            var handle = _renderer.CreateStaticMesh(
+                mesh, ResolvedStandardMaterial.Resolve(material, textureHandle));
+            instance.LocalBounds = TerrainMeshBuilder.GetBounds(
+                terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+            _assetMeshes.Add(instance, new AssetMeshGpuResource(
+                instance, handle, textureHandle, default, null, isTerrain: true));
+        }
+        catch
+        {
+            if (textureHandle.IsValid)
+                _renderer.DestroyTexture(textureHandle);
+            throw;
+        }
     }
 
-    /// <summary>Updates a retained dynamic terrain surface without changing its identity.</summary>
+    /// <summary>Updates a retained terrain surface without changing its identity.</summary>
     /// <param name="instance">Persistent scene terrain instance.</param>
     /// <param name="terrain">Current height samples.</param>
     /// <param name="collider">Terrain dimensions shared with collision.</param>
@@ -323,20 +350,23 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         TerrainResource terrain,
         TerrainColliderComponent collider)
     {
-        ArgumentNullException.ThrowIfNull(instance);
-        ArgumentNullException.ThrowIfNull(terrain);
-        ArgumentNullException.ThrowIfNull(collider);
-        if (!_assetMeshes.TryGetValue(instance, out var resource) || !resource.IsTerrain)
-        {
-            SetTerrainResource(instance, terrain, collider);
-            return;
-        }
-        TerrainMeshBuilder.FillVertices(
-            terrain, collider.HorizontalSize, collider.HeightScale,
-            resource.TerrainVertices!, collider.Center);
-        _renderer.UpdateMesh(resource.Mesh, resource.TerrainUpdate!);
-        instance.LocalBounds = TerrainMeshBuilder.GetBounds(
-            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+        UpdateTerrainResource(instance, terrain, collider, new StandardMaterialAsset());
+    }
+
+    /// <summary>Updates a retained terrain surface with material values.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Current height samples.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    /// <param name="material">Material assigned to the terrain surface.</param>
+    /// <param name="texture">Optional base-color texture.</param>
+    public void UpdateTerrainResource(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider,
+        StandardMaterialAsset material,
+        TextureResource? texture = null)
+    {
+        SetTerrainResource(instance, terrain, collider, material, texture);
     }
 
     /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>
@@ -757,12 +787,6 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <summary>Gets whether the handle uses the mutable colored terrain path.</summary>
         internal bool IsTerrain { get; }
 
-        /// <summary>Gets reusable terrain vertices for allocation-free sculpt updates.</summary>
-        internal Vertex[]? TerrainVertices { get; }
-
-        /// <summary>Gets the stable full-range terrain mesh update.</summary>
-        internal MeshUpdate? TerrainUpdate { get; }
-
         /// <summary>Gets or sets the pose revision most recently uploaded.</summary>
         internal ulong UploadedPoseRevision { get; set; }
 
@@ -773,13 +797,11 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <param name="animation">Optional runtime animation controller.</param>
         /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
         /// <param name="isTerrain">Whether this is a mutable colored terrain mesh.</param>
-        /// <param name="terrainVertices">Optional reusable terrain upload storage.</param>
         /// <param name="instance">Owning scene mesh instance.</param>
         internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
             TextureHandle texture, SkinPaletteHandle palette,
             AnimationController? animation, bool ownsAnimation = false,
-            bool isTerrain = false,
-            Vertex[]? terrainVertices = null)
+            bool isTerrain = false)
         {
             Instance = instance;
             Mesh = mesh;
@@ -788,8 +810,6 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             Animation = animation;
             OwnsAnimation = ownsAnimation;
             IsTerrain = isTerrain;
-            TerrainVertices = terrainVertices;
-            TerrainUpdate = terrainVertices is null ? null : new MeshUpdate(0, terrainVertices);
         }
     }
 }
