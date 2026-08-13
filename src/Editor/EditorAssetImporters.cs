@@ -17,6 +17,8 @@ public static class EditorAssetImporters
         registry.Register(new TerrainAssetImporter());
         registry.Register(new AnimationSetAssetImporter());
         registry.Register(new StandardMaterialAssetImporter());
+        registry.Register(new TerrainLayerAssetImporter());
+        registry.Register(new TerrainMaterialAssetImporter());
         registry.Register(new ImageTextureAssetImporter());
     }
 
@@ -39,6 +41,8 @@ public static class EditorAssetImporters
             ".nterrain" => "terrain",
             ".nanimset" => "animation-set",
             ".nmat" => "standard-material",
+            ".ntlayer" => "terrain-layer",
+            ".ntmat" => "terrain-material",
             ".png" or ".jpg" or ".jpeg" => "image-texture",
             _ => null
         };

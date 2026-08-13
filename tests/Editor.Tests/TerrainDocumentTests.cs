@@ -117,7 +117,8 @@ public sealed class TerrainDocumentTests : IDisposable
             () => new GizmoViewport(0f, 0f, 800f, 600f),
             () => instance,
             _ => document,
-            (_, _, _, _) => editCount++,
+            _ => null,
+            (_, _, _, _, _) => editCount++,
             value => preview = value,
             settings);
 

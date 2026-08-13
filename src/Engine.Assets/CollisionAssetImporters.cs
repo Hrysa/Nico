@@ -100,3 +100,62 @@ public sealed class StandardMaterialAssetImporter : IAssetImporter
             dependencies, []);
     }
 }
+
+/// <summary>Publishes a project-authored terrain layer and its texture dependencies.</summary>
+public sealed class TerrainLayerAssetImporter : IAssetImporter
+{
+    /// <inheritdoc/>
+    public string Id => "terrain-layer";
+
+    /// <inheritdoc/>
+    public int Version => 1;
+
+    /// <inheritdoc/>
+    public AssetImportResult Import(AssetImportContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.CancellationToken.ThrowIfCancellationRequested();
+        TerrainLayerAsset layer;
+        using (var source = context.OpenSource())
+            layer = TerrainMaterialAssetCodec.LoadLayer(source);
+        using (var source = context.OpenSource())
+        using (var destination = context.CreateArtifact("terrain-layer.ntlayer"))
+            source.CopyTo(destination);
+        var dependencies = new List<AssetReference>(3);
+        if (layer.BaseColorTexture is { } baseColorTexture)
+            dependencies.Add(baseColorTexture);
+        if (layer.NormalTexture is { } normalTexture)
+            dependencies.Add(normalTexture);
+        if (layer.MetallicRoughnessTexture is { } metallicRoughnessTexture)
+            dependencies.Add(metallicRoughnessTexture);
+        return new AssetImportResult(
+            [new AssetArtifact("main", "nico/terrain-layer", "terrain-layer.ntlayer")],
+            dependencies, []);
+    }
+}
+
+/// <summary>Publishes a project-authored painted terrain material.</summary>
+public sealed class TerrainMaterialAssetImporter : IAssetImporter
+{
+    /// <inheritdoc/>
+    public string Id => "terrain-material";
+
+    /// <inheritdoc/>
+    public int Version => 1;
+
+    /// <inheritdoc/>
+    public AssetImportResult Import(AssetImportContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.CancellationToken.ThrowIfCancellationRequested();
+        TerrainMaterialAsset material;
+        using (var source = context.OpenSource())
+            material = TerrainMaterialAssetCodec.LoadMaterial(source);
+        using (var source = context.OpenSource())
+        using (var destination = context.CreateArtifact("terrain-material.ntmat"))
+            source.CopyTo(destination);
+        return new AssetImportResult(
+            [new AssetArtifact("main", "nico/terrain-material", "terrain-material.ntmat")],
+            material.Layers.ToArray(), []);
+    }
+}

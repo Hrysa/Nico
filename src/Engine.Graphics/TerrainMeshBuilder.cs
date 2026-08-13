@@ -32,12 +32,14 @@ public static class TerrainMeshBuilder
     /// <param name="horizontalSize">Local X and Z surface dimensions.</param>
     /// <param name="heightScale">Local height represented by a normalized sample of one.</param>
     /// <param name="center">Optional node-local surface offset.</param>
+    /// <param name="tintByHeight">Whether vertex colors apply the procedural height tint.</param>
     /// <returns>Static terrain geometry ready for indexed material shading.</returns>
     public static StaticMeshResource BuildStaticMesh(
         TerrainResource terrain,
         Vector2 horizontalSize,
         float heightScale,
-        Vector3 center = default)
+        Vector3 center = default,
+        bool tintByHeight = true)
     {
         ArgumentNullException.ThrowIfNull(terrain);
         ValidateDimensions(horizontalSize, heightScale, center);
@@ -49,7 +51,8 @@ public static class TerrainMeshBuilder
             {
                 var positionIndex = z * terrain.Width + x;
                 var position = CreatePosition(terrain, horizontalSize, heightScale, center, x, z);
-                var color = CreateTerrainColor(terrain.GetHeight(x, z));
+                var color = tintByHeight
+                    ? CreateTerrainColor(terrain.GetHeight(x, z)) : Vector3.One;
                 var uv = CreateTerrainUv(terrain, x, z);
                 vertices[positionIndex] = new ModelVertex(
                     position, Vector3.UnitY, uv, new Vector4(1f, 0f, 0f, 1f),

@@ -84,7 +84,10 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         _sculpt.CheckedChanged += value =>
         {
             if (!_refreshing)
+            {
+                _settings.ToolMode = TerrainToolMode.Sculpt;
                 _settings.IsEnabled = value;
+            }
         };
         AddChild(_sculpt);
 
@@ -220,7 +223,8 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         try
         {
             _dimensions.Text = $"{_document.Value.Width} × {_document.Value.Depth} samples";
-            _sculpt.IsChecked = _settings.IsEnabled;
+            _sculpt.IsChecked = _settings.IsEnabled &&
+                _settings.ToolMode == TerrainToolMode.Sculpt;
             _radius.Text = Format(_settings.Radius);
             _strength.Text = Format(_settings.Strength);
             for (var index = 0; index < _modeButtons.Length; index++)
@@ -234,7 +238,8 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
                 (!_document.IsEditable ? "Read-only imported terrain" :
                     _document.IsStrokeActive ? "Sculpting…" :
                     _document.IsDirty ? "Unsaved changes" :
-                    _settings.IsEnabled ? "Drag primary pointer over selected terrain" :
+                    _settings.IsEnabled && _settings.ToolMode == TerrainToolMode.Sculpt
+                        ? "Drag primary pointer over selected terrain" :
                     "Enable Sculpt in Scene to edit heights");
             _status.ForegroundColor = _document.LastError is null
                 ? _theme.TextMuted : _theme.Error;

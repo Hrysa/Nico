@@ -26,8 +26,9 @@ public sealed class TerrainBrushController
     private readonly Func<GizmoViewport> _getViewport;
     private readonly Func<Node3D?> _getSelection;
     private readonly Func<AssetReference, TerrainDocument?> _resolveDocument;
+    private readonly Func<AssetReference, TerrainMaterialDocument?> _resolveMaterialDocument;
     private readonly Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
-        TerrainEditRegion> _terrainEdited;
+        TerrainEditRegion, bool> _terrainEdited;
     private readonly Action<TerrainBrushPreview?> _previewChanged;
     private BrushTarget? _activeTarget;
     private Vector3 _lastDabWorld;
@@ -46,6 +47,7 @@ public sealed class TerrainBrushController
     /// <param name="getViewport">Current Scene viewport geometry.</param>
     /// <param name="getSelection">Current transform selection.</param>
     /// <param name="resolveDocument">Shared terrain document resolver.</param>
+    /// <param name="resolveMaterialDocument">Shared painted material document resolver.</param>
     /// <param name="terrainEdited">Live render and physics update callback.</param>
     /// <param name="previewChanged">Brush-ring update callback.</param>
     /// <param name="settings">Optional shared brush options.</param>
@@ -54,8 +56,9 @@ public sealed class TerrainBrushController
         Func<GizmoViewport> getViewport,
         Func<Node3D?> getSelection,
         Func<AssetReference, TerrainDocument?> resolveDocument,
+        Func<AssetReference, TerrainMaterialDocument?> resolveMaterialDocument,
         Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
-            TerrainEditRegion> terrainEdited,
+            TerrainEditRegion, bool> terrainEdited,
         Action<TerrainBrushPreview?> previewChanged,
         TerrainBrushSettings? settings = null)
     {
@@ -63,6 +66,8 @@ public sealed class TerrainBrushController
         _getViewport = getViewport ?? throw new ArgumentNullException(nameof(getViewport));
         _getSelection = getSelection ?? throw new ArgumentNullException(nameof(getSelection));
         _resolveDocument = resolveDocument ?? throw new ArgumentNullException(nameof(resolveDocument));
+        _resolveMaterialDocument = resolveMaterialDocument ??
+            throw new ArgumentNullException(nameof(resolveMaterialDocument));
         _terrainEdited = terrainEdited ?? throw new ArgumentNullException(nameof(terrainEdited));
         _previewChanged = previewChanged ?? throw new ArgumentNullException(nameof(previewChanged));
         Settings = settings ?? new TerrainBrushSettings();
@@ -100,7 +105,10 @@ public sealed class TerrainBrushController
         var target = ResolveTarget();
         if (target is not { } resolved || !TryHit(resolved, position, out var hit))
             return false;
-        resolved.Document.BeginStroke();
+        if (resolved.IsPainting)
+            resolved.MaterialDocument!.BeginStroke();
+        else
+            resolved.Document.BeginStroke();
         _activeTarget = resolved;
         _flattenHeight = resolved.Document.Value.Sample(hit.U, hit.V);
         _hasLastDab = false;
@@ -115,7 +123,10 @@ public sealed class TerrainBrushController
     {
         if (_activeTarget is null)
             return false;
-        _activeTarget.Value.Document.EndStroke(save: true);
+        if (_activeTarget.Value.IsPainting)
+            _activeTarget.Value.MaterialDocument!.EndStroke(save: true);
+        else
+            _activeTarget.Value.Document.EndStroke(save: true);
         _activeTarget = null;
         _hasLastDab = false;
         return true;
@@ -131,14 +142,17 @@ public sealed class TerrainBrushController
             return false;
         }
         var target = _activeTarget.Value;
-        var changed = target.Document.CancelStroke();
+        var painting = target.IsPainting;
+        var changed = painting
+            ? target.MaterialDocument!.CancelStroke()
+            : target.Document.CancelStroke();
         _activeTarget = null;
         _hasLastDab = false;
         if (changed)
             _terrainEdited(target.Instance, target.Collider, target.Document.Value,
                 new TerrainEditRegion(0, 0,
                     target.Document.Value.Width - 1,
-                    target.Document.Value.Depth - 1));
+                    target.Document.Value.Depth - 1), !painting);
         ClearPreview();
         return true;
     }
@@ -161,8 +175,18 @@ public sealed class TerrainBrushController
                 collider)
             return null;
         var document = _resolveDocument(reference);
-        return document is { IsEditable: true }
-            ? new BrushTarget(instance, collider, document) : null;
+        if (document is not { IsEditable: true })
+            return null;
+        if (Settings.ToolMode != TerrainToolMode.Paint)
+            return new BrushTarget(instance, collider, document, null, false);
+        var materialReference = instance.Materials.FirstOrDefault();
+        if (materialReference.Asset.Value == Guid.Empty ||
+            _resolveMaterialDocument(materialReference) is not { IsEditable: true } material)
+            return null;
+        material.EnsureDimensions(document.Value.Width, document.Value.Depth);
+        if (Settings.PaintLayer >= material.Value.Layers.Count)
+            return null;
+        return new BrushTarget(instance, collider, document, material, true);
     }
 
     /// <summary>Applies one brush dab when it is sufficiently separated from the prior dab.</summary>
@@ -176,19 +200,30 @@ public sealed class TerrainBrushController
             Vector3.DistanceSquared(hit.WorldPosition, _lastDabWorld) <
             minimumSpacing * minimumSpacing)
             return;
-        var nodeModel = target.Instance.GetModelMatrix();
-        var worldHeightScale = target.Collider.HeightScale * MathF.Max(0.0001f,
-            Vector3.TransformNormal(Vector3.UnitY, nodeModel).Length());
-        var amount = Settings.Strength / worldHeightScale;
-        var region = target.Document.ApplyBrush(
-            hit.U, hit.V, hit.RadiusU, hit.RadiusV, amount,
-            Settings.Mode, _flattenHeight);
+        var painting = target.IsPainting;
+        TerrainEditRegion? region;
+        if (painting)
+        {
+            region = target.MaterialDocument!.ApplyPaint(
+                hit.U, hit.V, hit.RadiusU, hit.RadiusV,
+                Math.Clamp(Settings.Strength, 0.001f, 1f), Settings.PaintLayer);
+        }
+        else
+        {
+            var nodeModel = target.Instance.GetModelMatrix();
+            var worldHeightScale = target.Collider.HeightScale * MathF.Max(0.0001f,
+                Vector3.TransformNormal(Vector3.UnitY, nodeModel).Length());
+            var amount = Settings.Strength / worldHeightScale;
+            region = target.Document.ApplyBrush(
+                hit.U, hit.V, hit.RadiusU, hit.RadiusV, amount,
+                Settings.Mode, _flattenHeight);
+        }
         _lastDabWorld = hit.WorldPosition;
         _hasLastDab = true;
         if (region is not { } changed)
             return;
         var terrain = target.Document.Value;
-        _terrainEdited(target.Instance, target.Collider, terrain, changed);
+        _terrainEdited(target.Instance, target.Collider, terrain, changed, !painting);
     }
 
     /// <summary>Creates a pointer ray and finds its closest triangle on one height grid.</summary>
@@ -396,10 +431,14 @@ public sealed class TerrainBrushController
     /// <param name="Instance">Selected renderable terrain node.</param>
     /// <param name="Collider">Terrain surface dimensions and collision settings.</param>
     /// <param name="Document">Shared editable height document.</param>
+    /// <param name="MaterialDocument">Shared editable painted material document.</param>
+    /// <param name="IsPainting">Whether this stroke edits material weights.</param>
     private readonly record struct BrushTarget(
         MeshInstance3D Instance,
         TerrainColliderComponent Collider,
-        TerrainDocument Document);
+        TerrainDocument Document,
+        TerrainMaterialDocument? MaterialDocument,
+        bool IsPainting);
 
     /// <summary>Groups normalized and world-space data for one surface hit.</summary>
     /// <param name="U">Normalized terrain X coordinate.</param>

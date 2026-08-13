@@ -3,6 +3,16 @@ using Engine.Graphics;
 
 namespace Editor;
 
+/// <summary>Chooses whether the Scene terrain brush edits height or layer weights.</summary>
+public enum TerrainToolMode
+{
+    /// <summary>Edits terrain height samples.</summary>
+    Sculpt,
+
+    /// <summary>Paints one terrain-material layer.</summary>
+    Paint
+}
+
 /// <summary>Identifies the height operation performed by a terrain brush.</summary>
 public enum TerrainBrushMode
 {
@@ -33,6 +43,34 @@ public readonly record struct TerrainEditRegion(
 /// <summary>Stores shared Scene terrain-tool settings independently of Inspector lifetime.</summary>
 public sealed class TerrainBrushSettings
 {
+    /// <summary>Gets or sets whether the brush sculpts heights or paints layers.</summary>
+    public TerrainToolMode ToolMode
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Gets or sets the selected terrain-material layer channel.</summary>
+    public int PaintLayer
+    {
+        get;
+        set
+        {
+            if ((uint)value >= TerrainMaterialAsset.MaximumLayers)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    }
+
     /// <summary>Gets or sets whether primary pointer input sculpts selected terrain.</summary>
     public bool IsEnabled
     {

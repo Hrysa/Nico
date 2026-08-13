@@ -57,6 +57,10 @@ runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<AnimationSetRe
     "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<StandardMaterialAsset>(
     "nico/standard-material", (stream, _, _) => StandardMaterialAssetCodec.Load(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainLayerAsset>(
+    "nico/terrain-layer", (stream, _, _) => TerrainMaterialAssetCodec.LoadLayer(stream)));
+runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainMaterialAsset>(
+    "nico/terrain-material", (stream, _, _) => TerrainMaterialAssetCodec.LoadMaterial(stream)));
 runtimeResources.RegisterLoader(new DelegateRuntimeResourceLoader<TextureResource>(
     "nico/texture2d", (stream, _, _) => TextureResource.Load(stream)));
 logger.LogInformation("Indexed {AssetCount} project assets with {DiagnosticCount} diagnostics",
@@ -306,13 +310,7 @@ void SynchronizeMainViewportPresentations()
     }
 }
 
-mainUIHost.LayoutUpdated += SynchronizeMainViewportPresentations;
-dockSession.MainHost.SplitResizeCompleted += ResizeViewportTargets;
 TerrainBrushController terrainBrush = null!;
-dockWindowFactory.RegisterLifecycle(
-    EditorDockWorkspace.SceneId, OpenFloatingSceneViewport, CloseFloatingSceneViewport);
-dockWindowFactory.RegisterLifecycle(
-    EditorDockWorkspace.GameId, OpenFloatingGameViewport, CloseFloatingGameViewport);
 
 var uiEventRouter = mainUIHost.InputRouter;
 dockSession.AttachDragRouter(dockSession.MainHost, uiEventRouter, window, RefreshUI);
@@ -324,6 +322,8 @@ FileSystemCreateDialog? fileSystemCreateDialog = null;
 ConfirmationDialog? confirmationDialog = null;
 var fileSystemTree = editorView.FileSystemTree;
 var terrainBrushSettings = new TerrainBrushSettings();
+var editableAssetSources = new EditableAssetSourceRegistry();
+AssetDocumentService? documentService = null;
 using var assetDocuments = new AssetDocumentService(reference =>
 {
     assetDatabase.Refresh();
@@ -333,7 +333,8 @@ using var assetDocuments = new AssetDocumentService(reference =>
     detachedGameRenderer?.InvalidatePreviewAsset(reference);
     foreach (var sceneObject in sceneObjects)
     {
-        if (sceneObject.Mesh.Asset == reference.Asset || sceneObject.Materials.Contains(reference))
+        if (sceneObject.Mesh.Asset == reference.Asset || sceneObject.Materials.Contains(reference) ||
+            UsesTerrainMaterialDependency(sceneObject, reference))
         {
             LoadAssetMeshResources(sceneObject);
             if (detachedSceneRenderer is not null)
@@ -344,21 +345,28 @@ using var assetDocuments = new AssetDocumentService(reference =>
     }
     InvalidateViewports();
 });
+documentService = assetDocuments;
 assetDocuments.Register(new StandardMaterialDocumentFactory());
 assetDocuments.Register(new TerrainDocumentFactory());
-var editableAssetSources = new EditableAssetSourceRegistry();
+assetDocuments.Register(new TerrainLayerDocumentFactory());
+assetDocuments.Register(new TerrainMaterialDocumentFactory());
 editableAssetSources.Register("nico/standard-material", "standard-material");
 editableAssetSources.Register("nico/terrain", "terrain");
+editableAssetSources.Register("nico/terrain-layer", "terrain-layer");
+editableAssetSources.Register("nico/terrain-material", "terrain-material");
 var assetEditors = new AssetEditorRegistry(
     assetDocuments, ResolveAssetDocument, ResolveAssetReferenceDisplayName);
 assetEditors.Register(new StandardMaterialInspectorFactory());
 assetEditors.Register(new TerrainInspectorFactory(terrainBrushSettings));
+assetEditors.Register(new TerrainLayerInspectorFactory());
+assetEditors.Register(new TerrainMaterialInspectorFactory(terrainBrushSettings));
 liveTerrainResolver = reference => ResolveTerrainDocument(reference)?.Value;
 terrainBrush = new TerrainBrushController(
     sceneCamera,
     GetSceneGizmoViewport,
     () => selection.SelectedNode,
     ResolveTerrainDocument,
+    ResolveTerrainMaterialDocument,
     ApplyTerrainEdit,
     SetTerrainBrushPreview,
     terrainBrushSettings);
@@ -369,6 +377,12 @@ terrainBrushSettings.Changed += () =>
     renderScheduler.Invalidate(RenderInvalidation.SceneViewport);
     window.RequestFrame();
 };
+mainUIHost.LayoutUpdated += SynchronizeMainViewportPresentations;
+dockSession.MainHost.SplitResizeCompleted += ResizeViewportTargets;
+dockWindowFactory.RegisterLifecycle(
+    EditorDockWorkspace.SceneId, OpenFloatingSceneViewport, CloseFloatingSceneViewport);
+dockWindowFactory.RegisterLifecycle(
+    EditorDockWorkspace.GameId, OpenFloatingGameViewport, CloseFloatingGameViewport);
 dockSession.SynchronizeFloatingWindows();
 var assetDropResolver = new AssetDropResolver(assetDatabase, assetImportPipeline);
 using var modelPreviewController = new InspectorModelPreviewController(
@@ -1550,7 +1564,8 @@ AnimationRootJointOptions ResolveAnimationRootJoints(AssetReference source)
 bool IsVisibleImportedArtifact(string contentType)
 {
     return contentType is "nico/static-mesh" or "nico/skinned-mesh" or
-        "nico/standard-material" or "nico/texture2d" or
+        "nico/standard-material" or "nico/terrain-layer" or
+        "nico/terrain-material" or "nico/texture2d" or
         "nico/skeletal-animation" or "nico/animation-set";
 }
 
@@ -1564,6 +1579,8 @@ string GetImportedArtifactDisplayName(AssetArtifact artifact)
         "nico/static-mesh" => "Mesh",
         "nico/skinned-mesh" => "Skinned Mesh",
         "nico/standard-material" => "Material",
+        "nico/terrain-layer" => "Terrain Layer",
+        "nico/terrain-material" => "Terrain Material",
         "nico/texture2d" => "Texture",
         "nico/skeletal-animation" => "Animation",
         "nico/animation-set" => "Animation Set",
@@ -1884,12 +1901,11 @@ void LoadAssetMeshResources(
             }
             var terrain = LoadRuntimeResource(meshReference,
                 new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
-            var terrainMaterial = ResolveMeshMaterial(
-                meshReference, instance, 0, outcome);
+            var terrainMaterial = ResolveTerrainSurfaceMaterial(instance, terrain);
             (targetRenderer ?? viewportRenderer).SetTerrainResource(
                 instance, terrain, terrainCollider, terrainMaterial.Material,
                 terrainMaterial.BaseColorTexture, terrainMaterial.NormalTexture,
-                terrainMaterial.MetallicRoughnessTexture);
+                terrainMaterial.MetallicRoughnessTexture, terrainMaterial.UseHeightTint);
             return;
         }
         if (meshArtifact.ContentType == "nico/skinned-mesh")
@@ -2041,6 +2057,61 @@ TextureResource? ResolveTextureResource(AssetReference? reference)
         ResolveTextureResource(resolvedMaterial.MetallicRoughnessTexture));
 }
 
+/// <summary>Resolves a painted terrain material or the standard-material fallback.</summary>
+/// <param name="instance">Terrain scene instance.</param>
+/// <param name="terrain">Terrain grid defining paint-map resolution.</param>
+/// <returns>Composed PBR textures and height-tint policy.</returns>
+(StandardMaterialAsset Material, TextureResource? BaseColorTexture,
+    TextureResource? NormalTexture, TextureResource? MetallicRoughnessTexture,
+    bool UseHeightTint) ResolveTerrainSurfaceMaterial(
+    MeshInstance3D instance,
+    TerrainResource terrain)
+{
+    var reference = instance.Materials.FirstOrDefault();
+    if (reference.Asset.Value == Guid.Empty)
+    {
+        var fallback = ResolveMeshMaterial(instance.Mesh, instance, 0);
+        return (fallback.Material, fallback.BaseColorTexture, fallback.NormalTexture,
+            fallback.MetallicRoughnessTexture, true);
+    }
+    var resolved = ResolveAssetDocument(reference);
+    if (resolved?.ContentType != "nico/terrain-material")
+    {
+        var fallback = ResolveMeshMaterial(instance.Mesh, instance, 0);
+        return (fallback.Material, fallback.BaseColorTexture, fallback.NormalTexture,
+            fallback.MetallicRoughnessTexture, true);
+    }
+    var document = documentService!.GetOrLoad(resolved.Location, resolved.ContentType)
+        as TerrainMaterialDocument;
+    var material = document?.Value ?? LoadRuntimeResource(reference,
+        new TerrainMaterialAsset(terrain.Width, terrain.Depth));
+    if (document is { IsEditable: true } &&
+        (material.Width != terrain.Width || material.Depth != terrain.Depth))
+    {
+        document.EnsureDimensions(terrain.Width, terrain.Depth);
+        material = document.Value;
+    }
+    var layers = new List<ResolvedTerrainLayer>(material.Layers.Count);
+    for (var index = 0; index < material.Layers.Count; index++)
+    {
+        var layerReference = material.Layers[index];
+        var layerDocument = ResolveAssetDocument(layerReference) is { ContentType: "nico/terrain-layer" }
+            layerLocation
+            ? documentService!.GetOrLoad(layerLocation.Location, layerLocation.ContentType)
+                as TerrainLayerDocument
+            : null;
+        var layer = layerDocument?.Value ?? LoadRuntimeResource(layerReference,
+            new TerrainLayerAsset());
+        layers.Add(new ResolvedTerrainLayer(layer,
+            ResolveTextureResource(layer.BaseColorTexture),
+            ResolveTextureResource(layer.NormalTexture),
+            ResolveTextureResource(layer.MetallicRoughnessTexture)));
+    }
+    var composed = TerrainMaterialComposer.Compose(material, layers);
+    return (composed.Material, composed.BaseColorTexture, composed.NormalTexture,
+        composed.MetallicRoughnessTexture, false);
+}
+
 /// <summary>Loads a decoded resource through the shared zero-reference LRU.</summary>
 /// <typeparam name="TResource">Decoded resource type.</typeparam>
 /// <param name="reference">Persistent artifact reference.</param>
@@ -2168,7 +2239,32 @@ TerrainDocument? ResolveTerrainDocument(AssetReference reference)
     var resolved = ResolveAssetDocument(reference);
     if (resolved is null || resolved.ContentType != "nico/terrain")
         return null;
-    return assetDocuments.GetOrLoad(resolved.Location, resolved.ContentType) as TerrainDocument;
+    return documentService!.GetOrLoad(resolved.Location, resolved.ContentType) as TerrainDocument;
+}
+
+/// <summary>Gets the shared painted terrain-material document for one reference.</summary>
+/// <param name="reference">Terrain-material asset reference.</param>
+/// <returns>Shared typed document, or null when unavailable or mistyped.</returns>
+TerrainMaterialDocument? ResolveTerrainMaterialDocument(AssetReference reference)
+{
+    var resolved = ResolveAssetDocument(reference);
+    if (resolved is null || resolved.ContentType != "nico/terrain-material")
+        return null;
+    return documentService!.GetOrLoad(resolved.Location, resolved.ContentType)
+        as TerrainMaterialDocument;
+}
+
+/// <summary>Checks whether one scene terrain material references a changed layer asset.</summary>
+/// <param name="instance">Candidate scene instance.</param>
+/// <param name="dependency">Changed nested dependency.</param>
+/// <returns>True when the instance's painted material uses the dependency.</returns>
+bool UsesTerrainMaterialDependency(MeshInstance3D instance, AssetReference dependency)
+{
+    var materialReference = instance.Materials.FirstOrDefault();
+    if (materialReference.Asset.Value == Guid.Empty)
+        return false;
+    return ResolveTerrainMaterialDocument(materialReference)?.Value.Layers.Contains(dependency)
+        ?? false;
 }
 
 /// <summary>Publishes live sculpt changes to every renderer and attached physics terrain.</summary>
@@ -2180,16 +2276,20 @@ void ApplyTerrainEdit(
     MeshInstance3D instance,
     TerrainColliderComponent collider,
     TerrainResource terrain,
-    TerrainEditRegion editRegion)
+    TerrainEditRegion editRegion,
+    bool geometryChanged)
 {
-    var material = ResolveMeshMaterial(instance.Mesh, instance, 0);
+    var material = ResolveTerrainSurfaceMaterial(instance, terrain);
     viewportRenderer.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture);
+        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
+        material.UseHeightTint);
     detachedSceneRenderer?.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture);
+        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
+        material.UseHeightTint);
     detachedGameRenderer?.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture);
-    if (physicsWorld is not null)
+        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
+        material.UseHeightTint);
+    if (geometryChanged && physicsWorld is not null)
     {
         try
         {
@@ -2448,6 +2548,58 @@ void ShowMaterialPathDialog(string parentDirectory)
     RefreshVertices();
 }
 
+/// <summary>Shows a project-scoped path dialog for a terrain layer or painted material.</summary>
+/// <param name="parentDirectory">Directory receiving the new asset.</param>
+/// <param name="createLayer">True for a layer; false for a painted terrain material.</param>
+void ShowTerrainMaterialAssetPathDialog(string parentDirectory, bool createLayer)
+{
+    CloseFileContextMenu();
+    var title = createLayer ? "Terrain Layer" : "Terrain Material";
+    var extension = createLayer ? ".ntlayer" : ".ntmat";
+    var relativeParent = Path.GetRelativePath(project.RootPath, parentDirectory);
+    if (relativeParent == ".")
+        relativeParent = Path.GetFileName(project.RootPath);
+    var dialog = new FileSystemCreateDialog(width, height, title, relativeParent,
+        actionVerb: "Add") { Name = createLayer
+            ? "AddTerrainLayerDialog" : "AddTerrainMaterialDialog" };
+    dialog.CreateRequested += requestedName =>
+    {
+        var fileName = requestedName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
+            ? requestedName : requestedName + extension;
+        var assetPath = Path.Combine(parentDirectory, fileName);
+        if (File.Exists(assetPath) || Directory.Exists(assetPath))
+        {
+            dialog.ShowError("An item with that name already exists.");
+            RefreshVertices();
+            return;
+        }
+        try
+        {
+            if (createLayer)
+                TerrainMaterialAuthoring.SaveDefaultLayer(assetPath);
+            else
+                TerrainMaterialAuthoring.SaveDefaultMaterial(assetPath);
+            assetDatabase.Refresh();
+            CloseFileContextMenu();
+            RefreshFileSystem();
+            RefreshVertices();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                           or ArgumentException or NotSupportedException)
+        {
+            logger.LogError(exception, "Could not create {AssetType} {AssetPath}",
+                title, assetPath);
+            dialog.ShowError($"Could not create this {title.ToLowerInvariant()}.");
+            RefreshVertices();
+        }
+    };
+    dialog.CancelRequested += CloseFileContextMenu;
+    fileSystemCreateDialog = dialog;
+    overlay.Add(dialog, Vector2.Zero);
+    uiEventRouter.MovePointer(lastMousePos);
+    RefreshVertices();
+}
+
 /// <summary>Shows a project-scoped path dialog for a new editable terrain asset.</summary>
 /// <param name="parentDirectory">Directory receiving the new asset.</param>
 /// <param name="created">Optional callback that places the new terrain in a scene.</param>
@@ -2521,6 +2673,10 @@ void ShowAddFileSubmenu(string parentDirectory, float x, float y)
         createDefaultScene: true, saveAction: false));
     submenu.AddItem("Add Animation Set", () => ShowAnimationSetPathDialog(parentDirectory));
     submenu.AddItem("Add Material", () => ShowMaterialPathDialog(parentDirectory));
+    submenu.AddItem("Add Terrain Layer", () =>
+        ShowTerrainMaterialAssetPathDialog(parentDirectory, createLayer: true));
+    submenu.AddItem("Add Terrain Material", () =>
+        ShowTerrainMaterialAssetPathDialog(parentDirectory, createLayer: false));
     submenu.AddItem("Add Terrain", () => ShowTerrainPathDialog(parentDirectory));
     submenu.AddItem("Add Empty File", () => ShowCreateFileSystemDialog(parentDirectory,
         createFolder: false));

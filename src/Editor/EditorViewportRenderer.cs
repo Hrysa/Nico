@@ -318,6 +318,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="baseColorTexture">Optional base-color texture.</param>
     /// <param name="normalTexture">Optional normal-map texture.</param>
     /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture.</param>
+    /// <param name="useHeightTint">Whether procedural terrain vertex tint remains enabled.</param>
     public void SetTerrainResource(
         MeshInstance3D instance,
         TerrainResource terrain,
@@ -325,7 +326,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         StandardMaterialAsset material,
         TextureResource? baseColorTexture = null,
         TextureResource? normalTexture = null,
-        TextureResource? metallicRoughnessTexture = null)
+        TextureResource? metallicRoughnessTexture = null,
+        bool useHeightTint = true)
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(terrain);
@@ -334,7 +336,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
         var mesh = TerrainMeshBuilder.BuildStaticMesh(
-            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+            terrain, collider.HorizontalSize, collider.HeightScale, collider.Center,
+            useHeightTint);
         var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
         var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
         var metallicRoughnessHandle = CreateMaterialTexture(
@@ -377,6 +380,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="baseColorTexture">Optional base-color texture.</param>
     /// <param name="normalTexture">Optional normal-map texture.</param>
     /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture.</param>
+    /// <param name="useHeightTint">Whether procedural terrain vertex tint remains enabled.</param>
     public void UpdateTerrainResource(
         MeshInstance3D instance,
         TerrainResource terrain,
@@ -384,10 +388,11 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         StandardMaterialAsset material,
         TextureResource? baseColorTexture = null,
         TextureResource? normalTexture = null,
-        TextureResource? metallicRoughnessTexture = null)
+        TextureResource? metallicRoughnessTexture = null,
+        bool useHeightTint = true)
     {
         SetTerrainResource(instance, terrain, collider, material, baseColorTexture,
-            normalTexture, metallicRoughnessTexture);
+            normalTexture, metallicRoughnessTexture, useHeightTint);
     }
 
     /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>

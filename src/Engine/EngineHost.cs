@@ -103,6 +103,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         registry.Register(new TerrainAssetImporter());
         registry.Register(new AnimationSetAssetImporter());
         registry.Register(new StandardMaterialAssetImporter());
+        registry.Register(new TerrainLayerAssetImporter());
+        registry.Register(new TerrainMaterialAssetImporter());
         registry.Register(new ImageTextureAssetImporter());
         var pipeline = new AssetImportPipeline(database, registry);
         _runtimeResources = CreateRuntimeResourceManager(database, pipeline);
@@ -329,6 +331,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         AssetImportOutcome? outcome = null;
         StaticMeshResource mesh;
         SkinnedMeshResource? skin = null;
+        TerrainResource? terrainResource = null;
         if (BuiltInAssets.IsBuiltInMesh(meshReference))
         {
             mesh = BuiltInAssets.LoadMesh(meshReference);
@@ -349,12 +352,12 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
                 var collider = instance.GetComponent<TerrainColliderComponent>() ??
                     throw new InvalidDataException(
                         $"Terrain mesh '{meshReference}' requires a terrain collider.");
-                var terrain = LoadRuntimeResource(meshReference,
+                terrainResource = LoadRuntimeResource(meshReference,
                     new TerrainResource(2, 2, [0f, 0f, 0f, 0f]));
                 instance.LocalBounds = TerrainMeshBuilder.GetBounds(
-                    terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+                    terrainResource, collider.HorizontalSize, collider.HeightScale, collider.Center);
                 mesh = TerrainMeshBuilder.BuildStaticMesh(
-                    terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
+                    terrainResource, collider.HorizontalSize, collider.HeightScale, collider.Center);
             }
             else if (meshArtifact.ContentType == "nico/skinned-mesh")
             {
@@ -382,19 +385,48 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             : materialReference.Asset == meshReference.Asset
                 ? outcome : pipeline.Import(materialRecord, "player");
         var materialArtifact = materialOutcome?.Artifacts.FirstOrDefault(artifact =>
-            artifact.Key == materialReference.SubAsset &&
-            artifact.ContentType == "nico/standard-material");
-        if (materialArtifact is not null)
+            artifact.Key == materialReference.SubAsset);
+        TextureResource? baseColorResource = null;
+        TextureResource? normalResource = null;
+        TextureResource? metallicRoughnessResource = null;
+        if (materialArtifact?.ContentType == "nico/standard-material")
         {
             material = CloneMaterial(LoadRuntimeResource(
                 materialReference, new StandardMaterialAsset()));
+            baseColorResource = LoadOptionalTexture(material.BaseColorTexture);
+            normalResource = LoadOptionalTexture(material.NormalTexture);
+            metallicRoughnessResource = LoadOptionalTexture(
+                material.MetallicRoughnessTexture);
         }
-        var baseColorHandle = CreateMaterialTexture(
-            material.BaseColorTexture, TextureColorSpace.Srgb);
-        var normalHandle = CreateMaterialTexture(
-            material.NormalTexture, TextureColorSpace.Linear);
+        else if (materialArtifact?.ContentType == "nico/terrain-material" &&
+            terrainResource is not null)
+        {
+            var terrainMaterial = LoadRuntimeResource(materialReference,
+                new TerrainMaterialAsset(terrainResource.Width, terrainResource.Depth));
+            var terrainLayers = new List<ResolvedTerrainLayer>(terrainMaterial.Layers.Count);
+            for (var index = 0; index < terrainMaterial.Layers.Count; index++)
+            {
+                var layer = LoadRuntimeResource(terrainMaterial.Layers[index],
+                    new TerrainLayerAsset());
+                terrainLayers.Add(new ResolvedTerrainLayer(layer,
+                    LoadOptionalTexture(layer.BaseColorTexture),
+                    LoadOptionalTexture(layer.NormalTexture),
+                    LoadOptionalTexture(layer.MetallicRoughnessTexture)));
+            }
+            var composed = TerrainMaterialComposer.Compose(terrainMaterial, terrainLayers);
+            material = composed.Material;
+            baseColorResource = composed.BaseColorTexture;
+            normalResource = composed.NormalTexture;
+            metallicRoughnessResource = composed.MetallicRoughnessTexture;
+            var collider = instance.GetComponent<TerrainColliderComponent>()!;
+            mesh = TerrainMeshBuilder.BuildStaticMesh(terrainResource,
+                collider.HorizontalSize, collider.HeightScale, collider.Center,
+                tintByHeight: false);
+        }
+        var baseColorHandle = CreateMaterialTexture(baseColorResource, TextureColorSpace.Srgb);
+        var normalHandle = CreateMaterialTexture(normalResource, TextureColorSpace.Linear);
         var metallicRoughnessHandle = CreateMaterialTexture(
-            material.MetallicRoughnessTexture, TextureColorSpace.Linear);
+            metallicRoughnessResource, TextureColorSpace.Linear);
         try
         {
             if (skin is null)
@@ -432,14 +464,23 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <param name="colorSpace">Required sample interpretation.</param>
     /// <returns>The renderer-owned texture handle, or an invalid handle when omitted.</returns>
     private TextureHandle CreateMaterialTexture(
-        AssetReference? reference,
+        TextureResource? texture,
         TextureColorSpace colorSpace)
     {
-        if (reference is not { } textureReference)
+        if (texture is null)
             return default;
-        var texture = LoadRuntimeResource(textureReference,
-            new TextureResource(0, 0, [], colorSpace));
         return _window.CreateTexture(texture with { ColorSpace = colorSpace });
+    }
+
+    /// <summary>Loads one optional decoded texture resource.</summary>
+    /// <param name="reference">Optional persistent texture reference.</param>
+    /// <returns>Decoded texture, or null when omitted.</returns>
+    private TextureResource? LoadOptionalTexture(AssetReference? reference)
+    {
+        return reference is { } textureReference
+            ? LoadRuntimeResource(textureReference,
+                new TextureResource(0, 0, [], TextureColorSpace.Linear))
+            : null;
     }
 
     /// <summary>Destroys all renderer-owned textures associated with one material.</summary>
@@ -577,6 +618,11 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             "nico/animation-set", (stream, _, _) => AnimationSetResource.Load(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<StandardMaterialAsset>(
             "nico/standard-material", (stream, _, _) => StandardMaterialAssetCodec.Load(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainLayerAsset>(
+            "nico/terrain-layer", (stream, _, _) => TerrainMaterialAssetCodec.LoadLayer(stream)));
+        manager.RegisterLoader(new DelegateRuntimeResourceLoader<TerrainMaterialAsset>(
+            "nico/terrain-material", (stream, _, _) =>
+                TerrainMaterialAssetCodec.LoadMaterial(stream)));
         manager.RegisterLoader(new DelegateRuntimeResourceLoader<TextureResource>(
             "nico/texture2d", (stream, _, _) => TextureResource.Load(stream)));
         return manager;
@@ -807,6 +853,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             ".nterrain" => "terrain",
             ".nanimset" => "animation-set",
             ".nmat" => "standard-material",
+            ".ntlayer" => "terrain-layer",
+            ".ntmat" => "terrain-material",
             ".png" or ".jpg" or ".jpeg" => "image-texture",
             _ => null
         };

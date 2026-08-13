@@ -772,9 +772,13 @@ public sealed class SceneInspector : Panel
     /// <returns>Top available for following component sections.</returns>
     private float AddMaterialSection(MeshInstance3D instance, float y)
     {
-        AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Material", _theme.TextPrimary));
+        var isTerrain = instance.GetComponent<TerrainColliderComponent>() is not null;
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f,
+            isTerrain ? "Terrain Material" : "Material", _theme.TextPrimary));
         var materialField = new AssetReferenceField(
-            Width - 88f, 30f, "nico/standard-material", AssignMaterial, _theme)
+            Width - 88f, 30f,
+            isTerrain ? "nico/terrain-material" : "nico/standard-material",
+            AssignMaterial, _theme)
         {
             Name = "MaterialSlot0",
             Text = GetMaterialName(instance),
