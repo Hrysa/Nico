@@ -19,18 +19,27 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal ShaderModule UiShapeFragmentShader;
     internal Pipeline UiShapePipeline;
     internal Pipeline ViewportPipeline;
+    internal Pipeline ViewportTransparentPipeline;
     internal PipelineLayout ViewportLayout;
     internal ShaderModule ModelVertexShader;
     internal ShaderModule ModelFragmentShader;
     internal Pipeline ModelPipeline;
     internal Pipeline ModelDoubleSidedPipeline;
+    internal Pipeline ModelTransparentPipeline;
+    internal Pipeline ModelTransparentDoubleSidedPipeline;
     internal PipelineLayout ModelLayout;
     internal DescriptorSetLayout ModelTextureDescriptorSetLayout;
     internal DescriptorPool ModelTextureDescriptorPool;
+    internal DescriptorSetLayout ShadowSamplingDescriptorSetLayout;
+    internal DescriptorPool ShadowSamplingDescriptorPool;
+    internal DescriptorSetLayout SceneLightingDescriptorSetLayout;
+    internal DescriptorPool SceneLightingDescriptorPool;
     internal ShaderModule SkinnedModelVertexShader;
     internal ShaderModule SkinnedModelFragmentShader;
     internal Pipeline SkinnedModelPipeline;
     internal Pipeline SkinnedModelDoubleSidedPipeline;
+    internal Pipeline SkinnedModelTransparentPipeline;
+    internal Pipeline SkinnedModelTransparentDoubleSidedPipeline;
     internal PipelineLayout SkinnedModelLayout;
     internal DescriptorSetLayout SkinPaletteDescriptorSetLayout;
     internal DescriptorPool SkinPaletteDescriptorPool;
@@ -38,6 +47,8 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal ShaderModule SkinnedShadowVertexShader;
     internal Pipeline ShadowPipeline;
     internal Pipeline SkinnedShadowPipeline;
+    internal Pipeline CameraDepthPipeline;
+    internal Pipeline SkinnedCameraDepthPipeline;
     internal PipelineLayout ShadowLayout;
     internal PipelineLayout SkinnedShadowLayout;
     internal ShaderModule GridVertexShader;
@@ -75,11 +86,18 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(GridPipeline);
         DestroyPipeline(ModelPipeline);
         DestroyPipeline(ModelDoubleSidedPipeline);
+        DestroyPipeline(ModelTransparentPipeline);
+        DestroyPipeline(ModelTransparentDoubleSidedPipeline);
         DestroyPipeline(SkinnedModelPipeline);
         DestroyPipeline(SkinnedModelDoubleSidedPipeline);
+        DestroyPipeline(SkinnedModelTransparentPipeline);
+        DestroyPipeline(SkinnedModelTransparentDoubleSidedPipeline);
         DestroyPipeline(ShadowPipeline);
         DestroyPipeline(SkinnedShadowPipeline);
+        DestroyPipeline(CameraDepthPipeline);
+        DestroyPipeline(SkinnedCameraDepthPipeline);
         DestroyPipeline(ViewportPipeline);
+        DestroyPipeline(ViewportTransparentPipeline);
         DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);
         DestroyPipelineLayout(TextureLayout);
@@ -95,12 +113,20 @@ internal unsafe sealed class PipelineResources : IDisposable
             _vk.DestroyDescriptorPool(_device, TextureDescriptorPool, null);
         if (ModelTextureDescriptorPool.Handle != 0)
             _vk.DestroyDescriptorPool(_device, ModelTextureDescriptorPool, null);
+        if (ShadowSamplingDescriptorPool.Handle != 0)
+            _vk.DestroyDescriptorPool(_device, ShadowSamplingDescriptorPool, null);
+        if (SceneLightingDescriptorPool.Handle != 0)
+            _vk.DestroyDescriptorPool(_device, SceneLightingDescriptorPool, null);
         if (SkinPaletteDescriptorPool.Handle != 0)
             _vk.DestroyDescriptorPool(_device, SkinPaletteDescriptorPool, null);
         if (TextureDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, TextureDescriptorSetLayout, null);
         if (ModelTextureDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, ModelTextureDescriptorSetLayout, null);
+        if (ShadowSamplingDescriptorSetLayout.Handle != 0)
+            _vk.DestroyDescriptorSetLayout(_device, ShadowSamplingDescriptorSetLayout, null);
+        if (SceneLightingDescriptorSetLayout.Handle != 0)
+            _vk.DestroyDescriptorSetLayout(_device, SceneLightingDescriptorSetLayout, null);
         if (SkinPaletteDescriptorSetLayout.Handle != 0)
             _vk.DestroyDescriptorSetLayout(_device, SkinPaletteDescriptorSetLayout, null);
 

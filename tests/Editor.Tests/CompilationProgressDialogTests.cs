@@ -27,4 +27,24 @@ public class CompilationProgressDialogTests
         Assert.All(dialog.BuildDrawList().Commands,
             command => Assert.Equal(UIDrawLayer.Overlay, command.Layer));
     }
+
+    /// <summary>Verifies closing the progress modal detaches it from the retained overlay tree.</summary>
+    [Fact]
+    public void Remove_ProgressDialog_DetachesOverlayContent()
+    {
+        var overlay = new Canvas();
+        var dialog = new CompilationProgressDialog(1280f, 720f);
+        overlay.Add(dialog, System.Numerics.Vector2.Zero);
+        var before = overlay.BuildDrawList();
+        var beforeGeneration = before.Generation;
+        var beforeCommandCount = before.Commands.Count;
+
+        Assert.True(overlay.Remove(dialog));
+        var after = overlay.BuildDrawList();
+
+        Assert.Null(dialog.Parent);
+        Assert.DoesNotContain(dialog, overlay.Children);
+        Assert.NotEqual(beforeGeneration, after.Generation);
+        Assert.True(after.Commands.Count < beforeCommandCount);
+    }
 }

@@ -53,7 +53,26 @@ public static class ScenePlayClone
                 Color = light.Color,
                 Intensity = light.Intensity,
                 AmbientIntensity = light.AmbientIntensity,
-                IsEnabled = light.IsEnabled
+                IsEnabled = light.IsEnabled,
+                CastsShadows = light.CastsShadows
+            },
+            PointLight3D light => new PointLight3D
+            {
+                Color = light.Color,
+                Intensity = light.Intensity,
+                Range = light.Range,
+                IsEnabled = light.IsEnabled,
+                CastsShadows = light.CastsShadows
+            },
+            SpotLight3D light => new SpotLight3D
+            {
+                Color = light.Color,
+                Intensity = light.Intensity,
+                Range = light.Range,
+                OuterAngle = light.OuterAngle,
+                InnerAngle = light.InnerAngle,
+                IsEnabled = light.IsEnabled,
+                CastsShadows = light.CastsShadows
             },
             MeshInstance3D => new MeshInstance3D(),
             HudRoot => new HudRoot(),
@@ -102,7 +121,7 @@ public static class ScenePlayClone
         {
             case ScriptComponent sourceScript:
                 var script = new ScriptComponent(sourceScript.ScriptId)
-                    { Enabled = sourceScript.Enabled };
+                { Enabled = sourceScript.Enabled };
                 var overrides = sourceScript.PropertyOverrides;
                 for (var index = 0; index < overrides.Count; index++)
                     script.SetPropertyOverride(overrides[index].PropertyId, overrides[index].Value);
@@ -123,11 +142,11 @@ public static class ScenePlayClone
                 {
                     BoxColliderComponent box => new BoxColliderComponent { Size = box.Size },
                     SphereColliderComponent sphere => new SphereColliderComponent
-                        { Radius = sphere.Radius },
+                    { Radius = sphere.Radius },
                     CapsuleColliderComponent capsule => new CapsuleColliderComponent
-                        { Radius = capsule.Radius, Height = capsule.Height },
+                    { Radius = capsule.Radius, Height = capsule.Height },
                     CylinderColliderComponent cylinder => new CylinderColliderComponent
-                        { Radius = cylinder.Radius, Height = cylinder.Height },
+                    { Radius = cylinder.Radius, Height = cylinder.Height },
                     PlaneColliderComponent plane => new PlaneColliderComponent { Size = plane.Size },
                     MeshColliderComponent mesh => new MeshColliderComponent { Mesh = mesh.Mesh },
                     TerrainColliderComponent terrain => new TerrainColliderComponent

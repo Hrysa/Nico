@@ -2,29 +2,39 @@ using System.Numerics;
 using Engine.Core;
 using Engine.Graphics;
 using Engine.Scripting;
+using ExampleGame.Networking;
 
 namespace ExampleGame;
 
-/// <summary>Moves a dynamic character relative to an independently orbiting third-person camera.</summary>
+/// <summary>Sends player intent to the authoritative server and presents returned character state.</summary>
 public sealed partial class ThirdPersonController : SceneScript
 {
     private const float DegreesToRadians = MathF.PI / 180f;
     private const float MinimumPitch = -80f * DegreesToRadians;
     private const float MaximumPitch = 80f * DegreesToRadians;
     private RigidBodyComponent _body = null!;
+    private UdpGameClient? _networkClient;
+    private Task<UdpGameClient>? _connectionTask;
+    private CancellationTokenSource? _connectionCancellation;
     private PerspectiveCamera? _camera;
     private float _cameraYaw;
     private float _cameraPitch = -45f * DegreesToRadians;
     private bool _cameraOrbitActive;
-    private int _stableVerticalFrames;
+    private uint _inputSequence;
+    private double _inputAccumulator;
+    private bool _jumpRequested;
+    private Vector3 _authoritativePosition;
+    private float _requestedYaw;
+    private float _characterPitch;
+    private float _characterRoll;
 
-    /// <summary>Gets or sets horizontal movement speed in world units per second.</summary>
+    /// <summary>Gets or sets the authoritative server host.</summary>
     [Observe(Editor)]
-    public partial float MoveSpeed { get; set; } = 4f;
+    public partial string ServerHost { get; set; } = "127.0.0.1";
 
-    /// <summary>Gets or sets upward velocity applied by a grounded jump.</summary>
+    /// <summary>Gets or sets the authoritative server UDP port.</summary>
     [Observe(Editor)]
-    public partial float JumpSpeed { get; set; } = 5f;
+    public partial int ServerPort { get; set; } = 7777;
 
     /// <summary>Gets or sets the height above the character followed by the camera.</summary>
     [Observe(Editor)]
@@ -39,16 +49,31 @@ public sealed partial class ThirdPersonController : SceneScript
     public partial float CameraOrbitSensitivity { get; set; } = 0.18f;
 
     /// <inheritdoc />
+    public override bool IsStartupComplete => _networkClient is not null;
+
+    /// <inheritdoc />
     public override void OnReady()
     {
+        if (Owner is not Node3D owner3D)
+            throw new InvalidOperationException("Network character control requires a Node3D owner.");
+        var serverHost = ServerHost;
+        if (string.IsNullOrWhiteSpace(serverHost))
+            throw new InvalidOperationException("An authoritative server host is required.");
         _body = Owner.GetComponent<RigidBodyComponent>() ?? AddDefaultRigidBody();
-        _body.MotionType = RigidBodyMotionType.Dynamic;
-        _body.UseGravity = true;
-        _body.LinearDamping = 0.1f;
+        _body.MotionType = RigidBodyMotionType.Kinematic;
+        _body.UseGravity = false;
+        _body.LinearVelocity = Vector3.Zero;
         if (Owner.GetComponent<ColliderComponent>() is null)
             AddDefaultCollider();
+        _authoritativePosition = owner3D.GetWorldPosition();
+        var authoredRotation = owner3D.GetWorldRotation();
+        _requestedYaw = authoredRotation.Y;
+        _characterPitch = authoredRotation.X;
+        _characterRoll = authoredRotation.Z;
+        owner3D.SetWorldTransform(_authoritativePosition,
+            GetCharacterRotation());
         _camera = Scene.FindNode<PerspectiveCamera>("GameCamera");
-        if (_camera is not null && Owner is Node3D owner3D)
+        if (_camera is not null)
         {
             var target = owner3D.GetWorldPosition() + Vector3.UnitY * CameraTargetHeight;
             var direction = target - _camera.GetWorldPosition();
@@ -61,30 +86,67 @@ public sealed partial class ThirdPersonController : SceneScript
             }
         }
         UpdateCameraRig();
+        _connectionCancellation = new CancellationTokenSource();
+        var cancellationToken = _connectionCancellation.Token;
+        _connectionTask = Task.Run(
+            () => UdpGameClient.Connect(
+                serverHost, ServerPort, TimeSpan.FromSeconds(2), cancellationToken),
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public override void OnStartupUpdate()
+    {
+        if (_connectionTask is not { IsCompleted: true } completedTask)
+            return;
+        _connectionTask = null;
+        _connectionCancellation?.Dispose();
+        _connectionCancellation = null;
+        _networkClient = completedTask.GetAwaiter().GetResult();
+        if (Owner is not Node3D owner3D)
+            return;
+        _authoritativePosition = _networkClient.SpawnPosition;
+        owner3D.SetWorldTransform(_authoritativePosition, GetCharacterRotation());
+        UpdateCameraRig();
     }
 
     /// <inheritdoc />
     public override void OnUpdate(double deltaTime)
     {
-        if (Owner is not Node3D)
+        if (Owner is not Node3D owner3D || _networkClient is null)
             return;
 
         UpdateCameraOrbit();
-        UpdateCameraRig();
         var movement = ReadMovement();
-        var velocity = _body.LinearVelocity;
-        velocity.X = movement.X * MoveSpeed;
-        velocity.Z = movement.Z * MoveSpeed;
-        UpdateGroundedState(velocity);
-        if (Scene.Input.WasKeyPressed(InputKey.Space) && _stableVerticalFrames >= 2)
-        {
-            velocity.Y = JumpSpeed;
-            _stableVerticalFrames = 0;
-        }
-        _body.LinearVelocity = velocity;
-
+        _jumpRequested |= Scene.Input.WasKeyPressed(InputKey.Space);
         if (movement.LengthSquared() > float.Epsilon)
-            Owner.Rotation = Owner.Rotation with { Y = MathF.Atan2(movement.X, movement.Z) };
+            _requestedYaw = MathF.Atan2(movement.X, movement.Z);
+        _inputAccumulator += Math.Max(0d, deltaTime);
+        var inputInterval = 1d / _networkClient.TickRate;
+        if (_inputAccumulator >= inputInterval)
+        {
+            _inputAccumulator %= inputInterval;
+            _networkClient.SendInput(
+                ++_inputSequence,
+                new Vector2(movement.X, movement.Z),
+                _requestedYaw,
+                _jumpRequested);
+            _jumpRequested = false;
+        }
+        if (_networkClient.TryReceiveLatestSnapshot(out var snapshot))
+        {
+            _authoritativePosition = snapshot.Position;
+            _body.LinearVelocity = snapshot.Velocity;
+            if (snapshot.AcknowledgedInput == _inputSequence)
+                _requestedYaw = snapshot.FacingYaw;
+        }
+        if (_networkClient.HasTimedOut(TimeSpan.FromSeconds(3)))
+            throw new TimeoutException("Lost connection to the authoritative game server.");
+
+        var blend = 1f - MathF.Exp(-18f * (float)Math.Max(0d, deltaTime));
+        var position = Vector3.Lerp(owner3D.GetWorldPosition(), _authoritativePosition, blend);
+        owner3D.SetWorldTransform(position, GetCharacterRotation());
+        UpdateCameraRig();
     }
 
     /// <inheritdoc />
@@ -99,6 +161,23 @@ public sealed partial class ThirdPersonController : SceneScript
         if (_cameraOrbitActive)
             Scene.Input.SetPointerCaptured(false);
         _cameraOrbitActive = false;
+        _connectionCancellation?.Cancel();
+        if (_connectionTask is { } pendingConnection)
+        {
+            try
+            {
+                pendingConnection.GetAwaiter().GetResult().Dispose();
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or
+                TimeoutException or System.Net.Sockets.SocketException)
+            {
+            }
+        }
+        _connectionTask = null;
+        _connectionCancellation?.Dispose();
+        _connectionCancellation = null;
+        _networkClient?.Dispose();
+        _networkClient = null;
     }
 
     /// <summary>Reads normalized camera-relative WASD movement.</summary>
@@ -168,25 +247,22 @@ public sealed partial class ThirdPersonController : SceneScript
         _camera.Rotation = new Vector3(_cameraPitch, _cameraYaw, 0f);
     }
 
-    /// <summary>Tracks consecutive vertically settled frames without assuming a ground height.</summary>
-    /// <param name="velocity">Current physics velocity.</param>
-    private void UpdateGroundedState(Vector3 velocity)
+    /// <summary>Combines authored non-yaw orientation with predicted server-facing intent.</summary>
+    /// <returns>Stable world-space character rotation.</returns>
+    private Vector3 GetCharacterRotation()
     {
-        if (MathF.Abs(velocity.Y) <= 0.05f)
-            _stableVerticalFrames++;
-        else
-            _stableVerticalFrames = 0;
+        return new Vector3(_characterPitch, _requestedYaw, _characterRoll);
     }
 
-    /// <summary>Adds the default dynamic body used when the scene has none.</summary>
+    /// <summary>Adds the default presentation body used when the scene has none.</summary>
     /// <returns>The attached body.</returns>
     private RigidBodyComponent AddDefaultRigidBody()
     {
         var body = new RigidBodyComponent
         {
-            MotionType = RigidBodyMotionType.Dynamic,
+            MotionType = RigidBodyMotionType.Kinematic,
             Mass = 1f,
-            LinearDamping = 0.1f
+            UseGravity = false
         };
         Owner.AddComponent(body);
         return body;

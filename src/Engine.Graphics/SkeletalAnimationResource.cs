@@ -109,10 +109,22 @@ public sealed class SkeletalAnimationResource
     {
         ArgumentNullException.ThrowIfNull(target);
         if (mode == AnimationRetargetMode.Humanoid)
+        {
+            if (HasCompatibleHierarchy(target) &&
+                NearlyEqual(SkeletonTransform, targetSkeletonTransform))
+            {
+                return BindExact(target);
+            }
             return HumanoidAnimationRetargeter.Retarget(
                 this, target, targetSkeletonTransform);
+        }
         if (mode == AnimationRetargetMode.Exact)
             return BindExact(target);
+        if (HasCompatibleHierarchy(target) &&
+            NearlyEqual(SkeletonTransform, targetSkeletonTransform))
+        {
+            return BindExact(target);
+        }
         if ((!HasEquivalentBindPose(target) ||
              !NearlyEqual(SkeletonTransform, targetSkeletonTransform)) &&
             HumanoidRig.TryDetect(Skeleton, out _) &&
@@ -147,6 +159,24 @@ public sealed class SkeletalAnimationResource
     /// <returns>True when every target joint has the same named parent and local bind pose.</returns>
     private bool HasEquivalentBindPose(SkeletonResource target)
     {
+        if (!HasCompatibleHierarchy(target))
+            return false;
+        for (var index = 0; index < target.JointCount; index++)
+        {
+            var targetJoint = target.Joints[index];
+            var sourceIndex = Skeleton.FindJoint(targetJoint.Name);
+            var sourceJoint = Skeleton.Joints[sourceIndex];
+            if (!NearlyEqual(sourceJoint.BindTransform, targetJoint.BindTransform))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>Checks whether direct name binding covers the same complete hierarchy.</summary>
+    /// <param name="target">Potential exact-binding destination.</param>
+    /// <returns>True when names and named parent relationships match.</returns>
+    private bool HasCompatibleHierarchy(SkeletonResource target)
+    {
         if (target.JointCount != Skeleton.JointCount)
             return false;
         for (var index = 0; index < target.JointCount; index++)
@@ -160,8 +190,7 @@ public sealed class SkeletalAnimationResource
                 ? null : Skeleton.Joints[sourceJoint.ParentIndex].Name;
             var targetParent = targetJoint.ParentIndex < 0
                 ? null : target.Joints[targetJoint.ParentIndex].Name;
-            if (!string.Equals(sourceParent, targetParent, StringComparison.Ordinal) ||
-                !NearlyEqual(sourceJoint.BindTransform, targetJoint.BindTransform))
+            if (!string.Equals(sourceParent, targetParent, StringComparison.Ordinal))
                 return false;
         }
         return true;

@@ -255,6 +255,57 @@ public sealed class RuntimeResourceManager : IDisposable
         return Task.WhenAll(tasks);
     }
 
+    /// <summary>Reloads every pinned runtime value and evicts every unused value for one asset.</summary>
+    /// <param name="asset">Persistent asset whose published generation changed.</param>
+    /// <returns>A task completing after all pinned values publish their new generation.</returns>
+    public Task ReloadAsync(AssetId asset)
+    {
+        Task[] tasks;
+        List<object>? retired = null;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var entries = _byReference.Values
+                .Where(entry => entry.Reference.Asset == asset).ToArray();
+            var reloadCount = 0;
+            for (var index = 0; index < entries.Length; index++)
+            {
+                var entry = entries[index];
+                if (entry.ReferenceCount == 0)
+                {
+                    if (entry.UnusedNode is not null)
+                        _unusedRecency.Remove(entry.UnusedNode);
+                    entry.UnusedNode = null;
+                    _byHandle.Remove(entry.Handle);
+                    _byReference.Remove((entry.Reference, entry.ResourceType));
+                    entry.Removed = true;
+                    if (entry.OwnsCurrent)
+                        (retired ??= []).Add(entry.Current);
+                    continue;
+                }
+                reloadCount++;
+            }
+            tasks = new Task[reloadCount];
+            var taskIndex = 0;
+            for (var index = 0; index < entries.Length; index++)
+            {
+                var entry = entries[index];
+                if (entry.Removed)
+                    continue;
+                entry.State = ResourceLoadState.Loading;
+                entry.LoadVersion++;
+                entry.ActiveLoad = LoadEntryAsync(entry, entry.LoadVersion);
+                tasks[taskIndex++] = entry.ActiveLoad;
+            }
+        }
+        if (retired is not null)
+        {
+            for (var index = 0; index < retired.Count; index++)
+                _retirement.Retire(retired[index]);
+        }
+        return Task.WhenAll(tasks);
+    }
+
     /// <summary>Evicts every unpinned decoded resource belonging to one persistent asset.</summary>
     /// <param name="asset">Persistent asset identity whose published generation changed.</param>
     public void Invalidate(AssetId asset)

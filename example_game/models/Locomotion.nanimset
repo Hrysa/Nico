@@ -2,15 +2,16 @@
   "version": 4,
   "entries": [
     {
-      "alias": "Idle",
+      "alias": "Fight Idle",
       "source": {
         "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
         "subAsset": "animation/0"
       },
+      "inPlace": true,
       "retarget": "humanoid"
     },
     {
-      "alias": "Run",
+      "alias": "RPG Run",
       "source": {
         "asset": "019ff631-d796-7f41-a4cd-fddc456d92f6",
         "subAsset": "animation/0"
@@ -24,7 +25,25 @@
         "asset": "019ff631-d6e5-79f3-8b9e-6d71a902dd29",
         "subAsset": "animation/0"
       },
+      "inPlace": true,
       "retarget": "humanoid"
+    },
+    {
+      "alias": "Idle",
+      "source": {
+        "asset": "019fe17c-33cb-7db4-bfa8-4d3f24803e02",
+        "subAsset": "animation/0"
+      },
+      "retarget": "exact"
+    },
+    {
+      "alias": "Run",
+      "source": {
+        "asset": "019fefe0-0061-792f-ba2d-27e40bd50f64",
+        "subAsset": "animation/0"
+      },
+      "inPlace": true,
+      "rootMotionJoint": "mixamorig:Hips"
     }
   ]
 }

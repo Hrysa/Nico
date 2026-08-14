@@ -1,13 +1,13 @@
 {
-  "formatVersion": 11,
-  "gameCameraId": "b6272a1b9d4f48eeadfadc0f8492a2a8",
+  "formatVersion": 13,
+  "gameCameraId": "ca2ff3f7f22a409090d7c80c750be921",
   "nodes": [
     {
-      "id": "b53df15917874cd1b680aaa4afd587f3",
+      "id": "2ea54c2961f04efd9a2460e14e91ecd4",
       "type": "assetMesh",
       "name": "SceneCube",
       "position": {
-        "x": 0,
+        "x": 1.9573392,
         "y": 0.5,
         "z": 0
       },
@@ -17,7 +17,7 @@
         "z": 0
       },
       "scale": {
-        "x": 5,
+        "x": 1,
         "y": 1,
         "z": 1
       },
@@ -61,6 +61,8 @@
       "customType": null,
       "camera": null,
       "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/cube",
@@ -69,12 +71,12 @@
       "children": []
     },
     {
-      "id": "85a2d5256c7f4ffa85d14aa5a523d730",
+      "id": "851cc243605543d1ac3948863af14214",
       "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
         "x": 0.65508884,
-        "y": 0.81594753,
+        "y": 1.628846,
         "z": 0.6121162
       },
       "rotation": {
@@ -117,7 +119,7 @@
           "collider": null
         },
         {
-          "type": "boxCollider",
+          "type": "capsuleCollider",
           "enabled": true,
           "scriptId": null,
           "properties": null,
@@ -126,16 +128,16 @@
             "shape": null,
             "center": {
               "x": 0,
-              "y": 0.85,
-              "z": 0
+              "y": 0.835,
+              "z": 0.012950756
             },
             "size": {
-              "x": 0.5,
-              "y": 1.75,
-              "z": 0.5
+              "x": 1,
+              "y": 1,
+              "z": 1
             },
-            "radius": 0.5,
-            "height": 1,
+            "radius": 0.3,
+            "height": 1.6644181,
             "isTrigger": false,
             "friction": 0.5,
             "restitution": 0,
@@ -154,20 +156,22 @@
       "customType": null,
       "camera": null,
       "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
       "model": {
         "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
         "subAsset": "mesh/Mesh/0",
         "materials": [
           {
-            "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
-            "subAsset": "material/0"
+            "asset": "019ffee4-3ade-782e-b745-108ad23d8df6",
+            "subAsset": "main"
           }
         ]
       },
       "children": []
     },
     {
-      "id": "b6272a1b9d4f48eeadfadc0f8492a2a8",
+      "id": "ca2ff3f7f22a409090d7c80c750be921",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -194,11 +198,13 @@
         "far": 1000
       },
       "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
       "model": null,
       "children": []
     },
     {
-      "id": "8e0f661e8ed140698292602195ea685d",
+      "id": "55852b2f214049d994da4a4c2a074597",
       "type": "custom",
       "name": "HUD",
       "position": {
@@ -230,11 +236,13 @@
       "customType": "nico/hud-root",
       "camera": null,
       "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
       "model": null,
       "children": []
     },
     {
-      "id": "37e245601b5c486aba5253c0134c870c",
+      "id": "a3d08e42ce0f475e8ab0cb8e7d2ab941",
       "type": "assetMesh",
       "name": "Plane 1",
       "position": {
@@ -292,6 +300,8 @@
       "customType": null,
       "camera": null,
       "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/plane",
@@ -305,7 +315,7 @@
       "children": []
     },
     {
-      "id": "7741cddb3b0045b7b221728893c4fe30",
+      "id": "6735ccb5692246619468447eaf6e9da3",
       "type": "directionalLight",
       "name": "Directional Light 1",
       "position": {
@@ -333,12 +343,223 @@
           "y": 1,
           "z": 1
         },
-        "intensity": 1,
-        "ambientIntensity": 0.2,
-        "isEnabled": true
+        "intensity": 1.7,
+        "ambientIntensity": 0.3,
+        "isEnabled": true,
+        "castsShadows": true
       },
+      "pointLight": null,
+      "spotLight": null,
       "model": null,
       "children": []
+    },
+    {
+      "id": "b8cc3f23dbc945d19a980096d5349399",
+      "type": "assetMesh",
+      "name": "island",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [
+        {
+          "type": "terrainCollider",
+          "enabled": true,
+          "scriptId": null,
+          "properties": null,
+          "rigidBody": null,
+          "collider": {
+            "shape": null,
+            "center": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "size": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "radius": 0.5,
+            "height": 1,
+            "isTrigger": false,
+            "friction": 0.5,
+            "restitution": 0,
+            "mesh": null,
+            "collisionLayer": 1,
+            "collisionMask": 4294967295,
+            "planeSize": {
+              "x": 100,
+              "y": 100
+            },
+            "terrainData": {
+              "asset": "019ffabc-d53b-792b-b6c9-8847cf62d626",
+              "subAsset": "main"
+            },
+            "heightScale": 5
+          }
+        }
+      ],
+      "customType": null,
+      "camera": null,
+      "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
+      "model": {
+        "asset": "019ffabc-d53b-792b-b6c9-8847cf62d626",
+        "subAsset": "main",
+        "materials": [
+          {
+            "asset": "019ffbeb-e574-7b78-8f45-34bc2d60f261",
+            "subAsset": "main"
+          }
+        ]
+      },
+      "children": []
+    },
+    {
+      "id": "209c8ffc92984281b2422773bd58a6f7",
+      "type": "node3D",
+      "name": "tree-high",
+      "position": {
+        "x": -2.6378548,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [
+        {
+          "type": "cylinderCollider",
+          "enabled": true,
+          "scriptId": null,
+          "properties": null,
+          "rigidBody": null,
+          "collider": {
+            "shape": null,
+            "center": {
+              "x": 0,
+              "y": 1.8282423,
+              "z": 0
+            },
+            "size": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "radius": 0.46370962,
+            "height": 2.2839336,
+            "isTrigger": false,
+            "friction": 0.5,
+            "restitution": 0,
+            "mesh": null,
+            "collisionLayer": 1,
+            "collisionMask": 4294967295,
+            "planeSize": {
+              "x": 1,
+              "y": 1
+            },
+            "terrainData": null,
+            "heightScale": 1
+          }
+        }
+      ],
+      "customType": null,
+      "camera": null,
+      "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
+      "model": null,
+      "children": [
+        {
+          "id": "b423e959e3564b9c839bd4a4c18f67e3",
+          "type": "node3D",
+          "name": "tree-high",
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0,
+            "z": -0
+          },
+          "scale": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scriptId": null,
+          "components": [],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "model": null,
+          "children": []
+        },
+        {
+          "id": "9eb0a7446df8469999bc2b6494b31e2a",
+          "type": "assetMesh",
+          "name": "Static Batch 0",
+          "position": {
+            "x": 0,
+            "y": 0.68627554,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 3,
+            "y": 3,
+            "z": 3
+          },
+          "scriptId": null,
+          "components": [],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "model": {
+            "asset": "019ffe35-eeb9-7a20-b670-a6cb2acf27f9",
+            "subAsset": "model-batch/0",
+            "materials": [
+              {
+                "asset": "019ffecb-1794-7d0d-a24f-2443be455099",
+                "subAsset": "main"
+              }
+            ]
+          },
+          "children": []
+        }
+      ]
     }
   ]
 }

@@ -30,6 +30,16 @@ public sealed class TerrainBrushController
     private readonly Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
         TerrainEditRegion, bool> _terrainEdited;
     private readonly Action<TerrainBrushPreview?> _previewChanged;
+    private readonly Action<IReadOnlyList<MeshInstance3D>, IReadOnlyList<MeshInstance3D>>
+        _objectsEdited;
+    private readonly Func<AssetReference, string> _resolveObjectName;
+    private readonly Random _random;
+    private readonly Stack<ObjectStroke> _objectUndo = [];
+    private readonly Stack<ObjectStroke> _objectRedo = [];
+    private readonly List<ObjectPlacement> _strokeAdded = [];
+    private readonly List<ObjectPlacement> _strokeRemoved = [];
+    private readonly List<MeshInstance3D> _changedAdded = [];
+    private readonly List<MeshInstance3D> _changedRemoved = [];
     private BrushTarget? _activeTarget;
     private Vector3 _lastDabWorld;
     private float _flattenHeight;
@@ -42,6 +52,12 @@ public sealed class TerrainBrushController
     /// <summary>Gets whether one undoable pointer stroke is active.</summary>
     public bool IsStrokeActive => _activeTarget is not null;
 
+    /// <summary>Gets whether a completed terrain object stroke can be undone.</summary>
+    public bool CanUndoObjects => _objectUndo.Count > 0;
+
+    /// <summary>Gets whether an undone terrain object stroke can be reapplied.</summary>
+    public bool CanRedoObjects => _objectRedo.Count > 0;
+
     /// <summary>Creates a controller for the main Scene viewport.</summary>
     /// <param name="camera">Scene camera used to create pointer rays.</param>
     /// <param name="getViewport">Current Scene viewport geometry.</param>
@@ -51,6 +67,9 @@ public sealed class TerrainBrushController
     /// <param name="terrainEdited">Live render and physics update callback.</param>
     /// <param name="previewChanged">Brush-ring update callback.</param>
     /// <param name="settings">Optional shared brush options.</param>
+    /// <param name="objectsEdited">Optional scene-object publication callback.</param>
+    /// <param name="resolveObjectName">Optional painted-mesh display-name resolver.</param>
+    /// <param name="random">Optional random source used by deterministic tests.</param>
     public TerrainBrushController(
         PerspectiveCamera camera,
         Func<GizmoViewport> getViewport,
@@ -60,7 +79,11 @@ public sealed class TerrainBrushController
         Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
             TerrainEditRegion, bool> terrainEdited,
         Action<TerrainBrushPreview?> previewChanged,
-        TerrainBrushSettings? settings = null)
+        TerrainBrushSettings? settings = null,
+        Action<IReadOnlyList<MeshInstance3D>, IReadOnlyList<MeshInstance3D>>?
+            objectsEdited = null,
+        Func<AssetReference, string>? resolveObjectName = null,
+        Random? random = null)
     {
         _camera = camera ?? throw new ArgumentNullException(nameof(camera));
         _getViewport = getViewport ?? throw new ArgumentNullException(nameof(getViewport));
@@ -70,6 +93,9 @@ public sealed class TerrainBrushController
             throw new ArgumentNullException(nameof(resolveMaterialDocument));
         _terrainEdited = terrainEdited ?? throw new ArgumentNullException(nameof(terrainEdited));
         _previewChanged = previewChanged ?? throw new ArgumentNullException(nameof(previewChanged));
+        _objectsEdited = objectsEdited ?? (static (_, _) => { });
+        _resolveObjectName = resolveObjectName ?? (static reference => reference.ToString());
+        _random = random ?? new Random();
         Settings = settings ?? new TerrainBrushSettings();
     }
 
@@ -105,12 +131,22 @@ public sealed class TerrainBrushController
         var target = ResolveTarget();
         if (target is not { } resolved || !TryHit(resolved, position, out var hit))
             return false;
-        if (resolved.IsPainting)
-            resolved.MaterialDocument!.BeginStroke();
-        else
-            resolved.Document.BeginStroke();
+        switch (resolved.ToolMode)
+        {
+            case TerrainToolMode.Paint:
+                resolved.MaterialDocument!.BeginStroke();
+                break;
+            case TerrainToolMode.Objects:
+                _strokeAdded.Clear();
+                _strokeRemoved.Clear();
+                break;
+            default:
+                resolved.Document.BeginStroke();
+                break;
+        }
         _activeTarget = resolved;
-        _flattenHeight = resolved.Document.Value.Sample(hit.U, hit.V);
+        if (resolved.ToolMode == TerrainToolMode.Sculpt)
+            _flattenHeight = resolved.Document.Value.Sample(hit.U, hit.V);
         _hasLastDab = false;
         SetPreview(hit.Preview);
         ApplyDab(resolved, hit, force: true);
@@ -123,10 +159,19 @@ public sealed class TerrainBrushController
     {
         if (_activeTarget is null)
             return false;
-        if (_activeTarget.Value.IsPainting)
-            _activeTarget.Value.MaterialDocument!.EndStroke(save: true);
-        else
-            _activeTarget.Value.Document.EndStroke(save: true);
+        var target = _activeTarget.Value;
+        switch (target.ToolMode)
+        {
+            case TerrainToolMode.Paint:
+                target.MaterialDocument!.EndStroke(save: true);
+                break;
+            case TerrainToolMode.Objects:
+                CommitObjectStroke();
+                break;
+            default:
+                target.Document.EndStroke(save: true);
+                break;
+        }
         _activeTarget = null;
         _hasLastDab = false;
         return true;
@@ -142,17 +187,19 @@ public sealed class TerrainBrushController
             return false;
         }
         var target = _activeTarget.Value;
-        var painting = target.IsPainting;
-        var changed = painting
-            ? target.MaterialDocument!.CancelStroke()
-            : target.Document.CancelStroke();
+        var changed = target.ToolMode switch
+        {
+            TerrainToolMode.Paint => target.MaterialDocument!.CancelStroke(),
+            TerrainToolMode.Objects => CancelObjectStroke(),
+            _ => target.Document.CancelStroke()
+        };
         _activeTarget = null;
         _hasLastDab = false;
-        if (changed)
+        if (changed && target.ToolMode != TerrainToolMode.Objects)
             _terrainEdited(target.Instance, target.Collider, target.Document.Value,
                 new TerrainEditRegion(0, 0,
                     target.Document.Value.Width - 1,
-                    target.Document.Value.Depth - 1), !painting);
+                    target.Document.Value.Depth - 1), target.ToolMode == TerrainToolMode.Sculpt);
         ClearPreview();
         return true;
     }
@@ -175,10 +222,18 @@ public sealed class TerrainBrushController
                 collider)
             return null;
         var document = _resolveDocument(reference);
-        if (document is not { IsEditable: true })
+        if (document is null)
+            return null;
+        if (Settings.ToolMode == TerrainToolMode.Objects)
+        {
+            if (!Settings.EraseObjects && Settings.ObjectMesh is null)
+                return null;
+            return new BrushTarget(instance, collider, document, null, TerrainToolMode.Objects);
+        }
+        if (!document.IsEditable)
             return null;
         if (Settings.ToolMode != TerrainToolMode.Paint)
-            return new BrushTarget(instance, collider, document, null, false);
+            return new BrushTarget(instance, collider, document, null, TerrainToolMode.Sculpt);
         var materialReference = instance.Materials.FirstOrDefault();
         if (materialReference.Asset.Value == Guid.Empty ||
             _resolveMaterialDocument(materialReference) is not { IsEditable: true } material)
@@ -186,7 +241,7 @@ public sealed class TerrainBrushController
         material.EnsureDimensions(document.Value.Width, document.Value.Depth);
         if (Settings.PaintLayer >= material.Value.Layers.Count)
             return null;
-        return new BrushTarget(instance, collider, document, material, true);
+        return new BrushTarget(instance, collider, document, material, TerrainToolMode.Paint);
     }
 
     /// <summary>Applies one brush dab when it is sufficiently separated from the prior dab.</summary>
@@ -195,12 +250,21 @@ public sealed class TerrainBrushController
     /// <param name="force">Whether to ignore dab spacing.</param>
     private void ApplyDab(BrushTarget target, BrushHit hit, bool force)
     {
-        var minimumSpacing = MathF.Max(0.01f, Settings.Radius * 0.12f);
+        var minimumSpacing = target.ToolMode == TerrainToolMode.Objects
+            ? MathF.Max(0.01f, Settings.ObjectSpacing * 0.5f)
+            : MathF.Max(0.01f, Settings.Radius * 0.12f);
         if (!force && _hasLastDab &&
             Vector3.DistanceSquared(hit.WorldPosition, _lastDabWorld) <
             minimumSpacing * minimumSpacing)
             return;
-        var painting = target.IsPainting;
+        if (target.ToolMode == TerrainToolMode.Objects)
+        {
+            ApplyObjectDab(target, hit);
+            _lastDabWorld = hit.WorldPosition;
+            _hasLastDab = true;
+            return;
+        }
+        var painting = target.ToolMode == TerrainToolMode.Paint;
         TerrainEditRegion? region;
         if (painting)
         {
@@ -224,6 +288,290 @@ public sealed class TerrainBrushController
             return;
         var terrain = target.Document.Value;
         _terrainEdited(target.Instance, target.Collider, terrain, changed, !painting);
+    }
+
+    /// <summary>Undoes the most recently completed terrain object stroke.</summary>
+    /// <returns>True when scene objects changed.</returns>
+    public bool UndoObjects()
+    {
+        if (IsStrokeActive || !_objectUndo.TryPop(out var stroke))
+            return false;
+        ApplyObjectStroke(stroke, undo: true);
+        _objectRedo.Push(stroke);
+        Settings.RefreshObservers();
+        return true;
+    }
+
+    /// <summary>Reapplies the most recently undone terrain object stroke.</summary>
+    /// <returns>True when scene objects changed.</returns>
+    public bool RedoObjects()
+    {
+        if (IsStrokeActive || !_objectRedo.TryPop(out var stroke))
+            return false;
+        ApplyObjectStroke(stroke, undo: false);
+        _objectUndo.Push(stroke);
+        Settings.RefreshObservers();
+        return true;
+    }
+
+    /// <summary>Discards object-stroke history after replacing the active scene.</summary>
+    public void ClearObjectHistory()
+    {
+        _objectUndo.Clear();
+        _objectRedo.Clear();
+        _strokeAdded.Clear();
+        _strokeRemoved.Clear();
+        Settings.RefreshObservers();
+    }
+
+    /// <summary>Places or erases brush-authored mesh instances around one surface hit.</summary>
+    /// <param name="target">Selected terrain target.</param>
+    /// <param name="hit">Current terrain hit.</param>
+    private void ApplyObjectDab(BrushTarget target, BrushHit hit)
+    {
+        _changedAdded.Clear();
+        _changedRemoved.Clear();
+        if (Settings.EraseObjects)
+            EraseObjects(target, hit);
+        else
+            PlaceObjects(target, hit);
+        PublishObjectChanges();
+    }
+
+    /// <summary>Places randomized, spaced mesh instances inside one brush footprint.</summary>
+    /// <param name="target">Selected terrain target.</param>
+    /// <param name="hit">Current terrain hit.</param>
+    private void PlaceObjects(BrushTarget target, BrushHit hit)
+    {
+        if (Settings.ObjectMesh is not { } mesh)
+            return;
+        var spacing = Settings.ObjectSpacing;
+        var area = MathF.PI * Settings.Radius * Settings.Radius;
+        var attempts = Math.Clamp(
+            (int)MathF.Ceiling(area / (spacing * spacing) * Settings.ObjectDensity), 1, 128);
+        var terrain = target.Document.Value;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            var offset = attempt == 0 ? Vector2.Zero : RandomDiscOffset();
+            var u = hit.U + offset.X * hit.RadiusU;
+            var v = hit.V + offset.Y * hit.RadiusV;
+            if (u is < 0f or > 1f || v is < 0f or > 1f)
+                continue;
+            var localPosition = target.Collider.Center +
+                GetLocalSurfacePoint(terrain, target.Collider, u, v);
+            var worldPosition = Vector3.Transform(localPosition, target.Instance.GetModelMatrix());
+            if (!HasObjectSpacing(target.Instance, worldPosition, spacing))
+                continue;
+            var scale = Settings.MinimumObjectScale + _random.NextSingle() *
+                (Settings.MaximumObjectScale - Settings.MinimumObjectScale);
+            var normal = Settings.AlignObjectsToNormal
+                ? GetLocalSurfaceNormal(terrain, target.Collider, u, v) : Vector3.UnitY;
+            var yaw = Settings.RandomizeObjectYaw ? _random.NextSingle() * MathF.Tau : 0f;
+            var instance = new MeshInstance3D
+            {
+                Name = $"Scattered {_resolveObjectName(mesh)}",
+                Mesh = mesh,
+                Position = localPosition,
+                Orientation = CreateSurfaceOrientation(normal, yaw),
+                Scale = new Vector3(scale)
+            };
+            instance.AddComponent(new TerrainScatterInstanceComponent());
+            var index = target.Instance.Children.Count;
+            target.Instance.AddChild(instance);
+            var placement = new ObjectPlacement(target.Instance, instance, index);
+            _strokeAdded.Add(placement);
+            _changedAdded.Add(instance);
+        }
+    }
+
+    /// <summary>Erases matching brush-authored mesh instances inside one brush radius.</summary>
+    /// <param name="target">Selected terrain target.</param>
+    /// <param name="hit">Current terrain hit.</param>
+    private void EraseObjects(BrushTarget target, BrushHit hit)
+    {
+        var children = target.Instance.Children;
+        var radiusSquared = Settings.Radius * Settings.Radius;
+        for (var index = children.Count - 1; index >= 0; index--)
+        {
+            if (children[index] is not MeshInstance3D instance ||
+                instance.GetComponent<TerrainScatterInstanceComponent>() is null ||
+                Settings.ObjectMesh is { } mesh && instance.Mesh != mesh ||
+                Vector3.DistanceSquared(instance.GetWorldPosition(), hit.WorldPosition) >
+                    radiusSquared)
+                continue;
+            var placement = new ObjectPlacement(target.Instance, instance, index);
+            target.Instance.RemoveChild(instance);
+            _strokeRemoved.Add(placement);
+            _changedRemoved.Add(instance);
+        }
+    }
+
+    /// <summary>Checks one candidate against all brush-authored children and current additions.</summary>
+    /// <param name="terrain">Terrain node owning painted objects.</param>
+    /// <param name="worldPosition">Candidate world position.</param>
+    /// <param name="spacing">Required world-space separation.</param>
+    /// <returns>True when the candidate has sufficient separation.</returns>
+    private static bool HasObjectSpacing(
+        MeshInstance3D terrain,
+        Vector3 worldPosition,
+        float spacing)
+    {
+        var children = terrain.Children;
+        var spacingSquared = spacing * spacing;
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (children[index] is MeshInstance3D instance &&
+                instance.GetComponent<TerrainScatterInstanceComponent>() is not null &&
+                Vector3.DistanceSquared(instance.GetWorldPosition(), worldPosition) < spacingSquared)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>Commits active object mutations as one reversible stroke.</summary>
+    private void CommitObjectStroke()
+    {
+        if (_strokeAdded.Count > 0 || _strokeRemoved.Count > 0)
+        {
+            _objectUndo.Push(new ObjectStroke(_strokeAdded.ToArray(), _strokeRemoved.ToArray()));
+            _objectRedo.Clear();
+            Settings.RefreshObservers();
+        }
+        _strokeAdded.Clear();
+        _strokeRemoved.Clear();
+    }
+
+    /// <summary>Reverts active object mutations without adding a history entry.</summary>
+    /// <returns>True when scene objects changed.</returns>
+    private bool CancelObjectStroke()
+    {
+        if (_strokeAdded.Count == 0 && _strokeRemoved.Count == 0)
+            return false;
+        ApplyObjectStroke(new ObjectStroke(_strokeAdded.ToArray(), _strokeRemoved.ToArray()),
+            undo: true);
+        _strokeAdded.Clear();
+        _strokeRemoved.Clear();
+        return true;
+    }
+
+    /// <summary>Applies one object history entry in its forward or reverse direction.</summary>
+    /// <param name="stroke">Stored node mutations.</param>
+    /// <param name="undo">True to reverse the stroke.</param>
+    private void ApplyObjectStroke(ObjectStroke stroke, bool undo)
+    {
+        _changedAdded.Clear();
+        _changedRemoved.Clear();
+        if (undo)
+        {
+            for (var index = stroke.Added.Length - 1; index >= 0; index--)
+                RemovePlacement(stroke.Added[index]);
+            for (var index = stroke.Removed.Length - 1; index >= 0; index--)
+                RestorePlacement(stroke.Removed[index]);
+        }
+        else
+        {
+            for (var index = stroke.Removed.Length - 1; index >= 0; index--)
+                RemovePlacement(stroke.Removed[index]);
+            for (var index = 0; index < stroke.Added.Length; index++)
+                RestorePlacement(stroke.Added[index]);
+        }
+        PublishObjectChanges();
+    }
+
+    /// <summary>Removes one placement when it still belongs to its recorded terrain.</summary>
+    /// <param name="placement">Placement to remove.</param>
+    private void RemovePlacement(ObjectPlacement placement)
+    {
+        if (!ReferenceEquals(placement.Instance.Parent, placement.Parent) ||
+            !placement.Parent.RemoveChild(placement.Instance))
+            return;
+        _changedRemoved.Add(placement.Instance);
+    }
+
+    /// <summary>Restores one detached placement at its prior child index.</summary>
+    /// <param name="placement">Placement to restore.</param>
+    private void RestorePlacement(ObjectPlacement placement)
+    {
+        if (placement.Instance.Parent is not null)
+            return;
+        placement.Parent.InsertChild(
+            Math.Min(placement.Index, placement.Parent.Children.Count), placement.Instance);
+        _changedAdded.Add(placement.Instance);
+    }
+
+    /// <summary>Publishes the reusable object mutation buffers when either contains nodes.</summary>
+    private void PublishObjectChanges()
+    {
+        if (_changedAdded.Count > 0 || _changedRemoved.Count > 0)
+            _objectsEdited(_changedAdded, _changedRemoved);
+    }
+
+    /// <summary>Creates one uniformly distributed random offset inside a unit disc.</summary>
+    /// <returns>Two-dimensional unit-disc offset.</returns>
+    private Vector2 RandomDiscOffset()
+    {
+        var angle = _random.NextSingle() * MathF.Tau;
+        var radius = MathF.Sqrt(_random.NextSingle());
+        return new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
+    }
+
+    /// <summary>Samples one local terrain surface point at normalized coordinates.</summary>
+    /// <param name="terrain">Height grid.</param>
+    /// <param name="collider">Terrain dimensions.</param>
+    /// <param name="u">Normalized X coordinate.</param>
+    /// <param name="v">Normalized Z coordinate.</param>
+    /// <returns>Local surface point excluding collider center.</returns>
+    private static Vector3 GetLocalSurfacePoint(
+        TerrainResource terrain,
+        TerrainColliderComponent collider,
+        float u,
+        float v) => new(
+            (u - 0.5f) * collider.HorizontalSize.X,
+            terrain.Sample(u, v) * collider.HeightScale,
+            (v - 0.5f) * collider.HorizontalSize.Y);
+
+    /// <summary>Samples a stable local surface normal from centered finite differences.</summary>
+    /// <param name="terrain">Height grid.</param>
+    /// <param name="collider">Terrain dimensions.</param>
+    /// <param name="u">Normalized X coordinate.</param>
+    /// <param name="v">Normalized Z coordinate.</param>
+    /// <returns>Normalized local up direction.</returns>
+    private static Vector3 GetLocalSurfaceNormal(
+        TerrainResource terrain,
+        TerrainColliderComponent collider,
+        float u,
+        float v)
+    {
+        var du = 1f / (terrain.Width - 1);
+        var dv = 1f / (terrain.Depth - 1);
+        var left = GetLocalSurfacePoint(terrain, collider, MathF.Max(0f, u - du), v);
+        var right = GetLocalSurfacePoint(terrain, collider, MathF.Min(1f, u + du), v);
+        var back = GetLocalSurfacePoint(terrain, collider, u, MathF.Max(0f, v - dv));
+        var forward = GetLocalSurfacePoint(terrain, collider, u, MathF.Min(1f, v + dv));
+        var normal = Vector3.Cross(forward - back, right - left);
+        return normal.LengthSquared() <= float.Epsilon
+            ? Vector3.UnitY : Vector3.Normalize(normal);
+    }
+
+    /// <summary>Creates an orientation aligned to a surface normal with optional local yaw.</summary>
+    /// <param name="normal">Normalized surface direction.</param>
+    /// <param name="yaw">Rotation around the aligned up axis.</param>
+    /// <returns>Local object orientation.</returns>
+    private static Quaternion CreateSurfaceOrientation(Vector3 normal, float yaw)
+    {
+        var dot = Math.Clamp(Vector3.Dot(Vector3.UnitY, normal), -1f, 1f);
+        Quaternion alignment;
+        if (dot >= 0.999999f)
+            alignment = Quaternion.Identity;
+        else if (dot <= -0.999999f)
+            alignment = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI);
+        else
+        {
+            var axis = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, normal));
+            alignment = Quaternion.CreateFromAxisAngle(axis, MathF.Acos(dot));
+        }
+        var yawRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw);
+        return Quaternion.Normalize(yawRotation * alignment);
     }
 
     /// <summary>Creates a pointer ray and finds its closest triangle on one height grid.</summary>
@@ -432,13 +780,29 @@ public sealed class TerrainBrushController
     /// <param name="Collider">Terrain surface dimensions and collision settings.</param>
     /// <param name="Document">Shared editable height document.</param>
     /// <param name="MaterialDocument">Shared editable painted material document.</param>
-    /// <param name="IsPainting">Whether this stroke edits material weights.</param>
+    /// <param name="ToolMode">Operation captured when the stroke began.</param>
     private readonly record struct BrushTarget(
         MeshInstance3D Instance,
         TerrainColliderComponent Collider,
         TerrainDocument Document,
         TerrainMaterialDocument? MaterialDocument,
-        bool IsPainting);
+        TerrainToolMode ToolMode);
+
+    /// <summary>Stores one brush-created node and its stable hierarchy location.</summary>
+    /// <param name="Parent">Terrain node that owns the painted instance.</param>
+    /// <param name="Instance">Painted mesh instance.</param>
+    /// <param name="Index">Original child index.</param>
+    private readonly record struct ObjectPlacement(
+        MeshInstance3D Parent,
+        MeshInstance3D Instance,
+        int Index);
+
+    /// <summary>Stores all additions and removals committed by one pointer stroke.</summary>
+    /// <param name="Added">Instances added by the stroke.</param>
+    /// <param name="Removed">Instances removed by the stroke.</param>
+    private sealed record ObjectStroke(
+        ObjectPlacement[] Added,
+        ObjectPlacement[] Removed);
 
     /// <summary>Groups normalized and world-space data for one surface hit.</summary>
     /// <param name="U">Normalized terrain X coordinate.</param>

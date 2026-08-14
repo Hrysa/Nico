@@ -131,6 +131,95 @@ public sealed class TerrainDocumentTests : IDisposable
         Assert.False(document.IsDirty);
     }
 
+    /// <summary>Paints, spaces, erases, and restores persistent tagged terrain objects.</summary>
+    [Fact]
+    public void BrushController_ObjectStrokes_PlaceEraseUndoAndRedoSceneMeshes()
+    {
+        var path = Path.Combine(_directory, "ObjectBrush.nterrain");
+        TerrainAuthoring.SaveFlat(path, 9, 9, 0.25f);
+        var document = CreateDocument(path, _ => { });
+        var terrainReference = document.Reference;
+        var objectReference = new AssetReference(AssetId.New(), "tree");
+        var terrain = new MeshInstance3D { Mesh = terrainReference };
+        terrain.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(12f, 12f),
+            HeightScale = 4f
+        });
+        var camera = new PerspectiveCamera(MathF.PI / 4f, 4f / 3f, 0.1f, 100f)
+        {
+            Position = new Vector3(0f, 10f, 10f)
+        };
+        camera.LookAt(new Vector3(0f, 1f, 0f));
+        camera.UpdateViewport(800f, 600f);
+        var addedCount = 0;
+        var removedCount = 0;
+        var settings = new TerrainBrushSettings
+        {
+            ToolMode = TerrainToolMode.Objects,
+            IsEnabled = true,
+            ObjectMesh = objectReference,
+            Radius = 3f,
+            ObjectSpacing = 1.25f,
+            ObjectDensity = 1f,
+            MinimumObjectScale = 0.8f,
+            MaximumObjectScale = 1.2f
+        };
+        var controller = new TerrainBrushController(
+            camera,
+            () => new GizmoViewport(0f, 0f, 800f, 600f),
+            () => terrain,
+            _ => document,
+            _ => null,
+            (_, _, _, _, _) => { },
+            _ => { },
+            settings,
+            (added, removed) =>
+            {
+                addedCount += added.Count;
+                removedCount += removed.Count;
+            },
+            _ => "Tree",
+            new Random(1234));
+
+        Assert.True(controller.PrimaryDown(new Vector2(400f, 300f)));
+        Assert.True(controller.PrimaryUp());
+
+        var painted = terrain.Children.OfType<MeshInstance3D>().ToArray();
+        Assert.NotEmpty(painted);
+        Assert.Equal(painted.Length, addedCount);
+        Assert.All(painted, instance =>
+        {
+            Assert.Equal(objectReference, instance.Mesh);
+            Assert.StartsWith("Scattered Tree", instance.Name, StringComparison.Ordinal);
+            Assert.NotNull(instance.GetComponent<TerrainScatterInstanceComponent>());
+            Assert.InRange(instance.Scale.X, 0.8f, 1.2f);
+        });
+        for (var first = 0; first < painted.Length; first++)
+        {
+            for (var second = first + 1; second < painted.Length; second++)
+            {
+                Assert.True(Vector3.Distance(
+                    painted[first].GetWorldPosition(), painted[second].GetWorldPosition()) >=
+                    settings.ObjectSpacing - 0.0001f);
+            }
+        }
+        Assert.True(controller.CanUndoObjects);
+        Assert.True(controller.UndoObjects());
+        Assert.Empty(terrain.Children);
+        Assert.True(controller.RedoObjects());
+        Assert.Equal(painted.Length, terrain.Children.Count);
+
+        settings.EraseObjects = true;
+        Assert.True(controller.PrimaryDown(new Vector2(400f, 300f)));
+        Assert.True(controller.PrimaryUp());
+        Assert.True(terrain.Children.Count < painted.Length);
+        Assert.True(removedCount > 0);
+        Assert.True(controller.UndoObjects());
+        Assert.Equal(painted.Length, terrain.Children.Count);
+    }
+
     /// <summary>Exposes all sculpt modes and shared numeric settings in reusable Inspector content.</summary>
     [Fact]
     public void InspectorContent_EditableTerrain_ExposesCompleteSculptToolset()
@@ -161,6 +250,25 @@ public sealed class TerrainDocumentTests : IDisposable
             control => control.Name == "TerrainSave");
         Assert.Contains(content.Children.OfType<Button>(),
             control => control.Name == "TerrainReload");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainObjectPaintEnabled");
+        Assert.Contains(content.Children.OfType<AssetReferenceField>(),
+            control => control.Name == "TerrainObjectMesh" &&
+                control.AcceptedContentType == "nico/static-mesh");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainObjectErase");
+        Assert.Contains(content.Children.OfType<TextField>(),
+            control => control.Name == "TerrainObjectSpacing");
+        Assert.Contains(content.Children.OfType<TextField>(),
+            control => control.Name == "TerrainObjectDensity");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainObjectAlignNormal");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainObjectRandomYaw");
+        Assert.Contains(content.Children.OfType<Button>(),
+            control => control.Name == "TerrainObjectUndo");
+        Assert.Contains(content.Children.OfType<Button>(),
+            control => control.Name == "TerrainObjectRedo");
     }
 
     /// <summary>Creates the shared document directly from one editable source path.</summary>

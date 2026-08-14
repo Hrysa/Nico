@@ -30,6 +30,11 @@ public abstract class Component
     }
 }
 
+/// <summary>Marks a scene mesh instance as authored by a terrain object brush.</summary>
+public sealed class TerrainScatterInstanceComponent : Component
+{
+}
+
 /// <summary>Stores one persistent game-script attachment and its authored property overrides.</summary>
 public sealed class ScriptComponent : Component
 {

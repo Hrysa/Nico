@@ -26,7 +26,12 @@ public sealed class ExampleHud : SceneScript
         _previousPipeline = _rendering.RenderPipeline;
         var grayscalePass = new GrayscalePostProcessPass();
         var previousPasses = _previousPipeline.Passes;
-        var passes = new RenderPipelinePass[previousPasses.Length + 1];
+        if (previousPasses[^1].Stage != RenderPipelineStage.PostProcess)
+        {
+            throw new InvalidOperationException(
+                "The active render pipeline has no replaceable post-process output pass.");
+        }
+        var passes = new RenderPipelinePass[previousPasses.Length];
         previousPasses.CopyTo(passes);
         passes[^1] = grayscalePass;
         _installedPipeline = new RenderPipeline(passes);

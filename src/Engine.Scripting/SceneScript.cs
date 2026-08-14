@@ -93,6 +93,14 @@ public abstract class SceneScript
     {
     }
 
+    /// <summary>Gets whether asynchronous startup work has completed successfully.</summary>
+    public virtual bool IsStartupComplete => true;
+
+    /// <summary>Polls non-blocking startup work before normal game updates begin.</summary>
+    public virtual void OnStartupUpdate()
+    {
+    }
+
     /// <summary>Runs once for each game update.</summary>
     /// <param name="deltaTime">Elapsed time in seconds since the previous update.</param>
     public virtual void OnUpdate(double deltaTime)

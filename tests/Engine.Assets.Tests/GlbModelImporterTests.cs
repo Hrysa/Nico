@@ -15,9 +15,9 @@ public sealed class GlbModelImporterTests : IDisposable
 
     /// <summary>Guards the cache contract for the current standard-material artifact format.</summary>
     [Fact]
-    public void Version_CurrentArtifactContract_IsEleven()
+    public void Version_CurrentArtifactContract_IsTwelve()
     {
-        Assert.Equal(11, new GlbModelImporter().Version);
+        Assert.Equal(12, new GlbModelImporter().Version);
     }
 
     /// <summary>Imports the example character and Run clip and verifies in-place hips binding.</summary>
@@ -75,9 +75,9 @@ public sealed class GlbModelImporterTests : IDisposable
         }
     }
 
-    /// <summary>Auto binding retargets Mixamo rigs whose reference poses differ.</summary>
+    /// <summary>Auto and explicit humanoid binding agree for compatible Mixamo hierarchies.</summary>
     [Fact]
-    public void Import_ExampleRun_AutoUsesHumanoidForDifferentMixamoBindPoses()
+    public void Import_ExampleRun_AutoMatchesHumanoidForCompatibleMixamoRigs()
     {
         var models = Path.GetFullPath("../../example_game/models",
             Path.GetDirectoryName(GetSourceFilePath())!);
@@ -172,6 +172,33 @@ public sealed class GlbModelImporterTests : IDisposable
         var runningExtent = runningBounds.Maximum - runningBounds.Minimum;
         Assert.True(runningExtent.Y > runningExtent.Z * 1.5f,
             $"Running mesh is lying down: extent {runningExtent}.");
+    }
+
+    /// <summary>Humanoid binding preserves the planted feet of the breathing idle clip.</summary>
+    [Fact]
+    public void Import_BreathingIdle_HumanoidDoesNotIntroduceFootDrift()
+    {
+        var models = Path.GetFullPath("../../example_game/models",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        var character = ImportSkinnedMesh(
+            Path.Combine(models, "Ch03_nonPBR.glb"), "idle-drift-character");
+        var breathing = ImportAnimation(
+            Path.Combine(models, "Breathing Idle.glb"), "idle-drift-animation");
+        var exact = Assert.Single(breathing.BindTo(
+            character.Skeleton, AnimationRetargetMode.Exact,
+            character.MeshNodeTransform));
+        var humanoid = Assert.Single(breathing.BindTo(
+            character.Skeleton, AnimationRetargetMode.Humanoid,
+            character.MeshNodeTransform));
+
+        var exactTravel = MeasureMaximumFootTravel(
+            character, exact, sampleCount: 32);
+        var humanoidTravel = MeasureMaximumFootTravel(
+            character, humanoid, sampleCount: 32);
+
+        Assert.True(humanoidTravel <= exactTravel + 0.000001f,
+            $"Humanoid foot travel {humanoidTravel:F6} exceeded exact travel " +
+            $"{exactTravel:F6}.");
     }
 
     /// <summary>Retargets the RPG Unreal-style block clip onto the example Mixamo character.</summary>
@@ -413,6 +440,65 @@ public sealed class GlbModelImporterTests : IDisposable
         Assert.Equal(4, textureReader.ReadBytes(4).Length);
     }
 
+    /// <summary>Continues geometry import while warning about skipped external image URIs.</summary>
+    [Fact]
+    public void Import_ExternalImageUri_SkipsTextureAndClearsMaterialReferences()
+    {
+        var sourcePath = Path.Combine(_directory, "external-image.glb");
+        WriteMinimalGlb(sourcePath, externalImageUri: "textures/tree.png");
+        var staging = Path.Combine(_directory, "external-image-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var context = new AssetImportContext(sourcePath,
+            new AssetMetadata(1, AssetId.New(), "gltf-model", settings),
+            "editor", staging, CancellationToken.None);
+
+        var result = new GlbModelImporter().Import(context);
+
+        Assert.Contains(result.Artifacts, artifact =>
+            artifact.ContentType == "nico/static-mesh");
+        Assert.DoesNotContain(result.Artifacts, artifact =>
+            artifact.ContentType == "nico/texture2d");
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(AssetDiagnosticSeverity.Warning, diagnostic.Severity);
+        Assert.Equal("GLB_EXTERNAL_IMAGE_URI_SKIPPED", diagnostic.Code);
+        Assert.Contains("textures/tree.png", diagnostic.Message, StringComparison.Ordinal);
+        var materialArtifact = Assert.Single(result.Artifacts, artifact =>
+            artifact.ContentType == "nico/standard-material");
+        using var materialStream = File.OpenRead(Path.Combine(
+            staging, materialArtifact.RelativePath));
+        var material = StandardMaterialAssetCodec.Load(materialStream);
+        Assert.Null(material.BaseColorTexture);
+        Assert.Null(material.NormalTexture);
+        Assert.Null(material.MetallicRoughnessTexture);
+    }
+
+    /// <summary>Keeps original texture-slot identities when external and embedded images mix.</summary>
+    [Fact]
+    public void Import_MixedImageSources_PreservesEmbeddedTextureSlot()
+    {
+        var sourcePath = Path.Combine(_directory, "mixed-images.glb");
+        WriteMinimalGlb(sourcePath, externalImageUri: "textures/tree.png",
+            includeEmbeddedTextureAfterExternal: true);
+        var staging = Path.Combine(_directory, "mixed-images-staging");
+        var settings = JsonDocument.Parse("{}").RootElement.Clone();
+        var metadata = new AssetMetadata(1, AssetId.New(), "gltf-model", settings);
+        var result = new GlbModelImporter().Import(new AssetImportContext(
+            sourcePath, metadata, "editor", staging, CancellationToken.None));
+
+        var textureArtifact = Assert.Single(result.Artifacts, artifact =>
+            artifact.ContentType == "nico/texture2d");
+        Assert.Equal("texture/1", textureArtifact.Key);
+        var materialArtifact = Assert.Single(result.Artifacts, artifact =>
+            artifact.ContentType == "nico/standard-material");
+        using var materialStream = File.OpenRead(Path.Combine(
+            staging, materialArtifact.RelativePath));
+        var material = StandardMaterialAssetCodec.Load(materialStream);
+        Assert.Null(material.BaseColorTexture);
+        Assert.Null(material.NormalTexture);
+        Assert.Equal(new AssetReference(metadata.Id, "texture/1"),
+            material.MetallicRoughnessTexture);
+    }
+
     /// <summary>Recognizes a collision naming convention and excludes it from visual batches.</summary>
     [Fact]
     public void Import_UcxNode_MarksCollisionObjectAndOmitsModelBatch()
@@ -550,7 +636,14 @@ public sealed class GlbModelImporterTests : IDisposable
 
     /// <summary>Writes a GLB containing one indexed triangle without normals.</summary>
     /// <param name="path">Destination path.</param>
-    private static void WriteMinimalGlb(string path, string? nodeName = null)
+    /// <param name="nodeName">Optional authored mesh-node name.</param>
+    /// <param name="externalImageUri">Optional external URI replacing the embedded image.</param>
+    /// <param name="includeEmbeddedTextureAfterExternal">Whether a second embedded texture follows the URI.</param>
+    private static void WriteMinimalGlb(
+        string path,
+        string? nodeName = null,
+        string? externalImageUri = null,
+        bool includeEmbeddedTextureAfterExternal = false)
     {
         using var binaryStream = new MemoryStream();
         using (var binary = new BinaryWriter(binaryStream, Encoding.UTF8, leaveOpen: true))
@@ -597,6 +690,21 @@ public sealed class GlbModelImporterTests : IDisposable
         if (nodeName is not null)
             json = json.Replace("\"nodes\":[{\"mesh\":0",
                 $"\"nodes\":[{{\"name\":\"{nodeName}\",\"mesh\":0", StringComparison.Ordinal);
+        if (externalImageUri is not null)
+        {
+            var images = includeEmbeddedTextureAfterExternal
+                ? $"{{\"uri\":\"{externalImageUri}\"}},{{\"bufferView\":3,\"mimeType\":\"image/png\"}}"
+                : $"{{\"uri\":\"{externalImageUri}\"}}";
+            json = json.Replace("{\"bufferView\":3,\"mimeType\":\"image/png\"}",
+                images, StringComparison.Ordinal);
+            if (includeEmbeddedTextureAfterExternal)
+            {
+                json = json.Replace("\"textures\":[{\"source\":0}]",
+                    "\"textures\":[{\"source\":0},{\"source\":1}]", StringComparison.Ordinal);
+                json = json.Replace("\"metallicRoughnessTexture\":{\"index\":0}",
+                    "\"metallicRoughnessTexture\":{\"index\":1}", StringComparison.Ordinal);
+            }
+        }
         var jsonBytes = Encoding.UTF8.GetBytes(json);
         Array.Resize(ref jsonBytes, (jsonBytes.Length + 3) & ~3);
         for (var index = Encoding.UTF8.GetByteCount(json); index < jsonBytes.Length; index++)
@@ -823,6 +931,41 @@ public sealed class GlbModelImporterTests : IDisposable
             maximum = Vector3.Max(maximum, rendered);
         }
         return (minimum, maximum);
+    }
+
+    /// <summary>Measures maximum rendered horizontal ankle travel from the first pose.</summary>
+    /// <param name="mesh">Target character and skeleton.</param>
+    /// <param name="clip">Bound animation clip.</param>
+    /// <param name="sampleCount">Number of equal duration intervals.</param>
+    /// <returns>Largest left- or right-foot horizontal displacement.</returns>
+    private static float MeasureMaximumFootTravel(
+        SkinnedMeshResource mesh,
+        AnimationClipResource clip,
+        int sampleCount)
+    {
+        var leftFoot = mesh.Skeleton.FindJoint("mixamorig:LeftFoot");
+        var rightFoot = mesh.Skeleton.FindJoint("mixamorig:RightFoot");
+        Assert.True(leftFoot >= 0 && rightFoot >= 0);
+        var pose = new SkeletonPose(mesh.Skeleton);
+        pose.Evaluate(mesh.Skeleton, clip, 0f);
+        var leftAnchor = Vector3.Transform(
+            pose.WorldTransforms[leftFoot].Translation, mesh.MeshNodeTransform);
+        var rightAnchor = Vector3.Transform(
+            pose.WorldTransforms[rightFoot].Translation, mesh.MeshNodeTransform);
+        var maximum = 0f;
+        for (var sample = 1; sample <= sampleCount; sample++)
+        {
+            pose.Evaluate(mesh.Skeleton, clip, clip.Duration * sample / sampleCount);
+            var left = Vector3.Transform(
+                pose.WorldTransforms[leftFoot].Translation, mesh.MeshNodeTransform);
+            var right = Vector3.Transform(
+                pose.WorldTransforms[rightFoot].Translation, mesh.MeshNodeTransform);
+            maximum = MathF.Max(maximum,
+                new Vector2(left.X - leftAnchor.X, left.Z - leftAnchor.Z).Length());
+            maximum = MathF.Max(maximum,
+                new Vector2(right.X - rightAnchor.X, right.Z - rightAnchor.Z).Length());
+        }
+        return maximum;
     }
 
     /// <summary>Writes one row-vector matrix using glTF's equivalent column-major sequence.</summary>

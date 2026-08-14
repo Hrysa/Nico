@@ -16,6 +16,6 @@ public sealed class GrayscalePostProcessPass : RenderPipelinePass
     /// <inheritdoc/>
     public override void Execute(ref RenderPipelineContext context)
     {
-        context.Queue.Output = RenderOutputSettings.Create(Enabled ? 1f : 0f);
+        context.ApplyPostProcess(RenderOutputSettings.Create(Enabled ? 1f : 0f));
     }
 }

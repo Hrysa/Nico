@@ -56,8 +56,12 @@ internal static class Program
             using var server = new AuthoritativePhysicsServer(
                 options.ScenePath,
                 options.TickRate,
+                options.Port,
+                options.NetworkSnapshotRate,
+                TimeSpan.FromSeconds(options.ClientTimeoutSeconds),
                 loggerFactory.CreateLogger<AuthoritativePhysicsServer>());
-            logger.LogInformation("Server started; press Ctrl+C to stop");
+            logger.LogInformation(
+                "Server listening on UDP port {Port}; press Ctrl+C to stop", server.Port);
             RunTicks(server, options, cancellation.Token);
             if (server.Tick == 0 || server.Tick % options.SnapshotInterval != 0)
                 server.LogSnapshot();
@@ -121,6 +125,7 @@ internal static class Program
         Console.Error.WriteLine(
             "Usage: dotnet run --project example_game_server -- " +
             "[--scene <path>] [--tick-rate <hz>] [--ticks <count>] " +
-            "[--snapshot-interval <ticks>] [--no-delay]");
+            "[--snapshot-interval <ticks>] [--port <udp-port>] " +
+            "[--network-snapshot-rate <hz>] [--client-timeout <seconds>] [--no-delay]");
     }
 }

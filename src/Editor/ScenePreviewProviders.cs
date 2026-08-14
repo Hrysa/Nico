@@ -38,6 +38,49 @@ internal sealed class DirectionalLightPreviewProvider : IScenePreviewProvider
     }
 }
 
+/// <summary>Builds icons and direction/range markers for local lights.</summary>
+internal sealed class LocalLightPreviewProvider : IScenePreviewProvider
+{
+    /// <inheritdoc/>
+    public ScenePreviewCategory Category => ScenePreviewCategory.Lights;
+
+    /// <inheritdoc/>
+    public bool Supports(object value) => value is PointLight3D or SpotLight3D;
+
+    /// <inheritdoc/>
+    public void Build(Node3D node, object value, ScenePreviewPickingId pickingId,
+        bool selected, bool hovered, ScenePreviewList destination)
+    {
+        var light = (Light3D)value;
+        var origin = node.GetWorldPosition();
+        var color = selected ? new Vector4(1f, 0.8f, 0.2f, 1f) :
+            hovered ? new Vector4(1f, 0.9f, 0.45f, 1f) :
+            new Vector4(light.Color, 0.9f);
+        destination.AddIcon(new ScenePreviewIcon(origin, 18f,
+            ScenePreviewIconKind.Light, color,
+            ScenePreviewDepthMode.AlwaysVisible, pickingId));
+        if (light is not SpotLight3D spot)
+            return;
+        var direction = spot.GetEmissionDirection();
+        var previewLength = MathF.Min(spot.Range, 2f);
+        var end = origin + direction * previewLength;
+        destination.AddLine(new ScenePreviewLine(origin, end, color,
+            ScenePreviewDepthMode.AlwaysVisible, pickingId));
+        var radius = MathF.Tan(spot.OuterAngle * MathF.PI / 180f) * previewLength;
+        var transform = spot.GetModelMatrix();
+        var right = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitX, transform));
+        var up = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitY, transform));
+        destination.AddLine(new ScenePreviewLine(origin, end + right * radius, color,
+            ScenePreviewDepthMode.DepthTested, pickingId));
+        destination.AddLine(new ScenePreviewLine(origin, end - right * radius, color,
+            ScenePreviewDepthMode.DepthTested, pickingId));
+        destination.AddLine(new ScenePreviewLine(origin, end + up * radius, color,
+            ScenePreviewDepthMode.DepthTested, pickingId));
+        destination.AddLine(new ScenePreviewLine(origin, end - up * radius, color,
+            ScenePreviewDepthMode.DepthTested, pickingId));
+    }
+}
+
 /// <summary>Builds a camera icon, forward ray, and projection frustum.</summary>
 internal sealed class CameraPreviewProvider : IScenePreviewProvider
 {
@@ -372,8 +415,8 @@ internal static class PreviewWire
     internal static void AddWarning(ScenePreviewList destination, Matrix4x4 transform, Vector4 color,
         ScenePreviewPickingId pickingId)
     {
-        AddTransformed(destination, transform, new(-.35f,-.35f,-.35f), new(.35f,.35f,.35f), color, pickingId, ScenePreviewDepthMode.AlwaysVisible);
-        AddTransformed(destination, transform, new(-.35f,.35f,-.35f), new(.35f,-.35f,.35f), color, pickingId, ScenePreviewDepthMode.AlwaysVisible);
+        AddTransformed(destination, transform, new(-.35f, -.35f, -.35f), new(.35f, .35f, .35f), color, pickingId, ScenePreviewDepthMode.AlwaysVisible);
+        AddTransformed(destination, transform, new(-.35f, .35f, -.35f), new(.35f, -.35f, .35f), color, pickingId, ScenePreviewDepthMode.AlwaysVisible);
     }
 
     /// <summary>Adds every explicit triangle edge from a collision mesh.</summary>

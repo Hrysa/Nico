@@ -145,8 +145,8 @@ public sealed class SceneInspector : Panel
             value => node.Scale = value, radiansAsDegrees: false);
 
         var scriptY = 236f;
-        if (node is DirectionalLight3D directionalLight)
-            scriptY = AddDirectionalLightSection(directionalLight, scriptY);
+        if (node is Light3D light)
+            scriptY = AddLightSection(light, scriptY);
         if (node is MeshInstance3D meshInstance)
         {
             var terrain = meshInstance.GetComponent<TerrainColliderComponent>();
@@ -192,25 +192,54 @@ public sealed class SceneInspector : Panel
         ActivateInspectorContent();
     }
 
-    /// <summary>Adds editable color, strength, ambient, and enabled light settings.</summary>
-    /// <param name="light">Inspected directional light.</param>
+    /// <summary>Adds shared and type-specific settings for one authored light.</summary>
+    /// <param name="light">Inspected light.</param>
     /// <param name="y">Available section top.</param>
     /// <returns>Top available for following sections.</returns>
-    private float AddDirectionalLightSection(DirectionalLight3D light, float y)
+    private float AddLightSection(Light3D light, float y)
     {
         AddChild(CreateLabel(12f, y, Width - 24f, 26f,
-            "Directional Light", _theme.TextPrimary));
-        AddVectorRow("Color", "LightColor", y + 30f, () => light.Color,
-            value => light.Color = value, radiansAsDegrees: false, nonnegative: true);
+            light switch
+            {
+                DirectionalLight3D => "Directional Light",
+                PointLight3D => "Point Light",
+                SpotLight3D => "Spot Light",
+                _ => "Light"
+            }, _theme.TextPrimary));
+        AddColorRow("Color", "LightColor", y + 30f, () => light.Color,
+            value => light.Color = value);
         AddLightFloatField("Intensity", "LightIntensity", y + 68f,
             () => light.Intensity, value => light.Intensity = value);
-        AddLightFloatField("Ambient", "LightAmbientIntensity", y + 106f,
-            () => light.AmbientIntensity, value => light.AmbientIntensity = value);
-        var enabled = new ToggleButton(Width - 24f, 30f, "Enabled", _theme)
+        var rowY = y + 106f;
+        if (light is DirectionalLight3D directional)
+        {
+            AddLightFloatField("Ambient", "LightAmbientIntensity", rowY,
+                () => directional.AmbientIntensity,
+                value => directional.AmbientIntensity = value);
+            rowY += 38f;
+        }
+        if (light is PointLight3D point)
+        {
+            AddLightFloatField("Range", "LightRange", rowY,
+                () => point.Range, value => point.Range = value);
+            rowY += 38f;
+        }
+        if (light is SpotLight3D spot)
+        {
+            AddLightFloatField("Range", "LightRange", rowY,
+                () => spot.Range, value => spot.Range = value);
+            AddLightFloatField("Inner", "LightInnerAngle", rowY + 38f,
+                () => spot.InnerAngle, value => spot.InnerAngle = value);
+            AddLightFloatField("Outer", "LightOuterAngle", rowY + 76f,
+                () => spot.OuterAngle, value => spot.OuterAngle = value);
+            rowY += 114f;
+        }
+        var toggleWidth = (Width - 30f) * 0.5f;
+        var enabled = new ToggleButton(toggleWidth, 30f, "Enabled", _theme)
         {
             Name = "LightEnabled",
             IsChecked = light.IsEnabled,
-            Margin = new Thickness(12f, y + 144f, 0f, 0f)
+            Margin = new Thickness(12f, rowY, 0f, 0f)
         };
         enabled.CheckedChanged += value =>
         {
@@ -219,7 +248,51 @@ public sealed class SceneInspector : Panel
                 NodeChanged?.Invoke(node);
         };
         AddChild(enabled);
-        return y + 186f;
+        var shadows = new ToggleButton(toggleWidth, 30f, "Shadows", _theme)
+        {
+            Name = "LightCastsShadows",
+            IsChecked = light.CastsShadows,
+            Margin = new Thickness(18f + toggleWidth, rowY, 0f, 0f)
+        };
+        shadows.CheckedChanged += value =>
+        {
+            light.CastsShadows = value;
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        AddChild(shadows);
+        return rowY + 42f;
+    }
+
+    /// <summary>Adds one linear RGB color editor.</summary>
+    /// <param name="label">Displayed field label.</param>
+    /// <param name="name">Stable UI element name.</param>
+    /// <param name="y">Field row position.</param>
+    /// <param name="read">Current color reader.</param>
+    /// <param name="apply">Color writer.</param>
+    private void AddColorRow(string label, string name, float y,
+        Func<Vector3> read, Action<Vector3> apply)
+    {
+        AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));
+        var color = read();
+        var picker = new ColorPicker(Width - 90f, 30f, showAlpha: false, _theme)
+        {
+            Name = name,
+            Value = new Vector4(color, 1f),
+            Margin = new Thickness(78f, y, 0f, 0f)
+        };
+        picker.ValueChanged += value =>
+        {
+            apply(new Vector3(value.X, value.Y, value.Z));
+            if (InspectedNode is { } node)
+                NodeChanged?.Invoke(node);
+        };
+        RegisterRefresh(picker, () =>
+        {
+            var latest = read();
+            return new Vector4(latest, 1f);
+        });
+        AddChild(picker);
     }
 
     /// <summary>Adds one nonnegative directional-light scalar field.</summary>
@@ -1189,6 +1262,21 @@ public sealed class SceneInspector : Panel
             if (field.Text == latest)
                 return false;
             field.Text = latest;
+            return true;
+        });
+    }
+
+    /// <summary>Adds a non-destructive color-picker refresh binding.</summary>
+    /// <param name="picker">Color picker to synchronize.</param>
+    /// <param name="read">Callback returning the current linear color.</param>
+    private void RegisterRefresh(ColorPicker picker, Func<Vector4> read)
+    {
+        _refreshBindings.Add(() =>
+        {
+            var latest = read();
+            if (picker.Value == latest)
+                return false;
+            picker.SetValueWithoutNotification(latest);
             return true;
         });
     }

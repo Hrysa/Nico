@@ -99,7 +99,7 @@ public sealed class TerrainLayerInspectorContent : Panel, IInspectorContentLifec
     /// <summary>Builds all layer controls.</summary>
     private void Build()
     {
-        AddVector4("Color", "TerrainLayerColor", 0f,
+        AddColor("Color", "TerrainLayerColor", 0f,
             () => _document.Value.BaseColor,
             value => _document.Value.BaseColor = value);
         AddFloat("Metallic", "TerrainLayerMetallic", 38f,
@@ -132,31 +132,31 @@ public sealed class TerrainLayerInspectorContent : Panel, IInspectorContentLifec
             (!_document.IsEditable ? "Read-only imported terrain layer" : string.Empty));
     }
 
-    /// <summary>Adds a four-component normalized vector editor.</summary>
+    /// <summary>Adds a linear RGBA color editor.</summary>
     /// <param name="label">Displayed label.</param>
     /// <param name="name">Element-name prefix.</param>
     /// <param name="y">Row top.</param>
     /// <param name="read">Current value reader.</param>
     /// <param name="write">Value writer.</param>
-    private void AddVector4(string label, string name, float y,
+    private void AddColor(string label, string name, float y,
         Func<Vector4> read, Action<Vector4> write)
     {
         AddChild(CreateLabel(label, y));
-        const float left = 82f;
-        const float gap = 3f;
-        var width = (Width - left - gap * 3f) / 4f;
-        for (var index = 0; index < 4; index++)
+        var picker = new ColorPicker(Width - 82f, 30f, showAlpha: true, _theme)
         {
-            var component = index;
-            var field = CreateField($"{name}{"RGBA"[index]}", width, y,
-                () => Get(read(), component), value =>
-                {
-                    var current = read();
-                    write(Set(current, component, Math.Clamp(value, 0f, 1f)));
-                });
-            field.Margin = new Thickness(left + index * (width + gap), y, 0f, 0f);
-            AddChild(field);
-        }
+            Name = name,
+            Value = read(),
+            IsEnabled = _document.IsEditable,
+            Margin = new Thickness(82f, y, 0f, 0f)
+        };
+        if (_document.IsEditable)
+            picker.ValueChanged += value =>
+            {
+                write(value);
+                Persist();
+            };
+        _refresh.Add(() => picker.SetValueWithoutNotification(read()));
+        AddChild(picker);
     }
 
     /// <summary>Adds a two-component positive vector editor.</summary>
@@ -302,27 +302,6 @@ public sealed class TerrainLayerInspectorContent : Panel, IInspectorContentLifec
     private static string Format(float value) =>
         value.ToString("0.###", CultureInfo.InvariantCulture);
 
-    /// <summary>Reads one vector component.</summary>
-    /// <param name="value">Source vector.</param>
-    /// <param name="index">Component index.</param>
-    /// <returns>Selected component.</returns>
-    private static float Get(Vector4 value, int index) => index switch
-    {
-        0 => value.X, 1 => value.Y, 2 => value.Z, _ => value.W
-    };
-
-    /// <summary>Replaces one vector component.</summary>
-    /// <param name="value">Source vector.</param>
-    /// <param name="index">Component index.</param>
-    /// <param name="component">Replacement component.</param>
-    /// <returns>Updated vector.</returns>
-    private static Vector4 Set(Vector4 value, int index, float component) => index switch
-    {
-        0 => value with { X = component },
-        1 => value with { Y = component },
-        2 => value with { Z = component },
-        _ => value with { W = component }
-    };
 }
 
 /// <summary>Edits ordered terrain layers and controls Scene layer painting.</summary>

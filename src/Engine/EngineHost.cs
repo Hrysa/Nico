@@ -429,27 +429,26 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             metallicRoughnessResource, TextureColorSpace.Linear);
         try
         {
+            var resolvedMaterial = ResolvedStandardMaterial.Resolve(
+                material, baseColorHandle, normalHandle, metallicRoughnessHandle);
             if (skin is null)
             {
-                var meshHandle = _window.CreateStaticMesh(
-                    mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
-                        normalHandle, metallicRoughnessHandle));
+                var meshHandle = _window.CreateStaticMesh(mesh, resolvedMaterial);
                 _renderables.Add(new RuntimeRenderable(
                     instance, meshHandle, baseColorHandle, normalHandle,
-                    metallicRoughnessHandle, default, null));
+                    metallicRoughnessHandle, default, null,
+                    resolvedMaterial.SurfaceType));
             }
             else
             {
                 var controller = new AnimationController(skin);
-                var handles = _window.CreateSkinnedMesh(
-                    skin, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
-                        normalHandle, metallicRoughnessHandle));
+                var handles = _window.CreateSkinnedMesh(skin, resolvedMaterial);
                 _window.UpdateSkinPalette(handles.Palette, controller.Pose.SkinMatrices);
                 _animationService!.Register(instance, controller);
                 _renderables.Add(new RuntimeRenderable(instance, handles.Mesh,
                     baseColorHandle, normalHandle, metallicRoughnessHandle,
-                    handles.Palette, controller)
-                    { UploadedPoseRevision = controller.PoseRevision });
+                    handles.Palette, controller, resolvedMaterial.SurfaceType)
+                { UploadedPoseRevision = controller.PoseRevision });
             }
         }
         catch
@@ -686,16 +685,27 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     private void RenderScene(double delta)
     {
         var simulationDelta = delta * _simulationTimeScale;
-        _scriptRuntime?.Update(simulationDelta);
-        _physicsWorld?.Update(simulationDelta);
-        _scriptRuntime?.LateUpdate(simulationDelta);
+        var startupComplete = _scriptRuntime?.IsStartupComplete ?? true;
+        if (!startupComplete)
+        {
+            _scriptRuntime!.UpdateStartup();
+            startupComplete = _scriptRuntime.IsStartupComplete;
+        }
+        if (startupComplete)
+        {
+            _scriptRuntime?.Update(simulationDelta);
+            _physicsWorld?.Update(simulationDelta);
+            _scriptRuntime?.LateUpdate(simulationDelta);
+        }
         UpdateAnimations(simulationDelta);
         if (_camera is null)
             return;
         _renderQueue.Clear();
-        _renderQueue.Lighting = _sceneRoot is null
-            ? SceneLighting.None : SceneLighting.Resolve(_sceneRoot);
+        if (_sceneRoot is not null)
+            _renderQueue.ResolveLighting(_sceneRoot);
         _camera.UpdateViewport(_width, _height);
+        _renderQueue.Camera = RenderCameraData.Create(
+            _camera.GetViewMatrix(), _camera.GetProjectionMatrix());
         if (_worldSpaceUI is not null && _uiHost is not null)
         {
             var logicalSize = _uiViewportPolicy?.Resolve(
@@ -710,12 +720,16 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             {
                 _renderQueue.AddSkinned(renderable.Mesh, renderable.Palette,
                     _camera.GetPushConstants(renderable.Animation.Resource.ComposeModelTransform(
-                        renderable.Instance.GetModelMatrix())));
+                        renderable.Instance.GetModelMatrix())),
+                    castsShadows: renderable.SurfaceType != RenderSurfaceType.Transparent,
+                    surfaceType: renderable.SurfaceType);
             }
             else
             {
                 _renderQueue.Add(renderable.Mesh,
-                    _camera.GetPushConstants(renderable.Instance.GetModelMatrix()));
+                    _camera.GetPushConstants(renderable.Instance.GetModelMatrix()),
+                    castsShadows: renderable.SurfaceType != RenderSurfaceType.Transparent,
+                    surfaceType: renderable.SurfaceType);
             }
         }
         RenderPipeline.Render(_window, _renderView, _renderQueue);
@@ -814,6 +828,9 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         /// <summary>Gets the optional runtime animation controller.</summary>
         internal AnimationController? Animation { get; }
 
+        /// <summary>Gets the SRP queue class owned by the resolved material.</summary>
+        internal RenderSurfaceType SurfaceType { get; }
+
         /// <summary>Gets or sets the pose revision most recently uploaded to the palette.</summary>
         internal ulong UploadedPoseRevision { get; set; }
 
@@ -825,10 +842,11 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
+        /// <param name="surfaceType">SRP queue class owned by the resolved material.</param>
         internal RuntimeRenderable(MeshInstance3D instance, MeshHandle mesh,
             TextureHandle baseColorTexture, TextureHandle normalTexture,
             TextureHandle metallicRoughnessTexture, SkinPaletteHandle palette,
-            AnimationController? animation)
+            AnimationController? animation, RenderSurfaceType surfaceType)
         {
             Instance = instance;
             Mesh = mesh;
@@ -837,6 +855,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             MetallicRoughnessTexture = metallicRoughnessTexture;
             Palette = palette;
             Animation = animation;
+            SurfaceType = surfaceType;
         }
     }
 
@@ -979,7 +998,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     {
         yield return root;
         foreach (var child in root.Children)
-        foreach (var descendant in Enumerate(child))
-            yield return descendant;
+            foreach (var descendant in Enumerate(child))
+                yield return descendant;
     }
 }

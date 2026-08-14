@@ -145,8 +145,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     private readonly Dictionary<uint, ulong[]> _uploadedViewportQuadGenerations = new();
     private readonly Dictionary<uint, VertexT[][]> _uploadedViewportQuadVertices = new();
     private readonly Dictionary<uint, List<RenderCommand>> _pendingViewportDraws = new();
-    private readonly Dictionary<uint, SceneLighting> _pendingViewportLighting = new();
-    private readonly Dictionary<uint, DirectionalShadowSettings> _pendingViewportShadows = new();
+    private readonly Dictionary<uint, List<RenderPipelineCommand>> _pendingViewportPipelineCommands =
+        new();
+    private readonly Dictionary<uint, List<RenderPipelineBarrier>> _pendingViewportPipelineBarriers =
+        new();
+    private readonly Dictionary<uint, SceneLightSet> _pendingViewportLights = new();
+    private readonly Dictionary<uint, RenderCameraData> _pendingViewportCameras = new();
     private readonly Dictionary<uint, RenderOutputSettings> _pendingViewportOutput = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private readonly HashSet<uint> _pendingViewportRenders = [];
@@ -2023,18 +2027,24 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var vertexInputAttributes = new VertexInputAttributeDescription[3];
         vertexInputAttributes[0] = new VertexInputAttributeDescription
         {
-            Binding = 0, Location = 0,
-            Format = Format.R32G32B32Sfloat, Offset = 0
+            Binding = 0,
+            Location = 0,
+            Format = Format.R32G32B32Sfloat,
+            Offset = 0
         };
         vertexInputAttributes[1] = new VertexInputAttributeDescription
         {
-            Binding = 0, Location = 1,
-            Format = Format.R32G32B32Sfloat, Offset = (uint)(sizeof(float) * 3)
+            Binding = 0,
+            Location = 1,
+            Format = Format.R32G32B32Sfloat,
+            Offset = (uint)(sizeof(float) * 3)
         };
         vertexInputAttributes[2] = new VertexInputAttributeDescription
         {
-            Binding = 0, Location = 2,
-            Format = Format.R32Sfloat, Offset = (uint)(sizeof(float) * 6)
+            Binding = 0,
+            Location = 2,
+            Format = Format.R32Sfloat,
+            Offset = (uint)(sizeof(float) * 6)
         };
 
         fixed (VertexInputAttributeDescription* pAttributes = vertexInputAttributes)
@@ -2155,6 +2165,19 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
                     r = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _pipelines.ViewportPipeline);
                     if (r != Result.Success) throw new Exception($"Failed to create FBO graphics pipeline: {r}");
+
+                    depthStencilState.DepthWriteEnable = false;
+                    colorBlendAttachment.BlendEnable = true;
+                    colorBlendAttachment.SrcColorBlendFactor = BlendFactor.SrcAlpha;
+                    colorBlendAttachment.DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha;
+                    colorBlendAttachment.ColorBlendOp = BlendOp.Add;
+                    colorBlendAttachment.SrcAlphaBlendFactor = BlendFactor.One;
+                    colorBlendAttachment.DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha;
+                    colorBlendAttachment.AlphaBlendOp = BlendOp.Add;
+                    r = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                        out _pipelines.ViewportTransparentPipeline);
+                    if (r != Result.Success)
+                        throw new Exception($"Failed to create transparent FBO pipeline: {r}");
                 }
             }
         }
@@ -2204,6 +2227,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (descriptorResult != Result.Success)
             throw new InvalidOperationException(
                 $"Failed to create model texture descriptor pool: {descriptorResult}");
+        CreateShadowSamplingDescriptors();
+        CreateSceneLightingDescriptors();
         var pushConstantRange = new PushConstantRange
         {
             StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
@@ -2214,12 +2239,13 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
-            _pipelines.ModelTextureDescriptorSetLayout
+            _pipelines.ShadowSamplingDescriptorSetLayout,
+            _pipelines.SceneLightingDescriptorSetLayout
         };
         var modelLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 4,
+            SetLayoutCount = 5,
             PSetLayouts = descriptorLayouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
@@ -2372,6 +2398,27 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 if (result != Result.Success)
                     throw new InvalidOperationException(
                         $"Failed to create double-sided model pipeline: {result}");
+
+                depthStencil.DepthWriteEnable = false;
+                blendAttachment.BlendEnable = true;
+                blendAttachment.SrcColorBlendFactor = BlendFactor.SrcAlpha;
+                blendAttachment.DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha;
+                blendAttachment.ColorBlendOp = BlendOp.Add;
+                blendAttachment.SrcAlphaBlendFactor = BlendFactor.One;
+                blendAttachment.DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha;
+                blendAttachment.AlphaBlendOp = BlendOp.Add;
+                rasterizer.CullMode = CullModeFlags.BackBit;
+                result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                    null, out _pipelines.ModelTransparentPipeline);
+                if (result != Result.Success)
+                    throw new InvalidOperationException(
+                        $"Failed to create transparent model pipeline: {result}");
+                rasterizer.CullMode = CullModeFlags.None;
+                result = _vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                    null, out _pipelines.ModelTransparentDoubleSidedPipeline);
+                if (result != Result.Success)
+                    throw new InvalidOperationException(
+                        $"Failed to create double-sided transparent model pipeline: {result}");
             }
         }
         finally
@@ -2379,6 +2426,129 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             SilkMarshal.Free(entryPointName);
         }
         _logger.LogInformation("Indexed model pipeline created");
+    }
+
+    /// <summary>Creates the sampled atlas, comparison sampler, and cascade-buffer set layout.</summary>
+    private void CreateShadowSamplingDescriptors()
+    {
+        var bindings = stackalloc DescriptorSetLayoutBinding[6];
+        bindings[0] = new DescriptorSetLayoutBinding
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.SampledImage,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        bindings[1] = new DescriptorSetLayoutBinding
+        {
+            Binding = 1,
+            DescriptorType = DescriptorType.Sampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        bindings[2] = new DescriptorSetLayoutBinding
+        {
+            Binding = 2,
+            DescriptorType = DescriptorType.UniformBuffer,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        bindings[3] = new DescriptorSetLayoutBinding
+        {
+            Binding = 3,
+            DescriptorType = DescriptorType.SampledImage,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        bindings[4] = new DescriptorSetLayoutBinding
+        {
+            Binding = 4,
+            DescriptorType = DescriptorType.Sampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        bindings[5] = new DescriptorSetLayoutBinding
+        {
+            Binding = 5,
+            DescriptorType = DescriptorType.UniformBuffer,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        var layoutInfo = new DescriptorSetLayoutCreateInfo
+        {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 6,
+            PBindings = bindings
+        };
+        Check(_vk!.CreateDescriptorSetLayout(_device, &layoutInfo, null,
+            out _pipelines.ShadowSamplingDescriptorSetLayout),
+            "create shadow sampling descriptor layout");
+        const uint maximumShadowSets = 128;
+        var poolSizes = stackalloc DescriptorPoolSize[3];
+        poolSizes[0] = new DescriptorPoolSize
+        {
+            Type = DescriptorType.SampledImage,
+            DescriptorCount = maximumShadowSets * 2
+        };
+        poolSizes[1] = new DescriptorPoolSize
+        {
+            Type = DescriptorType.Sampler,
+            DescriptorCount = maximumShadowSets * 2
+        };
+        poolSizes[2] = new DescriptorPoolSize
+        {
+            Type = DescriptorType.UniformBuffer,
+            DescriptorCount = maximumShadowSets * 2
+        };
+        var poolInfo = new DescriptorPoolCreateInfo
+        {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+            PoolSizeCount = 3,
+            PPoolSizes = poolSizes,
+            MaxSets = maximumShadowSets
+        };
+        Check(_vk.CreateDescriptorPool(_device, &poolInfo, null,
+            out _pipelines.ShadowSamplingDescriptorPool),
+            "create shadow sampling descriptor pool");
+    }
+
+    /// <summary>Creates the per-view scene-light uniform-buffer descriptor contract.</summary>
+    private void CreateSceneLightingDescriptors()
+    {
+        var binding = new DescriptorSetLayoutBinding
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.UniformBuffer,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+        var layoutInfo = new DescriptorSetLayoutCreateInfo
+        {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 1,
+            PBindings = &binding
+        };
+        Check(_vk!.CreateDescriptorSetLayout(_device, &layoutInfo, null,
+            out _pipelines.SceneLightingDescriptorSetLayout),
+            "create scene-lighting descriptor layout");
+        const uint maximumLightingSets = 128;
+        var poolSize = new DescriptorPoolSize
+        {
+            Type = DescriptorType.UniformBuffer,
+            DescriptorCount = maximumLightingSets
+        };
+        var poolInfo = new DescriptorPoolCreateInfo
+        {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+            PoolSizeCount = 1,
+            PPoolSizes = &poolSize,
+            MaxSets = maximumLightingSets
+        };
+        Check(_vk.CreateDescriptorPool(_device, &poolInfo, null,
+            out _pipelines.SceneLightingDescriptorPool),
+            "create scene-lighting descriptor pool");
     }
 
     /// <summary>Creates the built-in GPU skinning pipeline and palette descriptors.</summary>
@@ -2423,7 +2593,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
             _pipelines.ModelTextureDescriptorSetLayout,
-            _pipelines.ModelTextureDescriptorSetLayout,
+            _pipelines.ShadowSamplingDescriptorSetLayout,
+            _pipelines.SceneLightingDescriptorSetLayout,
             _pipelines.SkinPaletteDescriptorSetLayout
         };
         var pushConstantRange = new PushConstantRange
@@ -2434,7 +2605,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         var pipelineLayoutInfo = new PipelineLayoutCreateInfo
         {
             SType = StructureType.PipelineLayoutCreateInfo,
-            SetLayoutCount = 5,
+            SetLayoutCount = 6,
             PSetLayouts = layouts,
             PushConstantRangeCount = 1,
             PPushConstantRanges = &pushConstantRange
@@ -2566,6 +2737,22 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
                 null, out _pipelines.SkinnedModelDoubleSidedPipeline),
                 "create double-sided skinned model pipeline");
+            depthStencil.DepthWriteEnable = false;
+            blendAttachment.BlendEnable = true;
+            blendAttachment.SrcColorBlendFactor = BlendFactor.SrcAlpha;
+            blendAttachment.DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha;
+            blendAttachment.ColorBlendOp = BlendOp.Add;
+            blendAttachment.SrcAlphaBlendFactor = BlendFactor.One;
+            blendAttachment.DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha;
+            blendAttachment.AlphaBlendOp = BlendOp.Add;
+            rasterizer.CullMode = CullModeFlags.BackBit;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                null, out _pipelines.SkinnedModelTransparentPipeline),
+                "create transparent skinned model pipeline");
+            rasterizer.CullMode = CullModeFlags.None;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo,
+                null, out _pipelines.SkinnedModelTransparentDoubleSidedPipeline),
+                "create double-sided transparent skinned model pipeline");
         }
         finally
         {
@@ -2731,6 +2918,33 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             pipelineInfo.Layout = _pipelines.SkinnedShadowLayout;
             Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
                 out _pipelines.SkinnedShadowPipeline), "create skinned shadow pipeline");
+
+            var cameraDepthAttachment = new PipelineColorBlendAttachmentState
+            {
+                ColorWriteMask = 0,
+                BlendEnable = false
+            };
+            blending.AttachmentCount = 1;
+            blending.PAttachments = &cameraDepthAttachment;
+            multisampling.RasterizationSamples = _msaaSamples;
+            rasterizer.DepthBiasEnable = false;
+            dynamicState.DynamicStateCount = 2;
+            pipelineInfo.RenderPass = _fboRenderPass;
+            pipelineInfo.Layout = _pipelines.ShadowLayout;
+            binding.Stride = ForwardModelVertex.Stride;
+            vertexInput.VertexAttributeDescriptionCount = 1;
+            vertexInput.PVertexAttributeDescriptions = &staticAttribute;
+            stage.Module = _pipelines.ShadowVertexShader;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                out _pipelines.CameraDepthPipeline), "create static camera-depth pipeline");
+            binding.Stride = SkinnedForwardModelVertex.Stride;
+            vertexInput.VertexAttributeDescriptionCount = 3;
+            vertexInput.PVertexAttributeDescriptions = skinnedAttributes;
+            stage.Module = _pipelines.SkinnedShadowVertexShader;
+            pipelineInfo.Layout = _pipelines.SkinnedShadowLayout;
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                out _pipelines.SkinnedCameraDepthPipeline),
+                "create skinned camera-depth pipeline");
         }
         finally
         {
@@ -3333,13 +3547,16 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                 _swapchainManager!.ImageFormat,
                 FindDepthFormat(), _msaaSamples, deviceLocalMemoryType,
                 _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool,
-                _pipelines.ModelTextureDescriptorSetLayout,
-                _pipelines.ModelTextureDescriptorPool);
+                _pipelines.ShadowSamplingDescriptorSetLayout,
+                _pipelines.ShadowSamplingDescriptorPool,
+                _pipelines.SceneLightingDescriptorSetLayout,
+                _pipelines.SceneLightingDescriptorPool, FindMemoryType);
         }
         catch
         {
             fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool,
-                _pipelines.ModelTextureDescriptorPool);
+                _pipelines.ShadowSamplingDescriptorPool,
+                _pipelines.SceneLightingDescriptorPool);
             throw;
         }
         _viewportFbos[id] = fbo;
@@ -3359,7 +3576,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (_viewportFbos.TryGetValue(viewportId, out var fbo))
         {
             fbo.Destroy(_vk, _device, _pipelines.TextureDescriptorPool,
-                _pipelines.ModelTextureDescriptorPool);
+                _pipelines.ShadowSamplingDescriptorPool,
+                _pipelines.SceneLightingDescriptorPool);
             _viewportFbos.Remove(viewportId);
         }
 
@@ -3374,8 +3592,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _uploadedViewportQuadVertices.Remove(viewportId);
 
         _pendingViewportDraws.Remove(viewportId);
-        _pendingViewportLighting.Remove(viewportId);
-        _pendingViewportShadows.Remove(viewportId);
+        _pendingViewportPipelineCommands.Remove(viewportId);
+        _pendingViewportPipelineBarriers.Remove(viewportId);
+        _pendingViewportLights.Remove(viewportId);
+        _pendingViewportCameras.Remove(viewportId);
         _pendingViewportOutput.Remove(viewportId);
         _pendingGridDraws.Remove(viewportId);
         _pendingViewportRenders.Remove(viewportId);
@@ -3447,9 +3667,35 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         if (!_pendingViewportDraws.ContainsKey(viewportId))
             _pendingViewportDraws[viewportId] = [];
-        _pendingViewportLighting[viewportId] = renderQueue.Lighting;
-        _pendingViewportShadows[viewportId] = renderQueue.Shadows;
-        _pendingViewportOutput[viewportId] = renderQueue.Output;
+        if (!_pendingViewportPipelineCommands.TryGetValue(viewportId, out var pipelineCommands))
+        {
+            pipelineCommands = [];
+            _pendingViewportPipelineCommands[viewportId] = pipelineCommands;
+        }
+        pipelineCommands.Clear();
+        if (!_pendingViewportPipelineBarriers.TryGetValue(viewportId, out var pipelineBarriers))
+        {
+            pipelineBarriers = [];
+            _pendingViewportPipelineBarriers[viewportId] = pipelineBarriers;
+        }
+        pipelineBarriers.Clear();
+        if (!_pendingViewportLights.TryGetValue(viewportId, out var lights))
+        {
+            lights = new SceneLightSet();
+            _pendingViewportLights[viewportId] = lights;
+        }
+        lights.CopyFrom(renderQueue.Lights);
+        _pendingViewportCameras[viewportId] = renderQueue.Camera;
+        _pendingViewportOutput[viewportId] = RenderOutputSettings.None;
+
+        foreach (var command in renderQueue.PipelineCommandSpan)
+        {
+            pipelineCommands.Add(command);
+            if (command.Kind == RenderPipelineCommandKind.ApplyPostProcess)
+                _pendingViewportOutput[viewportId] = command.Output;
+        }
+        foreach (var barrier in renderQueue.PipelineBarrierSpan)
+            pipelineBarriers.Add(barrier);
 
         foreach (var command in renderQueue.CommandSpan)
         {
@@ -3699,8 +3945,10 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     _swapchainManager!.ImageFormat, FindDepthFormat(), _msaaSamples,
                     deviceLocalMemoryType,
                     _pipelines.TextureDescriptorSetLayout, _pipelines.TextureDescriptorPool,
-                    _pipelines.ModelTextureDescriptorSetLayout,
-                    _pipelines.ModelTextureDescriptorPool);
+                    _pipelines.ShadowSamplingDescriptorSetLayout,
+                    _pipelines.ShadowSamplingDescriptorPool,
+                    _pipelines.SceneLightingDescriptorSetLayout,
+                    _pipelines.SceneLightingDescriptorPool, FindMemoryType);
             }
         }
     }
@@ -4215,6 +4463,36 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             RequestFrame();
     }
 
+    /// <summary>Validates compiled SRP dependencies before Vulkan command recording.</summary>
+    /// <param name="commands">Submitted semantic command stream.</param>
+    /// <param name="barriers">Compiled dependencies for that stream.</param>
+    private static void ValidatePipelineBarriers(
+        List<RenderPipelineCommand> commands,
+        List<RenderPipelineBarrier> barriers)
+    {
+        for (var index = 0; index < barriers.Count; index++)
+        {
+            var barrier = barriers[index];
+            if (barrier.BeforeCommandIndex <= 0 ||
+                barrier.BeforeCommandIndex >= commands.Count)
+            {
+                throw new InvalidOperationException(
+                    "A compiled render dependency targets an invalid command index.");
+            }
+            var destination = commands[barrier.BeforeCommandIndex];
+            if (destination.Stage != barrier.DestinationStage ||
+                (destination.Reads & barrier.Resources) == 0 &&
+                (destination.Writes & barrier.Resources) == 0 ||
+                barrier.SourceStage > barrier.DestinationStage)
+            {
+                throw new InvalidOperationException(
+                    "A compiled render dependency does not match its destination command.");
+            }
+        }
+    }
+
+    /// <summary>Records all pending view pipelines into offscreen framebuffers.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
     private void RecordFboPass(CommandBuffer commandBuffer)
     {
         _persistentVertices!.RecordPendingUploads(commandBuffer, _transientArena!, _activeFrameIndex);
@@ -4229,8 +4507,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         // ═══════════════════════════════════════════════════════════════
 
         var clearValues = stackalloc ClearValue[2];
-        var modelDescriptorSets = stackalloc DescriptorSet[4];
-        var skinnedDescriptorSets = stackalloc DescriptorSet[5];
+        var modelDescriptorSets = stackalloc DescriptorSet[5];
+        var skinnedDescriptorSets = stackalloc DescriptorSet[6];
         foreach (var (viewportId, fbo) in _viewportFbos)
         {
             if (fbo.IsDirty || !_pendingViewportRenders.Remove(viewportId))
@@ -4238,20 +4516,123 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
             var hasDraws = _pendingViewportDraws.TryGetValue(viewportId, out var draws) &&
                 draws.Count > 0;
-            var lighting = _pendingViewportLighting.TryGetValue(viewportId,
-                out var submittedLighting) ? submittedLighting : SceneLighting.None;
-            var shadowSettings = _pendingViewportShadows.TryGetValue(viewportId,
-                out var submittedShadows) ? submittedShadows : DirectionalShadowSettings.None;
-            var lightViewProjection = Matrix4x4.Identity;
-            var shadowStrength = 0f;
-            if (hasDraws && shadowSettings.IsEnabled && lighting.Intensity > 0f)
+            var shadowSettings = DirectionalShadowSettings.None;
+            var localShadowSettings = default(LocalShadowSettings);
+            var cameraCleared = false;
+            var hasRendererCommand = false;
+            var outputProduced = false;
+            if (_pendingViewportPipelineCommands.TryGetValue(viewportId,
+                out var pipelineCommands))
             {
-                lightViewProjection = CreateDirectionalShadowMatrix(
-                    draws![0].PushConstants, lighting, shadowSettings.MaxDistance);
-                RecordDirectionalShadowPass(commandBuffer, fbo, draws,
-                    lightViewProjection, shadowSettings);
-                shadowStrength = shadowSettings.Strength;
+                if (!_pendingViewportPipelineBarriers.TryGetValue(viewportId,
+                    out var pipelineBarriers))
+                {
+                    throw new InvalidOperationException(
+                        "A submitted render view has no compiled resource dependencies.");
+                }
+                ValidatePipelineBarriers(pipelineCommands, pipelineBarriers);
+                for (var commandIndex = 0; commandIndex < pipelineCommands.Count; commandIndex++)
+                {
+                    var pipelineCommand = pipelineCommands[commandIndex];
+                    switch (pipelineCommand.Kind)
+                    {
+                        case RenderPipelineCommandKind.ClearCamera:
+                            if (cameraCleared || shadowSettings.IsEnabled || hasRendererCommand)
+                            {
+                                throw new InvalidOperationException(
+                                    "Camera initialization must be the first backend command.");
+                            }
+                            cameraCleared = true;
+                            break;
+                        case RenderPipelineCommandKind.DirectionalShadows:
+                            if (hasRendererCommand)
+                                throw new InvalidOperationException(
+                                    "Directional shadows must execute before camera rendering.");
+                            shadowSettings = pipelineCommand.DirectionalShadows;
+                            break;
+                        case RenderPipelineCommandKind.LocalShadows:
+                            if (hasRendererCommand)
+                            {
+                                throw new InvalidOperationException(
+                                    "Local shadows must execute before camera rendering.");
+                            }
+                            localShadowSettings = pipelineCommand.LocalShadows;
+                            break;
+                        case RenderPipelineCommandKind.DrawRenderers:
+                            if (pipelineCommand.MaterialPass is not
+                                (RenderMaterialPass.DepthOnly or RenderMaterialPass.Forward))
+                            {
+                                throw new NotSupportedException(
+                                    $"Material pass {pipelineCommand.MaterialPass} is not implemented.");
+                            }
+                            hasRendererCommand = true;
+                            break;
+                        case RenderPipelineCommandKind.ApplyPostProcess:
+                            if (!cameraCleared || !hasRendererCommand || outputProduced ||
+                                commandIndex != pipelineCommands.Count - 1)
+                            {
+                                throw new InvalidOperationException(
+                                    "Post-processing must be the final backend command.");
+                            }
+                            outputProduced = true;
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(pipelineCommand.Kind));
+                    }
+                }
             }
+            if (!cameraCleared)
+            {
+                throw new InvalidOperationException(
+                    "A submitted render view has no camera initialization command.");
+            }
+            if (!outputProduced)
+            {
+                throw new InvalidOperationException(
+                    "A submitted render view has no presentation output command.");
+            }
+            var submittedCamera = _pendingViewportCameras.TryGetValue(viewportId,
+                out var camera) ? camera : default;
+            if (!_pendingViewportLights.TryGetValue(viewportId, out var sceneLights))
+                throw new InvalidOperationException("A submitted render view has no light set.");
+            var hasLocalShadowLights = HasLocalShadowLights(sceneLights);
+            var renderLocalShadows = hasDraws && localShadowSettings.IsEnabled &&
+                hasLocalShadowLights;
+            fbo.Lights.Update(_activeFrameIndex, sceneLights, submittedCamera,
+                renderLocalShadows);
+            var shadowData = default(GpuDirectionalShadowData);
+            var mainDirectional = sceneLights.MainDirectionalIndex >= 0
+                ? sceneLights.Lights[sceneLights.MainDirectionalIndex]
+                : default;
+            if (hasDraws && shadowSettings.IsEnabled &&
+                mainDirectional.Type == SceneLightType.Directional &&
+                mainDirectional.CastsShadows && mainDirectional.Intensity > 0f &&
+                submittedCamera.IsValid)
+            {
+                var cascades = DirectionalShadowCascadeCalculator.Calculate(
+                    submittedCamera, mainDirectional.Direction, shadowSettings,
+                    (int)DirectionalShadowAtlas.CascadeResolution);
+                RecordDirectionalShadowPass(commandBuffer, fbo, draws!,
+                    cascades, shadowSettings);
+                shadowData = GpuDirectionalShadowData.Create(cascades, shadowSettings);
+            }
+            else
+            {
+                if (!fbo.ShadowAtlas.IsInitialized)
+                    ClearDirectionalShadowAtlas(commandBuffer, fbo);
+            }
+            fbo.ShadowAtlas.Update(_activeFrameIndex, shadowData);
+            if (renderLocalShadows)
+            {
+                RecordLocalShadowPass(commandBuffer, fbo, draws!, sceneLights,
+                    localShadowSettings);
+            }
+            else if (!fbo.LocalShadowAtlas.IsInitialized)
+            {
+                ClearLocalShadowAtlas(commandBuffer, fbo);
+            }
+            fbo.LocalShadowAtlas.Update(_activeFrameIndex, sceneLights,
+                renderLocalShadows ? localShadowSettings : default);
 
             clearValues[0] = new ClearValue
             {
@@ -4286,9 +4667,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
             var vp = new Viewport
             {
-                X = 0, Y = 0,
-                Width = fbo.Width, Height = fbo.Height,
-                MinDepth = 0.0f, MaxDepth = 1.0f
+                X = 0,
+                Y = 0,
+                Width = fbo.Width,
+                Height = fbo.Height,
+                MinDepth = 0.0f,
+                MaxDepth = 1.0f
             };
             _vk.CmdSetViewport(commandBuffer, 0, 1, &vp);
 
@@ -4299,131 +4683,293 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             };
             _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-            // Draw the infinite ground grid before opaque scene geometry so
-            // subsequent meshes naturally occlude it through the depth buffer.
-            if (_pendingGridDraws.Remove(viewportId, out var gridPushConstants))
-            {
-                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.GridPipeline);
-                _vk.CmdPushConstants(commandBuffer, _pipelines.GridLayout,
-                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
-                    0, (uint)sizeof(GridPushConstants), &gridPushConstants);
-                _vk.CmdDraw(commandBuffer, 3, 1, 0, 0);
-            }
+            var hasGridDraw = _pendingGridDraws.Remove(
+                viewportId, out var gridPushConstants);
+            var gridDrawn = false;
 
-            // Replay pending draws
-            if (hasDraws)
+            // Replay only the queue classes explicitly scheduled by the active SRP.
+            if (hasRendererCommand && (hasDraws || hasGridDraw))
             {
-                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _pipelines.ViewportPipeline);
-
-                foreach (var draw in draws!)
+                for (var pipelineCommandIndex = 0;
+                    pipelineCommandIndex < pipelineCommands!.Count;
+                    pipelineCommandIndex++)
                 {
-                    if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
+                    var rendererCommand = pipelineCommands[pipelineCommandIndex];
+                    if (rendererCommand.Kind != RenderPipelineCommandKind.DrawRenderers)
+                        continue;
+                    if (rendererCommand.MaterialPass == RenderMaterialPass.DepthOnly)
                     {
-                        if (!draw.SkinPalette.IsValid)
-                            throw new InvalidOperationException(
-                                "A skinned mesh draw requires a joint palette.");
-                        var skinned = _persistentSkinnedMeshes.GetBinding(
-                            draw.Mesh, draw.SkinPalette, _activeFrameIndex);
-                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
-                            skinned.DoubleSided
-                                ? _pipelines.SkinnedModelDoubleSidedPipeline
-                                : _pipelines.SkinnedModelPipeline);
-                        if (skinned.IndexCount == 0)
-                            continue;
-                        var skinnedVertexBuffer = skinned.VertexBuffer;
-                        var skinnedOffset = 0UL;
-                        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
-                            &skinnedVertexBuffer, &skinnedOffset);
-                        _vk.CmdBindIndexBuffer(commandBuffer, skinned.IndexBuffer, 0,
-                            IndexType.Uint32);
-                        skinnedDescriptorSets[0] = _persistentTextures.GetDescriptor(
-                            skinned.BaseColorTexture);
-                        skinnedDescriptorSets[1] = _persistentTextures.GetDescriptor(
-                            skinned.NormalTexture);
-                        skinnedDescriptorSets[2] = _persistentTextures.GetDescriptor(
-                            skinned.MetallicRoughnessTexture);
-                        skinnedDescriptorSets[3] = fbo.ShadowDescriptorSet;
-                        skinnedDescriptorSets[4] = skinned.PaletteDescriptor;
-                        _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.SkinnedModelLayout, 0, 5,
-                            skinnedDescriptorSets, 0, null);
-                        var skinnedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting, skinned.Metallic, skinned.Roughness,
-                            lightViewProjection, shadowStrength);
-                        _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
-                            ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
-                            0, (uint)sizeof(ModelPushConstants),
-                            &skinnedConstants);
-                        _vk.CmdDrawIndexed(commandBuffer, skinned.IndexCount, 1, 0, 0, 0);
+                        if (submittedCamera.IsValid)
+                        {
+                            RecordCameraDepthDraws(commandBuffer, draws!,
+                                rendererCommand.QueueFilter,
+                                submittedCamera.View * submittedCamera.Projection);
+                        }
                         continue;
                     }
-                    if (_persistentIndexedMeshes!.Contains(draw.Mesh))
+                    if (!gridDrawn && hasGridDraw &&
+                        (rendererCommand.QueueFilter & RenderQueueFilter.Opaque) != 0)
                     {
-                        var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
                         _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
-                            indexed.DoubleSided
-                                ? _pipelines.ModelDoubleSidedPipeline
-                                : _pipelines.ModelPipeline);
-                        if (indexed.IndexCount == 0)
-                            continue;
-                        var indexedVertexBuffer = indexed.VertexBuffer;
-                        var indexedOffset = 0UL;
-                        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
-                            &indexedVertexBuffer, &indexedOffset);
-                        _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0,
-                            IndexType.Uint32);
-                        modelDescriptorSets[0] = _persistentTextures.GetDescriptor(
-                            indexed.BaseColorTexture);
-                        modelDescriptorSets[1] = _persistentTextures.GetDescriptor(
-                            indexed.NormalTexture);
-                        modelDescriptorSets[2] = _persistentTextures.GetDescriptor(
-                            indexed.MetallicRoughnessTexture);
-                        modelDescriptorSets[3] = fbo.ShadowDescriptorSet;
-                        _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
-                            _pipelines.ModelLayout, 0, 4, modelDescriptorSets, 0, null);
-                        var indexedConstants = ModelPushConstants.Create(
-                            draw.PushConstants, lighting, indexed.Metallic, indexed.Roughness,
-                            lightViewProjection, shadowStrength);
-                        _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
+                            _pipelines.GridPipeline);
+                        _vk.CmdPushConstants(commandBuffer, _pipelines.GridLayout,
                             ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
-                            0, (uint)sizeof(ModelPushConstants),
-                            &indexedConstants);
-                        _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
-                        continue;
+                            0, (uint)sizeof(GridPushConstants), &gridPushConstants);
+                        _vk.CmdDraw(commandBuffer, 3, 1, 0, 0);
+                        gridDrawn = true;
                     }
+                    var transparentPass = rendererCommand.Stage ==
+                        RenderPipelineStage.Transparent;
                     _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
-                        _pipelines.ViewportPipeline);
-                    var binding = _persistentVertices!.GetBinding(draw.Mesh);
-                    if (binding.VertexCount == 0)
-                        continue;
-                    var vb = binding.Buffer;
-                    var bufOffset = binding.ByteOffset;
-                    _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
+                        transparentPass
+                            ? _pipelines.ViewportTransparentPipeline
+                            : _pipelines.ViewportPipeline);
 
-                    var pc = draw.PushConstants;
-                    _vk.CmdPushConstants(commandBuffer, _pipelines.ViewportLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
+                    foreach (var draw in draws!)
+                    {
+                        if (!MatchesQueueFilter(draw.SurfaceType, rendererCommand.QueueFilter))
+                            continue;
+                        if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
+                        {
+                            if (!draw.SkinPalette.IsValid)
+                                throw new InvalidOperationException(
+                                    "A skinned mesh draw requires a joint palette.");
+                            var skinned = _persistentSkinnedMeshes.GetBinding(
+                                draw.Mesh, draw.SkinPalette, _activeFrameIndex);
+                            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                                transparentPass
+                                    ? skinned.DoubleSided
+                                        ? _pipelines.SkinnedModelTransparentDoubleSidedPipeline
+                                        : _pipelines.SkinnedModelTransparentPipeline
+                                    : skinned.DoubleSided
+                                        ? _pipelines.SkinnedModelDoubleSidedPipeline
+                                        : _pipelines.SkinnedModelPipeline);
+                            if (skinned.IndexCount == 0)
+                                continue;
+                            var skinnedVertexBuffer = skinned.VertexBuffer;
+                            var skinnedOffset = 0UL;
+                            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                                &skinnedVertexBuffer, &skinnedOffset);
+                            _vk.CmdBindIndexBuffer(commandBuffer, skinned.IndexBuffer, 0,
+                                IndexType.Uint32);
+                            skinnedDescriptorSets[0] = _persistentTextures.GetDescriptor(
+                                skinned.BaseColorTexture);
+                            skinnedDescriptorSets[1] = _persistentTextures.GetDescriptor(
+                                skinned.NormalTexture);
+                            skinnedDescriptorSets[2] = _persistentTextures.GetDescriptor(
+                                skinned.MetallicRoughnessTexture);
+                            skinnedDescriptorSets[3] =
+                                fbo.ShadowAtlas.GetDescriptorSet(_activeFrameIndex);
+                            skinnedDescriptorSets[4] =
+                                fbo.Lights.GetDescriptorSet(_activeFrameIndex);
+                            skinnedDescriptorSets[5] = skinned.PaletteDescriptor;
+                            _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                                _pipelines.SkinnedModelLayout, 0, 6,
+                                skinnedDescriptorSets, 0, null);
+                            var skinnedConstants = ModelPushConstants.Create(
+                                draw.PushConstants, skinned.Metallic, skinned.Roughness);
+                            _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedModelLayout,
+                                ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                                0, (uint)sizeof(ModelPushConstants),
+                                &skinnedConstants);
+                            _vk.CmdDrawIndexed(commandBuffer, skinned.IndexCount, 1, 0, 0, 0);
+                            continue;
+                        }
+                        if (_persistentIndexedMeshes!.Contains(draw.Mesh))
+                        {
+                            var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
+                            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                                transparentPass
+                                    ? indexed.DoubleSided
+                                        ? _pipelines.ModelTransparentDoubleSidedPipeline
+                                        : _pipelines.ModelTransparentPipeline
+                                    : indexed.DoubleSided
+                                        ? _pipelines.ModelDoubleSidedPipeline
+                                        : _pipelines.ModelPipeline);
+                            if (indexed.IndexCount == 0)
+                                continue;
+                            var indexedVertexBuffer = indexed.VertexBuffer;
+                            var indexedOffset = 0UL;
+                            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                                &indexedVertexBuffer, &indexedOffset);
+                            _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0,
+                                IndexType.Uint32);
+                            modelDescriptorSets[0] = _persistentTextures.GetDescriptor(
+                                indexed.BaseColorTexture);
+                            modelDescriptorSets[1] = _persistentTextures.GetDescriptor(
+                                indexed.NormalTexture);
+                            modelDescriptorSets[2] = _persistentTextures.GetDescriptor(
+                                indexed.MetallicRoughnessTexture);
+                            modelDescriptorSets[3] =
+                                fbo.ShadowAtlas.GetDescriptorSet(_activeFrameIndex);
+                            modelDescriptorSets[4] =
+                                fbo.Lights.GetDescriptorSet(_activeFrameIndex);
+                            _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                                _pipelines.ModelLayout, 0, 5, modelDescriptorSets, 0, null);
+                            var indexedConstants = ModelPushConstants.Create(
+                                draw.PushConstants, indexed.Metallic, indexed.Roughness);
+                            _vk.CmdPushConstants(commandBuffer, _pipelines.ModelLayout,
+                                ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                                0, (uint)sizeof(ModelPushConstants),
+                                &indexedConstants);
+                            _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
+                            continue;
+                        }
+                        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                            transparentPass
+                                ? _pipelines.ViewportTransparentPipeline
+                                : _pipelines.ViewportPipeline);
+                        var binding = _persistentVertices!.GetBinding(draw.Mesh);
+                        if (binding.VertexCount == 0)
+                            continue;
+                        var vb = binding.Buffer;
+                        var bufOffset = binding.ByteOffset;
+                        _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &bufOffset);
 
-                    _vk.CmdDraw(commandBuffer, binding.VertexCount, 1, 0, 0);
+                        var pc = draw.PushConstants;
+                        _vk.CmdPushConstants(commandBuffer, _pipelines.ViewportLayout, ShaderStageFlags.VertexBit, 0, (uint)sizeof(PushConstants), &pc);
+
+                        _vk.CmdDraw(commandBuffer, binding.VertexCount, 1, 0, 0);
+                    }
                 }
 
                 draws!.Clear();
             }
 
+            pipelineCommands?.Clear();
+
             _vk.CmdEndRenderPass(commandBuffer);
         }
     }
 
-    /// <summary>Records static and skinned casters into one view's directional shadow map.</summary>
+    /// <summary>Records filtered static and skinned geometry into camera depth.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="draws">Submitted scene draws.</param>
+    /// <param name="filter">Surface classes included in the depth pass.</param>
+    /// <param name="viewProjection">Active camera transform.</param>
+    private void RecordCameraDepthDraws(
+        CommandBuffer commandBuffer,
+        List<RenderCommand> draws,
+        RenderQueueFilter filter,
+        Matrix4x4 viewProjection)
+    {
+        var vk = _vk!;
+        for (var index = 0; index < draws.Count; index++)
+        {
+            var draw = draws[index];
+            if (!MatchesQueueFilter(draw.SurfaceType, filter))
+                continue;
+            if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
+            {
+                if (!draw.SkinPalette.IsValid)
+                    continue;
+                var binding = _persistentSkinnedMeshes.GetBinding(
+                    draw.Mesh, draw.SkinPalette, _activeFrameIndex);
+                if (binding.IndexCount == 0)
+                    continue;
+                vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                    _pipelines.SkinnedCameraDepthPipeline);
+                var vertexBuffer = binding.VertexBuffer;
+                var offset = 0UL;
+                vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+                vk.CmdBindIndexBuffer(commandBuffer, binding.IndexBuffer, 0, IndexType.Uint32);
+                var paletteDescriptor = binding.PaletteDescriptor;
+                vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                    _pipelines.SkinnedShadowLayout, 4, 1, &paletteDescriptor, 0, null);
+                var constants = new ShadowPushConstants
+                {
+                    Model = draw.PushConstants.Model,
+                    LightViewProjection = viewProjection
+                };
+                vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedShadowLayout,
+                    ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants), &constants);
+                vk.CmdDrawIndexed(commandBuffer, binding.IndexCount, 1, 0, 0, 0);
+                continue;
+            }
+            if (!_persistentIndexedMeshes!.Contains(draw.Mesh))
+                continue;
+            var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
+            if (indexed.IndexCount == 0)
+                continue;
+            vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                _pipelines.CameraDepthPipeline);
+            var indexedVertexBuffer = indexed.VertexBuffer;
+            var indexedOffset = 0UL;
+            vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+                &indexedVertexBuffer, &indexedOffset);
+            vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0, IndexType.Uint32);
+            var indexedConstants = new ShadowPushConstants
+            {
+                Model = draw.PushConstants.Model,
+                LightViewProjection = viewProjection
+            };
+            vk.CmdPushConstants(commandBuffer, _pipelines.ShadowLayout,
+                ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants),
+                &indexedConstants);
+            vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
+        }
+    }
+
+    /// <summary>Tests whether a submitted surface belongs to an SRP queue filter.</summary>
+    /// <param name="surfaceType">Submitted surface classification.</param>
+    /// <param name="filter">Classes selected by the active render command.</param>
+    /// <returns>True when the surface should be drawn by the command.</returns>
+    private static bool MatchesQueueFilter(
+        RenderSurfaceType surfaceType,
+        RenderQueueFilter filter)
+    {
+        var surfaceFlag = surfaceType switch
+        {
+            RenderSurfaceType.Opaque => RenderQueueFilter.Opaque,
+            RenderSurfaceType.AlphaTest => RenderQueueFilter.AlphaTest,
+            RenderSurfaceType.Transparent => RenderQueueFilter.Transparent,
+            RenderSurfaceType.Overlay => RenderQueueFilter.Overlay,
+            _ => throw new ArgumentOutOfRangeException(nameof(surfaceType))
+        };
+        return (filter & surfaceFlag) != 0;
+    }
+
+    /// <summary>Clears and transitions an unused shadow atlas for safe forward sampling.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="fbo">View owning the atlas.</param>
+    private void ClearDirectionalShadowAtlas(CommandBuffer commandBuffer, ViewportFbo fbo)
+    {
+        var clearValue = new ClearValue
+        {
+            DepthStencil = new ClearDepthStencilValue { Depth = 1f }
+        };
+        var beginInfo = new RenderPassBeginInfo
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = _shadowRenderPass,
+            Framebuffer = fbo.ShadowAtlas.Framebuffer,
+            RenderArea = new Rect2D
+            {
+                Extent = new Extent2D
+                {
+                    Width = DirectionalShadowAtlas.AtlasResolution,
+                    Height = DirectionalShadowAtlas.AtlasResolution
+                }
+            },
+            ClearValueCount = 1,
+            PClearValues = &clearValue
+        };
+        _vk!.CmdBeginRenderPass(commandBuffer, &beginInfo, SubpassContents.Inline);
+        _vk.CmdEndRenderPass(commandBuffer);
+        fbo.ShadowAtlas.MarkInitialized();
+    }
+
+    /// <summary>Records static and skinned casters into one view's cascade atlas.</summary>
     /// <param name="commandBuffer">Active frame command buffer.</param>
     /// <param name="fbo">View owning the shadow target.</param>
     /// <param name="draws">Submitted scene draws.</param>
-    /// <param name="lightViewProjection">World-to-shadow clip transform.</param>
+    /// <param name="cascades">Stable frustum-fitted light transforms.</param>
     /// <param name="settings">Active shadow settings.</param>
     private void RecordDirectionalShadowPass(
         CommandBuffer commandBuffer,
         ViewportFbo fbo,
         List<RenderCommand> draws,
-        Matrix4x4 lightViewProjection,
+        DirectionalShadowCascades cascades,
         DirectionalShadowSettings settings)
     {
         var clearValue = new ClearValue
@@ -4434,40 +4980,74 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         {
             SType = StructureType.RenderPassBeginInfo,
             RenderPass = _shadowRenderPass,
-            Framebuffer = fbo.ShadowFramebuffer,
+            Framebuffer = fbo.ShadowAtlas.Framebuffer,
             RenderArea = new Rect2D
             {
                 Extent = new Extent2D
                 {
-                    Width = ViewportFbo.ShadowResolution,
-                    Height = ViewportFbo.ShadowResolution
+                    Width = DirectionalShadowAtlas.AtlasResolution,
+                    Height = DirectionalShadowAtlas.AtlasResolution
                 }
             },
             ClearValueCount = 1,
             PClearValues = &clearValue
         };
         _vk!.CmdBeginRenderPass(commandBuffer, &beginInfo, SubpassContents.Inline);
-        var viewport = new Viewport
+        for (var cascadeIndex = 0; cascadeIndex < cascades.Count; cascadeIndex++)
         {
-            Width = ViewportFbo.ShadowResolution,
-            Height = ViewportFbo.ShadowResolution,
-            MinDepth = 0f,
-            MaxDepth = 1f
-        };
-        _vk.CmdSetViewport(commandBuffer, 0, 1, &viewport);
-        var scissor = new Rect2D
-        {
-            Extent = new Extent2D
+            var tileX = cascadeIndex & 1;
+            var tileY = cascadeIndex >> 1;
+            var viewport = new Viewport
             {
-                Width = ViewportFbo.ShadowResolution,
-                Height = ViewportFbo.ShadowResolution
-            }
-        };
-        _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
-        _vk.CmdSetDepthBias(commandBuffer, settings.DepthBias, 0f, settings.SlopeBias);
+                X = tileX * DirectionalShadowAtlas.CascadeResolution,
+                Y = tileY * DirectionalShadowAtlas.CascadeResolution,
+                Width = DirectionalShadowAtlas.CascadeResolution,
+                Height = DirectionalShadowAtlas.CascadeResolution,
+                MinDepth = 0f,
+                MaxDepth = 1f
+            };
+            _vk.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+            var scissor = new Rect2D
+            {
+                Offset = new Offset2D
+                {
+                    X = tileX * (int)DirectionalShadowAtlas.CascadeResolution,
+                    Y = tileY * (int)DirectionalShadowAtlas.CascadeResolution
+                },
+                Extent = new Extent2D
+                {
+                    Width = DirectionalShadowAtlas.CascadeResolution,
+                    Height = DirectionalShadowAtlas.CascadeResolution
+                }
+            };
+            _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+            var texelRatio = GetCascadeTexelSize(cascades, cascadeIndex) /
+                MathF.Max(cascades.WorldTexelSizes.X, 1e-6f);
+            var biasScale = Math.Clamp(MathF.Sqrt(texelRatio), 1f, 4f);
+            _vk.CmdSetDepthBias(commandBuffer, settings.DepthBias * biasScale,
+                0f, settings.SlopeBias * biasScale);
+            RecordShadowCasterDraws(commandBuffer, draws,
+                cascades.GetMatrix(cascadeIndex));
+        }
+        _vk.CmdEndRenderPass(commandBuffer);
+        fbo.ShadowAtlas.MarkInitialized();
+    }
+
+    /// <summary>Records all eligible draw commands into one active shadow tile.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="draws">Submitted scene draws.</param>
+    /// <param name="lightViewProjection">Current cascade transform.</param>
+    private void RecordShadowCasterDraws(
+        CommandBuffer commandBuffer,
+        List<RenderCommand> draws,
+        Matrix4x4 lightViewProjection)
+    {
+        var vk = _vk!;
         for (var index = 0; index < draws.Count; index++)
         {
             var draw = draws[index];
+            if (!draw.CastsShadows)
+                continue;
             if (_persistentSkinnedMeshes!.ContainsMesh(draw.Mesh))
             {
                 if (!draw.SkinPalette.IsValid)
@@ -4476,23 +5056,23 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     draw.Mesh, draw.SkinPalette, _activeFrameIndex);
                 if (binding.IndexCount == 0)
                     continue;
-                _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+                vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
                     _pipelines.SkinnedShadowPipeline);
                 var vertexBuffer = binding.VertexBuffer;
                 var offset = 0UL;
-                _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
-                _vk.CmdBindIndexBuffer(commandBuffer, binding.IndexBuffer, 0, IndexType.Uint32);
+                vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
+                vk.CmdBindIndexBuffer(commandBuffer, binding.IndexBuffer, 0, IndexType.Uint32);
                 var paletteDescriptor = binding.PaletteDescriptor;
-                _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+                vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
                     _pipelines.SkinnedShadowLayout, 4, 1, &paletteDescriptor, 0, null);
                 var constants = new ShadowPushConstants
                 {
                     Model = draw.PushConstants.Model,
                     LightViewProjection = lightViewProjection
                 };
-                _vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedShadowLayout,
+                vk.CmdPushConstants(commandBuffer, _pipelines.SkinnedShadowLayout,
                     ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants), &constants);
-                _vk.CmdDrawIndexed(commandBuffer, binding.IndexCount, 1, 0, 0, 0);
+                vk.CmdDrawIndexed(commandBuffer, binding.IndexCount, 1, 0, 0, 0);
                 continue;
             }
             if (!_persistentIndexedMeshes!.Contains(draw.Mesh))
@@ -4500,50 +5080,162 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             var indexed = _persistentIndexedMeshes.GetBinding(draw.Mesh);
             if (indexed.IndexCount == 0)
                 continue;
-            _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+            vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
                 _pipelines.ShadowPipeline);
             var indexedVertexBuffer = indexed.VertexBuffer;
             var indexedOffset = 0UL;
-            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
+            vk.CmdBindVertexBuffers(commandBuffer, 0, 1,
                 &indexedVertexBuffer, &indexedOffset);
-            _vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0, IndexType.Uint32);
+            vk.CmdBindIndexBuffer(commandBuffer, indexed.IndexBuffer, 0, IndexType.Uint32);
             var indexedConstants = new ShadowPushConstants
             {
                 Model = draw.PushConstants.Model,
                 LightViewProjection = lightViewProjection
             };
-            _vk.CmdPushConstants(commandBuffer, _pipelines.ShadowLayout,
+            vk.CmdPushConstants(commandBuffer, _pipelines.ShadowLayout,
                 ShaderStageFlags.VertexBit, 0, (uint)sizeof(ShadowPushConstants),
                 &indexedConstants);
-            _vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
+            vk.CmdDrawIndexed(commandBuffer, indexed.IndexCount, 1, 0, 0, 0);
         }
-        _vk.CmdEndRenderPass(commandBuffer);
     }
 
-    /// <summary>Builds a camera-centered directional-light shadow transform.</summary>
-    /// <param name="camera">Camera transforms from one submitted draw.</param>
-    /// <param name="lighting">Resolved directional light.</param>
-    /// <param name="maxDistance">Square world-space shadow coverage.</param>
-    /// <returns>Combined light view and Vulkan-corrected projection.</returns>
-    private static Matrix4x4 CreateDirectionalShadowMatrix(
-        PushConstants camera,
-        SceneLighting lighting,
-        float maxDistance)
+    /// <summary>Gets whether any collected local light owns a shadow-atlas row.</summary>
+    /// <param name="lights">Collected view lights.</param>
+    /// <returns>True when at least one point or spot light owns a shadow slot.</returns>
+    private static bool HasLocalShadowLights(SceneLightSet lights)
     {
-        var inverseView = Matrix4x4.Invert(camera.View, out var inverse)
-            ? inverse : Matrix4x4.Identity;
-        var cameraPosition = inverseView.Translation;
-        var cameraForward = Vector3.Normalize(Vector3.TransformNormal(-Vector3.UnitZ, inverseView));
-        var center = cameraPosition + cameraForward * (maxDistance * 0.3f);
-        var directionToLight = Vector3.Normalize(lighting.DirectionToLight);
-        var up = MathF.Abs(Vector3.Dot(directionToLight, Vector3.UnitY)) > 0.95f
-            ? Vector3.UnitZ : Vector3.UnitY;
-        var view = Matrix4x4.CreateLookAt(
-            center + directionToLight * maxDistance, center, up);
-        var projection = Matrix4x4.CreateOrthographic(
-            maxDistance * 2f, maxDistance * 2f, 0.1f, maxDistance * 3f);
-        projection.M22 = -projection.M22;
-        return view * projection;
+        var source = lights.Lights;
+        for (var index = 0; index < source.Length; index++)
+        {
+            if (source[index].ShadowIndex >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Transitions and clears an unused local-shadow atlas once.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="fbo">View owning the local-shadow target.</param>
+    private void ClearLocalShadowAtlas(CommandBuffer commandBuffer, ViewportFbo fbo)
+    {
+        var clearValue = new ClearValue
+        {
+            DepthStencil = new ClearDepthStencilValue { Depth = 1f }
+        };
+        var beginInfo = new RenderPassBeginInfo
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = _shadowRenderPass,
+            Framebuffer = fbo.LocalShadowAtlas.Framebuffer,
+            RenderArea = new Rect2D
+            {
+                Extent = new Extent2D
+                {
+                    Width = LocalShadowAtlas.AtlasWidth,
+                    Height = LocalShadowAtlas.AtlasHeight
+                }
+            },
+            ClearValueCount = 1,
+            PClearValues = &clearValue
+        };
+        _vk!.CmdBeginRenderPass(commandBuffer, &beginInfo, SubpassContents.Inline);
+        _vk.CmdEndRenderPass(commandBuffer);
+        fbo.LocalShadowAtlas.MarkInitialized();
+    }
+
+    /// <summary>Renders every shadowed point and spot light into its atlas row.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="fbo">View owning the local-shadow target.</param>
+    /// <param name="draws">Submitted scene draws.</param>
+    /// <param name="lights">Collected view lights.</param>
+    /// <param name="settings">Active local-shadow settings.</param>
+    private void RecordLocalShadowPass(
+        CommandBuffer commandBuffer,
+        ViewportFbo fbo,
+        List<RenderCommand> draws,
+        SceneLightSet lights,
+        LocalShadowSettings settings)
+    {
+        var clearValue = new ClearValue
+        {
+            DepthStencil = new ClearDepthStencilValue { Depth = 1f }
+        };
+        var beginInfo = new RenderPassBeginInfo
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = _shadowRenderPass,
+            Framebuffer = fbo.LocalShadowAtlas.Framebuffer,
+            RenderArea = new Rect2D
+            {
+                Extent = new Extent2D
+                {
+                    Width = LocalShadowAtlas.AtlasWidth,
+                    Height = LocalShadowAtlas.AtlasHeight
+                }
+            },
+            ClearValueCount = 1,
+            PClearValues = &clearValue
+        };
+        _vk!.CmdBeginRenderPass(commandBuffer, &beginInfo, SubpassContents.Inline);
+        var source = lights.Lights;
+        for (var lightIndex = 0; lightIndex < source.Length; lightIndex++)
+        {
+            var light = source[lightIndex];
+            if (light.ShadowIndex < 0)
+                continue;
+            var transforms = light.Type == SceneLightType.Point
+                ? LocalShadowMatrixCalculator.CalculatePoint(light)
+                : LocalShadowMatrixCalculator.CalculateSpot(light);
+            for (var faceIndex = 0; faceIndex < transforms.Count; faceIndex++)
+            {
+                var viewport = new Viewport
+                {
+                    X = faceIndex * LocalShadowAtlas.FaceResolution,
+                    Y = light.ShadowIndex * LocalShadowAtlas.FaceResolution,
+                    Width = LocalShadowAtlas.FaceResolution,
+                    Height = LocalShadowAtlas.FaceResolution,
+                    MinDepth = 0f,
+                    MaxDepth = 1f
+                };
+                _vk.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+                var scissor = new Rect2D
+                {
+                    Offset = new Offset2D
+                    {
+                        X = faceIndex * (int)LocalShadowAtlas.FaceResolution,
+                        Y = light.ShadowIndex * (int)LocalShadowAtlas.FaceResolution
+                    },
+                    Extent = new Extent2D
+                    {
+                        Width = LocalShadowAtlas.FaceResolution,
+                        Height = LocalShadowAtlas.FaceResolution
+                    }
+                };
+                _vk.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+                _vk.CmdSetDepthBias(commandBuffer, settings.DepthBias,
+                    0f, settings.SlopeBias);
+                RecordShadowCasterDraws(commandBuffer, draws,
+                    transforms.GetMatrix(faceIndex));
+            }
+        }
+        _vk.CmdEndRenderPass(commandBuffer);
+        fbo.LocalShadowAtlas.MarkInitialized();
+    }
+
+    /// <summary>Gets one cascade's world-space texel size.</summary>
+    /// <param name="cascades">Computed cascade metrics.</param>
+    /// <param name="index">Cascade index.</param>
+    /// <returns>World-space texel size.</returns>
+    private static float GetCascadeTexelSize(DirectionalShadowCascades cascades, int index)
+    {
+        return index switch
+        {
+            0 => cascades.WorldTexelSizes.X,
+            1 => cascades.WorldTexelSizes.Y,
+            2 => cascades.WorldTexelSizes.Z,
+            3 => cascades.WorldTexelSizes.W,
+            _ => throw new ArgumentOutOfRangeException(nameof(index))
+        };
     }
 
     private void RecordSwapchainPass(CommandBuffer commandBuffer, uint imageIndex)
@@ -4581,9 +5273,12 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
 
         var windowViewport = new Viewport
         {
-            X = 0, Y = 0,
-            Width = _swapchainManager.Extent.Width, Height = _swapchainManager.Extent.Height,
-            MinDepth = 0.0f, MaxDepth = 1.0f
+            X = 0,
+            Y = 0,
+            Width = _swapchainManager.Extent.Width,
+            Height = _swapchainManager.Extent.Height,
+            MinDepth = 0.0f,
+            MaxDepth = 1.0f
         };
         _vk.CmdSetViewport(commandBuffer, 0, 1, &windowViewport);
 
@@ -4982,7 +5677,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         // Cleanup viewport FBOs and their vertex buffers
         foreach (var (id, fbo) in _viewportFbos)
             fbo.Destroy(_vk!, _device, _pipelines.TextureDescriptorPool,
-                _pipelines.ModelTextureDescriptorPool);
+                _pipelines.ShadowSamplingDescriptorPool,
+                _pipelines.SceneLightingDescriptorPool);
         _viewportFbos.Clear();
 
         foreach (var buffers in _viewportQuadBuffers.Values)
@@ -4995,19 +5691,19 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             _persistentVertices is not null)
         {
             foreach (var retired in _retiredMeshes)
-            foreach (var mesh in retired)
-            {
-                if (_persistentSkinnedMeshes.ContainsMesh(mesh))
+                foreach (var mesh in retired)
                 {
-                    var resource = _persistentSkinnedMeshes.RemoveMesh(mesh);
-                    _pendingPaletteRetirements.Remove(resource.PaletteHandle);
-                    _persistentSkinnedMeshes.Release(resource);
+                    if (_persistentSkinnedMeshes.ContainsMesh(mesh))
+                    {
+                        var resource = _persistentSkinnedMeshes.RemoveMesh(mesh);
+                        _pendingPaletteRetirements.Remove(resource.PaletteHandle);
+                        _persistentSkinnedMeshes.Release(resource);
+                    }
+                    else if (_persistentIndexedMeshes.Contains(mesh))
+                        _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
+                    else
+                        _persistentVertices.Release(_persistentVertices.Remove(mesh));
                 }
-                else if (_persistentIndexedMeshes.Contains(mesh))
-                    _persistentIndexedMeshes.Release(_persistentIndexedMeshes.Remove(mesh));
-                else
-                    _persistentVertices.Release(_persistentVertices.Remove(mesh));
-            }
         }
         foreach (var retired in _retiredMeshes)
             retired.Clear();
@@ -5019,8 +5715,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (_persistentTextures is not null)
         {
             foreach (var retired in _retiredTextures)
-            foreach (var texture in retired)
-                _persistentTextures.Release(_persistentTextures.Remove(texture));
+                foreach (var texture in retired)
+                    _persistentTextures.Release(_persistentTextures.Remove(texture));
         }
         foreach (var retired in _retiredTextures)
             retired.Clear();

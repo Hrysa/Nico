@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../example_game_shared/ExampleGame.Shared.csproj" />
     <ProjectReference Include="../src/Engine.Assets/Engine.Assets.csproj" />
     <ProjectReference Include="../src/Engine.Core/Engine.Core.csproj" />
     <ProjectReference Include="../src/Engine.Graphics/Engine.Graphics.csproj" />

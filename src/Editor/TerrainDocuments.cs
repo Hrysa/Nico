@@ -10,7 +10,10 @@ public enum TerrainToolMode
     Sculpt,
 
     /// <summary>Paints one terrain-material layer.</summary>
-    Paint
+    Paint,
+
+    /// <summary>Paints persistent mesh instances onto the terrain surface.</summary>
+    Objects
 }
 
 /// <summary>Identifies the height operation performed by a terrain brush.</summary>
@@ -43,7 +46,7 @@ public readonly record struct TerrainEditRegion(
 /// <summary>Stores shared Scene terrain-tool settings independently of Inspector lifetime.</summary>
 public sealed class TerrainBrushSettings
 {
-    /// <summary>Gets or sets whether the brush sculpts heights or paints layers.</summary>
+    /// <summary>Gets or sets whether the brush edits heights, layers, or scene objects.</summary>
     public TerrainToolMode ToolMode
     {
         get;
@@ -70,6 +73,122 @@ public sealed class TerrainBrushSettings
             Changed?.Invoke();
         }
     }
+
+    /// <summary>Gets or sets the static mesh painted by the object brush.</summary>
+    public AssetReference? ObjectMesh
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Gets or sets whether the object brush erases matching painted instances.</summary>
+    public bool EraseObjects
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Gets or sets the minimum world-space distance between painted instances.</summary>
+    public float ObjectSpacing
+    {
+        get;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    } = 1.5f;
+
+    /// <summary>Gets or sets the normalized number of placement attempts per brush area.</summary>
+    public float ObjectDensity
+    {
+        get;
+        set
+        {
+            if (!float.IsFinite(value) || value is <= 0f or > 1f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    } = 0.65f;
+
+    /// <summary>Gets or sets the smallest random uniform object scale.</summary>
+    public float MinimumObjectScale
+    {
+        get;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (field == value)
+                return;
+            field = value;
+            if (MaximumObjectScale < value)
+                MaximumObjectScale = value;
+            Changed?.Invoke();
+        }
+    } = 0.85f;
+
+    /// <summary>Gets or sets the largest random uniform object scale.</summary>
+    public float MaximumObjectScale
+    {
+        get;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (field == value)
+                return;
+            field = value;
+            if (MinimumObjectScale > value)
+                MinimumObjectScale = value;
+            Changed?.Invoke();
+        }
+    } = 1.15f;
+
+    /// <summary>Gets or sets whether painted object up axes follow the terrain normal.</summary>
+    public bool AlignObjectsToNormal
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    } = true;
+
+    /// <summary>Gets or sets whether painted objects receive a random full yaw rotation.</summary>
+    public bool RandomizeObjectYaw
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    } = true;
 
     /// <summary>Gets or sets whether primary pointer input sculpts selected terrain.</summary>
     public bool IsEnabled
@@ -129,6 +248,12 @@ public sealed class TerrainBrushSettings
 
     /// <summary>Occurs when any shared tool option changes.</summary>
     public event Action? Changed;
+
+    /// <summary>Refreshes tool observers after related stroke history changes.</summary>
+    internal void RefreshObservers()
+    {
+        Changed?.Invoke();
+    }
 }
 
 /// <summary>Loads editable terrain documents from Nico terrain sources.</summary>

@@ -18,7 +18,7 @@ public sealed class GlbModelImporter : IAssetImporter
     public string Id => "gltf-model";
 
     /// <inheritdoc/>
-    public int Version => 11;
+    public int Version => 12;
 
     /// <inheritdoc/>
     public AssetImportResult Import(AssetImportContext context)
@@ -43,11 +43,16 @@ public sealed class GlbModelImporter : IAssetImporter
             if (!hasMeshes || hasAnimations)
                 artifacts.AddRange(ImportStandaloneAnimations(
                     context, document.RootElement, binary, model!));
-            artifacts.AddRange(ImportMaterials(context, document.RootElement));
-            artifacts.AddRange(ImportTextures(context, document.RootElement, binary));
+            var diagnostics = new List<AssetImportDiagnostic>();
+            var importedTextureSlots = new HashSet<int>();
+            var textureArtifacts = ImportTextures(context, document.RootElement, binary,
+                importedTextureSlots, diagnostics);
+            artifacts.AddRange(ImportMaterials(
+                context, document.RootElement, importedTextureSlots));
+            artifacts.AddRange(textureArtifacts);
             var objects = ImportObjects(document.RootElement,
                 animationsAreArtifacts: hasAnimations);
-            return new AssetImportResult(artifacts, [], [], objects);
+            return new AssetImportResult(artifacts, [], diagnostics, objects);
         }
     }
 
@@ -843,10 +848,12 @@ public sealed class GlbModelImporter : IAssetImporter
     /// <summary>Imports glTF standard material factors as independently addressable artifacts.</summary>
     /// <param name="context">Artifact output context.</param>
     /// <param name="root">glTF JSON root.</param>
+    /// <param name="importedTextureSlots">Texture slots available as generated artifacts.</param>
     /// <returns>Published material artifacts.</returns>
     private static IReadOnlyList<AssetArtifact> ImportMaterials(
         AssetImportContext context,
-        JsonElement root)
+        JsonElement root,
+        IReadOnlySet<int> importedTextureSlots)
     {
         if (!root.TryGetProperty("materials", out var materials))
             return [];
@@ -904,13 +911,14 @@ public sealed class GlbModelImporter : IAssetImporter
                     Metallic = metallic,
                     Roughness = roughness,
                     DoubleSided = doubleSided,
-                    BaseColorTexture = baseColorTextureSlot >= 0
+                    BaseColorTexture = importedTextureSlots.Contains(baseColorTextureSlot)
                         ? new AssetReference(context.Metadata.Id, $"texture/{baseColorTextureSlot}")
                         : null,
-                    NormalTexture = normalTextureSlot >= 0
+                    NormalTexture = importedTextureSlots.Contains(normalTextureSlot)
                         ? new AssetReference(context.Metadata.Id, $"texture/{normalTextureSlot}")
                         : null,
-                    MetallicRoughnessTexture = metallicRoughnessTextureSlot >= 0
+                    MetallicRoughnessTexture = importedTextureSlots.Contains(
+                        metallicRoughnessTextureSlot)
                         ? new AssetReference(context.Metadata.Id, $"texture/{metallicRoughnessTextureSlot}")
                         : null
                 });
@@ -926,11 +934,15 @@ public sealed class GlbModelImporter : IAssetImporter
     /// <param name="context">Artifact output context.</param>
     /// <param name="root">glTF JSON root.</param>
     /// <param name="binary">GLB binary chunk.</param>
+    /// <param name="importedTextureSlots">Texture slots successfully emitted as artifacts.</param>
+    /// <param name="diagnostics">Destination for recoverable texture warnings.</param>
     /// <returns>Published compressed texture artifacts.</returns>
     private static IReadOnlyList<AssetArtifact> ImportTextures(
         AssetImportContext context,
         JsonElement root,
-        byte[] binary)
+        byte[] binary,
+        ISet<int> importedTextureSlots,
+        ICollection<AssetImportDiagnostic> diagnostics)
     {
         if (!root.TryGetProperty("textures", out var textures))
             return [];
@@ -946,7 +958,18 @@ public sealed class GlbModelImporter : IAssetImporter
                 throw new InvalidDataException("GLB texture image index is out of range.");
             var image = images[sourceIndex];
             if (!image.TryGetProperty("bufferView", out var bufferViewElement))
-                throw new InvalidDataException("GLB external image URIs are not supported.");
+            {
+                if (!image.TryGetProperty("uri", out var uriElement))
+                    throw new InvalidDataException(
+                        "GLB image has neither an embedded buffer view nor a URI.");
+                var uri = uriElement.GetString() ?? string.Empty;
+                diagnostics.Add(new AssetImportDiagnostic(
+                    AssetDiagnosticSeverity.Warning,
+                    "GLB_EXTERNAL_IMAGE_URI_SKIPPED",
+                    $"Skipped GLB texture {textureIndex} because image URI '{uri}' is external."));
+                textureIndex++;
+                continue;
+            }
             var mimeType = image.GetProperty("mimeType").GetString();
             _ = mimeType switch
             {
@@ -977,6 +1000,7 @@ public sealed class GlbModelImporter : IAssetImporter
             }
             artifacts.Add(new AssetArtifact($"texture/{textureIndex}",
                 "nico/texture2d", relativePath));
+            importedTextureSlots.Add(textureIndex);
             textureIndex++;
         }
         return artifacts;

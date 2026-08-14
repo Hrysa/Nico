@@ -87,6 +87,31 @@ public class SceneScriptRuntimeTests
         Assert.Equal(allocationStart, allocationEnd);
     }
 
+    /// <summary>Polls staged script startup without running normal gameplay updates.</summary>
+    [Fact]
+    public void Runtime_PendingStartup_CompletesThroughExplicitPolling()
+    {
+        var scriptId = AssetId.New();
+        var root = new Node3D();
+        var owner = new Node3D();
+        owner.AddComponent(new ScriptComponent(scriptId));
+        root.AddChild(owner);
+        using var runtime = new SceneScriptRuntime();
+        runtime.Attach(root, new TestScriptCatalog(scriptId, typeof(PendingStartupScript)));
+
+        runtime.Start();
+        runtime.UpdateStartup();
+
+        var script = Assert.IsType<PendingStartupScript>(Assert.Single(runtime.Scripts));
+        Assert.False(runtime.IsStartupComplete);
+        Assert.Equal(1, script.StartupPollCount);
+
+        runtime.UpdateStartup();
+
+        Assert.True(runtime.IsStartupComplete);
+        Assert.Equal(2, script.StartupPollCount);
+    }
+
     /// <summary>Verifies scene scripts receive held and one-update keyboard transitions.</summary>
     [Fact]
     public void Runtime_InputSource_ProvidesStableKeyboardState()
@@ -256,6 +281,22 @@ public class SceneScriptRuntimeTests
         public override void OnLateUpdate(double deltaTime)
         {
             LateUpdateCalled = true;
+        }
+    }
+
+    /// <summary>Completes startup after two explicit polls.</summary>
+    public sealed class PendingStartupScript : SceneScript
+    {
+        /// <summary>Gets the number of startup polls.</summary>
+        public int StartupPollCount { get; private set; }
+
+        /// <inheritdoc />
+        public override bool IsStartupComplete => StartupPollCount >= 2;
+
+        /// <inheritdoc />
+        public override void OnStartupUpdate()
+        {
+            StartupPollCount++;
         }
     }
 

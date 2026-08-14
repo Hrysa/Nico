@@ -19,6 +19,9 @@ public sealed class GameScriptHost : IDisposable
     /// <summary>Gets the number of scripts attached to the active play scene.</summary>
     public int ScriptCount => _runtime?.Scripts.Count ?? 0;
 
+    /// <summary>Gets whether every script in the staged scene has completed startup.</summary>
+    public bool IsSceneStartupComplete => _runtime?.IsStartupComplete ?? true;
+
     /// <summary>Gets the compiled UUID script catalog when asset discovery was supplied.</summary>
     public IScriptTypeCatalog? Catalog => _catalog;
 
@@ -112,6 +115,13 @@ public sealed class GameScriptHost : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _runtime?.Update(deltaTime);
+    }
+
+    /// <summary>Polls non-blocking startup work for a staged scene.</summary>
+    public void UpdateSceneStartup()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _runtime?.UpdateStartup();
     }
 
     /// <summary>Updates scripts after physics and before rendering.</summary>

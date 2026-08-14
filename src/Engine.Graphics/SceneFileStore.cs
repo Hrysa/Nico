@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 11;
+    private const int CurrentFormatVersion = 13;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -107,6 +107,8 @@ public static class SceneFileStore
         {
             PerspectiveCamera => SceneNodeType.PerspectiveCamera,
             DirectionalLight3D => SceneNodeType.DirectionalLight,
+            PointLight3D => SceneNodeType.PointLight,
+            SpotLight3D => SceneNodeType.SpotLight,
             MeshInstance3D => SceneNodeType.AssetMesh,
             Node3D when node.GetType() == typeof(Node3D) => SceneNodeType.Node3D,
             ICustomSceneNode => SceneNodeType.Custom,
@@ -114,6 +116,8 @@ public static class SceneFileStore
         };
         var camera = node as PerspectiveCamera;
         var light = node as DirectionalLight3D;
+        var pointLight = node as PointLight3D;
+        var spotLight = node as SpotLight3D;
         var children = node.Children.Select(child => EncodeNode(child, context)).ToList();
         return new SceneNodeData(
             id,
@@ -128,7 +132,14 @@ public static class SceneFileStore
             camera is null ? null : new CameraData(camera.Fov, camera.Near, camera.Far),
             light is null ? null : new DirectionalLightData(
                 SceneVector3.From(light.Color), light.Intensity,
-                light.AmbientIntensity, light.IsEnabled),
+                light.AmbientIntensity, light.IsEnabled, light.CastsShadows),
+            pointLight is null ? null : new PointLightData(
+                SceneVector3.From(pointLight.Color), pointLight.Intensity,
+                pointLight.Range, pointLight.IsEnabled, pointLight.CastsShadows),
+            spotLight is null ? null : new SpotLightData(
+                SceneVector3.From(spotLight.Color), spotLight.Intensity,
+                spotLight.Range, spotLight.InnerAngle, spotLight.OuterAngle,
+                spotLight.IsEnabled, spotLight.CastsShadows),
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
                     meshInstance.Materials.ToList()) : null,
@@ -159,6 +170,8 @@ public static class SceneFileStore
             SceneNodeType.ImportedModel or SceneNodeType.AssetMesh => CreateAssetMesh(data.Model),
             SceneNodeType.PerspectiveCamera => CreateCamera(data.Camera),
             SceneNodeType.DirectionalLight => CreateDirectionalLight(data.DirectionalLight),
+            SceneNodeType.PointLight => CreatePointLight(data.PointLight),
+            SceneNodeType.SpotLight => CreateSpotLight(data.SpotLight),
             SceneNodeType.Custom => CreateCustomNode(data.CustomType, nodeFactory),
             _ => throw new InvalidDataException($"Unsupported scene node type '{data.Type}'.")
         };
@@ -225,6 +238,10 @@ public static class SceneFileStore
                 case ColliderComponent collider:
                     result.Add(EncodeCollider(collider));
                     break;
+                case TerrainScatterInstanceComponent scatter:
+                    result.Add(new SceneComponentData(
+                        SceneComponentType.TerrainScatterInstance, scatter.Enabled));
+                    break;
                 default:
                     throw new NotSupportedException(
                         $"Component type '{components[index].GetType().Name}' cannot be saved.");
@@ -276,6 +293,9 @@ public static class SceneFileStore
                         GravityScale = body.GravityScale,
                         LinearDamping = body.LinearDamping
                     };
+                    break;
+                case SceneComponentType.TerrainScatterInstance:
+                    component = new TerrainScatterInstanceComponent();
                     break;
                 case SceneComponentType.Collider when componentData.Collider is { } legacy:
                     component = DecodeLegacyCollider(legacy);
@@ -394,9 +414,9 @@ public static class SceneFileStore
         {
             LegacyColliderShape.Sphere => new SphereColliderComponent { Radius = data.Radius },
             LegacyColliderShape.Capsule => new CapsuleColliderComponent
-                { Radius = data.Radius, Height = data.Height },
+            { Radius = data.Radius, Height = data.Height },
             LegacyColliderShape.Cylinder => new CylinderColliderComponent
-                { Radius = data.Radius, Height = data.Height },
+            { Radius = data.Radius, Height = data.Height },
             LegacyColliderShape.Plane => new PlaneColliderComponent(),
             LegacyColliderShape.Mesh => new MeshColliderComponent { Mesh = data.Mesh },
             _ => new BoxColliderComponent { Size = data.Size.ToVector3() }
@@ -445,7 +465,44 @@ public static class SceneFileStore
             Color = data.Color.ToVector3(),
             Intensity = data.Intensity,
             AmbientIntensity = data.AmbientIntensity,
-            IsEnabled = data.IsEnabled
+            IsEnabled = data.IsEnabled,
+            CastsShadows = data.CastsShadows
+        };
+    }
+
+    /// <summary>Creates a point light from serialized settings.</summary>
+    /// <param name="data">Serialized point-light settings.</param>
+    /// <returns>A configured point light.</returns>
+    private static PointLight3D CreatePointLight(PointLightData? data)
+    {
+        if (data is null)
+            throw new InvalidDataException("A point light node is missing light settings.");
+        return new PointLight3D
+        {
+            Color = data.Color.ToVector3(),
+            Intensity = data.Intensity,
+            Range = data.Range,
+            IsEnabled = data.IsEnabled,
+            CastsShadows = data.CastsShadows
+        };
+    }
+
+    /// <summary>Creates a spot light from serialized settings.</summary>
+    /// <param name="data">Serialized spot-light settings.</param>
+    /// <returns>A configured spot light.</returns>
+    private static SpotLight3D CreateSpotLight(SpotLightData? data)
+    {
+        if (data is null)
+            throw new InvalidDataException("A spot light node is missing light settings.");
+        return new SpotLight3D
+        {
+            Color = data.Color.ToVector3(),
+            Intensity = data.Intensity,
+            Range = data.Range,
+            OuterAngle = data.OuterAngle,
+            InnerAngle = data.InnerAngle,
+            IsEnabled = data.IsEnabled,
+            CastsShadows = data.CastsShadows
         };
     }
 
@@ -479,6 +536,8 @@ public static class SceneFileStore
         string? CustomType,
         CameraData? Camera,
         DirectionalLightData? DirectionalLight,
+        PointLightData? PointLight,
+        SpotLightData? SpotLight,
         ModelData? Model,
         List<SceneNodeData> Children);
 
@@ -502,7 +561,24 @@ public static class SceneFileStore
         SceneVector3 Color,
         float Intensity,
         float AmbientIntensity,
-        bool IsEnabled);
+        bool IsEnabled,
+        bool CastsShadows = true);
+
+    private sealed record PointLightData(
+        SceneVector3 Color,
+        float Intensity,
+        float Range,
+        bool IsEnabled,
+        bool CastsShadows);
+
+    private sealed record SpotLightData(
+        SceneVector3 Color,
+        float Intensity,
+        float Range,
+        float InnerAngle,
+        float OuterAngle,
+        bool IsEnabled,
+        bool CastsShadows);
 
     private sealed record ColliderData(
         LegacyColliderShape? Shape = null,
@@ -658,6 +734,8 @@ public static class SceneFileStore
         AssetMesh,
         PerspectiveCamera,
         DirectionalLight,
+        PointLight,
+        SpotLight,
         Custom
     }
 
@@ -672,7 +750,8 @@ public static class SceneFileStore
         CylinderCollider,
         PlaneCollider,
         MeshCollider,
-        TerrainCollider
+        TerrainCollider,
+        TerrainScatterInstance
     }
 
     /// <summary>Shape discriminator retained only for loading scene format version 8.</summary>

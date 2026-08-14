@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <ProjectReference Include="../../example_game_server/ExampleGame.Server.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../example_game/scenes/scene.node"
+             Link="example_game/scenes/scene.node"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../example_game/maps/island.nterrain"
+             Link="example_game/maps/island.nterrain"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

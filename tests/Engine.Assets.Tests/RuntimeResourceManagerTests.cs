@@ -103,6 +103,22 @@ public class RuntimeResourceManagerTests
         Assert.Equal(ResourceLoadState.Ready, manager.GetState(handle));
     }
 
+    /// <summary>Verifies an asset-wide reload refreshes a pinned typed handle in place.</summary>
+    [Fact]
+    public async Task Reload_Asset_RefreshesPinnedGeneration()
+    {
+        var fixture = new ResourceFixture("first");
+        using var manager = fixture.CreateManager();
+        var handle = manager.Acquire(fixture.Reference, new TestResource("fallback"));
+        await manager.WaitAsync(handle);
+        fixture.SetContent("second", "generation-2");
+
+        await manager.ReloadAsync(fixture.Reference.Asset);
+
+        Assert.Equal("second", manager.Get(handle).Value);
+        Assert.Equal(ResourceLoadState.Ready, manager.GetState(handle));
+    }
+
     /// <summary>Verifies failed reloads retain the previous ready resource and expose the error.</summary>
     [Fact]
     public async Task Reload_Failure_PreservesPreviousReadyResource()

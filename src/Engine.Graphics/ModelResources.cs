@@ -409,6 +409,10 @@ public sealed class ResolvedStandardMaterial
     /// <summary>Gets or sets whether back-face culling is disabled.</summary>
     public bool DoubleSided { get; set; }
 
+    /// <summary>Gets the SRP queue class implied by the material opacity factor.</summary>
+    public RenderSurfaceType SurfaceType => BaseColor.W < 0.999f
+        ? RenderSurfaceType.Transparent : RenderSurfaceType.Opaque;
+
     /// <summary>Resolves persistent material values with optional GPU textures.</summary>
     /// <param name="source">Persistent material resource.</param>
     /// <param name="baseColorTexture">Renderer-owned base-color texture handle.</param>

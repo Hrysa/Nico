@@ -16,6 +16,20 @@ public sealed class SceneScriptRuntime : IDisposable
     /// <summary>Gets the script instances attached to the scene.</summary>
     public IReadOnlyList<SceneScript> Scripts => _scripts;
 
+    /// <summary>Gets whether every attached script has completed startup.</summary>
+    public bool IsStartupComplete
+    {
+        get
+        {
+            for (var index = 0; index < _scripts.Count; index++)
+            {
+                if (!_scripts[index].IsStartupComplete)
+                    return false;
+            }
+            return true;
+        }
+    }
+
     /// <summary>Finds the runtime instance created for one authored component.</summary>
     /// <param name="component">Script component identity.</param>
     /// <param name="script">Attached runtime instance when found.</param>
@@ -77,6 +91,20 @@ public sealed class SceneScriptRuntime : IDisposable
         _started = true;
         foreach (var script in _scripts)
             script.OnReady();
+    }
+
+    /// <summary>Polls scripts that still have non-blocking startup work pending.</summary>
+    public void UpdateStartup()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_started)
+            throw new InvalidOperationException("The script runtime has not been started.");
+        for (var index = 0; index < _scripts.Count; index++)
+        {
+            var script = _scripts[index];
+            if (!script.IsStartupComplete)
+                script.OnStartupUpdate();
+        }
     }
 
     /// <summary>Updates all active scripts.</summary>

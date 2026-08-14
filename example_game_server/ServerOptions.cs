@@ -6,7 +6,10 @@ internal sealed record ServerOptions(
     int TickRate,
     long? MaximumTicks,
     int SnapshotInterval,
-    bool RunWithoutDelay)
+    bool RunWithoutDelay,
+    int Port,
+    int NetworkSnapshotRate,
+    double ClientTimeoutSeconds)
 {
     /// <summary>Parses supported server command-line arguments.</summary>
     /// <param name="args">Arguments supplied to the process.</param>
@@ -23,6 +26,9 @@ internal sealed record ServerOptions(
         long? maximumTicks = null;
         var snapshotInterval = 60;
         var runWithoutDelay = false;
+        var port = 7777;
+        var networkSnapshotRate = 20;
+        var clientTimeoutSeconds = 10d;
         for (var index = 0; index < args.Length; index++)
         {
             var argument = args[index];
@@ -51,14 +57,33 @@ internal sealed record ServerOptions(
                     parsedInterval > 0:
                     snapshotInterval = parsedInterval;
                     break;
+                case "--port" when int.TryParse(value, out var parsedPort) &&
+                    parsedPort is >= 0 and <= ushort.MaxValue:
+                    port = parsedPort;
+                    break;
+                case "--network-snapshot-rate" when
+                    int.TryParse(value, out var parsedSnapshotRate) && parsedSnapshotRate > 0:
+                    networkSnapshotRate = parsedSnapshotRate;
+                    break;
+                case "--client-timeout" when
+                    double.TryParse(value, out var parsedTimeout) &&
+                    double.IsFinite(parsedTimeout) && parsedTimeout > 0d:
+                    clientTimeoutSeconds = parsedTimeout;
+                    break;
                 default:
                     options = null;
                     error = $"Unknown or invalid argument: {argument} {value}";
                     return false;
             }
         }
-        options = new ServerOptions(
-            scenePath, tickRate, maximumTicks, snapshotInterval, runWithoutDelay);
+        if (networkSnapshotRate > tickRate)
+        {
+            options = null;
+            error = "--network-snapshot-rate cannot exceed --tick-rate.";
+            return false;
+        }
+        options = new ServerOptions(scenePath, tickRate, maximumTicks, snapshotInterval,
+            runWithoutDelay, port, networkSnapshotRate, clientTimeoutSeconds);
         error = null;
         return true;
     }

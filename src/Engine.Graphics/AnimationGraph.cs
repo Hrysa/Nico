@@ -28,8 +28,8 @@ public sealed class AnimationState
     /// <summary>Gets the stable registry key.</summary>
     public string Key { get; }
 
-    /// <summary>Gets the immutable clip sampled by this state.</summary>
-    public AnimationClipResource Clip { get; }
+    /// <summary>Gets the current published clip sampled by this state.</summary>
+    public AnimationClipResource Clip { get; private set; }
 
     /// <summary>Gets or sets clip-local playback time in seconds.</summary>
     public float Time
@@ -199,6 +199,20 @@ public sealed class AnimationState
 
     /// <summary>Resets completion tracking after an explicit play operation.</summary>
     internal void ResetCompletion() => _endedRaised = false;
+
+    /// <summary>Publishes a new clip generation while retaining this live state's identity.</summary>
+    /// <param name="clip">Replacement clip with the same registry key.</param>
+    internal void ReplaceClip(AnimationClipResource clip)
+    {
+        var normalizedTime = NormalizedTime;
+        Clip = clip;
+        _time = normalizedTime * clip.Duration;
+        Speed = clip.DefaultSpeed;
+        Loop = clip.DefaultLoop;
+        _endedRaised = false;
+        SkeletonPose.SampleLocalTransforms(
+            _controller.Skeleton, clip, (float)_time, LocalTransforms);
+    }
 
     /// <summary>Releases callbacks when the owning runtime controller is destroyed.</summary>
     internal void ClearCallbacks() => Ended = null;
@@ -448,6 +462,24 @@ public sealed class AnimationController : IDisposable
                 throw new ArgumentException(
                     $"Animation clip name '{clip.Name}' is already registered.", nameof(clips));
         }
+    }
+
+    /// <summary>Registers new clips and updates existing named states in place.</summary>
+    /// <param name="clips">Current published clips keyed by stable name.</param>
+    public void RefreshClips(IReadOnlyList<AnimationClipResource> clips)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(clips);
+        for (var index = 0; index < clips.Count; index++)
+        {
+            var clip = clips[index];
+            ArgumentNullException.ThrowIfNull(clip);
+            if (_states.TryGetValue(clip.Name, out var state))
+                state.ReplaceClip(clip);
+            else
+                RegisterClips([clip]);
+        }
+        EvaluatePose();
     }
 
     /// <summary>Gets or creates the reusable state registered for one clip key.</summary>

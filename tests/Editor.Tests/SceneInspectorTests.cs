@@ -37,17 +37,13 @@ public class SceneInspectorTests
         var light = new DirectionalLight3D();
         var inspector = new SceneInspector(320f, 620f);
         inspector.Bind(light);
-        var red = Assert.IsType<TextField>(FindByName<TextField>(inspector, "LightColorX"));
+        var color = Assert.IsType<ColorPicker>(FindByName<ColorPicker>(inspector, "LightColor"));
         var intensity = Assert.IsType<TextField>(
             FindByName<TextField>(inspector, "LightIntensity"));
         var enabled = Assert.IsType<ToggleButton>(
             FindByName<ToggleButton>(inspector, "LightEnabled"));
 
-        red.SetFocus(true);
-        red.InvokeKeyDown((int)InputKey.Backspace);
-        red.InvokeTextInput('0');
-        red.InvokeTextInput('.');
-        red.InvokeTextInput('5');
+        color.Value = new Vector4(0.5f, 0.25f, 0.75f, 1f);
         intensity.SetFocus(true);
         intensity.InvokeKeyDown((int)InputKey.Backspace);
         intensity.InvokeTextInput('2');
@@ -58,8 +54,28 @@ public class SceneInspectorTests
         enabled.InvokeClick();
 
         Assert.Equal(0.5f, light.Color.X);
+        Assert.Equal(0.25f, light.Color.Y);
+        Assert.Equal(0.75f, light.Color.Z);
         Assert.Equal(2.25f, light.Intensity);
         Assert.False(light.IsEnabled);
+    }
+
+    /// <summary>Exposes shared and cone-specific controls for local lights.</summary>
+    [Fact]
+    public void SpotLight_Bind_ShowsRangeConeAndShadowFields()
+    {
+        var light = new SpotLight3D();
+        var inspector = new SceneInspector(320f, 700f);
+
+        inspector.Bind(light);
+
+        Assert.NotNull(FindByName<TextField>(inspector, "LightRange"));
+        Assert.NotNull(FindByName<TextField>(inspector, "LightInnerAngle"));
+        Assert.NotNull(FindByName<TextField>(inspector, "LightOuterAngle"));
+        var shadows = Assert.IsType<ToggleButton>(
+            FindByName<ToggleButton>(inspector, "LightCastsShadows"));
+        shadows.InvokeClick();
+        Assert.True(light.CastsShadows);
     }
 
     /// <summary>Verifies an empty Inspector has no obsolete property-filter input.</summary>

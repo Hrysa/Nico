@@ -232,6 +232,56 @@ public sealed class InspectorProviderTests : IDisposable
         Assert.Equal(metallicRoughnessTexture, saved.MetallicRoughnessTexture);
     }
 
+    /// <summary>Edits and persists base color through the shared color picker.</summary>
+    [Fact]
+    public void StandardMaterialContent_ColorPicker_UpdatesSharedDocument()
+    {
+        var path = Path.Combine(_directory, "Colored.nmat");
+        MaterialAuthoring.SaveDefault(path);
+        StandardMaterialAsset resource;
+        using (var source = File.OpenRead(path))
+            resource = StandardMaterialAssetCodec.Load(source);
+        var reference = new AssetReference(AssetId.New(), "main");
+        var document = new StandardMaterialDocument(
+            CreateEditableLocation(reference, path), resource, _ => { });
+        var content = new StandardMaterialInspectorContent(
+            300f, document, value => value.ToString());
+        var picker = Assert.IsType<ColorPicker>(
+            FindByName<ColorPicker>(content, "MaterialBaseColor"));
+        var expected = new Vector4(0.1f, 0.2f, 0.3f, 0.4f);
+
+        picker.Value = expected;
+
+        Assert.Equal(expected, document.Value.BaseColor);
+        using var savedSource = File.OpenRead(path);
+        Assert.Equal(expected, StandardMaterialAssetCodec.Load(savedSource).BaseColor);
+    }
+
+    /// <summary>Edits and persists terrain-layer color through the shared color picker.</summary>
+    [Fact]
+    public void TerrainLayerContent_ColorPicker_UpdatesSharedDocument()
+    {
+        var path = Path.Combine(_directory, "Colored.nterrainlayer");
+        TerrainMaterialAuthoring.SaveDefaultLayer(path);
+        TerrainLayerAsset resource;
+        using (var source = File.OpenRead(path))
+            resource = TerrainMaterialAssetCodec.LoadLayer(source);
+        var reference = new AssetReference(AssetId.New(), "main");
+        var document = new TerrainLayerDocument(
+            CreateEditableLocation(reference, path), resource, _ => { });
+        var content = new TerrainLayerInspectorContent(
+            300f, document, value => value.ToString());
+        var picker = Assert.IsType<ColorPicker>(
+            FindByName<ColorPicker>(content, "TerrainLayerColor"));
+        var expected = new Vector4(0.8f, 0.6f, 0.4f, 0.2f);
+
+        picker.Value = expected;
+
+        Assert.Equal(expected, document.Value.BaseColor);
+        using var savedSource = File.OpenRead(path);
+        Assert.Equal(expected, TerrainMaterialAssetCodec.LoadLayer(savedSource).BaseColor);
+    }
+
     /// <summary>Keeps imported material content visible while disabling every mutating control.</summary>
     [Fact]
     public void StandardMaterialContent_ReadOnlyArtifact_DisablesEditing()
@@ -251,6 +301,8 @@ public sealed class InspectorProviderTests : IDisposable
 
         Assert.True(Assert.IsType<TextField>(
             FindByName<TextField>(content, "MaterialMetallic")).IsReadOnly);
+        Assert.False(Assert.IsType<ColorPicker>(
+            FindByName<ColorPicker>(content, "MaterialBaseColor")).IsEnabled);
         Assert.False(Assert.IsType<AssetReferenceField>(
             FindByName<AssetReferenceField>(content, "MaterialBaseColorTexture")).IsEnabled);
         Assert.Null(FindByName<Button>(content, "MaterialBaseColorTextureClear"));
@@ -279,6 +331,8 @@ public sealed class InspectorProviderTests : IDisposable
 
         Assert.Equal(338f, Assert.IsType<TextField>(
             FindByName<TextField>(content, "MaterialMetallic")).Width);
+        Assert.Equal(338f, Assert.IsType<ColorPicker>(
+            FindByName<ColorPicker>(content, "MaterialBaseColor")).Width);
         Assert.Equal(280f, Assert.IsType<AssetReferenceField>(
             FindByName<AssetReferenceField>(content, "MaterialBaseColorTexture")).Width);
     }

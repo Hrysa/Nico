@@ -182,7 +182,7 @@ if (activeScenePath is not null)
 }
 else
 {
-var cube = new MeshInstance3D { Name = "SceneCube" };
+    var cube = new MeshInstance3D { Name = "SceneCube" };
     sceneObjects = [cube];
     sceneRoot = new Node3D { Name = "Scene" };
     gameCamera = new PerspectiveCamera(
@@ -212,7 +212,10 @@ GameScriptHost? scriptSchemaHost = null;
 LoadedScene? playScene = null;
 LoadedScene? pendingPlayScene = null;
 Task<GameScriptHost>? playBuildTask = null;
+GameScriptHost? pendingPlayStartupHost = null;
 CancellationTokenSource? playBuildCancellation = null;
+var playStopRequested = false;
+var playBuildReadyToInitialize = false;
 Task<GameScriptHost>? scriptSchemaBuildTask = null;
 CancellationTokenSource? scriptSchemaBuildCancellation = null;
 CompilationProgressDialog? compilationProgressDialog = null;
@@ -267,10 +270,11 @@ var flyInputWindow = window;
 var flyCamera = new FlyCameraController(
     sceneCamera, captured => flyInputWindow.SetMouseCaptured(captured), selection.CancelInteraction);
 using var sceneInputContext = new SceneViewportInputContext(sceneViewport, flyCamera);
+var liveAssetDependencies = new LiveAssetDependencyRegistry();
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, sceneRoot,
     selection, ResolveCollisionMeshResource, ResolveTerrainResource,
-    ResolveAnimationSetClips);
+    ResolveAnimationSetClips, liveAssetDependencies);
 var gameRenderingService = new EditorGameRenderingService(viewportRenderer);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
@@ -327,23 +331,10 @@ AssetDocumentService? documentService = null;
 using var assetDocuments = new AssetDocumentService(reference =>
 {
     assetDatabase.Refresh();
-    runtimeResources.Invalidate(reference.Asset);
-    viewportRenderer.InvalidatePreviewAsset(reference);
-    detachedSceneRenderer?.InvalidatePreviewAsset(reference);
-    detachedGameRenderer?.InvalidatePreviewAsset(reference);
-    foreach (var sceneObject in sceneObjects)
-    {
-        if (sceneObject.Mesh.Asset == reference.Asset || sceneObject.Materials.Contains(reference) ||
-            UsesTerrainMaterialDependency(sceneObject, reference))
-        {
-            LoadAssetMeshResources(sceneObject);
-            if (detachedSceneRenderer is not null)
-                LoadAssetMeshResources(sceneObject, targetRenderer: detachedSceneRenderer);
-            if (detachedGameRenderer is not null)
-                LoadAssetMeshResources(sceneObject, targetRenderer: detachedGameRenderer);
-        }
-    }
-    InvalidateViewports();
+    var record = assetDatabase.Find(reference.Asset);
+    if (record is not null)
+        assetImportPipeline.Import(record, "editor");
+    RefreshPublishedAsset(reference);
 });
 documentService = assetDocuments;
 assetDocuments.Register(new StandardMaterialDocumentFactory());
@@ -357,7 +348,12 @@ editableAssetSources.Register("nico/terrain-material", "terrain-material");
 var assetEditors = new AssetEditorRegistry(
     assetDocuments, ResolveAssetDocument, ResolveAssetReferenceDisplayName);
 assetEditors.Register(new StandardMaterialInspectorFactory());
-assetEditors.Register(new TerrainInspectorFactory(terrainBrushSettings));
+assetEditors.Register(new TerrainInspectorFactory(
+    terrainBrushSettings,
+    () => terrainBrush.UndoObjects(),
+    () => terrainBrush.RedoObjects(),
+    () => terrainBrush.CanUndoObjects,
+    () => terrainBrush.CanRedoObjects));
 assetEditors.Register(new TerrainLayerInspectorFactory());
 assetEditors.Register(new TerrainMaterialInspectorFactory(terrainBrushSettings));
 liveTerrainResolver = reference => ResolveTerrainDocument(reference)?.Value;
@@ -369,7 +365,9 @@ terrainBrush = new TerrainBrushController(
     ResolveTerrainMaterialDocument,
     ApplyTerrainEdit,
     SetTerrainBrushPreview,
-    terrainBrushSettings);
+    terrainBrushSettings,
+    ApplyTerrainObjectChanges,
+    ResolveAssetReferenceDisplayName);
 selection.SelectionChanged += _ => terrainBrush.RefreshToolState();
 terrainBrushSettings.Changed += () =>
 {
@@ -431,7 +429,10 @@ animationSetEditor.Saved += path =>
     assetDatabase.Refresh();
     var record = assetDatabase.FindByPath(path);
     if (record is not null)
+    {
         assetImportPipeline.Import(record, "editor");
+        RefreshPublishedAsset(new AssetReference(record.Id, "main"));
+    }
     RefreshFileSystem();
 };
 RefreshFileSystem();
@@ -773,14 +774,17 @@ void UpdateScriptSchemaBuild()
 /// <summary>Starts an isolated runtime copy of the authored scene.</summary>
 void StartPlayMode()
 {
-    if (isPlaying || playBuildTask is not null)
+    if (isPlaying || playBuildTask is not null || pendingPlayStartupHost is not null)
         return;
     terrainBrushSettings.IsEnabled = false;
     OpenDockPanel(EditorDockWorkspace.GameId, EditorDockWorkspace.SceneId);
     try
     {
+        playStopRequested = false;
+        playBuildReadyToInitialize = false;
         pendingPlayScene = ScenePlayClone.Create(sceneRoot, gameCamera);
         ShowCompilationProgress();
+        editorView.PlayButtonIcon.Kind = IconKind.Stop;
         playBuildCancellation = new CancellationTokenSource();
         var cancellationToken = playBuildCancellation.Token;
         playBuildTask = Task.Run(
@@ -788,8 +792,11 @@ void StartPlayMode()
     }
     catch (Exception exception)
     {
+        playStopRequested = false;
+        playBuildReadyToInitialize = false;
         pendingPlayScene = null;
         CloseCompilationProgress();
+        editorView.PlayButtonIcon.Kind = IconKind.Play;
         logger.LogError(exception, "Could not enter play mode");
     }
 }
@@ -798,38 +805,79 @@ void StartPlayMode()
 /// <param name="deltaTime">Elapsed time used to animate compilation progress.</param>
 void UpdatePlayModeStart(double deltaTime)
 {
-    if (playBuildTask is not { } build)
+    var stagedHost = pendingPlayStartupHost;
+    var build = playBuildTask;
+    if (build is null && stagedHost is null)
         return;
-    if (!build.IsCompleted)
+    if (stagedHost is null && !build!.IsCompleted)
     {
         compilationProgressDialog?.Update(deltaTime);
         RefreshVertices();
         return;
     }
+    if (stagedHost is null && !playBuildReadyToInitialize)
+    {
+        playBuildReadyToInitialize = true;
+        CloseCompilationProgress();
+        return;
+    }
 
     var candidateScene = pendingPlayScene;
-    playBuildTask = null;
-    playBuildCancellation?.Dispose();
-    playBuildCancellation = null;
-    pendingPlayScene = null;
-    CloseCompilationProgress();
-    GameScriptHost? candidateHost = null;
+    var stopRequested = playStopRequested;
+    GameScriptHost? candidateHost = stagedHost;
+    if (stagedHost is null)
+    {
+        playBuildTask = null;
+        playBuildCancellation?.Dispose();
+        playBuildCancellation = null;
+        playBuildReadyToInitialize = false;
+    }
+    else
+    {
+        pendingPlayStartupHost = null;
+    }
     PhysicsWorld? candidatePhysicsWorld = null;
+    var committed = false;
     try
     {
-        candidateHost = build.GetAwaiter().GetResult();
+        if (candidateHost is null)
+            candidateHost = build!.GetAwaiter().GetResult();
+        if (stopRequested)
+        {
+            candidateHost.Dispose();
+            candidateHost = null;
+            pendingPlayScene = null;
+            playStopRequested = false;
+            logger.LogInformation("Canceled pending play mode startup");
+            return;
+        }
         if (candidateScene is null)
             throw new InvalidOperationException("The pending play scene is unavailable.");
-        viewportRenderer.SetGameScene(candidateScene.GameCamera,
-            candidateScene.MeshInstances);
-        foreach (var assetMesh in candidateScene.MeshInstances)
+        if (stagedHost is null)
         {
-            if (!viewportRenderer.HasAssetMeshResource(assetMesh))
-                LoadAssetMeshResources(assetMesh);
+            viewportRenderer.SetGameScene(candidateScene.GameCamera,
+                candidateScene.MeshInstances);
+            foreach (var assetMesh in candidateScene.MeshInstances)
+            {
+                if (!viewportRenderer.HasAssetMeshResource(assetMesh))
+                    LoadAssetMeshResources(assetMesh);
+            }
+            candidateHost.LoadScene(candidateScene.Root, window,
+                viewportRenderer.AnimationService, gameRenderingService,
+                new SceneAssetRegistry(path => assetDatabase.FindByPath(path)?.Id));
         }
-        candidateHost.LoadScene(candidateScene.Root, window,
-            viewportRenderer.AnimationService, gameRenderingService,
-            new SceneAssetRegistry(path => assetDatabase.FindByPath(path)?.Id));
+        else
+        {
+            candidateHost.UpdateSceneStartup();
+        }
+        if (!candidateHost.IsSceneStartupComplete)
+        {
+            pendingPlayStartupHost = candidateHost;
+            candidateHost = null;
+            return;
+        }
+        pendingPlayScene = null;
+        playStopRequested = false;
         candidatePhysicsWorld = new PhysicsWorld(
             ResolveCollisionMeshResource, ResolveTerrainResource);
         candidatePhysicsWorld.EnableInterpolation = true;
@@ -840,6 +888,7 @@ void UpdatePlayModeStart(double deltaTime)
         scriptHost = candidateHost;
         physicsWorld = candidatePhysicsWorld;
         isPlaying = true;
+        committed = true;
         viewportRenderer.RemapStaticAssetMeshResources(sceneObjects,
             candidateScene.MeshInstances);
         detachedSceneRenderer?.RemapStaticAssetMeshResources(sceneObjects,
@@ -868,18 +917,49 @@ void UpdatePlayModeStart(double deltaTime)
         logger.LogInformation("Entered play mode with {ScriptCount} scripts",
             candidateHost.ScriptCount);
     }
+    catch (OperationCanceledException) when (stopRequested)
+    {
+        candidateHost?.Dispose();
+        pendingPlayStartupHost = null;
+        pendingPlayScene = null;
+        playStopRequested = false;
+        logger.LogInformation("Canceled pending play mode startup");
+    }
     catch (Exception exception)
     {
-        UnmountPlayHud();
-        viewportRenderer.SetGameScene(gameCamera, sceneObjects);
-        candidatePhysicsWorld?.Dispose();
-        try
+        pendingPlayStartupHost = null;
+        pendingPlayScene = null;
+        playStopRequested = false;
+        if (committed)
         {
-            candidateHost?.Dispose();
+            try
+            {
+                StopPlayMode();
+            }
+            catch (Exception rollbackException)
+            {
+                logger.LogError(rollbackException,
+                    "Could not completely roll back failed play mode startup");
+                scriptHost = null;
+                physicsWorld = null;
+                playScene = null;
+                isPlaying = false;
+                editorView.PlayButtonIcon.Kind = IconKind.Play;
+            }
         }
-        catch (Exception disposalException)
+        else
         {
-            logger.LogError(disposalException, "Could not unload a failed game script build");
+            UnmountPlayHud();
+            viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+            candidatePhysicsWorld?.Dispose();
+            try
+            {
+                candidateHost?.Dispose();
+            }
+            catch (Exception disposalException)
+            {
+                logger.LogError(disposalException, "Could not unload a failed game script build");
+            }
         }
         if (exception is ScriptBuildException buildException)
         {
@@ -892,7 +972,13 @@ void UpdatePlayModeStart(double deltaTime)
         }
         logger.LogError(exception, "Could not enter play mode");
     }
-    RefreshVertices();
+    finally
+    {
+        if (!committed && pendingPlayStartupHost is null)
+            editorView.PlayButtonIcon.Kind = IconKind.Play;
+        CloseCompilationProgress();
+        RefreshVertices();
+    }
 }
 
 /// <summary>Shows modal compilation progress above the editor.</summary>
@@ -900,21 +986,63 @@ void ShowCompilationProgress()
 {
     CloseCompilationProgress();
     compilationProgressDialog = new CompilationProgressDialog(width, height)
-        { Name = "CompilationProgressDialog" };
+    { Name = "CompilationProgressDialog" };
+    compilationProgressDialog.DismissRequested += CancelPendingPlayModeStart;
     overlay.Add(compilationProgressDialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
 }
 
+/// <summary>Cancels an in-progress transition into Play without blocking the editor thread.</summary>
+void CancelPendingPlayModeStart()
+{
+    if (playBuildTask is null && pendingPlayStartupHost is null)
+        return;
+    playStopRequested = true;
+    playBuildCancellation?.Cancel();
+    if (pendingPlayStartupHost is { } stagedHost)
+    {
+        pendingPlayStartupHost = null;
+        pendingPlayScene = null;
+        playStopRequested = false;
+        try
+        {
+            stagedHost.Dispose();
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Could not cancel staged play mode startup");
+        }
+    }
+    editorView.PlayButtonIcon.Kind = IconKind.Play;
+    CloseCompilationProgress();
+}
+
 /// <summary>Removes modal compilation progress from the editor.</summary>
 void CloseCompilationProgress()
 {
-    if (compilationProgressDialog is null)
-        return;
-    if (ReferenceEquals(compilationProgressDialog.Parent, overlay))
-        overlay.Remove(compilationProgressDialog);
+    var removed = false;
+    if (compilationProgressDialog is { } activeDialog)
+    {
+        if (ReferenceEquals(activeDialog.Parent, overlay))
+            removed |= overlay.Remove(activeDialog);
+        else if (activeDialog.Parent is { } parent)
+            removed |= parent.RemoveChild(activeDialog);
+    }
     compilationProgressDialog = null;
+    var overlayChildren = overlay.Children;
+    for (var index = overlayChildren.Count - 1; index >= 0; index--)
+    {
+        if (overlayChildren[index] is CompilationProgressDialog staleDialog)
+            removed |= overlay.Remove(staleDialog);
+    }
+    if (!removed)
+        return;
+    uiEventRouter.ReleasePointerCapture();
+    uiEventRouter.MovePointer(lastMousePos);
     RefreshVertices();
+    window.RequestFrame();
+    logger.LogDebug("Closed compilation progress dialog and submitted the cleared UI snapshot");
 }
 
 /// <summary>Queues asset records for bounded background import without blocking the editor thread.</summary>
@@ -954,7 +1082,8 @@ void StartNextAssetImportBatch()
         ReferenceEquals(assetImportProgressDialog.Parent, overlay))
         overlay.Remove(assetImportProgressDialog);
     assetImportProgressDialog = new AssetImportProgressDialog(
-        width, height, activeAssetImports.Length) { Name = "AssetImportProgressDialog" };
+        width, height, activeAssetImports.Length)
+    { Name = "AssetImportProgressDialog" };
     overlay.Add(assetImportProgressDialog, Vector2.Zero);
     uiEventRouter.MovePointer(lastMousePos);
     window.RequestFrame();
@@ -989,16 +1118,23 @@ void UpdateAssetImports()
         {
             var outcome = outcomes[index];
             outcomesByAsset[outcome.Asset] = outcome;
-            if (outcome.Succeeded)
-                continue;
             for (var diagnosticIndex = 0;
                  diagnosticIndex < outcome.Diagnostics.Count;
                  diagnosticIndex++)
             {
                 var diagnostic = outcome.Diagnostics[diagnosticIndex];
-                logger.LogError("Asset import {Asset}: {Code}: {Message}",
-                    outcome.Asset, diagnostic.Code, diagnostic.Message);
+                if (diagnostic.Severity == AssetDiagnosticSeverity.Error)
+                    logger.LogError("Asset import {Asset}: {Code}: {Message}",
+                        outcome.Asset, diagnostic.Code, diagnostic.Message);
+                else if (diagnostic.Severity == AssetDiagnosticSeverity.Warning)
+                    logger.LogWarning("Asset import {Asset}: {Code}: {Message}",
+                        outcome.Asset, diagnostic.Code, diagnostic.Message);
+                else
+                    logger.LogInformation("Asset import {Asset}: {Code}: {Message}",
+                        outcome.Asset, diagnostic.Code, diagnostic.Message);
             }
+            if (outcome.Succeeded)
+                RefreshPublishedRuntimeAsset(outcome.Asset);
         }
         for (var index = 0; index < sceneObjects.Count; index++)
         {
@@ -1130,6 +1266,11 @@ void UnmountPlayHud()
 /// <summary>Stops scripts and discards the isolated runtime scene.</summary>
 void StopPlayMode()
 {
+    if (playBuildTask is not null || pendingPlayStartupHost is not null)
+    {
+        CancelPendingPlayModeStart();
+        return;
+    }
     if (!isPlaying && scriptHost is null && playScene is null)
         return;
     try
@@ -1187,7 +1328,7 @@ void AttachPlayButton(Button playButton)
     editorView.PlayButtonIcon.Kind = isPlaying ? IconKind.Stop : IconKind.Play;
     playButton.Click += () =>
     {
-        if (isPlaying)
+        if (isPlaying || playBuildTask is not null || pendingPlayStartupHost is not null)
             StopPlayMode();
         else
             StartPlayMode();
@@ -1343,6 +1484,7 @@ bool LoadScene(string scenePath, bool makeActive)
     try
     {
         StopPlayMode();
+        terrainBrush.ClearObjectHistory();
         var loadedScene = SceneFileStore.Load(scenePath, HudSceneNodeFactory.Instance);
         selection.Select(null);
         sceneRoot.ClearChildren();
@@ -1405,7 +1547,7 @@ void ShowOpenSceneDialog()
     }
 
     var picker = new ScenePickerDialog(width, height, project.RootPath, scenePaths)
-        { Name = "OpenSceneDialog" };
+    { Name = "OpenSceneDialog" };
     picker.OpenRequested += scenePath => LoadScene(scenePath, makeActive: true);
     picker.CancelRequested += CloseFileContextMenu;
     scenePickerDialog = picker;
@@ -1473,6 +1615,22 @@ void AddImportedSubAssets(FileSystemNode node)
     }
 }
 
+/// <summary>Logs structured GLB diagnostics at their authored severity.</summary>
+/// <param name="outcome">Completed GLB import outcome.</param>
+void LogGlbDiagnostics(AssetImportOutcome outcome)
+{
+    for (var index = 0; index < outcome.Diagnostics.Count; index++)
+    {
+        var diagnostic = outcome.Diagnostics[index];
+        if (diagnostic.Severity == AssetDiagnosticSeverity.Error)
+            logger.LogError("GLB import {Code}: {Message}", diagnostic.Code, diagnostic.Message);
+        else if (diagnostic.Severity == AssetDiagnosticSeverity.Warning)
+            logger.LogWarning("GLB import {Code}: {Message}", diagnostic.Code, diagnostic.Message);
+        else
+            logger.LogInformation("GLB import {Code}: {Message}", diagnostic.Code, diagnostic.Message);
+    }
+}
+
 /// <summary>Imports a physical GLB and exposes all standalone animation artifacts for authoring.</summary>
 /// <param name="source">Physical project file.</param>
 /// <returns>Imported animation rows, or an empty collection when unsupported or invalid.</returns>
@@ -1485,13 +1643,9 @@ IReadOnlyList<ImportedSubAssetNode> ResolveAnimationArtifacts(FileSystemNode sou
     if (record is null)
         return [];
     var outcome = assetImportPipeline.Import(record, "editor");
+    LogGlbDiagnostics(outcome);
     if (!outcome.Succeeded)
-    {
-        for (var index = 0; index < outcome.Diagnostics.Count; index++)
-            logger.LogError("GLB import {Code}: {Message}", outcome.Diagnostics[index].Code,
-                outcome.Diagnostics[index].Message);
         return [];
-    }
     var animations = new List<ImportedSubAssetNode>();
     for (var index = 0; index < outcome.Artifacts.Count; index++)
     {
@@ -1609,8 +1763,8 @@ IEnumerable<FileSystemNode> EnumerateFileSystemNodes(FileSystemNode root)
 {
     yield return root;
     foreach (var child in root.Children.OfType<FileSystemNode>())
-    foreach (var descendant in EnumerateFileSystemNodes(child))
-        yield return descendant;
+        foreach (var descendant in EnumerateFileSystemNodes(child))
+            yield return descendant;
 }
 
 /// <summary>Rebuilds the filesystem tree from the opened project root.</summary>
@@ -1676,18 +1830,13 @@ void OpenFileSystemEntry(Node item)
             return;
         }
         var outcome = assetImportPipeline.Import(record, "editor");
+        LogGlbDiagnostics(outcome);
         if (outcome.Succeeded)
         {
             logger.LogInformation("Imported GLB {FilePath} into {ArtifactCount} artifacts",
                 node.FullPath, outcome.Artifacts.Count);
             requestedFileSystemExpansion.Add(node.FullPath);
             RefreshFileSystem();
-        }
-        else
-        {
-            foreach (var diagnostic in outcome.Diagnostics)
-                logger.LogError("GLB import {Code}: {Message}", diagnostic.Code,
-                    diagnostic.Message);
         }
         return;
     }
@@ -1792,13 +1941,9 @@ void InstantiateGlbPrimaryMesh(FileSystemNode source, TreeViewDropTarget dropTar
         return;
     }
     var outcome = assetImportPipeline.Import(record, "editor");
+    LogGlbDiagnostics(outcome);
     if (!outcome.Succeeded)
-    {
-        foreach (var diagnostic in outcome.Diagnostics)
-            logger.LogError("GLB import {Code}: {Message}", diagnostic.Code,
-                diagnostic.Message);
         return;
-    }
     if (isPlaying)
     {
         logger.LogWarning("Imported models cannot be added while Play mode is active");
@@ -1964,6 +2109,45 @@ AnimationClipResource[] ResolveAnimationSetClips(
     }
     var set = LoadRuntimeResource(setReference, new AnimationSetResource([]));
     return set.BindTo(skin.Skeleton, LoadAnimationSource, skin.MeshNodeTransform);
+}
+
+/// <summary>Publishes one saved asset generation to caches and live editor consumers.</summary>
+/// <param name="reference">Saved asset output.</param>
+void RefreshPublishedAsset(AssetReference reference)
+{
+    RefreshPublishedRuntimeAsset(reference.Asset);
+    viewportRenderer.InvalidatePreviewAsset(reference);
+    detachedSceneRenderer?.InvalidatePreviewAsset(reference);
+    detachedGameRenderer?.InvalidatePreviewAsset(reference);
+    var activeObjects = GetActiveSceneObjects();
+    for (var index = 0; index < activeObjects.Count; index++)
+    {
+        var sceneObject = activeObjects[index];
+        var affected = sceneObject.Mesh.Asset == reference.Asset;
+        for (var materialIndex = 0;
+             materialIndex < sceneObject.Materials.Count && !affected;
+             materialIndex++)
+        {
+            affected = sceneObject.Materials[materialIndex].Asset == reference.Asset;
+        }
+        affected |= UsesTerrainMaterialDependency(sceneObject, reference);
+        if (!affected)
+            continue;
+        LoadAssetMeshResources(sceneObject);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(sceneObject, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(sceneObject, targetRenderer: detachedGameRenderer);
+    }
+    InvalidateViewports();
+}
+
+/// <summary>Refreshes decoded resources before notifying registered live dependents.</summary>
+/// <param name="asset">Republished persistent asset.</param>
+void RefreshPublishedRuntimeAsset(AssetId asset)
+{
+    runtimeResources.ReloadAsync(asset).GetAwaiter().GetResult();
+    liveAssetDependencies.Refresh(asset);
 }
 
 /// <summary>Loads one standalone or skinned animation artifact without target binding.</summary>
@@ -2310,6 +2494,37 @@ void ApplyTerrainEdit(
     InvalidateViewports();
 }
 
+/// <summary>Publishes terrain-brush object additions and removals to editor scene services.</summary>
+/// <param name="added">Newly attached brush-authored mesh instances.</param>
+/// <param name="removed">Newly detached brush-authored mesh instances.</param>
+void ApplyTerrainObjectChanges(
+    IReadOnlyList<MeshInstance3D> added,
+    IReadOnlyList<MeshInstance3D> removed)
+{
+    var activeObjects = GetActiveSceneObjects();
+    for (var index = 0; index < removed.Count; index++)
+        activeObjects.Remove(removed[index]);
+    for (var index = 0; index < added.Count; index++)
+    {
+        var instance = added[index];
+        if (!activeObjects.Contains(instance))
+            activeObjects.Add(instance);
+        LoadAssetMeshResources(instance);
+        if (detachedSceneRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedSceneRenderer);
+        if (detachedGameRenderer is not null)
+            LoadAssetMeshResources(instance, targetRenderer: detachedGameRenderer);
+    }
+    selection.SetObjects(activeObjects);
+    viewportRenderer.SetSceneObjects(activeObjects);
+    viewportRenderer.SetSceneRoot(GetActiveSceneRoot());
+    viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    detachedSceneRenderer?.SetSceneObjects(activeObjects);
+    detachedGameRenderer?.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    hierarchyTree.SetRoots(GetActiveSceneRoot().Children);
+    InvalidateViewports();
+}
+
 /// <summary>Publishes the current terrain brush ring to Scene renderers.</summary>
 /// <param name="preview">Brush geometry, or null to hide it.</param>
 void SetTerrainBrushPreview(TerrainBrushPreview? preview)
@@ -2347,7 +2562,7 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height,
         createFolder ? "Folder" : "File", relativeParent)
-        { Name = "CreateFileSystemItemDialog" };
+    { Name = "CreateFileSystemItemDialog" };
     dialog.CreateRequested += name =>
     {
         var itemPath = Path.Combine(parentDirectory, name);
@@ -2386,6 +2601,7 @@ void ShowCreateFileSystemDialog(string parentDirectory, bool createFolder)
 void ResetToDefaultScene()
 {
     StopPlayMode();
+    terrainBrush.ClearObjectHistory();
     selection.Select(null);
     sceneRoot.ClearChildren();
     sceneObjects.Clear();
@@ -2419,7 +2635,8 @@ void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool s
     if (relativeParent == ".")
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height, "Scene", relativeParent,
-        actionVerb: saveAction ? "Save" : "Add") { Name = "SaveNodeDialog" };
+        actionVerb: saveAction ? "Save" : "Add")
+    { Name = "SaveNodeDialog" };
     dialog.CreateRequested += requestedName =>
     {
         var fileName = requestedName.EndsWith(".node", StringComparison.OrdinalIgnoreCase)
@@ -2466,7 +2683,8 @@ void ShowAnimationSetPathDialog(string parentDirectory)
     if (relativeParent == ".")
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height, "Animation Set", relativeParent,
-        actionVerb: "Add") { Name = "AddAnimationSetDialog" };
+        actionVerb: "Add")
+    { Name = "AddAnimationSetDialog" };
     dialog.CreateRequested += requestedName =>
     {
         var fileName = requestedName.EndsWith(".nanimset", StringComparison.OrdinalIgnoreCase)
@@ -2513,7 +2731,8 @@ void ShowMaterialPathDialog(string parentDirectory)
     if (relativeParent == ".")
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height, "Material", relativeParent,
-        actionVerb: "Add") { Name = "AddMaterialDialog" };
+        actionVerb: "Add")
+    { Name = "AddMaterialDialog" };
     dialog.CreateRequested += requestedName =>
     {
         var fileName = requestedName.EndsWith(".nmat", StringComparison.OrdinalIgnoreCase)
@@ -2560,8 +2779,11 @@ void ShowTerrainMaterialAssetPathDialog(string parentDirectory, bool createLayer
     if (relativeParent == ".")
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height, title, relativeParent,
-        actionVerb: "Add") { Name = createLayer
-            ? "AddTerrainLayerDialog" : "AddTerrainMaterialDialog" };
+        actionVerb: "Add")
+    {
+        Name = createLayer
+            ? "AddTerrainLayerDialog" : "AddTerrainMaterialDialog"
+    };
     dialog.CreateRequested += requestedName =>
     {
         var fileName = requestedName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
@@ -2613,7 +2835,8 @@ void ShowTerrainPathDialog(
     if (relativeParent == ".")
         relativeParent = Path.GetFileName(project.RootPath);
     var dialog = new FileSystemCreateDialog(width, height, "Terrain", relativeParent,
-        actionVerb: "Add") { Name = "AddTerrainDialog" };
+        actionVerb: "Add")
+    { Name = "AddTerrainDialog" };
     dialog.CreateRequested += requestedName =>
     {
         var fileName = requestedName.EndsWith(".nterrain", StringComparison.OrdinalIgnoreCase)
@@ -2711,7 +2934,7 @@ void ShowDeleteConfirmation(string targetPath)
     var displayName = Path.GetFileName(targetPath.TrimEnd(Path.DirectorySeparatorChar));
     var dialog = new ConfirmationDialog(width, height, "Delete Project Item",
         $"Delete {displayName}? This cannot be undone.", "Delete")
-        { Name = "DeleteProjectItemDialog" };
+    { Name = "DeleteProjectItemDialog" };
     dialog.Confirmed += () =>
     {
         try
@@ -2941,12 +3164,29 @@ void InsertTerrainNode(
 /// <param name="parent">Hierarchy parent.</param>
 void AddDirectionalLight(Node parent)
 {
-    var activeRoot = GetActiveSceneRoot();
     var light = new DirectionalLight3D
     {
-        Name = $"Directional Light {createdObjectIndex++}",
         Rotation = new Vector3(-45f, 35f, 0f) * (MathF.PI / 180f)
     };
+    AddLight(parent, light, "Directional Light");
+}
+
+/// <summary>Adds an editable point light below one hierarchy node.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+void AddPointLight(Node parent) => AddLight(parent, new PointLight3D(), "Point Light");
+
+/// <summary>Adds an editable spot light below one hierarchy node.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+void AddSpotLight(Node parent) => AddLight(parent, new SpotLight3D(), "Spot Light");
+
+/// <summary>Adds one configured light below a hierarchy node.</summary>
+/// <param name="parent">Hierarchy parent.</param>
+/// <param name="light">Detached light node.</param>
+/// <param name="displayName">Hierarchy name prefix.</param>
+void AddLight(Node parent, Light3D light, string displayName)
+{
+    var activeRoot = GetActiveSceneRoot();
+    light.Name = $"{displayName} {createdObjectIndex++}";
     parent.AddChild(light);
     if (ReferenceEquals(parent, activeRoot))
         hierarchyTree.SetRoots(activeRoot.Children);
@@ -3048,6 +3288,7 @@ void DeleteSceneNode(Node target)
         ContainsActiveGameCamera(target))
         return;
 
+    terrainBrush.ClearObjectHistory();
     hierarchyTree.Select(null);
     selection.Select(null);
     if (presentedHud is not null && ContainsNode(target, presentedHud))
@@ -3142,6 +3383,8 @@ void ShowHierarchyContextMenu()
         project.RootPath, (reference, name) => AddTerrainNode(target, reference, name)),
         !isPlaying);
     objectMenu.AddItem("Add Directional Light", () => AddDirectionalLight(target));
+    objectMenu.AddItem("Add Point Light", () => AddPointLight(target));
+    objectMenu.AddItem("Add Spot Light", () => AddSpotLight(target));
     menu.AddSubmenu("Add 3D Object", objectMenu);
 
     HudRoot? existingHud = null;

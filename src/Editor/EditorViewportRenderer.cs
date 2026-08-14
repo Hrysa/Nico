@@ -31,6 +31,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
     private readonly SceneAnimationRegistry _animationRegistry;
+    private readonly LiveAssetDependencyRegistry? _liveAssetDependencies;
     private GizmoViewport _lastSceneViewport;
     private ScenePreviewPickingId? _hoveredPreview;
     private TerrainBrushPreview? _terrainBrushPreview;
@@ -84,6 +85,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="previewMeshResolver">Optional explicit collision-mesh preview resolver.</param>
     /// <param name="previewTerrainResolver">Optional explicit terrain preview resolver.</param>
     /// <param name="animationSetResolver">Optional script-selected animation-set resolver.</param>
+    /// <param name="liveAssetDependencies">Optional registry for republished live values.</param>
     /// <param name="renderPipeline">Optional render-pass composition.</param>
     public EditorViewportRenderer(
         IRenderer renderer,
@@ -98,6 +100,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         Func<AssetReference, TerrainResource?>? previewTerrainResolver = null,
         Func<AssetReference, SkinnedMeshResource, AnimationClipResource[]>?
             animationSetResolver = null,
+        LiveAssetDependencyRegistry? liveAssetDependencies = null,
         RenderPipeline? renderPipeline = null)
     {
         _renderer = renderer;
@@ -113,12 +116,19 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _gameRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
         _previewRegistry = ScenePreviewRegistry.CreateDefault(
             previewMeshResolver, previewTerrainResolver);
+        _liveAssetDependencies = liveAssetDependencies;
         _animationRegistry = new SceneAnimationRegistry((_, animationSet, controller) =>
         {
             if (animationSetResolver is null)
                 throw new InvalidOperationException(
                     "This viewport cannot resolve script animation sets.");
-            controller.RegisterClips(animationSetResolver(animationSet, controller.Resource));
+            controller.RefreshClips(animationSetResolver(animationSet, controller.Resource));
+            _liveAssetDependencies?.Bind(controller, animationSet.Asset, () =>
+            {
+                if (controller.IsValid)
+                    controller.RefreshClips(
+                        animationSetResolver(animationSet, controller.Resource));
+            });
         });
     }
 
@@ -284,12 +294,12 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
-            var meshHandle = _renderer.CreateStaticMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
-                    normalHandle, metallicRoughnessHandle));
+            var resolvedMaterial = ResolvedStandardMaterial.Resolve(
+                material, baseColorHandle, normalHandle, metallicRoughnessHandle);
+            var meshHandle = _renderer.CreateStaticMesh(mesh, resolvedMaterial);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, meshHandle, baseColorHandle, normalHandle,
-                metallicRoughnessHandle, default, null));
+                metallicRoughnessHandle, default, null, resolvedMaterial.SurfaceType));
         }
         catch
         {
@@ -344,14 +354,14 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
-            var handle = _renderer.CreateStaticMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
-                    normalHandle, metallicRoughnessHandle));
+            var resolvedMaterial = ResolvedStandardMaterial.Resolve(
+                material, baseColorHandle, normalHandle, metallicRoughnessHandle);
+            var handle = _renderer.CreateStaticMesh(mesh, resolvedMaterial);
             instance.LocalBounds = TerrainMeshBuilder.GetBounds(
                 terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, handle, baseColorHandle, normalHandle, metallicRoughnessHandle,
-                default, null, isTerrain: true));
+                default, null, resolvedMaterial.SurfaceType, isTerrain: true));
         }
         catch
         {
@@ -425,9 +435,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             metallicRoughnessTexture, TextureColorSpace.Linear);
         try
         {
-            var handles = _renderer.CreateSkinnedMesh(
-                mesh, ResolvedStandardMaterial.Resolve(material, baseColorHandle,
-                    normalHandle, metallicRoughnessHandle));
+            var resolvedMaterial = ResolvedStandardMaterial.Resolve(
+                material, baseColorHandle, normalHandle, metallicRoughnessHandle);
+            var handles = _renderer.CreateSkinnedMesh(mesh, resolvedMaterial);
             var playbackResource = animations is null
                 ? mesh
                 : new SkinnedMeshResource(mesh.Mesh, mesh.Influences, mesh.Skeleton,
@@ -439,8 +449,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
                 _animationRegistry.Register(instance, controller);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, handles.Mesh, baseColorHandle, normalHandle,
-                metallicRoughnessHandle, handles.Palette, controller, ownsController)
-                { UploadedPoseRevision = controller.PoseRevision });
+                metallicRoughnessHandle, handles.Palette, controller,
+                resolvedMaterial.SurfaceType, ownsController)
+            { UploadedPoseRevision = controller.PoseRevision });
         }
         catch
         {
@@ -550,6 +561,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         ScenePreviewPickingId? best = null;
         var view = _sceneCamera.GetViewMatrix();
         var projection = _sceneCamera.GetProjectionMatrix();
+        _sceneQueue.Camera = RenderCameraData.Create(view, projection);
         var lines = _previews.Lines;
         for (var index = 0; index < lines.Count; index++)
         {
@@ -611,7 +623,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <summary>Builds and submits the Scene viewport queue.</summary>
     private void RenderSceneViewport()
     {
-        _sceneQueue.Lighting = SceneLighting.Resolve(_sceneRoot);
+        _sceneQueue.ResolveLighting(_sceneRoot);
         var view = _sceneCamera.GetViewMatrix();
         var projection = _sceneCamera.GetProjectionMatrix();
         _renderer.DrawGroundGrid(_sceneViewport, view, projection);
@@ -620,7 +632,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             Model = Matrix4x4.Identity,
             View = view,
             Projection = projection
-        });
+        }, castsShadows: false);
         for (var index = 0; index < _sceneObjects.Count; index++)
         {
             var instance = _sceneObjects[index];
@@ -660,7 +672,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
                 Model = model,
                 View = view,
                 Projection = projection
-            });
+            }, castsShadows: false);
         }
     }
 
@@ -712,8 +724,10 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="height">Game viewport height.</param>
     private void RenderGameViewport(float width, float height)
     {
-        _gameQueue.Lighting = SceneLighting.Resolve(_sceneRoot);
+        _gameQueue.ResolveLighting(_sceneRoot);
         _gameCamera.UpdateViewport(width, height);
+        _gameQueue.Camera = RenderCameraData.Create(
+            _gameCamera.GetViewMatrix(), _gameCamera.GetProjectionMatrix());
         for (var index = 0; index < _gameObjects.Count; index++)
         {
             var instance = _gameObjects[index];
@@ -764,6 +778,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     {
         if (resource.Animation is not null && resource.OwnsAnimation)
         {
+            _liveAssetDependencies?.Unbind(resource.Animation);
             _animationRegistry.Unregister(resource.Instance);
             resource.Animation.Dispose();
         }
@@ -817,10 +832,14 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         {
             pushConstants.Model = resource.Animation!.Resource.ComposeModelTransform(
                 pushConstants.Model);
-            queue.AddSkinned(resource.Mesh, resource.Palette, pushConstants);
+            queue.AddSkinned(resource.Mesh, resource.Palette, pushConstants,
+                castsShadows: resource.SurfaceType != RenderSurfaceType.Transparent,
+                surfaceType: resource.SurfaceType);
         }
         else
-            queue.Add(resource.Mesh, pushConstants);
+            queue.Add(resource.Mesh, pushConstants,
+                castsShadows: resource.SurfaceType != RenderSurfaceType.Transparent,
+                surfaceType: resource.SurfaceType);
     }
 
     /// <summary>Groups renderer handles owned for one imported scene instance.</summary>
@@ -849,6 +868,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <summary>Gets the optional joint-palette handle.</summary>
         internal SkinPaletteHandle Palette { get; }
 
+        /// <summary>Gets the SRP queue class owned by the resolved material.</summary>
+        internal RenderSurfaceType SurfaceType { get; }
+
         /// <summary>Gets the optional runtime animation controller.</summary>
         internal AnimationController? Animation { get; }
 
@@ -868,13 +890,15 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
+        /// <param name="surfaceType">SRP queue class owned by the resolved material.</param>
         /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
         /// <param name="isTerrain">Whether this is a mutable colored terrain mesh.</param>
         /// <param name="instance">Owning scene mesh instance.</param>
         internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
             TextureHandle baseColorTexture, TextureHandle normalTexture,
             TextureHandle metallicRoughnessTexture, SkinPaletteHandle palette,
-            AnimationController? animation, bool ownsAnimation = false,
+            AnimationController? animation, RenderSurfaceType surfaceType,
+            bool ownsAnimation = false,
             bool isTerrain = false)
         {
             Instance = instance;
@@ -883,6 +907,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             NormalTexture = normalTexture;
             MetallicRoughnessTexture = metallicRoughnessTexture;
             Palette = palette;
+            SurfaceType = surfaceType;
             Animation = animation;
             OwnsAnimation = ownsAnimation;
             IsTerrain = isTerrain;

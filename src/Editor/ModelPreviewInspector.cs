@@ -775,11 +775,12 @@ public sealed class ModelPreviewInspectorContent : Panel, IInspectorContentLifec
         if (!_dirty && !animated)
             return;
         _queue.Clear();
-        _queue.Lighting = new SceneLighting(
+        _queue.SetPreviewLighting(
             Vector3.Normalize(new Vector3(0.7f, 1f, 0.8f)),
             Vector3.One, 1.15f, 0.3f);
         if (_axisMesh.IsValid)
-            _queue.Add(_axisMesh, _camera.GetPushConstants(Matrix4x4.Identity));
+            _queue.Add(_axisMesh, _camera.GetPushConstants(Matrix4x4.Identity),
+                castsShadows: false);
         for (var index = 0; index < _gpuMeshes.Count; index++)
         {
             var resource = _gpuMeshes[index];
@@ -789,6 +790,8 @@ public sealed class ModelPreviewInspectorContent : Panel, IInspectorContentLifec
             else
                 _queue.Add(resource.Mesh, pushConstants);
         }
+        _queue.Camera = RenderCameraData.Create(
+            _camera.GetViewMatrix(), _camera.GetProjectionMatrix());
         BasicForwardRenderPipeline.Instance.Render(renderer, _viewport.RenderView, _queue);
         _dirty = false;
     }

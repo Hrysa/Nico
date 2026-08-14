@@ -46,6 +46,54 @@ public class SceneFileStoreTests
         }
     }
 
+    /// <summary>Round-trips point and spot light properties introduced by scene format 13.</summary>
+    [Fact]
+    public void SaveAndLoad_LocalLights_PreservesSettings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"local-light-scene-{Guid.NewGuid():N}.node");
+        var root = new Node3D();
+        var camera = new PerspectiveCamera();
+        root.AddChild(new PointLight3D
+        {
+            Name = "Lamp",
+            Position = new Vector3(1f, 2f, 3f),
+            Color = new Vector3(0.4f, 0.6f, 0.8f),
+            Intensity = 7f,
+            Range = 14f,
+            CastsShadows = true
+        });
+        root.AddChild(new SpotLight3D
+        {
+            Name = "Cone",
+            Range = 20f,
+            InnerAngle = 18f,
+            OuterAngle = 42f,
+            Intensity = 5f
+        });
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+            var loaded = SceneFileStore.Load(path);
+
+            var point = Assert.IsType<PointLight3D>(loaded.Root.Children[0]);
+            Assert.Equal(new Vector3(1f, 2f, 3f), point.Position);
+            Assert.Equal(new Vector3(0.4f, 0.6f, 0.8f), point.Color);
+            Assert.Equal(7f, point.Intensity);
+            Assert.Equal(14f, point.Range);
+            Assert.True(point.CastsShadows);
+            var spot = Assert.IsType<SpotLight3D>(loaded.Root.Children[1]);
+            Assert.Equal(20f, spot.Range);
+            Assert.Equal(18f, spot.InnerAngle);
+            Assert.Equal(42f, spot.OuterAngle);
+            Assert.Equal(5f, spot.Intensity);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>Verifies higher-level HUD roots survive scene persistence through their factory.</summary>
     [Fact]
     public void SaveAndLoad_HudRoot_PreservesCustomNodeAndComponents()
@@ -431,6 +479,16 @@ public class SceneFileStoreTests
             HorizontalSize = new Vector2(32f, 48f),
             HeightScale = 8f
         });
+        var treeReference = new AssetReference(AssetId.New(), "tree");
+        var tree = new MeshInstance3D
+        {
+            Name = "Scattered Tree",
+            Mesh = treeReference,
+            Position = new Vector3(2f, 3f, 4f),
+            Scale = new Vector3(1.2f)
+        };
+        tree.AddComponent(new TerrainScatterInstanceComponent());
+        terrain.AddChild(tree);
         var camera = new PerspectiveCamera();
         root.AddChild(terrain);
         root.AddChild(camera);
@@ -442,12 +500,18 @@ public class SceneFileStoreTests
 
             var loadedTerrain = Assert.IsType<MeshInstance3D>(loaded.Root.Children[0]);
             Assert.Equal(reference, loadedTerrain.Mesh);
-            Assert.Same(loadedTerrain, Assert.Single(loaded.MeshInstances));
+            Assert.Equal(2, loaded.MeshInstances.Count);
+            Assert.Same(loadedTerrain, loaded.MeshInstances[0]);
             var collider = Assert.IsType<TerrainColliderComponent>(
                 Assert.Single(loadedTerrain.Components));
             Assert.Equal(reference, collider.TerrainData);
             Assert.Equal(new Vector2(32f, 48f), collider.HorizontalSize);
             Assert.Equal(8f, collider.HeightScale);
+            var loadedTree = Assert.IsType<MeshInstance3D>(Assert.Single(loadedTerrain.Children));
+            Assert.Equal(treeReference, loadedTree.Mesh);
+            Assert.Equal(tree.Position, loadedTree.Position);
+            Assert.Equal(tree.Scale, loadedTree.Scale);
+            Assert.IsType<TerrainScatterInstanceComponent>(Assert.Single(loadedTree.Components));
         }
         finally
         {

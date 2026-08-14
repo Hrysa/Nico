@@ -50,6 +50,8 @@ public readonly record struct RenderOutputSettings
 /// <summary>Identifies the role and ordering intent of a render-pipeline pass.</summary>
 public enum RenderPipelineStage
 {
+    /// <summary>Initializes camera attachments and per-view state.</summary>
+    CameraSetup,
     /// <summary>Produces light-space visibility for shadowed lights.</summary>
     Shadows,
     /// <summary>Produces camera-space depth before color rendering.</summary>
@@ -62,6 +64,96 @@ public enum RenderPipelineStage
     PostProcess
 }
 
+/// <summary>Identifies backend work explicitly scheduled by a render-pipeline pass.</summary>
+public enum RenderPipelineCommandKind
+{
+    /// <summary>Clears and initializes the active camera color and depth targets.</summary>
+    ClearCamera,
+    /// <summary>Renders directional-light shadow casters into the shadow atlas.</summary>
+    DirectionalShadows,
+    /// <summary>Renders point- and spot-light casters into the local-shadow atlas.</summary>
+    LocalShadows,
+    /// <summary>Draws a filtered subset of scene geometry with a material pass.</summary>
+    DrawRenderers,
+    /// <summary>Transforms camera color into the view's presentation output.</summary>
+    ApplyPostProcess
+}
+
+/// <summary>Identifies the material shader pass requested for filtered geometry.</summary>
+public enum RenderMaterialPass
+{
+    /// <summary>Writes camera depth without evaluating surface color.</summary>
+    DepthOnly,
+    /// <summary>Evaluates the built-in forward-lit surface shader.</summary>
+    Forward
+}
+
+/// <summary>Filters scene draws by authored surface behavior.</summary>
+[Flags]
+public enum RenderQueueFilter
+{
+    /// <summary>Selects no scene draws.</summary>
+    None = 0,
+    /// <summary>Selects solid surfaces.</summary>
+    Opaque = 1 << 0,
+    /// <summary>Selects cutout surfaces that still write depth.</summary>
+    AlphaTest = 1 << 1,
+    /// <summary>Selects blended surfaces.</summary>
+    Transparent = 1 << 2,
+    /// <summary>Selects non-world overlay geometry.</summary>
+    Overlay = 1 << 3
+}
+
+/// <summary>Names render resources read or written by SRP commands.</summary>
+[Flags]
+public enum RenderPipelineResource
+{
+    /// <summary>No render resource.</summary>
+    None = 0,
+    /// <summary>The active camera color target.</summary>
+    CameraColor = 1 << 0,
+    /// <summary>The active camera depth target.</summary>
+    CameraDepth = 1 << 1,
+    /// <summary>The active view's directional-shadow atlas.</summary>
+    DirectionalShadowAtlas = 1 << 2,
+    /// <summary>The active view's point- and spot-light shadow atlas.</summary>
+    LocalShadowAtlas = 1 << 3,
+    /// <summary>The final color consumed while presenting the rendered view.</summary>
+    PresentedColor = 1 << 4
+}
+
+/// <summary>Describes one renderer-independent unit of GPU work scheduled by the SRP.</summary>
+/// <param name="Stage">Semantic pipeline stage that authored the command.</param>
+/// <param name="Kind">Backend operation to execute.</param>
+/// <param name="QueueFilter">Scene surface classes selected by a draw command.</param>
+/// <param name="MaterialPass">Material shader pass selected by a draw command.</param>
+/// <param name="Reads">Render resources read by the command.</param>
+/// <param name="Writes">Render resources written by the command.</param>
+/// <param name="DirectionalShadows">Settings used by a directional-shadow operation.</param>
+/// <param name="LocalShadows">Settings used by a local-shadow operation.</param>
+/// <param name="Output">Presentation transform used by a post-process operation.</param>
+public readonly record struct RenderPipelineCommand(
+    RenderPipelineStage Stage,
+    RenderPipelineCommandKind Kind,
+    RenderQueueFilter QueueFilter = RenderQueueFilter.None,
+    RenderMaterialPass MaterialPass = default,
+    RenderPipelineResource Reads = RenderPipelineResource.None,
+    RenderPipelineResource Writes = RenderPipelineResource.None,
+    DirectionalShadowSettings DirectionalShadows = default,
+    LocalShadowSettings LocalShadows = default,
+    RenderOutputSettings Output = default);
+
+/// <summary>Describes one resource hazard resolved between sequential SRP commands.</summary>
+/// <param name="BeforeCommandIndex">Command index that requires the dependency.</param>
+/// <param name="Resources">Resources whose prior access must complete.</param>
+/// <param name="SourceStage">Stage that last accessed the resources.</param>
+/// <param name="DestinationStage">Stage beginning the next access.</param>
+public readonly record struct RenderPipelineBarrier(
+    int BeforeCommandIndex,
+    RenderPipelineResource Resources,
+    RenderPipelineStage SourceStage,
+    RenderPipelineStage DestinationStage);
+
 /// <summary>Configures one directional-light shadow-map pass.</summary>
 public readonly record struct DirectionalShadowSettings
 {
@@ -70,16 +162,28 @@ public readonly record struct DirectionalShadowSettings
     /// <param name="depthBias">Constant raster depth bias.</param>
     /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
     /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    /// <param name="cascadeCount">Number of frustum-fitted cascades.</param>
+    /// <param name="splitLambda">Blend between uniform and logarithmic splits.</param>
+    /// <param name="cascadeBlend">Fraction of each cascade blended into the next.</param>
+    /// <param name="normalBias">Receiver normal offset measured in shadow texels.</param>
     private DirectionalShadowSettings(
         float maxDistance,
         float depthBias,
         float slopeBias,
-        float strength)
+        float strength,
+        int cascadeCount,
+        float splitLambda,
+        float cascadeBlend,
+        float normalBias)
     {
         MaxDistance = maxDistance;
         DepthBias = depthBias;
         SlopeBias = slopeBias;
         Strength = strength;
+        CascadeCount = cascadeCount;
+        SplitLambda = splitLambda;
+        CascadeBlend = cascadeBlend;
+        NormalBias = normalBias;
     }
 
     /// <summary>Gets whether this configuration requests shadow rendering.</summary>
@@ -97,24 +201,44 @@ public readonly record struct DirectionalShadowSettings
     /// <summary>Gets direct-light shadow attenuation from zero to one.</summary>
     public float Strength { get; }
 
+    /// <summary>Gets the number of frustum-fitted cascades.</summary>
+    public int CascadeCount { get; }
+
+    /// <summary>Gets the blend between uniform zero and logarithmic one split placement.</summary>
+    public float SplitLambda { get; }
+
+    /// <summary>Gets the fractional transition band between adjacent cascades.</summary>
+    public float CascadeBlend { get; }
+
+    /// <summary>Gets receiver normal offset measured in cascade texels.</summary>
+    public float NormalBias { get; }
+
     /// <summary>Gets disabled shadow rendering.</summary>
     public static DirectionalShadowSettings None { get; } = default;
 
     /// <summary>Gets balanced defaults for the built-in forward pipeline.</summary>
     public static DirectionalShadowSettings Default { get; } =
-        new(30f, 1.25f, 1.75f, 1f);
+        new(50f, 1.25f, 1.75f, 1f, 3, 0.7f, 0.1f, 1.5f);
 
     /// <summary>Creates validated directional shadow settings.</summary>
     /// <param name="maxDistance">World-space shadow coverage around the camera.</param>
     /// <param name="depthBias">Constant raster depth bias.</param>
     /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
     /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    /// <param name="cascadeCount">Cascade count from one through four.</param>
+    /// <param name="splitLambda">Blend between uniform zero and logarithmic one splits.</param>
+    /// <param name="cascadeBlend">Fractional transition width from zero through 0.3.</param>
+    /// <param name="normalBias">Receiver normal offset measured in cascade texels.</param>
     /// <returns>Validated shadow settings.</returns>
     public static DirectionalShadowSettings Create(
         float maxDistance,
         float depthBias,
         float slopeBias,
-        float strength)
+        float strength,
+        int cascadeCount = 3,
+        float splitLambda = 0.7f,
+        float cascadeBlend = 0.1f,
+        float normalBias = 1.5f)
     {
         if (!float.IsFinite(maxDistance) || maxDistance <= 0f)
             throw new ArgumentOutOfRangeException(nameof(maxDistance));
@@ -124,14 +248,85 @@ public readonly record struct DirectionalShadowSettings
             throw new ArgumentOutOfRangeException(nameof(slopeBias));
         if (!float.IsFinite(strength) || strength < 0f || strength > 1f)
             throw new ArgumentOutOfRangeException(nameof(strength));
-        return new DirectionalShadowSettings(maxDistance, depthBias, slopeBias, strength);
+        if (cascadeCount is < 1 or > 4)
+            throw new ArgumentOutOfRangeException(nameof(cascadeCount));
+        if (!float.IsFinite(splitLambda) || splitLambda < 0f || splitLambda > 1f)
+            throw new ArgumentOutOfRangeException(nameof(splitLambda));
+        if (!float.IsFinite(cascadeBlend) || cascadeBlend < 0f || cascadeBlend > 0.3f)
+            throw new ArgumentOutOfRangeException(nameof(cascadeBlend));
+        if (!float.IsFinite(normalBias) || normalBias < 0f || normalBias > 8f)
+            throw new ArgumentOutOfRangeException(nameof(normalBias));
+        return new DirectionalShadowSettings(maxDistance, depthBias, slopeBias, strength,
+            cascadeCount, splitLambda, cascadeBlend, normalBias);
+    }
+}
+
+/// <summary>Configures point- and spot-light shadow-map rendering.</summary>
+public readonly record struct LocalShadowSettings
+{
+    /// <summary>Creates validated local-shadow settings.</summary>
+    /// <param name="depthBias">Constant raster depth bias.</param>
+    /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
+    /// <param name="normalBias">Receiver normal offset relative to light range.</param>
+    /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    private LocalShadowSettings(
+        float depthBias,
+        float slopeBias,
+        float normalBias,
+        float strength)
+    {
+        DepthBias = depthBias;
+        SlopeBias = slopeBias;
+        NormalBias = normalBias;
+        Strength = strength;
+    }
+
+    /// <summary>Gets constant raster depth bias.</summary>
+    public float DepthBias { get; }
+
+    /// <summary>Gets slope-scaled raster depth bias.</summary>
+    public float SlopeBias { get; }
+
+    /// <summary>Gets receiver normal offset relative to light range.</summary>
+    public float NormalBias { get; }
+
+    /// <summary>Gets the authored shadow strength.</summary>
+    public float Strength { get; }
+
+    /// <summary>Gets whether these settings request local-shadow rendering.</summary>
+    public bool IsEnabled => Strength > 0f;
+
+    /// <summary>Gets balanced built-in local-shadow settings.</summary>
+    public static LocalShadowSettings Default { get; } = Create(1f, 2f, 0.002f, 1f);
+
+    /// <summary>Creates validated local-shadow settings.</summary>
+    /// <param name="depthBias">Constant raster depth bias.</param>
+    /// <param name="slopeBias">Slope-scaled raster depth bias.</param>
+    /// <param name="normalBias">Receiver normal offset relative to light range.</param>
+    /// <param name="strength">Direct-light shadow attenuation from zero to one.</param>
+    /// <returns>Validated settings.</returns>
+    public static LocalShadowSettings Create(
+        float depthBias,
+        float slopeBias,
+        float normalBias,
+        float strength)
+    {
+        if (!float.IsFinite(depthBias) || depthBias < 0f || depthBias > 16f)
+            throw new ArgumentOutOfRangeException(nameof(depthBias));
+        if (!float.IsFinite(slopeBias) || slopeBias < 0f || slopeBias > 16f)
+            throw new ArgumentOutOfRangeException(nameof(slopeBias));
+        if (!float.IsFinite(normalBias) || normalBias < 0f || normalBias > 0.1f)
+            throw new ArgumentOutOfRangeException(nameof(normalBias));
+        if (!float.IsFinite(strength) || strength < 0f || strength > 1f)
+            throw new ArgumentOutOfRangeException(nameof(strength));
+        return new LocalShadowSettings(depthBias, slopeBias, normalBias, strength);
     }
 }
 
 /// <summary>Provides backend-independent state shared by one pipeline execution.</summary>
 public struct RenderPipelineContext
 {
-    private bool _submitted;
+    private RenderPipelineStage _activeStage;
 
     /// <summary>Creates a context for one render view and queue.</summary>
     /// <param name="view">Destination render view.</param>
@@ -142,6 +337,7 @@ public struct RenderPipelineContext
     {
         View = view;
         Queue = queue;
+        _activeStage = default;
     }
 
     /// <summary>Gets the destination render view.</summary>
@@ -150,17 +346,79 @@ public struct RenderPipelineContext
     /// <summary>Gets the mutable queue prepared for this render.</summary>
     public RenderQueue Queue { get; }
 
-    /// <summary>Gets whether a pass has submitted the scene queue.</summary>
-    public readonly bool IsSubmitted => _submitted;
-
-    /// <summary>Requests scene submission after every pass has finished configuring output.</summary>
-    public void SubmitScene()
+    /// <summary>Schedules explicit initialization of camera color and depth attachments.</summary>
+    public void ClearCamera()
     {
-        if (_submitted)
-            throw new InvalidOperationException(
-                "A render pipeline may submit its scene queue only once.");
-        _submitted = true;
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage,
+            RenderPipelineCommandKind.ClearCamera,
+            Writes: RenderPipelineResource.CameraColor |
+                RenderPipelineResource.CameraDepth));
     }
+
+    /// <summary>Schedules directional shadow rendering as explicit backend work.</summary>
+    /// <param name="settings">Validated directional-shadow configuration.</param>
+    public void RenderDirectionalShadows(DirectionalShadowSettings settings)
+    {
+        if (!settings.IsEnabled)
+            throw new ArgumentException("Directional shadow rendering requires enabled settings.",
+                nameof(settings));
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage,
+            RenderPipelineCommandKind.DirectionalShadows,
+            Writes: RenderPipelineResource.DirectionalShadowAtlas,
+            DirectionalShadows: settings));
+    }
+
+    /// <summary>Schedules point- and spot-light shadow rendering as explicit backend work.</summary>
+    /// <param name="settings">Validated local-shadow configuration.</param>
+    public void RenderLocalShadows(LocalShadowSettings settings)
+    {
+        if (!settings.IsEnabled)
+            throw new ArgumentException("Local shadow rendering requires enabled settings.",
+                nameof(settings));
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage,
+            RenderPipelineCommandKind.LocalShadows,
+            Writes: RenderPipelineResource.LocalShadowAtlas,
+            LocalShadows: settings));
+    }
+
+    /// <summary>Schedules a filtered material pass as explicit backend work.</summary>
+    /// <param name="filter">Surface classes included by the draw.</param>
+    /// <param name="materialPass">Material shader pass used for matching geometry.</param>
+    /// <param name="reads">Render resources read by the pass.</param>
+    /// <param name="writes">Render resources written by the pass.</param>
+    public void DrawRenderers(
+        RenderQueueFilter filter,
+        RenderMaterialPass materialPass,
+        RenderPipelineResource reads,
+        RenderPipelineResource writes)
+    {
+        if (filter == RenderQueueFilter.None)
+            throw new ArgumentException("A renderer draw requires at least one queue class.",
+                nameof(filter));
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage, RenderPipelineCommandKind.DrawRenderers,
+            filter, materialPass, reads, writes));
+    }
+
+    /// <summary>Schedules the final camera-color transform for presentation.</summary>
+    /// <param name="settings">Validated output-effect settings.</param>
+    public void ApplyPostProcess(RenderOutputSettings settings)
+    {
+        Queue.Output = settings;
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage,
+            RenderPipelineCommandKind.ApplyPostProcess,
+            Reads: RenderPipelineResource.CameraColor,
+            Writes: RenderPipelineResource.PresentedColor,
+            Output: settings));
+    }
+
+    /// <summary>Sets the semantic stage assigned to work authored by the next pass.</summary>
+    /// <param name="stage">Active pass stage.</param>
+    internal void BeginPass(RenderPipelineStage stage) => _activeStage = stage;
 }
 
 /// <summary>Defines one extensible stage in a renderer-independent render pipeline.</summary>
@@ -212,13 +470,19 @@ public class RenderPipeline
             if (_passes[index] is null)
                 throw new ArgumentException("Render pipeline passes cannot be null.",
                     nameof(passes));
+            if (index > 0 && _passes[index].Stage < _passes[index - 1].Stage)
+            {
+                throw new ArgumentException(
+                    "Render pipeline stages must be configured in semantic execution order.",
+                    nameof(passes));
+            }
         }
     }
 
     /// <summary>Gets an allocation-free view of configured passes.</summary>
     public ReadOnlySpan<RenderPipelinePass> Passes => _passes;
 
-    /// <summary>Executes every configured pass and requires one scene submission.</summary>
+    /// <summary>Executes every configured pass and submits its recorded GPU work.</summary>
     /// <param name="submitter">Backend submission boundary.</param>
     /// <param name="view">Destination render view.</param>
     /// <param name="queue">Prepared render queue.</param>
@@ -231,10 +495,12 @@ public class RenderPipeline
         ArgumentNullException.ThrowIfNull(queue);
         if (!view.IsValid)
             throw new ArgumentException("A valid render view is required.", nameof(view));
+        queue.ClearPipelineCommands();
         var context = new RenderPipelineContext(view, queue);
         for (var index = 0; index < _passes.Length; index++)
         {
             var pass = _passes[index];
+            context.BeginPass(pass.Stage);
             pass.Setup(ref context);
             try
             {
@@ -245,9 +511,11 @@ public class RenderPipeline
                 pass.Cleanup(ref context);
             }
         }
-        if (!context.IsSubmitted)
+        if (!queue.HasDrawPipelineCommand)
             throw new InvalidOperationException(
-                "The render pipeline completed without submitting the scene queue.");
+                "The render pipeline completed without scheduling scene geometry.");
+        queue.CompilePipelineDependencies();
+        queue.SortTransparentBackToFront();
         submitter.Submit(view, queue);
     }
 }
@@ -267,7 +535,19 @@ public sealed class EmptyRenderPipelinePass : RenderPipelinePass
     }
 }
 
-/// <summary>Submits the prepared queue to the existing forward renderer.</summary>
+/// <summary>Explicitly initializes the active camera attachments.</summary>
+public sealed class CameraClearRenderPass : RenderPipelinePass
+{
+    /// <summary>Creates the built-in camera initialization pass.</summary>
+    public CameraClearRenderPass() : base(RenderPipelineStage.CameraSetup)
+    {
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) => context.ClearCamera();
+}
+
+/// <summary>Schedules opaque geometry for the built-in forward renderer.</summary>
 public sealed class ForwardOpaqueRenderPass : RenderPipelinePass
 {
     /// <summary>Creates the basic forward opaque stage.</summary>
@@ -276,7 +556,47 @@ public sealed class ForwardOpaqueRenderPass : RenderPipelinePass
     }
 
     /// <inheritdoc/>
-    public override void Execute(ref RenderPipelineContext context) => context.SubmitScene();
+    public override void Execute(ref RenderPipelineContext context) => context.DrawRenderers(
+        RenderQueueFilter.Opaque | RenderQueueFilter.AlphaTest,
+        RenderMaterialPass.Forward,
+        RenderPipelineResource.CameraDepth |
+            RenderPipelineResource.DirectionalShadowAtlas |
+            RenderPipelineResource.LocalShadowAtlas,
+        RenderPipelineResource.CameraColor | RenderPipelineResource.CameraDepth);
+}
+
+/// <summary>Schedules solid and cutout geometry into the active camera depth target.</summary>
+public sealed class DepthPrepassRenderPass : RenderPipelinePass
+{
+    /// <summary>Creates the built-in camera depth prepass.</summary>
+    public DepthPrepassRenderPass() : base(RenderPipelineStage.DepthPrepass)
+    {
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) => context.DrawRenderers(
+        RenderQueueFilter.Opaque,
+        RenderMaterialPass.DepthOnly,
+        RenderPipelineResource.None,
+        RenderPipelineResource.CameraDepth);
+}
+
+/// <summary>Schedules blended geometry after solid forward rendering.</summary>
+public sealed class ForwardTransparentRenderPass : RenderPipelinePass
+{
+    /// <summary>Creates the built-in forward transparent stage.</summary>
+    public ForwardTransparentRenderPass() : base(RenderPipelineStage.Transparent)
+    {
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) => context.DrawRenderers(
+        RenderQueueFilter.Transparent,
+        RenderMaterialPass.Forward,
+        RenderPipelineResource.CameraColor | RenderPipelineResource.CameraDepth |
+            RenderPipelineResource.DirectionalShadowAtlas |
+            RenderPipelineResource.LocalShadowAtlas,
+        RenderPipelineResource.CameraColor);
 }
 
 /// <summary>Requests a directional shadow map before opaque forward rendering.</summary>
@@ -301,7 +621,56 @@ public sealed class DirectionalShadowRenderPass : RenderPipelinePass
 
     /// <inheritdoc/>
     public override void Execute(ref RenderPipelineContext context) =>
-        context.Queue.Shadows = _settings;
+        context.RenderDirectionalShadows(_settings);
+}
+
+/// <summary>Requests local-light shadow maps before forward rendering.</summary>
+public sealed class LocalShadowRenderPass : RenderPipelinePass
+{
+    private readonly LocalShadowSettings _settings;
+
+    /// <summary>Creates a local-shadow pass using the built-in settings.</summary>
+    public LocalShadowRenderPass() : this(LocalShadowSettings.Default)
+    {
+    }
+
+    /// <summary>Creates a local-shadow pass using explicit settings.</summary>
+    /// <param name="settings">Validated local-shadow settings.</param>
+    public LocalShadowRenderPass(LocalShadowSettings settings)
+        : base(RenderPipelineStage.Shadows)
+    {
+        if (!settings.IsEnabled)
+            throw new ArgumentException("A local-shadow pass requires enabled settings.",
+                nameof(settings));
+        _settings = settings;
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) =>
+        context.RenderLocalShadows(_settings);
+}
+
+/// <summary>Transforms completed camera color into presentation-ready output.</summary>
+public sealed class OutputPostProcessRenderPass : RenderPipelinePass
+{
+    private readonly RenderOutputSettings _settings;
+
+    /// <summary>Creates a presentation pass with no optional output effect.</summary>
+    public OutputPostProcessRenderPass() : this(RenderOutputSettings.None)
+    {
+    }
+
+    /// <summary>Creates a presentation pass with explicit output settings.</summary>
+    /// <param name="settings">Validated output effects.</param>
+    public OutputPostProcessRenderPass(RenderOutputSettings settings)
+        : base(RenderPipelineStage.PostProcess)
+    {
+        _settings = settings;
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) =>
+        context.ApplyPostProcess(_settings);
 }
 
 /// <summary>Provides the engine's initial configurable forward render pipeline.</summary>
@@ -313,11 +682,13 @@ public sealed class BasicForwardRenderPipeline : RenderPipeline
     /// <summary>Creates shadow, depth, opaque, transparent, and post-process stages.</summary>
     public BasicForwardRenderPipeline()
         : base(
+            new CameraClearRenderPass(),
             new DirectionalShadowRenderPass(),
-            new EmptyRenderPipelinePass(RenderPipelineStage.DepthPrepass),
+            new LocalShadowRenderPass(),
+            new DepthPrepassRenderPass(),
             new ForwardOpaqueRenderPass(),
-            new EmptyRenderPipelinePass(RenderPipelineStage.Transparent),
-            new EmptyRenderPipelinePass(RenderPipelineStage.PostProcess))
+            new ForwardTransparentRenderPass(),
+            new OutputPostProcessRenderPass())
     {
     }
 }

@@ -11,7 +11,6 @@ namespace Engine.Graphics;
 /// </summary>
 internal unsafe class ViewportFbo
 {
-    public const uint ShadowResolution = 2048;
     public uint Id { get; }
     public uint Width { get; private set; }
     public uint Height { get; private set; }
@@ -30,12 +29,9 @@ internal unsafe class ViewportFbo
     public Framebuffer Framebuffer;
     public Sampler Sampler;
     public DescriptorSet DescriptorSet;
-    public Image ShadowImage;
-    public DeviceMemory ShadowMemory;
-    public ImageView ShadowView;
-    public Framebuffer ShadowFramebuffer;
-    public Sampler ShadowSampler;
-    public DescriptorSet ShadowDescriptorSet;
+    public DirectionalShadowAtlas ShadowAtlas { get; } = new();
+    public LocalShadowAtlas LocalShadowAtlas { get; } = new();
+    public SceneLightGpuBuffer Lights { get; } = new();
 
     public ViewportFbo(uint id, uint width, uint height)
     {
@@ -57,6 +53,8 @@ internal unsafe class ViewportFbo
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool,
         DescriptorSetLayout shadowDescriptorSetLayout, DescriptorPool shadowDescriptorPool,
+        DescriptorSetLayout lightingDescriptorSetLayout, DescriptorPool lightingDescriptorPool,
+        Func<uint, MemoryPropertyFlags, uint> findMemoryType,
         bool allocateDescriptorSet = true)
     {
         // ── Color image ────────────────────────────────────────
@@ -66,7 +64,8 @@ internal unsafe class ViewportFbo
             ImageType = ImageType.Type2D,
             Format = colorFormat,
             Extent = new Extent3D { Width = Width, Height = Height, Depth = 1 },
-            MipLevels = 1, ArrayLayers = 1,
+            MipLevels = 1,
+            ArrayLayers = 1,
             Samples = SampleCountFlags.Count1Bit,
             Tiling = ImageTiling.Optimal,
             Usage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.SampledBit,
@@ -80,7 +79,10 @@ internal unsafe class ViewportFbo
         vk.BindImageMemory(device, ColorImage, ColorMemory, 0);
         var colorViewInfo = new ImageViewCreateInfo
         {
-            SType = StructureType.ImageViewCreateInfo, Image = ColorImage, ViewType = ImageViewType.Type2D, Format = colorFormat,
+            SType = StructureType.ImageViewCreateInfo,
+            Image = ColorImage,
+            ViewType = ImageViewType.Type2D,
+            Format = colorFormat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.ColorBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
         };
         vk.CreateImageView(device, in colorViewInfo, null, out ColorView);
@@ -95,7 +97,10 @@ internal unsafe class ViewportFbo
         vk.BindImageMemory(device, MsaaColorImage, MsaaColorMemory, 0);
         var msaaViewInfo = new ImageViewCreateInfo
         {
-            SType = StructureType.ImageViewCreateInfo, Image = MsaaColorImage, ViewType = ImageViewType.Type2D, Format = colorFormat,
+            SType = StructureType.ImageViewCreateInfo,
+            Image = MsaaColorImage,
+            ViewType = ImageViewType.Type2D,
+            Format = colorFormat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.ColorBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
         };
         vk.CreateImageView(device, in msaaViewInfo, null, out MsaaColorView);
@@ -107,7 +112,8 @@ internal unsafe class ViewportFbo
             ImageType = ImageType.Type2D,
             Format = depthFormat,
             Extent = new Extent3D { Width = Width, Height = Height, Depth = 1 },
-            MipLevels = 1, ArrayLayers = 1,
+            MipLevels = 1,
+            ArrayLayers = 1,
             Samples = samples,
             Tiling = ImageTiling.Optimal,
             Usage = ImageUsageFlags.DepthStencilAttachmentBit,
@@ -121,7 +127,10 @@ internal unsafe class ViewportFbo
         vk.BindImageMemory(device, DepthImage, DepthMemory, 0);
         var depthViewInfo = new ImageViewCreateInfo
         {
-            SType = StructureType.ImageViewCreateInfo, Image = DepthImage, ViewType = ImageViewType.Type2D, Format = depthFormat,
+            SType = StructureType.ImageViewCreateInfo,
+            Image = DepthImage,
+            ViewType = ImageViewType.Type2D,
+            Format = depthFormat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.DepthBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = 1 }
         };
         vk.CreateImageView(device, in depthViewInfo, null, out DepthView);
@@ -134,7 +143,9 @@ internal unsafe class ViewportFbo
             RenderPass = fboRenderPass,
             AttachmentCount = 3,
             PAttachments = fbAttachments,
-            Width = Width, Height = Height, Layers = 1
+            Width = Width,
+            Height = Height,
+            Layers = 1
         };
         vk.CreateFramebuffer(device, &fbInfo, null, out Framebuffer);
 
@@ -142,11 +153,18 @@ internal unsafe class ViewportFbo
         var samplerInfo = new SamplerCreateInfo
         {
             SType = StructureType.SamplerCreateInfo,
-            MagFilter = Filter.Linear, MinFilter = Filter.Linear,
-            AddressModeU = SamplerAddressMode.ClampToEdge, AddressModeV = SamplerAddressMode.ClampToEdge, AddressModeW = SamplerAddressMode.ClampToEdge,
-            AnisotropyEnable = new Bool32(false), MaxAnisotropy = 1,
-            BorderColor = BorderColor.IntOpaqueBlack, UnnormalizedCoordinates = new Bool32(false),
-            CompareEnable = new Bool32(false), CompareOp = CompareOp.Always, MipmapMode = SamplerMipmapMode.Nearest
+            MagFilter = Filter.Linear,
+            MinFilter = Filter.Linear,
+            AddressModeU = SamplerAddressMode.ClampToEdge,
+            AddressModeV = SamplerAddressMode.ClampToEdge,
+            AddressModeW = SamplerAddressMode.ClampToEdge,
+            AnisotropyEnable = new Bool32(false),
+            MaxAnisotropy = 1,
+            BorderColor = BorderColor.IntOpaqueBlack,
+            UnnormalizedCoordinates = new Bool32(false),
+            CompareEnable = new Bool32(false),
+            CompareOp = CompareOp.Always,
+            MipmapMode = SamplerMipmapMode.Nearest
         };
         vk.CreateSampler(device, in samplerInfo, null, out Sampler);
 
@@ -156,8 +174,10 @@ internal unsafe class ViewportFbo
             var setLayout = descriptorSetLayout;
             var descriptorSetInfo = new DescriptorSetAllocateInfo
             {
-                SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = descriptorPool,
-                DescriptorSetCount = 1, PSetLayouts = &setLayout
+                SType = StructureType.DescriptorSetAllocateInfo,
+                DescriptorPool = descriptorPool,
+                DescriptorSetCount = 1,
+                PSetLayouts = &setLayout
             };
             var allocationResult = vk.AllocateDescriptorSets(device, in descriptorSetInfo, out DescriptorSet);
             if (allocationResult != Result.Success)
@@ -167,111 +187,27 @@ internal unsafe class ViewportFbo
         var imageInfoDesc = new DescriptorImageInfo { Sampler = Sampler, ImageView = ColorView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
         var writeDescriptor = new WriteDescriptorSet
         {
-            SType = StructureType.WriteDescriptorSet, DstSet = DescriptorSet, DstBinding = 0, DstArrayElement = 0,
-            DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &imageInfoDesc
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = DescriptorSet,
+            DstBinding = 0,
+            DstArrayElement = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            PImageInfo = &imageInfoDesc
         };
         vk.UpdateDescriptorSets(device, 1, &writeDescriptor, 0, null);
 
-        var shadowInfo = new ImageCreateInfo
-        {
-            SType = StructureType.ImageCreateInfo,
-            ImageType = ImageType.Type2D,
-            Format = depthFormat,
-            Extent = new Extent3D
-            {
-                Width = ShadowResolution, Height = ShadowResolution, Depth = 1
-            },
-            MipLevels = 1,
-            ArrayLayers = 1,
-            Samples = SampleCountFlags.Count1Bit,
-            Tiling = ImageTiling.Optimal,
-            Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit,
-            SharingMode = SharingMode.Exclusive,
-            InitialLayout = ImageLayout.Undefined
-        };
-        vk.CreateImage(device, &shadowInfo, null, out ShadowImage);
-        vk.GetImageMemoryRequirements(device, ShadowImage, out var shadowMemoryRequirements);
-        var shadowAllocation = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = shadowMemoryRequirements.Size,
-            MemoryTypeIndex = deviceLocalMemoryType
-        };
-        vk.AllocateMemory(device, in shadowAllocation, null, out ShadowMemory);
-        vk.BindImageMemory(device, ShadowImage, ShadowMemory, 0);
-        var shadowViewInfo = new ImageViewCreateInfo
-        {
-            SType = StructureType.ImageViewCreateInfo,
-            Image = ShadowImage,
-            ViewType = ImageViewType.Type2D,
-            Format = depthFormat,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = ImageAspectFlags.DepthBit,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            }
-        };
-        vk.CreateImageView(device, in shadowViewInfo, null, out ShadowView);
-        var shadowAttachment = ShadowView;
-        var shadowFramebufferInfo = new FramebufferCreateInfo
-        {
-            SType = StructureType.FramebufferCreateInfo,
-            RenderPass = shadowRenderPass,
-            AttachmentCount = 1,
-            PAttachments = &shadowAttachment,
-            Width = ShadowResolution,
-            Height = ShadowResolution,
-            Layers = 1
-        };
-        vk.CreateFramebuffer(device, &shadowFramebufferInfo, null, out ShadowFramebuffer);
-        var shadowSamplerInfo = new SamplerCreateInfo
-        {
-            SType = StructureType.SamplerCreateInfo,
-            MagFilter = Filter.Nearest,
-            MinFilter = Filter.Nearest,
-            AddressModeU = SamplerAddressMode.ClampToBorder,
-            AddressModeV = SamplerAddressMode.ClampToBorder,
-            AddressModeW = SamplerAddressMode.ClampToBorder,
-            BorderColor = BorderColor.FloatOpaqueWhite,
-            MipmapMode = SamplerMipmapMode.Nearest,
-            MaxLod = 1f
-        };
-        vk.CreateSampler(device, in shadowSamplerInfo, null, out ShadowSampler);
         if (allocateDescriptorSet)
         {
-            var shadowLayout = shadowDescriptorSetLayout;
-            var shadowSetInfo = new DescriptorSetAllocateInfo
-            {
-                SType = StructureType.DescriptorSetAllocateInfo,
-                DescriptorPool = shadowDescriptorPool,
-                DescriptorSetCount = 1,
-                PSetLayouts = &shadowLayout
-            };
-            var shadowAllocationResult = vk.AllocateDescriptorSets(
-                device, in shadowSetInfo, out ShadowDescriptorSet);
-            if (shadowAllocationResult != Result.Success)
-                throw new InvalidOperationException(
-                    $"Failed to allocate viewport {Id} shadow descriptor: {shadowAllocationResult}");
+            ShadowAtlas.Create(vk, device, shadowRenderPass, depthFormat,
+                deviceLocalMemoryType, shadowDescriptorSetLayout, shadowDescriptorPool,
+                findMemoryType);
+            LocalShadowAtlas.Create(vk, device, shadowRenderPass, depthFormat,
+                deviceLocalMemoryType, ShadowAtlas.GetDescriptorSet(0),
+                ShadowAtlas.GetDescriptorSet(1), findMemoryType);
+            Lights.Create(vk, device, lightingDescriptorSetLayout,
+                lightingDescriptorPool, findMemoryType);
         }
-        var shadowDescriptorInfo = new DescriptorImageInfo
-        {
-            Sampler = ShadowSampler,
-            ImageView = ShadowView,
-            ImageLayout = ImageLayout.DepthStencilReadOnlyOptimal
-        };
-        var shadowWrite = new WriteDescriptorSet
-        {
-            SType = StructureType.WriteDescriptorSet,
-            DstSet = ShadowDescriptorSet,
-            DstBinding = 0,
-            DescriptorType = DescriptorType.CombinedImageSampler,
-            DescriptorCount = 1,
-            PImageInfo = &shadowDescriptorInfo
-        };
-        vk.UpdateDescriptorSets(device, 1, &shadowWrite, 0, null);
     }
 
     /// <summary>Destroys framebuffer resources and optionally returns its sampled-image descriptor.</summary>
@@ -284,6 +220,7 @@ internal unsafe class ViewportFbo
         Device device,
         DescriptorPool descriptorPool,
         DescriptorPool shadowDescriptorPool,
+        DescriptorPool lightingDescriptorPool,
         bool releaseDescriptorSet = true)
     {
         if (releaseDescriptorSet && DescriptorSet.Handle != 0)
@@ -292,22 +229,12 @@ internal unsafe class ViewportFbo
             vk.FreeDescriptorSets(device, descriptorPool, 1, &descriptorSet);
             DescriptorSet = default;
         }
-        if (releaseDescriptorSet && ShadowDescriptorSet.Handle != 0)
+        if (releaseDescriptorSet)
         {
-            var shadowDescriptor = ShadowDescriptorSet;
-            vk.FreeDescriptorSets(device, shadowDescriptorPool, 1, &shadowDescriptor);
-            ShadowDescriptorSet = default;
+            LocalShadowAtlas.Destroy(vk, device);
+            ShadowAtlas.Destroy(vk, device, shadowDescriptorPool);
+            Lights.Destroy(vk, device, lightingDescriptorPool);
         }
-        if (ShadowFramebuffer.Handle != 0)
-            vk.DestroyFramebuffer(device, ShadowFramebuffer, null);
-        if (ShadowSampler.Handle != 0)
-            vk.DestroySampler(device, ShadowSampler, null);
-        if (ShadowView.Handle != 0)
-            vk.DestroyImageView(device, ShadowView, null);
-        if (ShadowImage.Handle != 0)
-            vk.DestroyImage(device, ShadowImage, null);
-        if (ShadowMemory.Handle != 0)
-            vk.FreeMemory(device, ShadowMemory, null);
         vk.DestroyFramebuffer(device, Framebuffer, null);
         vk.DestroySampler(device, Sampler, null);
         vk.DestroyImageView(device, MsaaColorView, null);
@@ -325,12 +252,17 @@ internal unsafe class ViewportFbo
         Vk vk, Device device, RenderPass fboRenderPass, RenderPass shadowRenderPass,
         Format colorFormat, Format depthFormat, SampleCountFlags samples, uint deviceLocalMemoryType,
         DescriptorSetLayout descriptorSetLayout, DescriptorPool descriptorPool,
-        DescriptorSetLayout shadowDescriptorSetLayout, DescriptorPool shadowDescriptorPool)
+        DescriptorSetLayout shadowDescriptorSetLayout, DescriptorPool shadowDescriptorPool,
+        DescriptorSetLayout lightingDescriptorSetLayout, DescriptorPool lightingDescriptorPool,
+        Func<uint, MemoryPropertyFlags, uint> findMemoryType)
     {
-        Destroy(vk, device, descriptorPool, shadowDescriptorPool, releaseDescriptorSet: false);
+        Destroy(vk, device, descriptorPool, shadowDescriptorPool, lightingDescriptorPool,
+            releaseDescriptorSet: false);
         Create(vk, device, fboRenderPass, shadowRenderPass, colorFormat, depthFormat, samples,
             deviceLocalMemoryType, descriptorSetLayout, descriptorPool,
-            shadowDescriptorSetLayout, shadowDescriptorPool, allocateDescriptorSet: false);
+            shadowDescriptorSetLayout, shadowDescriptorPool,
+            lightingDescriptorSetLayout, lightingDescriptorPool, findMemoryType,
+            allocateDescriptorSet: false);
         IsDirty = false;
     }
 }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 
@@ -9,12 +10,29 @@ namespace Editor;
 public sealed class TerrainInspectorFactory : IAssetInspectorFactory
 {
     private readonly TerrainBrushSettings _settings;
+    private readonly Func<bool> _undoObjects;
+    private readonly Func<bool> _redoObjects;
+    private readonly Func<bool> _canUndoObjects;
+    private readonly Func<bool> _canRedoObjects;
 
     /// <summary>Creates a factory over the Scene viewport's shared brush settings.</summary>
     /// <param name="settings">Shared terrain-tool state.</param>
-    public TerrainInspectorFactory(TerrainBrushSettings settings)
+    /// <param name="undoObjects">Object-stroke undo command.</param>
+    /// <param name="redoObjects">Object-stroke redo command.</param>
+    /// <param name="canUndoObjects">Object-stroke undo availability.</param>
+    /// <param name="canRedoObjects">Object-stroke redo availability.</param>
+    public TerrainInspectorFactory(
+        TerrainBrushSettings settings,
+        Func<bool>? undoObjects = null,
+        Func<bool>? redoObjects = null,
+        Func<bool>? canUndoObjects = null,
+        Func<bool>? canRedoObjects = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _undoObjects = undoObjects ?? (static () => false);
+        _redoObjects = redoObjects ?? (static () => false);
+        _canUndoObjects = canUndoObjects ?? (static () => false);
+        _canRedoObjects = canRedoObjects ?? (static () => false);
     }
 
     /// <inheritdoc/>
@@ -25,7 +43,12 @@ public sealed class TerrainInspectorFactory : IAssetInspectorFactory
     {
         if (document is not TerrainDocument terrain)
             throw new InvalidOperationException("Terrain editor received an invalid document.");
-        return new TerrainInspectorContent(context.Width, terrain, _settings);
+        return new TerrainInspectorContent(context.Width, terrain, _settings,
+            displayName: context.ResolveDisplayName,
+            undoObjects: _undoObjects,
+            redoObjects: _redoObjects,
+            canUndoObjects: _canUndoObjects,
+            canRedoObjects: _canRedoObjects);
     }
 }
 
@@ -46,6 +69,23 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
     private readonly Button _reload;
     private readonly Label _dimensions;
     private readonly Label _status;
+    private readonly Func<AssetReference, string> _displayName;
+    private readonly Func<bool> _canUndoObjects;
+    private readonly Func<bool> _canRedoObjects;
+    private readonly ToggleButton _paintObjects;
+    private readonly AssetReferenceField _objectMesh;
+    private readonly Button _clearObjectMesh;
+    private readonly ToggleButton _placeObjects;
+    private readonly ToggleButton _eraseObjects;
+    private readonly TextField _objectSpacing;
+    private readonly TextField _objectDensity;
+    private readonly TextField _minimumObjectScale;
+    private readonly TextField _maximumObjectScale;
+    private readonly ToggleButton _alignObjects;
+    private readonly ToggleButton _randomizeYaw;
+    private readonly Button _undoObjects;
+    private readonly Button _redoObjects;
+    private readonly Label _objectStatus;
     private bool _refreshing;
     private bool _active;
 
@@ -54,16 +94,29 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
     /// <param name="document">Shared terrain document.</param>
     /// <param name="settings">Shared Scene brush settings.</param>
     /// <param name="theme">Theme supplying visuals.</param>
+    /// <param name="displayName">Optional painted-mesh display-name resolver.</param>
+    /// <param name="undoObjects">Optional object-stroke undo command.</param>
+    /// <param name="redoObjects">Optional object-stroke redo command.</param>
+    /// <param name="canUndoObjects">Optional object-stroke undo availability.</param>
+    /// <param name="canRedoObjects">Optional object-stroke redo availability.</param>
     public TerrainInspectorContent(
         float width,
         TerrainDocument document,
         TerrainBrushSettings settings,
-        UITheme? theme = null)
-        : base(new Color(0f, 0f, 0f), width, 304f)
+        UITheme? theme = null,
+        Func<AssetReference, string>? displayName = null,
+        Func<bool>? undoObjects = null,
+        Func<bool>? redoObjects = null,
+        Func<bool>? canUndoObjects = null,
+        Func<bool>? canRedoObjects = null)
+        : base(new Color(0f, 0f, 0f), width, 694f)
     {
         _document = document ?? throw new ArgumentNullException(nameof(document));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _theme = theme ?? UITheme.Dark;
+        _displayName = displayName ?? (static reference => reference.ToString());
+        _canUndoObjects = canUndoObjects ?? (static () => false);
+        _canRedoObjects = canRedoObjects ?? (static () => false);
         PaintBackground = false;
 
         _dimensions = new Label(string.Empty, width, 26f)
@@ -150,6 +203,144 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             Margin = new Thickness(0f, 232f, 0f, 0f)
         };
         AddChild(_status);
+
+        _paintObjects = new ToggleButton(width, 30f, "Paint Objects in Scene", _theme,
+            ButtonStyle.Primary)
+        {
+            Name = "TerrainObjectPaintEnabled",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 304f, 0f, 0f)
+        };
+        _paintObjects.CheckedChanged += value =>
+        {
+            if (_refreshing)
+                return;
+            _settings.ToolMode = TerrainToolMode.Objects;
+            _settings.IsEnabled = value;
+        };
+        AddChild(_paintObjects);
+
+        _objectMesh = new AssetReferenceField(MathF.Max(0f, width - 62f), 30f,
+            "nico/static-mesh", reference =>
+            {
+                _settings.ObjectMesh = reference;
+                return true;
+            }, _theme)
+        {
+            Name = "TerrainObjectMesh",
+            Placeholder = "Drop a static mesh",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 342f, 0f, 0f)
+        };
+        AddChild(_objectMesh);
+        _clearObjectMesh = new Button(58f, 30f, "Clear", _theme)
+        {
+            Name = "TerrainObjectMeshClear",
+            IsEnabled = true,
+            Margin = new Thickness(MathF.Max(0f, width - 58f), 342f, 0f, 0f)
+        };
+        _clearObjectMesh.Click += () => _settings.ObjectMesh = null;
+        AddChild(_clearObjectMesh);
+
+        _placeObjects = new ToggleButton(0f, 30f, "Place", _theme)
+        {
+            Name = "TerrainObjectPlace",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 380f, 0f, 0f)
+        };
+        _eraseObjects = new ToggleButton(0f, 30f, "Erase", _theme)
+        {
+            Name = "TerrainObjectErase",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 380f, 0f, 0f)
+        };
+        _placeObjects.CheckedChanged += value =>
+        {
+            if (!_refreshing && value)
+                _settings.EraseObjects = false;
+        };
+        _eraseObjects.CheckedChanged += value =>
+        {
+            if (!_refreshing && value)
+                _settings.EraseObjects = true;
+        };
+        AddChild(_placeObjects);
+        AddChild(_eraseObjects);
+
+        AddChild(CreateLabel("Spacing", 418f));
+        _objectSpacing = CreateFloatField("TerrainObjectSpacing", 418f,
+            _settings.ObjectSpacing, value => _settings.ObjectSpacing = value,
+            requiresEditableDocument: false);
+        AddChild(_objectSpacing);
+        AddChild(CreateLabel("Density", 456f));
+        _objectDensity = CreateFloatField("TerrainObjectDensity", 456f,
+            _settings.ObjectDensity,
+            value => _settings.ObjectDensity = Math.Clamp(value, 0.01f, 1f),
+            requiresEditableDocument: false);
+        AddChild(_objectDensity);
+        AddChild(CreateLabel("Min Scale", 494f));
+        _minimumObjectScale = CreateFloatField("TerrainObjectMinimumScale", 494f,
+            _settings.MinimumObjectScale, value => _settings.MinimumObjectScale = value,
+            requiresEditableDocument: false);
+        AddChild(_minimumObjectScale);
+        AddChild(CreateLabel("Max Scale", 532f));
+        _maximumObjectScale = CreateFloatField("TerrainObjectMaximumScale", 532f,
+            _settings.MaximumObjectScale, value => _settings.MaximumObjectScale = value,
+            requiresEditableDocument: false);
+        AddChild(_maximumObjectScale);
+
+        _alignObjects = new ToggleButton(0f, 30f, "Align Normal", _theme)
+        {
+            Name = "TerrainObjectAlignNormal",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 570f, 0f, 0f)
+        };
+        _randomizeYaw = new ToggleButton(0f, 30f, "Random Yaw", _theme)
+        {
+            Name = "TerrainObjectRandomYaw",
+            IsEnabled = true,
+            Margin = new Thickness(0f, 570f, 0f, 0f)
+        };
+        _alignObjects.CheckedChanged += value =>
+        {
+            if (!_refreshing)
+                _settings.AlignObjectsToNormal = value;
+        };
+        _randomizeYaw.CheckedChanged += value =>
+        {
+            if (!_refreshing)
+                _settings.RandomizeObjectYaw = value;
+        };
+        AddChild(_alignObjects);
+        AddChild(_randomizeYaw);
+
+        _undoObjects = new Button(0f, 30f, "Undo Objects", _theme)
+            { Name = "TerrainObjectUndo", Margin = new Thickness(0f, 608f, 0f, 0f) };
+        _redoObjects = new Button(0f, 30f, "Redo Objects", _theme)
+            { Name = "TerrainObjectRedo", Margin = new Thickness(0f, 608f, 0f, 0f) };
+        var undoObjectCommand = undoObjects ?? (static () => false);
+        var redoObjectCommand = redoObjects ?? (static () => false);
+        _undoObjects.Click += () =>
+        {
+            if (undoObjectCommand())
+                RefreshValues();
+        };
+        _redoObjects.Click += () =>
+        {
+            if (redoObjectCommand())
+                RefreshValues();
+        };
+        AddChild(_undoObjects);
+        AddChild(_redoObjects);
+
+        _objectStatus = new Label(string.Empty, width, 42f)
+        {
+            Name = "TerrainObjectStatus",
+            ForegroundColor = _theme.TextMuted,
+            PaddingLeft = 0f,
+            Margin = new Thickness(0f, 646f, 0f, 0f)
+        };
+        AddChild(_objectStatus);
         Reflow(width);
         RefreshValues();
     }
@@ -195,7 +386,9 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
     {
         SetWidth(_dimensions, width);
         SetWidth(_status, width);
+        SetWidth(_objectStatus, width);
         SetWidth(_sculpt, width);
+        SetWidth(_paintObjects, width);
         const float gap = 4f;
         var modeWidth = MathF.Max(0f, MathF.Floor((width - gap * 3f) / 4f));
         for (var index = 0; index < _modeButtons.Length; index++)
@@ -207,6 +400,10 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         var fieldWidth = MathF.Max(0f, width - 82f);
         SetWidth(_radius, fieldWidth);
         SetWidth(_strength, fieldWidth);
+        SetWidth(_objectSpacing, fieldWidth);
+        SetWidth(_objectDensity, fieldWidth);
+        SetWidth(_minimumObjectScale, fieldWidth);
+        SetWidth(_maximumObjectScale, fieldWidth);
         var actionWidth = MathF.Max(0f, MathF.Floor((width - gap * 3f) / 4f));
         for (var index = 0; index < _actionButtons.Length; index++)
         {
@@ -214,6 +411,18 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             _actionButtons[index].Margin = new Thickness(
                 index * (actionWidth + gap), 190f, 0f, 0f);
         }
+        SetWidth(_objectMesh, MathF.Max(0f, width - 62f));
+        _clearObjectMesh.Margin = new Thickness(MathF.Max(0f, width - 58f), 342f, 0f, 0f);
+        var halfWidth = MathF.Max(0f, MathF.Floor((width - gap) * 0.5f));
+        SetWidth(_placeObjects, halfWidth);
+        SetWidth(_eraseObjects, halfWidth);
+        _eraseObjects.Margin = new Thickness(halfWidth + gap, 380f, 0f, 0f);
+        SetWidth(_alignObjects, halfWidth);
+        SetWidth(_randomizeYaw, halfWidth);
+        _randomizeYaw.Margin = new Thickness(halfWidth + gap, 570f, 0f, 0f);
+        SetWidth(_undoObjects, halfWidth);
+        SetWidth(_redoObjects, halfWidth);
+        _redoObjects.Margin = new Thickness(halfWidth + gap, 608f, 0f, 0f);
     }
 
     /// <summary>Synchronizes all controls from current document and tool state.</summary>
@@ -225,8 +434,22 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             _dimensions.Text = $"{_document.Value.Width} × {_document.Value.Depth} samples";
             _sculpt.IsChecked = _settings.IsEnabled &&
                 _settings.ToolMode == TerrainToolMode.Sculpt;
+            _paintObjects.IsChecked = _settings.IsEnabled &&
+                _settings.ToolMode == TerrainToolMode.Objects;
             _radius.Text = Format(_settings.Radius);
             _strength.Text = Format(_settings.Strength);
+            _objectMesh.Text = _settings.ObjectMesh is { } mesh
+                ? _displayName(mesh) : string.Empty;
+            _placeObjects.IsChecked = !_settings.EraseObjects;
+            _eraseObjects.IsChecked = _settings.EraseObjects;
+            _objectSpacing.Text = Format(_settings.ObjectSpacing);
+            _objectDensity.Text = Format(_settings.ObjectDensity);
+            _minimumObjectScale.Text = Format(_settings.MinimumObjectScale);
+            _maximumObjectScale.Text = Format(_settings.MaximumObjectScale);
+            _alignObjects.IsChecked = _settings.AlignObjectsToNormal;
+            _randomizeYaw.IsChecked = _settings.RandomizeObjectYaw;
+            _undoObjects.IsEnabled = _canUndoObjects();
+            _redoObjects.IsEnabled = _canRedoObjects();
             for (var index = 0; index < _modeButtons.Length; index++)
                 _modeButtons[index].IsChecked = (TerrainBrushMode)index == _settings.Mode;
             _undo.IsEnabled = _document.IsEditable && _document.CanUndo;
@@ -243,6 +466,11 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
                     "Enable Sculpt in Scene to edit heights");
             _status.ForegroundColor = _document.LastError is null
                 ? _theme.TextMuted : _theme.Error;
+            _objectStatus.Text = _settings.ObjectMesh is null && !_settings.EraseObjects
+                    ? "Drop a static mesh before placing objects"
+                    : _settings.IsEnabled && _settings.ToolMode == TerrainToolMode.Objects
+                        ? "Drag over selected terrain; switch to Erase to remove"
+                        : "Enable Paint Objects in Scene to scatter meshes";
         }
         finally
         {
@@ -255,19 +483,26 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
     /// <param name="y">Row position.</param>
     /// <param name="value">Initial value.</param>
     /// <param name="apply">Validated value writer.</param>
+    /// <param name="requiresEditableDocument">Whether a read-only terrain disables the field.</param>
     /// <returns>Configured text field.</returns>
-    private TextField CreateFloatField(string name, float y, float value, Action<float> apply)
+    private TextField CreateFloatField(
+        string name,
+        float y,
+        float value,
+        Action<float> apply,
+        bool requiresEditableDocument = true)
     {
+        var enabled = !requiresEditableDocument || _document.IsEditable;
         var field = new TextField(MathF.Max(0f, Width - 82f), 30f, _theme)
         {
             Name = name,
             Text = Format(value),
-            IsReadOnly = !_document.IsEditable,
+            IsReadOnly = !enabled,
             UpdateTrigger = TextUpdateTrigger.Commit,
             Validator = ValidatePositive,
             Margin = new Thickness(82f, y, 0f, 0f)
         };
-        if (_document.IsEditable)
+        if (enabled)
         {
             field.ValueUpdateRequested += text =>
             {

@@ -103,6 +103,31 @@ public sealed class AnimationResourceTests
         Assert.True(second.IsCurrent);
     }
 
+    /// <summary>Refreshes a published clip without invalidating retained playback state.</summary>
+    [Fact]
+    public void AnimationController_RefreshClips_UpdatesRetainedStateInPlace()
+    {
+        using var controller = new AnimationController(CreateBlendResource());
+        var state = controller.Play("Forward");
+        controller.Update(0.5d);
+        var replacement = new AnimationClipResource("Forward", 2f,
+        [
+            new JointAnimationTrack(
+                new Vector3AnimationTrack([0f, 2f],
+                    [Vector3.UnitY, Vector3.UnitY], AnimationInterpolation.Linear),
+                null, null)
+        ], defaultSpeed: 2f, defaultLoop: false);
+
+        controller.RefreshClips([replacement]);
+
+        Assert.Same(state, controller.GetOrCreate("Forward"));
+        Assert.Same(replacement, state.Clip);
+        Assert.Equal(1f, state.Time, 5);
+        Assert.Equal(2f, state.Speed);
+        Assert.False(state.Loop);
+        Assert.Equal(1f, controller.Pose.LocalTransforms[0].Translation.Y, 5);
+    }
+
     /// <summary>Blends sampled local transforms instead of final skin matrices.</summary>
     [Fact]
     public void AnimationController_CrossFade_BlendsLocalPose()

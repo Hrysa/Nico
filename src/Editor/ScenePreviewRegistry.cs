@@ -182,6 +182,7 @@ public sealed class ScenePreviewRegistry
         registry.Register(new EmptyNodePreviewProvider());
         registry.Register(new CameraPreviewProvider());
         registry.Register(new DirectionalLightPreviewProvider());
+        registry.Register(new LocalLightPreviewProvider());
         registry.Register(new ColliderPreviewProvider(meshResolver, terrainResolver));
         return registry;
     }
@@ -195,7 +196,7 @@ internal sealed class EmptyNodePreviewProvider : IScenePreviewProvider
 
     /// <inheritdoc/>
     public bool Supports(object value) => value is Node3D and not MeshInstance3D and
-        not PerspectiveCamera and not DirectionalLight3D;
+        not PerspectiveCamera and not Light3D;
 
     /// <inheritdoc/>
     public void Build(Node3D node, object value, ScenePreviewPickingId pickingId,

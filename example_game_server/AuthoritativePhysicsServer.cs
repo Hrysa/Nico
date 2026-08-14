@@ -14,15 +14,23 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
     private readonly AssetImportPipeline _assetPipeline;
     private readonly LoadedScene _scene;
     private readonly PhysicsWorld _physicsWorld;
+    private readonly ServerTerrainCollision _terrainCollision;
+    private readonly UdpGameServer _network;
     private bool _disposed;
 
     /// <summary>Creates and attaches a BEPU world to one authored scene.</summary>
     /// <param name="scenePath">Path to the authored example scene.</param>
     /// <param name="tickRate">Authoritative simulation frequency.</param>
+    /// <param name="port">UDP listen port, or zero for an ephemeral port.</param>
+    /// <param name="networkSnapshotRate">UDP snapshots sent per second.</param>
+    /// <param name="clientTimeout">Silent-client timeout.</param>
     /// <param name="logger">Server logger.</param>
     internal AuthoritativePhysicsServer(
         string scenePath,
         int tickRate,
+        int port,
+        int networkSnapshotRate,
+        TimeSpan clientTimeout,
         ILogger<AuthoritativePhysicsServer> logger)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scenePath);
@@ -36,18 +44,24 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         _assetDatabase = new AssetDatabase(projectRoot, SelectImporter);
         var registry = new AssetImporterRegistry();
         registry.Register(new GlbModelImporter());
+        registry.Register(new TerrainAssetImporter());
         _assetPipeline = new AssetImportPipeline(_assetDatabase, registry);
-        _scene = SceneFileStore.Load(scenePath);
-        _physicsWorld = new PhysicsWorld(ResolveCollisionMesh)
+        _scene = SceneFileStore.Load(scenePath, ServerSceneNodeFactory.Instance);
+        _terrainCollision = new ServerTerrainCollision(_scene.Root, ResolveTerrain);
+        _physicsWorld = new PhysicsWorld(ResolveCollisionMesh, ResolveTerrain)
         {
             FixedTimeStep = 1d / tickRate,
             EnableInterpolation = false
         };
         _physicsWorld.Attach(_scene.Root);
+        _network = new UdpGameServer(
+            port, tickRate, networkSnapshotRate, clientTimeout, _terrainCollision, logger);
         TickRate = tickRate;
         _logger.LogInformation(
-            "Loaded authoritative scene {ScenePath} with {BodyCount} BEPU bodies at {TickRate} Hz",
-            scenePath, _physicsWorld.BodyCount, tickRate);
+            "Loaded authoritative scene {ScenePath} with {BodyCount} BEPU bodies and " +
+            "{TerrainCount} shared terrain surfaces at {TickRate} Hz; UDP port {Port}",
+            scenePath, _physicsWorld.BodyCount, _terrainCollision.SurfaceCount, tickRate,
+            _network.Port);
     }
 
     /// <summary>Selects importers needed by authoritative server resources.</summary>
@@ -55,8 +69,12 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
     /// <returns>The GLB importer ID, or null for unsupported files.</returns>
     private static string? SelectImporter(string path)
     {
-        return Path.GetExtension(path).Equals(".glb", StringComparison.OrdinalIgnoreCase)
-            ? "gltf-model" : null;
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".glb" => "gltf-model",
+            ".nterrain" => "terrain",
+            _ => null
+        };
     }
 
     /// <summary>Imports and decodes one static collision-mesh artifact.</summary>
@@ -76,8 +94,31 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         return StaticMeshResource.Load(stream);
     }
 
+    /// <summary>Imports and decodes one authored terrain artifact.</summary>
+    /// <param name="reference">Persistent terrain artifact reference.</param>
+    /// <returns>The decoded shared terrain height grid.</returns>
+    private TerrainResource ResolveTerrain(AssetReference reference)
+    {
+        var record = _assetDatabase.Find(reference.Asset)
+            ?? throw new FileNotFoundException($"Terrain asset '{reference.Asset}' is missing.");
+        var outcome = _assetPipeline.Import(record, "server");
+        var artifact = outcome.Artifacts.FirstOrDefault(candidate =>
+            candidate.Key == reference.SubAsset && candidate.ContentType == "nico/terrain")
+            ?? throw new FileNotFoundException($"Terrain output '{reference}' is missing.");
+        var artifactDirectory = outcome.ArtifactDirectory
+            ?? throw new InvalidDataException($"Terrain asset '{reference.Asset}' failed to import.");
+        using var stream = File.OpenRead(Path.Combine(artifactDirectory, artifact.RelativePath));
+        return TerrainResource.Load(stream);
+    }
+
     /// <summary>Gets the configured authoritative simulation frequency.</summary>
     internal int TickRate { get; }
+
+    /// <summary>Gets the actual bound authoritative UDP port.</summary>
+    internal int Port => _network.Port;
+
+    /// <summary>Gets the number of authenticated UDP clients.</summary>
+    internal int ClientCount => _network.ClientCount;
 
     /// <summary>Gets the number of completed authoritative ticks.</summary>
     internal long Tick { get; private set; }
@@ -86,6 +127,7 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
     internal void Step()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _network.Step(Tick + 1, (float)_physicsWorld.FixedTimeStep);
         _physicsWorld.Update(_physicsWorld.FixedTimeStep);
         Tick++;
     }
@@ -132,6 +174,7 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        _network.Dispose();
         _physicsWorld.Dispose();
     }
 }
