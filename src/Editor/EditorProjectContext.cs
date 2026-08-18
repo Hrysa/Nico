@@ -8,9 +8,6 @@ public sealed class EditorProjectContext
     /// <summary>Gets the normalized absolute path to the game project root.</summary>
     public string RootPath { get; }
 
-    /// <summary>Gets the path of the project's primary scene file.</summary>
-    public string ScenePath => Path.Combine(RootPath, "scene.node");
-
     /// <summary>
     /// Finds scene files that can be opened from this game project.
     /// </summary>
@@ -20,8 +17,6 @@ public sealed class EditorProjectContext
         var paths = Directory.EnumerateFiles(RootPath, "*.node", SearchOption.AllDirectories)
             .Select(Path.GetFullPath)
             .ToList();
-        if (File.Exists(ScenePath) && !paths.Contains(ScenePath, StringComparer.Ordinal))
-            paths.Add(ScenePath);
         paths.Sort((left, right) => string.Compare(
             Path.GetRelativePath(RootPath, left),
             Path.GetRelativePath(RootPath, right),

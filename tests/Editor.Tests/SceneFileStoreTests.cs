@@ -9,6 +9,45 @@ namespace Editor.Tests;
 
 public class SceneFileStoreTests
 {
+    /// <summary>Round-trips authored equirectangular skybox settings and rotation.</summary>
+    [Fact]
+    public void SaveAndLoad_Skybox_PreservesSettings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"skybox-scene-{Guid.NewGuid():N}.node");
+        var root = new Node3D();
+        var camera = new PerspectiveCamera();
+        var reference = new AssetReference(AssetId.New(), "main");
+        var skybox = new Skybox3D
+        {
+            Name = "Evening",
+            Texture = reference,
+            Tint = new Vector3(0.8f, 0.7f, 0.6f),
+            Intensity = 1.25f,
+            IsEnabled = false,
+            Rotation = new Vector3(0f, 0.7f, 0f)
+        };
+        root.AddChild(skybox);
+        root.AddChild(camera);
+        try
+        {
+            SceneFileStore.Save(path, root, camera);
+
+            var loaded = SceneFileStore.Load(path);
+
+            var actual = Assert.IsType<Skybox3D>(loaded.Root.Children[0]);
+            Assert.Equal(skybox.Name, actual.Name);
+            Assert.Equal(reference, actual.Texture);
+            Assert.Equal(skybox.Tint, actual.Tint);
+            Assert.Equal(skybox.Intensity, actual.Intensity);
+            Assert.Equal(skybox.Rotation, actual.Rotation);
+            Assert.False(actual.IsEnabled);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>Round-trips authored directional-light settings and transforms.</summary>
     [Fact]
     public void SaveAndLoad_DirectionalLight_PreservesSettings()

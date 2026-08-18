@@ -279,6 +279,35 @@ public sealed class PhysicsWorldTests
         Assert.False(world.TryGetTerrainHeight(new Vector3(6f, 0f, 0f), out _));
     }
 
+    /// <summary>Builds collision triangles from the same locally refined sample topology.</summary>
+    [Fact]
+    public void TerrainCollider_LocalRefinement_RaycastMatchesDetailHeight()
+    {
+        var terrainReference = new AssetReference(AssetId.New(), "terrain/adaptive");
+        var terrainResource = new TerrainResource(3, 3, new float[9]);
+        terrainResource.SetQuadRefined(0, 0, true);
+        terrainResource.SetSampleHeight(new TerrainSamplePoint(1, 1), 1f);
+        var root = new Node3D();
+        var terrain = new Node3D();
+        terrain.AddComponent(new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(4f),
+            HeightScale = 2f
+        });
+        root.AddChild(terrain);
+        using var world = new PhysicsWorld(terrainResolver: reference =>
+            reference == terrainReference ? terrainResource : null);
+        world.Attach(root);
+        var position = new Vector3(-1f, 0f, -1f);
+
+        Assert.True(world.TryGetTerrainHeight(position, out var height));
+        Assert.Equal(2f, height, 4);
+        Assert.True(world.TryRaycast(new Vector3(-1f, 5f, -1f), -Vector3.UnitY,
+            10f, uint.MaxValue, out var hit));
+        Assert.Equal(height, hit.Position.Y, 3);
+    }
+
     /// <summary>Verifies raycasts return the closest authored collider allowed by the query mask.</summary>
     [Fact]
     public void TryRaycast_LayerMask_ReturnsEligibleAuthoredCollider()

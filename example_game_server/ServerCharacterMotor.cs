@@ -6,12 +6,13 @@ namespace ExampleGame.Server;
 internal sealed class ServerCharacterMotor
 {
     private const float Gravity = -9.81f;
-    private const float MoveSpeed = 4f;
+    private const float MoveSpeed = 8f;
     private const float JumpSpeed = 5f;
     private const float GroundSnapDistance = 0.2f;
     private const float MaximumAcceleration = 30f;
-    private static readonly float CosMaximumSlope = MathF.Cos(MathF.PI / 4f);
+    internal static readonly float CosMaximumSlope = MathF.Cos(MathF.PI / 4f);
     private Vector2 _movement;
+    private Vector2 _lastWalkableHorizontalPosition;
     private bool _jumpRequested;
 
     /// <summary>Creates a motor at one authoritative foot position.</summary>
@@ -19,6 +20,7 @@ internal sealed class ServerCharacterMotor
     internal ServerCharacterMotor(Vector3 spawnPosition)
     {
         Position = spawnPosition;
+        _lastWalkableHorizontalPosition = new Vector2(spawnPosition.X, spawnPosition.Z);
         IsGrounded = true;
         GroundNormal = Vector3.UnitY;
     }
@@ -79,13 +81,18 @@ internal sealed class ServerCharacterMotor
         }
 
         var walkable = Vector3.Dot(ground.Normal, Vector3.UnitY) >= CosMaximumSlope;
+        if (walkable)
+            _lastWalkableHorizontalPosition = new Vector2(next.X, next.Z);
         if (!walkable && next.Y <= ground.Height + GroundSnapDistance)
         {
-            next.X = previous.X;
-            next.Z = previous.Z;
+            next.X = _lastWalkableHorizontalPosition.X;
+            next.Z = _lastWalkableHorizontalPosition.Y;
             horizontal = Vector2.Zero;
             if (terrain.TrySample(next, out var previousGround))
+            {
                 ground = previousGround;
+                walkable = Vector3.Dot(ground.Normal, Vector3.UnitY) >= CosMaximumSlope;
+            }
         }
         var descending = vertical <= 0f;
         var supported = walkable && (wasGrounded || descending) &&
@@ -93,8 +100,9 @@ internal sealed class ServerCharacterMotor
         if (supported)
         {
             next.Y = ground.Height;
-            vertical = (next.Y - previous.Y) / deltaTime;
+            vertical = 0f;
             GroundNormal = ground.Normal;
+            _lastWalkableHorizontalPosition = new Vector2(next.X, next.Z);
         }
         Position = next;
         Velocity = new Vector3(horizontal.X, vertical, horizontal.Y);

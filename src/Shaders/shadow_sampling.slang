@@ -45,6 +45,11 @@ float SampleShadowCascade(int cascadeIndex, float3 worldPosition, float3 worldNo
         return 1.0;
 
     float inverseResolution = shadowData.shadowParameters.w;
+    // Raster bias alone is quantized to depth-buffer units and can leave animated,
+    // low-poly receivers comparing against their own stored depth. Pull the receiver
+    // half a shadow texel toward the light before the comparison to suppress acne
+    // without moving the caster geometry or widening silhouettes.
+    float comparisonDepth = projected.z - inverseResolution * 0.5;
     float border = inverseResolution * 1.5;
     localUv = clamp(localUv, float2(border, border),
         float2(1.0 - border, 1.0 - border));
@@ -57,7 +62,7 @@ float SampleShadowCascade(int cascadeIndex, float3 worldPosition, float3 worldNo
             float2 filteredLocalUv = localUv + float2(x, y) * inverseResolution;
             float2 atlasUv = tileOffset + filteredLocalUv * 0.5;
             visibility += shadowAtlas.SampleCmpLevelZero(
-                shadowSampler, atlasUv, projected.z);
+                shadowSampler, atlasUv, comparisonDepth);
         }
     }
     return visibility / 9.0;

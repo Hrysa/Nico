@@ -158,27 +158,34 @@ sceneViewport.Camera = sceneCamera;
 Node3D sceneRoot;
 List<MeshInstance3D> sceneObjects;
 PerspectiveCamera gameCamera;
-var discoveredScenes = project.FindSceneFiles();
-string? activeScenePath = File.Exists(project.ScenePath)
-    ? project.ScenePath : discoveredScenes.FirstOrDefault();
+var activeScenePath = EditorSceneSession.Load(project.RootPath, out var sceneRestoreError);
+if (sceneRestoreError is not null)
+    logger.LogWarning(sceneRestoreError,
+        "Could not restore the last selected scene; starting with an untitled scene");
 editorView.ProjectLabel.Text = activeScenePath is null
     ? "Untitled.node" : Path.GetFileName(activeScenePath);
+LoadedScene? restoredScene = null;
 if (activeScenePath is not null)
 {
     try
     {
-        var loadedScene = SceneFileStore.Load(activeScenePath, HudSceneNodeFactory.Instance);
-        sceneRoot = loadedScene.Root;
-        sceneObjects = loadedScene.MeshInstances;
-        gameCamera = loadedScene.GameCamera;
+        restoredScene = SceneFileStore.Load(activeScenePath, HudSceneNodeFactory.Instance);
         logger.LogInformation("Loaded scene {ScenePath}", activeScenePath);
     }
     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
         or System.Text.Json.JsonException or NotSupportedException or InvalidOperationException)
     {
-        logger.LogCritical(exception, "Could not load scene {ScenePath}", activeScenePath);
-        return 3;
+        logger.LogWarning(exception,
+            "Could not restore scene {ScenePath}; starting with an untitled scene",
+            activeScenePath);
+        SetActiveScenePath(null);
     }
+}
+if (restoredScene is not null)
+{
+    sceneRoot = restoredScene.Root;
+    sceneObjects = restoredScene.MeshInstances;
+    gameCamera = restoredScene.GameCamera;
 }
 else
 {
@@ -274,7 +281,8 @@ var liveAssetDependencies = new LiveAssetDependencyRegistry();
 using var viewportRenderer = new EditorViewportRenderer(
     window, sceneViewportId, gameViewportId, sceneCamera, gameCamera, sceneObjects, sceneRoot,
     selection, ResolveCollisionMeshResource, ResolveTerrainResource,
-    ResolveAnimationSetClips, liveAssetDependencies);
+    ResolveAnimationSetClips, reference => ResolveTextureResource(reference),
+    liveAssetDependencies);
 var gameRenderingService = new EditorGameRenderingService(viewportRenderer);
 selection.PreviewPicker = viewportRenderer.PickPreview;
 var renderScheduler = new EditorRenderScheduler();
@@ -487,6 +495,24 @@ void SaveDockWorkspace()
     }
 }
 
+/// <summary>Updates and persists the active scene selection.</summary>
+/// <param name="scenePath">Selected scene path, or null for an untitled scene.</param>
+void SetActiveScenePath(string? scenePath)
+{
+    activeScenePath = scenePath is null ? null : Path.GetFullPath(scenePath);
+    editorView.ProjectLabel.Text = activeScenePath is null
+        ? "Untitled.node" : Path.GetFileName(activeScenePath);
+    try
+    {
+        EditorSceneSession.Save(project.RootPath, activeScenePath);
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+        NotSupportedException or ArgumentException)
+    {
+        logger.LogWarning(exception, "Could not save the active Editor scene selection");
+    }
+}
+
 /// <summary>Connects focused Scene viewport input to one native-window UI host.</summary>
 /// <param name="host">Host whose independent router owns focus for the viewport.</param>
 /// <param name="includePointerLook">Whether this host also needs standalone fly-camera pointer routing.</param>
@@ -620,7 +646,8 @@ void OpenFloatingSceneViewport(DetachedToolWindow toolWindow)
     detachedSceneRenderer = new EditorViewportRenderer(
         detachedWindow, sceneViewportId, sceneViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot(),
-        selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+        selection, ResolveCollisionMeshResource, ResolveTerrainResource,
+        skyboxTextureResolver: reference => ResolveTextureResource(reference));
     foreach (var previewItem in editorView.ScenePreviewItems)
         detachedSceneRenderer.SetPreviewCategoryVisible(
             previewItem.Key, previewItem.Value.IsChecked);
@@ -691,7 +718,8 @@ void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
     detachedGameRenderer = new EditorViewportRenderer(
         detachedWindow, gameViewportId, gameViewportId,
         sceneCamera, gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot(),
-        selection, ResolveCollisionMeshResource, ResolveTerrainResource);
+        selection, ResolveCollisionMeshResource, ResolveTerrainResource,
+        skyboxTextureResolver: reference => ResolveTextureResource(reference));
     gameRenderingService.SetDetachedRenderer(detachedGameRenderer);
     foreach (var assetMesh in GetActiveSceneObjects())
         LoadAssetMeshResources(assetMesh, targetRenderer: detachedGameRenderer);
@@ -704,7 +732,7 @@ void OpenFloatingGameViewport(DetachedToolWindow toolWindow)
     detachedWindow.Update += _ =>
     {
         detachedGameRenderer?.SetGameScene(
-            gameViewport.Camera ?? gameCamera, GetActiveSceneObjects());
+            gameViewport.Camera ?? gameCamera, GetActiveSceneObjects(), GetActiveSceneRoot());
         detachedGameRenderer?.RenderGame(gameViewport);
     };
     ResizeEditor(width, height);
@@ -856,7 +884,7 @@ void UpdatePlayModeStart(double deltaTime)
         if (stagedHost is null)
         {
             viewportRenderer.SetGameScene(candidateScene.GameCamera,
-                candidateScene.MeshInstances);
+                candidateScene.MeshInstances, candidateScene.Root);
             foreach (var assetMesh in candidateScene.MeshInstances)
             {
                 if (!viewportRenderer.HasAssetMeshResource(assetMesh))
@@ -900,7 +928,8 @@ void UpdatePlayModeStart(double deltaTime)
         hierarchyTree.SetRoots(candidateScene.Root.Children);
         inspector.RefreshScriptSchemas();
         gameViewport.Camera = candidateScene.GameCamera;
-        viewportRenderer.SetGameScene(candidateScene.GameCamera, candidateScene.MeshInstances);
+        viewportRenderer.SetGameScene(
+            candidateScene.GameCamera, candidateScene.MeshInstances, candidateScene.Root);
         foreach (var assetMesh in candidateScene.MeshInstances)
         {
             if (!viewportRenderer.HasAssetMeshResource(assetMesh))
@@ -950,7 +979,7 @@ void UpdatePlayModeStart(double deltaTime)
         else
         {
             UnmountPlayHud();
-            viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+            viewportRenderer.SetGameScene(gameCamera, sceneObjects, sceneRoot);
             candidatePhysicsWorld?.Dispose();
             try
             {
@@ -1226,6 +1255,22 @@ void FindHudRoot(Node node, ref HudRoot? found)
         FindHudRoot(children[index], ref found);
 }
 
+/// <summary>Finds the single authored skybox in one scene subtree.</summary>
+/// <param name="node">Current subtree node.</param>
+/// <param name="found">Previously found skybox, if any.</param>
+void FindSkybox(Node node, ref Skybox3D? found)
+{
+    if (node is Skybox3D skybox)
+    {
+        if (found is not null)
+            throw new InvalidOperationException("A scene can contain only one skybox.");
+        found = skybox;
+    }
+    var children = node.Children;
+    for (var index = 0; index < children.Count; index++)
+        FindSkybox(children[index], ref found);
+}
+
 /// <summary>Replaces the HUD tree mounted over the Game viewport.</summary>
 /// <param name="previous">Previously mounted tree.</param>
 /// <param name="current">Replacement tree.</param>
@@ -1302,7 +1347,7 @@ void StopPlayMode()
     inspector.RefreshScriptSchemas();
     editSelectionBeforePlay = null;
     gameViewport.Camera = gameCamera;
-    viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+    viewportRenderer.SetGameScene(gameCamera, sceneObjects, sceneRoot);
     foreach (var assetMesh in sceneObjects)
     {
         if (!viewportRenderer.HasAssetMeshResource(assetMesh))
@@ -1496,7 +1541,7 @@ bool LoadScene(string scenePath, bool makeActive)
         gameViewport.Camera = gameCamera;
         viewportRenderer.SetSceneObjects(sceneObjects);
         viewportRenderer.SetSceneRoot(sceneRoot);
-        viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+        viewportRenderer.SetGameScene(gameCamera, sceneObjects, sceneRoot);
         foreach (var assetMesh in sceneObjects)
         {
             LoadAssetMeshResources(assetMesh);
@@ -1508,8 +1553,7 @@ bool LoadScene(string scenePath, bool makeActive)
         hierarchyTree.SetRoots(sceneRoot.Children);
         if (makeActive)
         {
-            activeScenePath = Path.GetFullPath(scenePath);
-            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+            SetActiveScenePath(scenePath);
         }
         logger.LogInformation("Loaded scene {ScenePath}", scenePath);
         CloseFileContextMenu();
@@ -2119,6 +2163,9 @@ void RefreshPublishedAsset(AssetReference reference)
     viewportRenderer.InvalidatePreviewAsset(reference);
     detachedSceneRenderer?.InvalidatePreviewAsset(reference);
     detachedGameRenderer?.InvalidatePreviewAsset(reference);
+    viewportRenderer.InvalidateSkyboxAsset(reference.Asset);
+    detachedSceneRenderer?.InvalidateSkyboxAsset(reference.Asset);
+    detachedGameRenderer?.InvalidateSkyboxAsset(reference.Asset);
     var activeObjects = GetActiveSceneObjects();
     for (var index = 0; index < activeObjects.Count; index++)
     {
@@ -2456,23 +2503,45 @@ bool UsesTerrainMaterialDependency(MeshInstance3D instance, AssetReference depen
 /// <param name="collider">Terrain dimensions shared with collision.</param>
 /// <param name="terrain">Current edited height grid.</param>
 /// <param name="editRegion">Inclusive sample rectangle touched by the edit.</param>
+/// <param name="geometryChanged">Whether terrain geometry rather than paint changed.</param>
+/// <param name="topologyChanged">Whether active terrain indices changed.</param>
 void ApplyTerrainEdit(
     MeshInstance3D instance,
     TerrainColliderComponent collider,
     TerrainResource terrain,
     TerrainEditRegion editRegion,
-    bool geometryChanged)
+    bool geometryChanged,
+    bool topologyChanged)
 {
-    var material = ResolveTerrainSurfaceMaterial(instance, terrain);
-    viewportRenderer.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
-        material.UseHeightTint);
-    detachedSceneRenderer?.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
-        material.UseHeightTint);
-    detachedGameRenderer?.UpdateTerrainResource(instance, terrain, collider, material.Material,
-        material.BaseColorTexture, material.NormalTexture, material.MetallicRoughnessTexture,
-        material.UseHeightTint);
+    if (topologyChanged)
+    {
+        viewportRenderer.QueueTerrainTopologyUpdate(instance, terrain, collider);
+        detachedSceneRenderer?.QueueTerrainTopologyUpdate(instance, terrain, collider);
+        detachedGameRenderer?.QueueTerrainTopologyUpdate(instance, terrain, collider);
+    }
+    else if (geometryChanged)
+    {
+        viewportRenderer.QueueTerrainGeometryUpdate(instance, terrain, collider, editRegion);
+        detachedSceneRenderer?.QueueTerrainGeometryUpdate(
+            instance, terrain, collider, editRegion);
+        detachedGameRenderer?.QueueTerrainGeometryUpdate(
+            instance, terrain, collider, editRegion);
+    }
+    else
+    {
+        var material = ResolveTerrainSurfaceMaterial(instance, terrain);
+        viewportRenderer.UpdateTerrainResource(instance, terrain, collider, material.Material,
+            material.BaseColorTexture, material.NormalTexture,
+            material.MetallicRoughnessTexture, material.UseHeightTint);
+        detachedSceneRenderer?.UpdateTerrainResource(
+            instance, terrain, collider, material.Material,
+            material.BaseColorTexture, material.NormalTexture,
+            material.MetallicRoughnessTexture, material.UseHeightTint);
+        detachedGameRenderer?.UpdateTerrainResource(
+            instance, terrain, collider, material.Material,
+            material.BaseColorTexture, material.NormalTexture,
+            material.MetallicRoughnessTexture, material.UseHeightTint);
+    }
     if (geometryChanged && physicsWorld is not null)
     {
         try
@@ -2518,9 +2587,11 @@ void ApplyTerrainObjectChanges(
     selection.SetObjects(activeObjects);
     viewportRenderer.SetSceneObjects(activeObjects);
     viewportRenderer.SetSceneRoot(GetActiveSceneRoot());
-    viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    viewportRenderer.SetGameScene(
+        gameViewport.Camera ?? gameCamera, activeObjects, GetActiveSceneRoot());
     detachedSceneRenderer?.SetSceneObjects(activeObjects);
-    detachedGameRenderer?.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    detachedGameRenderer?.SetGameScene(
+        gameViewport.Camera ?? gameCamera, activeObjects, GetActiveSceneRoot());
     hierarchyTree.SetRoots(GetActiveSceneRoot().Children);
     InvalidateViewports();
 }
@@ -2620,7 +2691,7 @@ void ResetToDefaultScene()
     sceneRoot.AddChild(cube);
     sceneRoot.AddChild(gameCamera);
     gameViewport.Camera = gameCamera;
-    viewportRenderer.SetGameScene(gameCamera, sceneObjects);
+    viewportRenderer.SetGameScene(gameCamera, sceneObjects, sceneRoot);
     hierarchyTree.SetRoots(sceneRoot.Children);
 }
 
@@ -2653,8 +2724,7 @@ void ShowScenePathDialog(string parentDirectory, bool createDefaultScene, bool s
             if (createDefaultScene)
                 ResetToDefaultScene();
             SceneFileStore.Save(scenePath, sceneRoot, gameCamera);
-            activeScenePath = Path.GetFullPath(scenePath);
-            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+            SetActiveScenePath(scenePath);
             logger.LogInformation("Saved scene {ScenePath}", activeScenePath);
             CloseFileContextMenu();
             RefreshFileSystem();
@@ -2962,8 +3032,7 @@ void ShowDeleteConfirmation(string targetPath)
             }
             if (removesActiveScene)
             {
-                activeScenePath = null;
-                editorView.ProjectLabel.Text = "Untitled.node";
+                SetActiveScenePath(null);
                 ResetToDefaultScene();
             }
             logger.LogInformation("Deleted project item {ItemPath}", targetPath);
@@ -3179,6 +3248,30 @@ void AddPointLight(Node parent) => AddLight(parent, new PointLight3D(), "Point L
 /// <param name="parent">Hierarchy parent.</param>
 void AddSpotLight(Node parent) => AddLight(parent, new SpotLight3D(), "Spot Light");
 
+/// <summary>Adds or selects the scene's single authored skybox.</summary>
+/// <param name="parent">Hierarchy parent for a newly created skybox.</param>
+void AddSkybox(Node parent)
+{
+    var activeRoot = GetActiveSceneRoot();
+    Skybox3D? existing = null;
+    FindSkybox(activeRoot, ref existing);
+    if (existing is not null)
+    {
+        hierarchyTree.Select(existing);
+        CloseHierarchyContextMenu();
+        return;
+    }
+    var skybox = new Skybox3D { Name = "Skybox" };
+    parent.AddChild(skybox);
+    if (ReferenceEquals(parent, activeRoot))
+        hierarchyTree.SetRoots(activeRoot.Children);
+    else
+        hierarchyTree.Expand(parent);
+    hierarchyTree.Select(skybox);
+    CloseHierarchyContextMenu();
+    InvalidateViewports();
+}
+
 /// <summary>Adds one configured light below a hierarchy node.</summary>
 /// <param name="parent">Hierarchy parent.</param>
 /// <param name="light">Detached light node.</param>
@@ -3299,9 +3392,10 @@ void DeleteSceneNode(Node target)
     selection.SetObjects(activeObjects);
     viewportRenderer.SetSceneObjects(activeObjects);
     viewportRenderer.SetSceneRoot(GetActiveSceneRoot());
-    viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    viewportRenderer.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects, activeRoot);
     detachedSceneRenderer?.SetSceneObjects(activeObjects);
-    detachedGameRenderer?.SetGameScene(gameViewport.Camera ?? gameCamera, activeObjects);
+    detachedGameRenderer?.SetGameScene(
+        gameViewport.Camera ?? gameCamera, activeObjects, activeRoot);
     if (physicsWorld is not null)
         physicsWorld.Attach(activeRoot);
     hierarchyTree.SetRoots(activeRoot.Children);
@@ -3385,6 +3479,9 @@ void ShowHierarchyContextMenu()
     objectMenu.AddItem("Add Directional Light", () => AddDirectionalLight(target));
     objectMenu.AddItem("Add Point Light", () => AddPointLight(target));
     objectMenu.AddItem("Add Spot Light", () => AddSpotLight(target));
+    Skybox3D? existingSkybox = null;
+    FindSkybox(activeRoot, ref existingSkybox);
+    objectMenu.AddItem("Add Skybox", () => AddSkybox(target), existingSkybox is null);
     menu.AddSubmenu("Add 3D Object", objectMenu);
 
     HudRoot? existingHud = null;
@@ -3636,9 +3733,8 @@ void MoveFileSystemEntry(FileSystemNode source, TreeViewDropTarget dropTarget)
             File.Move(sourcePath, destinationPath);
         if (activeRelativePath is not null)
         {
-            activeScenePath = activeRelativePath.Length == 0
-                ? destinationPath : Path.Combine(destinationPath, activeRelativePath);
-            editorView.ProjectLabel.Text = Path.GetFileName(activeScenePath);
+            SetActiveScenePath(activeRelativePath.Length == 0
+                ? destinationPath : Path.Combine(destinationPath, activeRelativePath));
         }
         logger.LogInformation("Moved project item {SourcePath} to {DestinationPath}",
             sourcePath, destinationPath);

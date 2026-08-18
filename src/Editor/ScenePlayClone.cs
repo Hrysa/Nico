@@ -74,6 +74,13 @@ public static class ScenePlayClone
                 IsEnabled = light.IsEnabled,
                 CastsShadows = light.CastsShadows
             },
+            Skybox3D skybox => new Skybox3D
+            {
+                IsEnabled = skybox.IsEnabled,
+                Texture = skybox.Texture,
+                Tint = skybox.Tint,
+                Intensity = skybox.Intensity
+            },
             MeshInstance3D => new MeshInstance3D(),
             HudRoot => new HudRoot(),
             Node3D when source.GetType() == typeof(Node3D) => new Node3D(),
@@ -119,6 +126,11 @@ public static class ScenePlayClone
     {
         switch (source)
         {
+            case TerrainScatterInstanceComponent sourceScatter:
+                return new TerrainScatterInstanceComponent
+                {
+                    Enabled = sourceScatter.Enabled
+                };
             case ScriptComponent sourceScript:
                 var script = new ScriptComponent(sourceScript.ScriptId)
                 { Enabled = sourceScript.Enabled };

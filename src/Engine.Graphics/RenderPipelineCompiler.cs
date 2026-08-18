@@ -127,6 +127,15 @@ internal static class RenderPipelineCompiler
                         "A renderer command requires a queue filter and output resource.");
                 }
                 break;
+            case RenderPipelineCommandKind.DrawSkybox:
+                if (command.Stage != RenderPipelineStage.Skybox ||
+                    command.Reads != RenderPipelineResource.CameraDepth ||
+                    command.Writes != RenderPipelineResource.CameraColor)
+                {
+                    throw new InvalidOperationException(
+                        "A skybox command must read camera depth and write camera color.");
+                }
+                break;
             case RenderPipelineCommandKind.ApplyPostProcess:
                 if (command.Stage != RenderPipelineStage.PostProcess ||
                     command.Reads != RenderPipelineResource.CameraColor ||

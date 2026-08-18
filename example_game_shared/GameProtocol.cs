@@ -20,13 +20,24 @@ public enum GameMessageType : byte
 /// <param name="Movement">Normalized XZ movement intent.</param>
 /// <param name="FacingYaw">World-space facing angle in radians.</param>
 /// <param name="Jump">Whether this input requests a jump.</param>
+/// <param name="Attack">Whether this input requests a primary attack.</param>
 public readonly record struct ClientInputMessage(
     uint ClientId,
     ulong SessionToken,
     uint Sequence,
     Vector2 Movement,
     float FacingYaw,
-    bool Jump);
+    bool Jump,
+    bool Attack);
+
+/// <summary>Authoritative presentation state for one fixed scene monster.</summary>
+/// <param name="Position">World-space foot position.</param>
+/// <param name="FacingYaw">World-space facing angle in radians.</param>
+/// <param name="Health">Remaining health from zero through one hundred.</param>
+public readonly record struct MonsterSnapshotMessage(
+    Vector3 Position,
+    float FacingYaw,
+    byte Health);
 
 /// <summary>Initial server response assigning an authenticated player session.</summary>
 /// <param name="ClientNonce">Nonce copied from the triggering hello.</param>
@@ -52,6 +63,9 @@ public readonly record struct ServerWelcomeMessage(
 /// <param name="Velocity">Authoritative world-space velocity.</param>
 /// <param name="FacingYaw">Accepted world-space facing angle in radians.</param>
 /// <param name="Grounded">Whether terrain currently supports the player.</param>
+/// <param name="AttackSequence">Number of authoritative attacks accepted for this player.</param>
+/// <param name="Monster0">First authored monster state.</param>
+/// <param name="Monster1">Second authored monster state.</param>
 public readonly record struct ServerSnapshotMessage(
     uint ClientId,
     ulong SessionToken,
@@ -60,13 +74,16 @@ public readonly record struct ServerSnapshotMessage(
     Vector3 Position,
     Vector3 Velocity,
     float FacingYaw,
-    bool Grounded);
+    bool Grounded,
+    uint AttackSequence,
+    MonsterSnapshotMessage Monster0,
+    MonsterSnapshotMessage Monster1);
 
 /// <summary>Encodes and validates the example game's allocation-free UDP datagrams.</summary>
 public static class GameProtocol
 {
     private const uint Magic = 0x4F43494Eu;
-    private const byte Version = 1;
+    private const byte Version = 2;
     private const int HeaderSize = 6;
     public const int ClientHelloSize = HeaderSize + sizeof(uint);
     public const int ServerWelcomeSize = HeaderSize + sizeof(uint) * 2 + sizeof(ulong) +
@@ -75,7 +92,8 @@ public static class GameProtocol
         sizeof(uint) + sizeof(float) * 3 + sizeof(byte);
     public const int ClientDisconnectSize = HeaderSize + sizeof(uint) + sizeof(ulong);
     public const int ServerSnapshotSize = HeaderSize + sizeof(uint) + sizeof(ulong) +
-        sizeof(uint) + sizeof(long) + sizeof(float) * 7 + sizeof(byte);
+        sizeof(uint) + sizeof(long) + sizeof(float) * 7 + sizeof(byte) + sizeof(uint) +
+        (sizeof(float) * 4 + sizeof(byte)) * 2;
 
     /// <summary>Writes a client discovery/session request.</summary>
     /// <param name="destination">Exact-sized datagram destination.</param>
@@ -160,7 +178,7 @@ public static class GameProtocol
         WriteSingle(destination, ref offset, message.Movement.X);
         WriteSingle(destination, ref offset, message.Movement.Y);
         WriteSingle(destination, ref offset, message.FacingYaw);
-        destination[offset] = message.Jump ? (byte)1 : (byte)0;
+        destination[offset] = (byte)((message.Jump ? 1 : 0) | (message.Attack ? 2 : 0));
     }
 
     /// <summary>Reads one finite authenticated player-input datagram.</summary>
@@ -185,13 +203,14 @@ public static class GameProtocol
         var yaw = ReadSingle(source, ref offset);
         var flags = source[offset];
         if (!float.IsFinite(movement.X) || !float.IsFinite(movement.Y) ||
-            !float.IsFinite(yaw) || (flags & ~1) != 0)
+            !float.IsFinite(yaw) || (flags & ~3) != 0)
         {
             message = default;
             return false;
         }
         message = new ClientInputMessage(
-            clientId, token, sequence, movement, yaw, (flags & 1) != 0);
+            clientId, token, sequence, movement, yaw,
+            (flags & 1) != 0, (flags & 2) != 0);
         return true;
     }
 
@@ -250,7 +269,10 @@ public static class GameProtocol
         WriteVector3(destination, ref offset, message.Position);
         WriteVector3(destination, ref offset, message.Velocity);
         WriteSingle(destination, ref offset, message.FacingYaw);
-        destination[offset] = message.Grounded ? (byte)1 : (byte)0;
+        destination[offset++] = message.Grounded ? (byte)1 : (byte)0;
+        WriteUInt32(destination, ref offset, message.AttackSequence);
+        WriteMonster(destination, ref offset, message.Monster0);
+        WriteMonster(destination, ref offset, message.Monster1);
     }
 
     /// <summary>Reads one valid authoritative player snapshot.</summary>
@@ -274,17 +296,56 @@ public static class GameProtocol
         var position = ReadVector3(source, ref offset);
         var velocity = ReadVector3(source, ref offset);
         var facingYaw = ReadSingle(source, ref offset);
-        var grounded = source[offset] == 1;
+        var groundedByte = source[offset++];
+        var grounded = groundedByte == 1;
+        var attackSequence = ReadUInt32(source, ref offset);
+        var monster0 = ReadMonster(source, ref offset);
+        var monster1 = ReadMonster(source, ref offset);
         if (!IsFinite(position) || !IsFinite(velocity) || !float.IsFinite(facingYaw) ||
-            source[offset] > 1)
+            groundedByte > 1 || !IsValid(monster0) || !IsValid(monster1))
         {
             message = default;
             return false;
         }
         message = new ServerSnapshotMessage(
-            clientId, token, sequence, tick, position, velocity, facingYaw, grounded);
+            clientId, token, sequence, tick, position, velocity, facingYaw, grounded,
+            attackSequence, monster0, monster1);
         return true;
     }
+
+    /// <summary>Writes one fixed-size monster state and advances the offset.</summary>
+    /// <param name="destination">Datagram destination.</param>
+    /// <param name="offset">Current byte offset.</param>
+    /// <param name="monster">Monster state to encode.</param>
+    private static void WriteMonster(
+        Span<byte> destination,
+        ref int offset,
+        MonsterSnapshotMessage monster)
+    {
+        WriteVector3(destination, ref offset, monster.Position);
+        WriteSingle(destination, ref offset, monster.FacingYaw);
+        destination[offset++] = monster.Health;
+    }
+
+    /// <summary>Reads one fixed-size monster state and advances the offset.</summary>
+    /// <param name="source">Received datagram.</param>
+    /// <param name="offset">Current byte offset.</param>
+    /// <returns>Decoded monster state.</returns>
+    private static MonsterSnapshotMessage ReadMonster(
+        ReadOnlySpan<byte> source,
+        ref int offset)
+    {
+        var position = ReadVector3(source, ref offset);
+        var facingYaw = ReadSingle(source, ref offset);
+        return new MonsterSnapshotMessage(position, facingYaw, source[offset++]);
+    }
+
+    /// <summary>Checks whether one decoded monster state is finite and bounded.</summary>
+    /// <param name="monster">Decoded monster state.</param>
+    /// <returns>True when the state can enter gameplay presentation.</returns>
+    private static bool IsValid(MonsterSnapshotMessage monster) =>
+        IsFinite(monster.Position) && float.IsFinite(monster.FacingYaw) &&
+        monster.Health <= 100;
 
     /// <summary>Checks an exact datagram header and expected message type.</summary>
     /// <param name="source">Received datagram.</param>

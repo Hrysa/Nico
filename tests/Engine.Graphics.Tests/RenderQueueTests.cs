@@ -84,6 +84,33 @@ public sealed class RenderQueueTests
         Assert.False(queue.Camera.IsValid);
     }
 
+    /// <summary>Clears the optional environment together with other per-frame state.</summary>
+    [Fact]
+    public void Clear_ResetsSkybox()
+    {
+        var queue = new RenderQueue
+        {
+            Skybox = SkyboxRenderSettings.Create(
+                new TextureHandle(5), Vector3.One, 1f, 0f)
+        };
+
+        queue.Clear();
+
+        Assert.False(queue.Skybox.IsEnabled);
+    }
+
+    /// <summary>Rejects invalid appearance values at the renderer boundary.</summary>
+    [Fact]
+    public void SkyboxSettings_InvalidValues_Throw()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            SkyboxRenderSettings.Create(default, Vector3.One, 1f, 0f));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SkyboxRenderSettings.Create(new TextureHandle(1), -Vector3.One, 1f, 0f));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SkyboxRenderSettings.Create(new TextureHandle(1), Vector3.One, -1f, 0f));
+    }
+
     /// <summary>Clears SRP-authored backend work together with frame draw state.</summary>
     [Fact]
     public void Clear_RemovesPipelineCommands()

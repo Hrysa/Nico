@@ -47,6 +47,43 @@ public sealed record MeshDescription(Vertex[] Vertices, ResourceUsage Usage = Re
 /// <param name="Vertices">Replacement vertices.</param>
 public sealed record MeshUpdate(uint FirstVertex, Vertex[] Vertices);
 
+/// <summary>Describes a contiguous model-vertex replacement using reusable source storage.</summary>
+public readonly record struct StaticMeshVertexUpdate
+{
+    /// <summary>Gets the first destination vertex.</summary>
+    public uint FirstVertex { get; }
+
+    /// <summary>Gets reusable source vertex storage.</summary>
+    public ModelVertex[] Vertices { get; }
+
+    /// <summary>Gets the first populated source vertex.</summary>
+    public int SourceIndex { get; }
+
+    /// <summary>Gets the number of vertices to replace.</summary>
+    public int VertexCount { get; }
+
+    /// <summary>Creates one validated contiguous model-vertex replacement.</summary>
+    /// <param name="firstVertex">First destination vertex.</param>
+    /// <param name="vertices">Reusable source storage.</param>
+    /// <param name="sourceIndex">First populated source vertex.</param>
+    /// <param name="vertexCount">Number of vertices to replace.</param>
+    public StaticMeshVertexUpdate(
+        uint firstVertex,
+        ModelVertex[] vertices,
+        int sourceIndex,
+        int vertexCount)
+    {
+        ArgumentNullException.ThrowIfNull(vertices);
+        if (sourceIndex < 0 || vertexCount <= 0 ||
+            (long)sourceIndex + vertexCount > vertices.Length)
+            throw new ArgumentOutOfRangeException(nameof(vertexCount));
+        FirstVertex = firstVertex;
+        Vertices = vertices;
+        SourceIndex = sourceIndex;
+        VertexCount = vertexCount;
+    }
+}
+
 /// <summary>Describes colored screen-space geometry valid only for the current frame.</summary>
 public readonly record struct TransientGeometry
 {

@@ -147,6 +147,8 @@ public sealed class SceneInspector : Panel
         var scriptY = 236f;
         if (node is Light3D light)
             scriptY = AddLightSection(light, scriptY);
+        if (node is Skybox3D skybox)
+            scriptY = AddSkyboxSection(skybox, scriptY);
         if (node is MeshInstance3D meshInstance)
         {
             var terrain = meshInstance.GetComponent<TerrainColliderComponent>();
@@ -208,29 +210,29 @@ public sealed class SceneInspector : Panel
             }, _theme.TextPrimary));
         AddColorRow("Color", "LightColor", y + 30f, () => light.Color,
             value => light.Color = value);
-        AddLightFloatField("Intensity", "LightIntensity", y + 68f,
+        AddNonnegativeFloatField("Intensity", "LightIntensity", y + 68f,
             () => light.Intensity, value => light.Intensity = value);
         var rowY = y + 106f;
         if (light is DirectionalLight3D directional)
         {
-            AddLightFloatField("Ambient", "LightAmbientIntensity", rowY,
+            AddNonnegativeFloatField("Ambient", "LightAmbientIntensity", rowY,
                 () => directional.AmbientIntensity,
                 value => directional.AmbientIntensity = value);
             rowY += 38f;
         }
         if (light is PointLight3D point)
         {
-            AddLightFloatField("Range", "LightRange", rowY,
+            AddNonnegativeFloatField("Range", "LightRange", rowY,
                 () => point.Range, value => point.Range = value);
             rowY += 38f;
         }
         if (light is SpotLight3D spot)
         {
-            AddLightFloatField("Range", "LightRange", rowY,
+            AddNonnegativeFloatField("Range", "LightRange", rowY,
                 () => spot.Range, value => spot.Range = value);
-            AddLightFloatField("Inner", "LightInnerAngle", rowY + 38f,
+            AddNonnegativeFloatField("Inner", "LightInnerAngle", rowY + 38f,
                 () => spot.InnerAngle, value => spot.InnerAngle = value);
-            AddLightFloatField("Outer", "LightOuterAngle", rowY + 76f,
+            AddNonnegativeFloatField("Outer", "LightOuterAngle", rowY + 76f,
                 () => spot.OuterAngle, value => spot.OuterAngle = value);
             rowY += 114f;
         }
@@ -264,6 +266,34 @@ public sealed class SceneInspector : Panel
         return rowY + 42f;
     }
 
+    /// <summary>Adds equirectangular texture and display settings for one skybox.</summary>
+    /// <param name="skybox">Inspected skybox.</param>
+    /// <param name="y">Available section top.</param>
+    /// <returns>Top available for following sections.</returns>
+    private float AddSkyboxSection(Skybox3D skybox, float y)
+    {
+        AddChild(CreateLabel(12f, y, Width - 24f, 26f, "Skybox", _theme.TextPrimary));
+        AddAssetReferenceRow("Texture", "SkyboxTexture", y + 30f, "nico/texture2d",
+            () => skybox.Texture, value => skybox.Texture = value);
+        AddColorRow("Tint", "SkyboxTint", y + 68f, () => skybox.Tint,
+            value => skybox.Tint = value);
+        AddNonnegativeFloatField("Intensity", "SkyboxIntensity", y + 106f,
+            () => skybox.Intensity, value => skybox.Intensity = value);
+        var enabled = new ToggleButton(Width - 24f, 30f, "Enabled", _theme)
+        {
+            Name = "SkyboxEnabled",
+            IsChecked = skybox.IsEnabled,
+            Margin = new Thickness(12f, y + 144f, 0f, 0f)
+        };
+        enabled.CheckedChanged += value =>
+        {
+            skybox.IsEnabled = value;
+            NodeChanged?.Invoke(skybox);
+        };
+        AddChild(enabled);
+        return y + 186f;
+    }
+
     /// <summary>Adds one linear RGB color editor.</summary>
     /// <param name="label">Displayed field label.</param>
     /// <param name="name">Stable UI element name.</param>
@@ -295,13 +325,13 @@ public sealed class SceneInspector : Panel
         AddChild(picker);
     }
 
-    /// <summary>Adds one nonnegative directional-light scalar field.</summary>
+    /// <summary>Adds one nonnegative scalar field.</summary>
     /// <param name="label">Displayed field label.</param>
     /// <param name="name">Stable UI element name.</param>
     /// <param name="y">Field row position.</param>
     /// <param name="read">Current value reader.</param>
     /// <param name="apply">Validated value writer.</param>
-    private void AddLightFloatField(string label, string name, float y,
+    private void AddNonnegativeFloatField(string label, string name, float y,
         Func<float> read, Action<float> apply)
     {
         AddChild(CreateLabel(12f, y, 66f, 30f, label, _theme.TextSecondary));

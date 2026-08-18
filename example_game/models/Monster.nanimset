@@ -1,0 +1,43 @@
+{
+  "version": 4,
+  "entries": [
+    {
+      "alias": "Idle",
+      "source": {
+        "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
+        "subAsset": "animation/0"
+      },
+      "inPlace": true,
+      "retarget": "exact"
+    },
+    {
+      "alias": "Run",
+      "source": {
+        "asset": "019ff631-d796-7f41-a4cd-fddc456d92f6",
+        "subAsset": "animation/0"
+      },
+      "inPlace": true,
+      "retarget": "exact"
+    },
+    {
+      "alias": "Hit",
+      "source": {
+        "asset": "019ff631-d715-7503-9c28-f03f6902fff0",
+        "subAsset": "animation/0"
+      },
+      "loop": false,
+      "inPlace": true,
+      "retarget": "exact"
+    },
+    {
+      "alias": "Death",
+      "source": {
+        "asset": "019ff631-d6f0-7447-9fdb-1c77bd2a4b0c",
+        "subAsset": "animation/0"
+      },
+      "loop": false,
+      "inPlace": true,
+      "retarget": "exact"
+    }
+  ]
+}

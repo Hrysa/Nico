@@ -38,7 +38,8 @@ public sealed class ExampleHud : SceneScript
         _rendering.RenderPipeline = _installedPipeline;
 
         var theme = UITheme.Dark;
-        var status = new Label("Third-person demo", 180f, 32f)
+        const string controls = "WASD move · Space jump · LMB attack";
+        var status = new Label(controls, 300f, 32f)
         {
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
@@ -79,7 +80,7 @@ public sealed class ExampleHud : SceneScript
         grayscaleToggle.CheckedChanged += enabled =>
         {
             grayscalePass.Enabled = enabled;
-            status.Text = enabled ? "Grayscale enabled" : "Third-person demo";
+            status.Text = enabled ? "Grayscale enabled" : controls;
         };
         var root = UI.Overlay([status, _fpsLabel, crosshair, grayscaleToggle]);
         root.Name = "ExampleHudContent";

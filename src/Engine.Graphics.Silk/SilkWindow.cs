@@ -151,6 +151,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         new();
     private readonly Dictionary<uint, SceneLightSet> _pendingViewportLights = new();
     private readonly Dictionary<uint, RenderCameraData> _pendingViewportCameras = new();
+    private readonly Dictionary<uint, SkyboxRenderSettings> _pendingViewportSkyboxes = new();
     private readonly Dictionary<uint, RenderOutputSettings> _pendingViewportOutput = new();
     private readonly Dictionary<uint, GridPushConstants> _pendingGridDraws = new();
     private readonly HashSet<uint> _pendingViewportRenders = [];
@@ -676,6 +677,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         CreateUiShapePipeline();
         CreateFboGraphicsPipeline();
         CreateModelPipeline();
+        CreateSkyboxPipeline();
         CreateSkinnedModelPipeline();
         CreateShadowPipelines();
         _persistentTextures = new PersistentTextureStore(_vk!, _device, FindMemoryType,
@@ -2911,6 +2913,11 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             };
             Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
                 out _pipelines.ShadowPipeline), "create static shadow pipeline");
+            // Closed animated characters otherwise render their light-facing surface into
+            // the shadow map and compare against the same quantized plane in the forward
+            // pass, producing dense acne on illuminated polygons. Use their back faces as
+            // the caster depth while preserving two-sided casting for static foliage.
+            rasterizer.CullMode = CullModeFlags.FrontBit;
             binding.Stride = SkinnedForwardModelVertex.Stride;
             vertexInput.VertexAttributeDescriptionCount = 3;
             vertexInput.PVertexAttributeDescriptions = skinnedAttributes;
@@ -2927,6 +2934,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             blending.AttachmentCount = 1;
             blending.PAttachments = &cameraDepthAttachment;
             multisampling.RasterizationSamples = _msaaSamples;
+            rasterizer.CullMode = CullModeFlags.None;
             rasterizer.DepthBiasEnable = false;
             dynamicState.DynamicStateCount = 2;
             pipelineInfo.RenderPass = _fboRenderPass;
@@ -2951,6 +2959,125 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             SilkMarshal.Free(entryPointName);
         }
         _logger.LogInformation("Directional shadow pipelines created");
+    }
+
+    /// <summary>Creates the fullscreen equirectangular skybox pipeline for viewport FBOs.</summary>
+    private void CreateSkyboxPipeline()
+    {
+        _logger.LogDebug("Creating skybox pipeline");
+        _pipelines.SkyboxVertexShader = CreateShaderModule("skybox.vert.spv");
+        _pipelines.SkyboxFragmentShader = CreateShaderModule("skybox.frag.spv");
+        var entryPointName = SilkMarshal.StringToPtr("main", NativeStringEncoding.UTF8);
+        try
+        {
+            var stages = stackalloc PipelineShaderStageCreateInfo[2];
+            stages[0] = new PipelineShaderStageCreateInfo
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = ShaderStageFlags.VertexBit,
+                Module = _pipelines.SkyboxVertexShader,
+                PName = (byte*)entryPointName
+            };
+            stages[1] = new PipelineShaderStageCreateInfo
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = ShaderStageFlags.FragmentBit,
+                Module = _pipelines.SkyboxFragmentShader,
+                PName = (byte*)entryPointName
+            };
+            var vertexInput = new PipelineVertexInputStateCreateInfo
+            {
+                SType = StructureType.PipelineVertexInputStateCreateInfo
+            };
+            var inputAssembly = new PipelineInputAssemblyStateCreateInfo
+            {
+                SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                Topology = PrimitiveTopology.TriangleList
+            };
+            var dynamicStates = stackalloc[] { DynamicState.Viewport, DynamicState.Scissor };
+            var dynamicState = new PipelineDynamicStateCreateInfo
+            {
+                SType = StructureType.PipelineDynamicStateCreateInfo,
+                DynamicStateCount = 2,
+                PDynamicStates = dynamicStates
+            };
+            var viewportState = new PipelineViewportStateCreateInfo
+            {
+                SType = StructureType.PipelineViewportStateCreateInfo,
+                ViewportCount = 1,
+                ScissorCount = 1
+            };
+            var rasterizer = new PipelineRasterizationStateCreateInfo
+            {
+                SType = StructureType.PipelineRasterizationStateCreateInfo,
+                PolygonMode = PolygonMode.Fill,
+                CullMode = CullModeFlags.None,
+                FrontFace = FrontFace.CounterClockwise,
+                LineWidth = 1f
+            };
+            var multisampling = new PipelineMultisampleStateCreateInfo
+            {
+                SType = StructureType.PipelineMultisampleStateCreateInfo,
+                RasterizationSamples = _msaaSamples
+            };
+            var depthStencil = new PipelineDepthStencilStateCreateInfo
+            {
+                SType = StructureType.PipelineDepthStencilStateCreateInfo,
+                DepthTestEnable = true,
+                DepthWriteEnable = false,
+                DepthCompareOp = CompareOp.LessOrEqual
+            };
+            var blendAttachment = new PipelineColorBlendAttachmentState
+            {
+                ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+                    ColorComponentFlags.BBit | ColorComponentFlags.ABit
+            };
+            var blending = new PipelineColorBlendStateCreateInfo
+            {
+                SType = StructureType.PipelineColorBlendStateCreateInfo,
+                AttachmentCount = 1,
+                PAttachments = &blendAttachment
+            };
+            var pushConstantRange = new PushConstantRange
+            {
+                StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                Size = (uint)sizeof(SkyboxPushConstants)
+            };
+            var textureLayout = _pipelines.ModelTextureDescriptorSetLayout;
+            var layoutInfo = new PipelineLayoutCreateInfo
+            {
+                SType = StructureType.PipelineLayoutCreateInfo,
+                SetLayoutCount = 1,
+                PSetLayouts = &textureLayout,
+                PushConstantRangeCount = 1,
+                PPushConstantRanges = &pushConstantRange
+            };
+            Check(_vk!.CreatePipelineLayout(_device, &layoutInfo, null,
+                out _pipelines.SkyboxLayout), "create skybox pipeline layout");
+            var pipelineInfo = new GraphicsPipelineCreateInfo
+            {
+                SType = StructureType.GraphicsPipelineCreateInfo,
+                StageCount = 2,
+                PStages = stages,
+                PVertexInputState = &vertexInput,
+                PInputAssemblyState = &inputAssembly,
+                PViewportState = &viewportState,
+                PRasterizationState = &rasterizer,
+                PMultisampleState = &multisampling,
+                PDepthStencilState = &depthStencil,
+                PColorBlendState = &blending,
+                PDynamicState = &dynamicState,
+                Layout = _pipelines.SkyboxLayout,
+                RenderPass = _fboRenderPass
+            };
+            Check(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null,
+                out _pipelines.SkyboxPipeline), "create skybox pipeline");
+        }
+        finally
+        {
+            SilkMarshal.Free(entryPointName);
+        }
+        _logger.LogInformation("Skybox pipeline created");
     }
 
     /// <summary>
@@ -3596,6 +3723,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _pendingViewportPipelineBarriers.Remove(viewportId);
         _pendingViewportLights.Remove(viewportId);
         _pendingViewportCameras.Remove(viewportId);
+        _pendingViewportSkyboxes.Remove(viewportId);
         _pendingViewportOutput.Remove(viewportId);
         _pendingGridDraws.Remove(viewportId);
         _pendingViewportRenders.Remove(viewportId);
@@ -3686,6 +3814,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         }
         lights.CopyFrom(renderQueue.Lights);
         _pendingViewportCameras[viewportId] = renderQueue.Camera;
+        _pendingViewportSkyboxes[viewportId] = renderQueue.Skybox;
+        if (renderQueue.Skybox.IsEnabled)
+            ValidateOwner(renderQueue.Skybox.Texture);
         _pendingViewportOutput[viewportId] = RenderOutputSettings.None;
 
         foreach (var command in renderQueue.PipelineCommandSpan)
@@ -3736,8 +3867,22 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         _persistentTextures.GetDescriptor(metallicRoughnessTexture);
         _persistentIndexedMeshes!.Add(handle, vertices, mesh.Indices, baseColorTexture,
             normalTexture, metallicRoughnessTexture, material.Metallic, material.Roughness,
-            material.DoubleSided);
+            material.BaseColor, material.DoubleSided);
         return handle;
+    }
+
+    /// <inheritdoc/>
+    public void UpdateStaticMeshVertices(MeshHandle mesh, StaticMeshVertexUpdate update)
+    {
+        ValidateOwner(mesh);
+        if (!_persistentIndexedMeshes!.Contains(mesh) ||
+            _persistentSkinnedMeshes!.ContainsMesh(mesh))
+        {
+            throw new InvalidOperationException(
+                "Only retained static indexed meshes support model-vertex updates.");
+        }
+        _persistentIndexedMeshes.UpdateVertices(mesh, update);
+        RequestFrame();
     }
 
     /// <inheritdoc/>
@@ -4520,6 +4665,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             var localShadowSettings = default(LocalShadowSettings);
             var cameraCleared = false;
             var hasRendererCommand = false;
+            var skyboxScheduled = false;
             var outputProduced = false;
             if (_pendingViewportPipelineCommands.TryGetValue(viewportId,
                 out var pipelineCommands))
@@ -4567,6 +4713,16 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             }
                             hasRendererCommand = true;
                             break;
+                        case RenderPipelineCommandKind.DrawSkybox:
+                            if (!cameraCleared || skyboxScheduled ||
+                                pipelineCommand.Stage != RenderPipelineStage.Skybox)
+                            {
+                                throw new InvalidOperationException(
+                                    "Skybox rendering requires one scheduled Skybox stage.");
+                            }
+                            skyboxScheduled = true;
+                            hasRendererCommand = true;
+                            break;
                         case RenderPipelineCommandKind.ApplyPostProcess:
                             if (!cameraCleared || !hasRendererCommand || outputProduced ||
                                 commandIndex != pipelineCommands.Count - 1)
@@ -4593,6 +4749,9 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             }
             var submittedCamera = _pendingViewportCameras.TryGetValue(viewportId,
                 out var camera) ? camera : default;
+            var submittedSkybox = _pendingViewportSkyboxes.TryGetValue(viewportId,
+                out var skybox) ? skybox : default;
+            var hasSkybox = skyboxScheduled && submittedSkybox.IsEnabled;
             if (!_pendingViewportLights.TryGetValue(viewportId, out var sceneLights))
                 throw new InvalidOperationException("A submitted render view has no light set.");
             var hasLocalShadowLights = HasLocalShadowLights(sceneLights);
@@ -4688,18 +4847,24 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             var gridDrawn = false;
 
             // Replay only the queue classes explicitly scheduled by the active SRP.
-            if (hasRendererCommand && (hasDraws || hasGridDraw))
+            if (hasRendererCommand && (hasDraws || hasGridDraw || hasSkybox))
             {
                 for (var pipelineCommandIndex = 0;
                     pipelineCommandIndex < pipelineCommands!.Count;
                     pipelineCommandIndex++)
                 {
                     var rendererCommand = pipelineCommands[pipelineCommandIndex];
+                    if (rendererCommand.Kind == RenderPipelineCommandKind.DrawSkybox)
+                    {
+                        if (hasSkybox)
+                            RecordSkyboxDraw(commandBuffer, submittedCamera, submittedSkybox);
+                        continue;
+                    }
                     if (rendererCommand.Kind != RenderPipelineCommandKind.DrawRenderers)
                         continue;
                     if (rendererCommand.MaterialPass == RenderMaterialPass.DepthOnly)
                     {
-                        if (submittedCamera.IsValid)
+                        if (hasDraws && submittedCamera.IsValid)
                         {
                             RecordCameraDepthDraws(commandBuffer, draws!,
                                 rendererCommand.QueueFilter,
@@ -4725,6 +4890,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                             ? _pipelines.ViewportTransparentPipeline
                             : _pipelines.ViewportPipeline);
 
+                    if (!hasDraws)
+                        continue;
                     foreach (var draw in draws!)
                     {
                         if (!MatchesQueueFilter(draw.SurfaceType, rendererCommand.QueueFilter))
@@ -4833,13 +5000,34 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
                     }
                 }
 
-                draws!.Clear();
+                draws?.Clear();
             }
 
             pipelineCommands?.Clear();
 
             _vk.CmdEndRenderPass(commandBuffer);
         }
+    }
+
+    /// <summary>Records one fullscreen equirectangular environment at far camera depth.</summary>
+    /// <param name="commandBuffer">Active frame command buffer.</param>
+    /// <param name="camera">Submitted camera matrices.</param>
+    /// <param name="skybox">Submitted skybox texture and appearance.</param>
+    private void RecordSkyboxDraw(
+        CommandBuffer commandBuffer,
+        RenderCameraData camera,
+        SkyboxRenderSettings skybox)
+    {
+        var constants = SkyboxPushConstants.Create(camera, skybox);
+        var descriptor = _persistentTextures!.GetDescriptor(skybox.Texture);
+        _vk!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics,
+            _pipelines.SkyboxPipeline);
+        _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics,
+            _pipelines.SkyboxLayout, 0, 1, &descriptor, 0, null);
+        _vk.CmdPushConstants(commandBuffer, _pipelines.SkyboxLayout,
+            ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+            0, (uint)sizeof(SkyboxPushConstants), &constants);
+        _vk.CmdDraw(commandBuffer, 3, 1, 0, 0);
     }
 
     /// <summary>Records filtered static and skinned geometry into camera depth.</summary>

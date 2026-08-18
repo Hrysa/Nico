@@ -447,33 +447,135 @@ internal static class PreviewWire
         TerrainColliderComponent collider, TerrainResource terrain, Vector4 color,
         ScenePreviewPickingId pickingId)
     {
-        for (var z = 0; z < terrain.Depth; z++)
+        for (var z = 0; z < terrain.Depth - 1; z++)
         {
-            for (var x = 0; x < terrain.Width; x++)
-            {
-                var point = GetTerrainPoint(collider, terrain, x, z);
-                if (x + 1 < terrain.Width)
-                    AddTransformed(destination, transform, point,
-                        GetTerrainPoint(collider, terrain, x + 1, z), color, pickingId);
-                if (z + 1 < terrain.Depth)
-                    AddTransformed(destination, transform, point,
-                        GetTerrainPoint(collider, terrain, x, z + 1), color, pickingId);
-            }
+            for (var x = 0; x < terrain.Width - 1; x++)
+                AddTerrainQuad(destination, transform, collider, terrain, color, pickingId, x, z);
         }
     }
 
-    /// <summary>Computes one centered authored terrain sample point.</summary>
+    /// <summary>Adds one refined or stitched base quad without allocating temporary geometry.</summary>
+    /// <param name="destination">Primitive destination.</param>
+    /// <param name="transform">World transform.</param>
     /// <param name="collider">Authored terrain dimensions.</param>
-    /// <param name="terrain">Height sample resource.</param>
-    /// <param name="x">Sample column.</param><param name="z">Sample row.</param>
-    /// <returns>Centered local sample point.</returns>
-    private static Vector3 GetTerrainPoint(TerrainColliderComponent collider,
-        TerrainResource terrain, int x, int z)
+    /// <param name="terrain">Adaptive terrain samples.</param>
+    /// <param name="color">Line color.</param>
+    /// <param name="pickingId">Owner identity.</param>
+    /// <param name="x">Base quad column.</param>
+    /// <param name="z">Base quad row.</param>
+    private static void AddTerrainQuad(
+        ScenePreviewList destination,
+        Matrix4x4 transform,
+        TerrainColliderComponent collider,
+        TerrainResource terrain,
+        Vector4 color,
+        ScenePreviewPickingId pickingId,
+        int x,
+        int z)
     {
-        var u = x / (float)(terrain.Width - 1);
-        var v = z / (float)(terrain.Depth - 1);
+        var fineX = x * 2;
+        var fineZ = z * 2;
+        if (terrain.IsQuadRefined(x, z))
+        {
+            for (var localZ = 0; localZ < 2; localZ++)
+            {
+                for (var localX = 0; localX < 2; localX++)
+                {
+                    AddTerrainTriangle(destination, transform, collider, terrain, color,
+                        pickingId,
+                        new TerrainSamplePoint(fineX + localX, fineZ + localZ),
+                        new TerrainSamplePoint(fineX + localX, fineZ + localZ + 1),
+                        new TerrainSamplePoint(fineX + localX + 1, fineZ + localZ + 1));
+                    AddTerrainTriangle(destination, transform, collider, terrain, color,
+                        pickingId,
+                        new TerrainSamplePoint(fineX + localX, fineZ + localZ),
+                        new TerrainSamplePoint(fineX + localX + 1, fineZ + localZ + 1),
+                        new TerrainSamplePoint(fineX + localX + 1, fineZ + localZ));
+                }
+            }
+            return;
+        }
+        var leftSplit = x > 0 && terrain.IsQuadRefined(x - 1, z);
+        var rightSplit = x + 1 < terrain.Width - 1 && terrain.IsQuadRefined(x + 1, z);
+        var topSplit = z > 0 && terrain.IsQuadRefined(x, z - 1);
+        var bottomSplit = z + 1 < terrain.Depth - 1 && terrain.IsQuadRefined(x, z + 1);
+        if (!leftSplit && !rightSplit && !topSplit && !bottomSplit)
+        {
+            AddTerrainTriangle(destination, transform, collider, terrain, color, pickingId,
+                new TerrainSamplePoint(fineX, fineZ),
+                new TerrainSamplePoint(fineX, fineZ + 2),
+                new TerrainSamplePoint(fineX + 2, fineZ + 2));
+            AddTerrainTriangle(destination, transform, collider, terrain, color, pickingId,
+                new TerrainSamplePoint(fineX, fineZ),
+                new TerrainSamplePoint(fineX + 2, fineZ + 2),
+                new TerrainSamplePoint(fineX + 2, fineZ));
+            return;
+        }
+        Span<TerrainSamplePoint> boundary = stackalloc TerrainSamplePoint[8];
+        var count = 0;
+        boundary[count++] = new TerrainSamplePoint(fineX, fineZ);
+        if (leftSplit)
+            boundary[count++] = new TerrainSamplePoint(fineX, fineZ + 1);
+        boundary[count++] = new TerrainSamplePoint(fineX, fineZ + 2);
+        if (bottomSplit)
+            boundary[count++] = new TerrainSamplePoint(fineX + 1, fineZ + 2);
+        boundary[count++] = new TerrainSamplePoint(fineX + 2, fineZ + 2);
+        if (rightSplit)
+            boundary[count++] = new TerrainSamplePoint(fineX + 2, fineZ + 1);
+        boundary[count++] = new TerrainSamplePoint(fineX + 2, fineZ);
+        if (topSplit)
+            boundary[count++] = new TerrainSamplePoint(fineX + 1, fineZ);
+        var center = new TerrainSamplePoint(fineX + 1, fineZ + 1);
+        for (var index = 0; index < count; index++)
+        {
+            AddTerrainTriangle(destination, transform, collider, terrain, color, pickingId,
+                center, boundary[index], boundary[(index + 1) % count]);
+        }
+    }
+
+    /// <summary>Adds all three transformed edges of one adaptive terrain triangle.</summary>
+    /// <param name="destination">Primitive destination.</param>
+    /// <param name="transform">World transform.</param>
+    /// <param name="collider">Authored terrain dimensions.</param>
+    /// <param name="terrain">Adaptive terrain samples.</param>
+    /// <param name="color">Line color.</param>
+    /// <param name="pickingId">Owner identity.</param>
+    /// <param name="first">First triangle sample.</param>
+    /// <param name="second">Second triangle sample.</param>
+    /// <param name="third">Third triangle sample.</param>
+    private static void AddTerrainTriangle(
+        ScenePreviewList destination,
+        Matrix4x4 transform,
+        TerrainColliderComponent collider,
+        TerrainResource terrain,
+        Vector4 color,
+        ScenePreviewPickingId pickingId,
+        TerrainSamplePoint first,
+        TerrainSamplePoint second,
+        TerrainSamplePoint third)
+    {
+        var a = GetTerrainPoint(collider, terrain, first);
+        var b = GetTerrainPoint(collider, terrain, second);
+        var c = GetTerrainPoint(collider, terrain, third);
+        AddTransformed(destination, transform, a, b, color, pickingId);
+        AddTransformed(destination, transform, b, c, color, pickingId);
+        AddTransformed(destination, transform, c, a, color, pickingId);
+    }
+
+    /// <summary>Computes one centered adaptive terrain sample point.</summary>
+    /// <param name="collider">Authored terrain dimensions.</param>
+    /// <param name="terrain">Adaptive terrain resource.</param>
+    /// <param name="sample">Fine-lattice sample coordinate.</param>
+    /// <returns>Centered local sample point.</returns>
+    private static Vector3 GetTerrainPoint(
+        TerrainColliderComponent collider,
+        TerrainResource terrain,
+        TerrainSamplePoint sample)
+    {
+        var u = sample.FineX / (float)(terrain.FineWidth - 1);
+        var v = sample.FineZ / (float)(terrain.FineDepth - 1);
         return new Vector3((u - .5f) * collider.HorizontalSize.X,
-            terrain.GetHeight(x, z) * collider.HeightScale,
+            terrain.GetSampleHeight(sample) * collider.HeightScale,
             (v - .5f) * collider.HorizontalSize.Y);
     }
 

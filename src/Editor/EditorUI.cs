@@ -28,7 +28,7 @@ public static class EditorUI
         var workspaceHeight = MathF.Max(0f, height - titleBarHeight - bottomDockHeight);
         var overlay = new Canvas { Name = "Overlay" };
 
-        var projectLabel = new Label("scene.node", 180f, titleBarHeight)
+        var projectLabel = new Label("Untitled.node", 180f, titleBarHeight)
         {
             Name = "ProjectLabel",
             FontSize = theme.FontSize,

@@ -52,6 +52,8 @@ compile_shader ui_shape.slang vertexMain vertex ui_shape.vert.spv
 compile_shader ui_shape.slang fragmentMain fragment ui_shape.frag.spv
 compile_shader grid.slang vertexMain vertex grid.vert.spv
 compile_shader grid.slang fragmentMain fragment grid.frag.spv
+compile_shader skybox.slang vertexMain vertex skybox.vert.spv
+compile_shader skybox.slang fragmentMain fragment skybox.frag.spv
 compile_shader texture.slang vertexMain vertex texture.vert.spv
 compile_shader texture.slang fragmentMain fragment texture.frag.spv
 compile_shader model.slang vertexMain vertex model.vert.spv

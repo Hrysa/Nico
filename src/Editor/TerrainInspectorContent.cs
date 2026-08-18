@@ -61,6 +61,9 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
     private readonly ToggleButton[] _modeButtons = new ToggleButton[4];
     private readonly Button[] _actionButtons;
     private readonly ToggleButton _sculpt;
+    private readonly ToggleButton _resizeSamples;
+    private readonly ToggleButton _increaseSamples;
+    private readonly ToggleButton _decreaseSamples;
     private readonly TextField _radius;
     private readonly TextField _strength;
     private readonly Button _undo;
@@ -143,6 +146,48 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             }
         };
         AddChild(_sculpt);
+
+        _resizeSamples = new ToggleButton(width, 30f, "Resize Samples", _theme,
+            ButtonStyle.Primary)
+        {
+            Name = "TerrainSampleResizeEnabled",
+            IsEnabled = document.IsEditable,
+            Margin = new Thickness(0f, 34f, 0f, 0f)
+        };
+        _resizeSamples.CheckedChanged += value =>
+        {
+            if (!_refreshing)
+            {
+                _settings.ToolMode = TerrainToolMode.Samples;
+                _settings.IsEnabled = value;
+            }
+        };
+        AddChild(_resizeSamples);
+
+        _increaseSamples = new ToggleButton(0f, 30f, "Increase", _theme)
+        {
+            Name = "TerrainSamplesIncrease",
+            IsEnabled = document.IsEditable,
+            Margin = new Thickness(0f, 72f, 0f, 0f)
+        };
+        _decreaseSamples = new ToggleButton(0f, 30f, "Decrease", _theme)
+        {
+            Name = "TerrainSamplesDecrease",
+            IsEnabled = document.IsEditable,
+            Margin = new Thickness(0f, 72f, 0f, 0f)
+        };
+        _increaseSamples.CheckedChanged += value =>
+        {
+            if (!_refreshing && value)
+                _settings.IncreaseSamples = true;
+        };
+        _decreaseSamples.CheckedChanged += value =>
+        {
+            if (!_refreshing && value)
+                _settings.IncreaseSamples = false;
+        };
+        AddChild(_increaseSamples);
+        AddChild(_decreaseSamples);
 
         var modes = Enum.GetValues<TerrainBrushMode>();
         for (var index = 0; index < modes.Length; index++)
@@ -388,8 +433,12 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         SetWidth(_status, width);
         SetWidth(_objectStatus, width);
         SetWidth(_sculpt, width);
-        SetWidth(_paintObjects, width);
         const float gap = 4f;
+        var primaryWidth = MathF.Max(0f, MathF.Floor((width - gap) * 0.5f));
+        SetWidth(_sculpt, primaryWidth);
+        SetWidth(_resizeSamples, primaryWidth);
+        _resizeSamples.Margin = new Thickness(primaryWidth + gap, 34f, 0f, 0f);
+        SetWidth(_paintObjects, width);
         var modeWidth = MathF.Max(0f, MathF.Floor((width - gap * 3f) / 4f));
         for (var index = 0; index < _modeButtons.Length; index++)
         {
@@ -397,6 +446,9 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             _modeButtons[index].Margin = new Thickness(
                 index * (modeWidth + gap), 72f, 0f, 0f);
         }
+        SetWidth(_increaseSamples, primaryWidth);
+        SetWidth(_decreaseSamples, primaryWidth);
+        _decreaseSamples.Margin = new Thickness(primaryWidth + gap, 72f, 0f, 0f);
         var fieldWidth = MathF.Max(0f, width - 82f);
         SetWidth(_radius, fieldWidth);
         SetWidth(_strength, fieldWidth);
@@ -431,9 +483,17 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         _refreshing = true;
         try
         {
-            _dimensions.Text = $"{_document.Value.Width} × {_document.Value.Depth} samples";
+            _dimensions.Text = $"{_document.Value.Width} × {_document.Value.Depth} base • " +
+                $"{_document.Value.GetActiveSamples().Length} active";
             _sculpt.IsChecked = _settings.IsEnabled &&
                 _settings.ToolMode == TerrainToolMode.Sculpt;
+            _resizeSamples.IsChecked = _settings.IsEnabled &&
+                _settings.ToolMode == TerrainToolMode.Samples;
+            _increaseSamples.IsChecked = _settings.IncreaseSamples;
+            _decreaseSamples.IsChecked = !_settings.IncreaseSamples;
+            var resizingSamples = _settings.ToolMode == TerrainToolMode.Samples;
+            _increaseSamples.IsVisible = resizingSamples;
+            _decreaseSamples.IsVisible = resizingSamples;
             _paintObjects.IsChecked = _settings.IsEnabled &&
                 _settings.ToolMode == TerrainToolMode.Objects;
             _radius.Text = Format(_settings.Radius);
@@ -451,7 +511,10 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
             _undoObjects.IsEnabled = _canUndoObjects();
             _redoObjects.IsEnabled = _canRedoObjects();
             for (var index = 0; index < _modeButtons.Length; index++)
+            {
                 _modeButtons[index].IsChecked = (TerrainBrushMode)index == _settings.Mode;
+                _modeButtons[index].IsVisible = !resizingSamples;
+            }
             _undo.IsEnabled = _document.IsEditable && _document.CanUndo;
             _redo.IsEnabled = _document.IsEditable && _document.CanRedo;
             _save.IsEnabled = _document.IsEditable && _document.IsDirty &&
@@ -461,6 +524,10 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
                 (!_document.IsEditable ? "Read-only imported terrain" :
                     _document.IsStrokeActive ? "Sculpting…" :
                     _document.IsDirty ? "Unsaved changes" :
+                    _settings.IsEnabled && _settings.ToolMode == TerrainToolMode.Samples
+                        ? _settings.IncreaseSamples
+                            ? "Drag to add local half-cell terrain samples"
+                            : "Drag to remove local half-cell terrain samples" :
                     _settings.IsEnabled && _settings.ToolMode == TerrainToolMode.Sculpt
                         ? "Drag primary pointer over selected terrain" :
                     "Enable Sculpt in Scene to edit heights");

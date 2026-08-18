@@ -12,6 +12,14 @@ namespace ExampleGame.Server;
 internal sealed class UdpGameServer : IDisposable
 {
     private const int MaximumDatagramsPerTick = 256;
+    private const int MonsterCount = 2;
+    private const float MonsterMoveSpeed = 1.5f;
+    private const float MonsterStopDistance = 1.35f;
+    private const float MonsterSeparationDistance = 1f;
+    private const float MonsterWakeDistance = 18f;
+    private const float PlayerAttackRange = 2.25f;
+    private const float PlayerAttackHalfAngleCosine = 0.5f;
+    private const byte PlayerAttackDamage = 50;
     private readonly Socket _socket;
     private readonly SocketAddress _receiveAddress = new(AddressFamily.InterNetwork, 16);
     private readonly ServerTerrainCollision _terrain;
@@ -21,6 +29,8 @@ internal sealed class UdpGameServer : IDisposable
     private readonly long _timeoutTimestampTicks;
     private readonly int _snapshotInterval;
     private readonly int _tickRate;
+    private readonly int _attackCooldownTicks;
+    private readonly MonsterState[] _monsters = new MonsterState[MonsterCount];
     private uint _nextClientId = 1;
     private bool _disposed;
 
@@ -30,6 +40,7 @@ internal sealed class UdpGameServer : IDisposable
     /// <param name="snapshotRate">Authoritative snapshots per second.</param>
     /// <param name="clientTimeout">Silence duration after which a session expires.</param>
     /// <param name="terrain">Shared authored terrain collision.</param>
+    /// <param name="monsterSpawns">Exactly two authored monster spawn positions.</param>
     /// <param name="logger">Server network logger.</param>
     internal UdpGameServer(
         int port,
@@ -37,6 +48,7 @@ internal sealed class UdpGameServer : IDisposable
         int snapshotRate,
         TimeSpan clientTimeout,
         ServerTerrainCollision terrain,
+        Vector3[] monsterSpawns,
         ILogger logger)
     {
         if ((uint)port > ushort.MaxValue)
@@ -48,10 +60,15 @@ internal sealed class UdpGameServer : IDisposable
         if (clientTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(clientTimeout));
         ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(monsterSpawns);
+        if (monsterSpawns.Length != MonsterCount)
+            throw new ArgumentException("The example server requires exactly two monsters.",
+                nameof(monsterSpawns));
         ArgumentNullException.ThrowIfNull(logger);
         _terrain = terrain;
         _logger = logger;
         _tickRate = tickRate;
+        _attackCooldownTicks = Math.Max(1, (int)MathF.Ceiling(tickRate * 0.45f));
         _snapshotInterval = Math.Max(1, tickRate / snapshotRate);
         _timeoutTimestampTicks = checked((long)(clientTimeout.TotalSeconds * Stopwatch.Frequency));
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
@@ -59,6 +76,13 @@ internal sealed class UdpGameServer : IDisposable
             Blocking = false
         };
         _socket.Bind(new IPEndPoint(IPAddress.Any, port));
+        for (var index = 0; index < _monsters.Length; index++)
+        {
+            var spawn = monsterSpawns[index];
+            if (_terrain.TrySample(spawn, out var ground))
+                spawn.Y = ground.Height;
+            _monsters[index] = new MonsterState(spawn);
+        }
     }
 
     /// <summary>Gets the actual bound UDP port.</summary>
@@ -76,6 +100,8 @@ internal sealed class UdpGameServer : IDisposable
         ReceivePending(serverTick);
         foreach (var session in _sessions.Values)
             session.Motor.Simulate(_terrain, deltaTime);
+        ProcessAttacks(serverTick);
+        SimulateMonsters(deltaTime);
         if (serverTick % _snapshotInterval == 0)
             SendSnapshots(serverTick);
         ExpireSilentSessions();
@@ -132,6 +158,7 @@ internal sealed class UdpGameServer : IDisposable
             session.LastReceiveTimestamp = Stopwatch.GetTimestamp();
             session.FacingYaw = MathF.IEEERemainder(input.FacingYaw, MathF.Tau);
             session.Motor.SetInput(input.Movement, input.Jump);
+            session.AttackRequested |= input.Attack;
             return;
         }
         if (GameProtocol.TryReadClientDisconnect(datagram, out var clientId, out var token) &&
@@ -141,6 +168,161 @@ internal sealed class UdpGameServer : IDisposable
             _logger.LogInformation("UDP client {ClientId} disconnected from {Address}:{Port}",
                 session.ClientId, endpoint.Address, endpoint.Port);
         }
+    }
+
+    /// <summary>Accepts cooldown-limited player attacks and damages monsters in the facing arc.</summary>
+    /// <param name="serverTick">Current authoritative tick.</param>
+    private void ProcessAttacks(long serverTick)
+    {
+        foreach (var session in _sessions.Values)
+        {
+            if (!session.AttackRequested)
+                continue;
+            session.AttackRequested = false;
+            if (session.LastAttackTick != long.MinValue &&
+                serverTick - session.LastAttackTick < _attackCooldownTicks)
+            {
+                continue;
+            }
+            session.LastAttackTick = serverTick;
+            session.AttackSequence++;
+            var origin = session.Motor.Position;
+            var forward = new Vector2(
+                MathF.Sin(session.FacingYaw), MathF.Cos(session.FacingYaw));
+            for (var index = 0; index < _monsters.Length; index++)
+            {
+                var monster = _monsters[index];
+                if (monster.Health == 0)
+                    continue;
+                var offset = new Vector2(
+                    monster.Position.X - origin.X, monster.Position.Z - origin.Z);
+                var distanceSquared = offset.LengthSquared();
+                if (distanceSquared > PlayerAttackRange * PlayerAttackRange)
+                    continue;
+                if (distanceSquared > float.Epsilon &&
+                    Vector2.Dot(offset / MathF.Sqrt(distanceSquared), forward) <
+                    PlayerAttackHalfAngleCosine)
+                {
+                    continue;
+                }
+                monster.Health = (byte)Math.Max(0, monster.Health - PlayerAttackDamage);
+            }
+        }
+    }
+
+    /// <summary>Moves living monsters toward the closest connected player over walkable terrain.</summary>
+    /// <param name="deltaTime">Fixed simulation duration.</param>
+    private void SimulateMonsters(float deltaTime)
+    {
+        for (var index = 0; index < _monsters.Length; index++)
+        {
+            var monster = _monsters[index];
+            if (monster.Health == 0 || !TryGetClosestPlayer(monster.Position, out var player))
+                continue;
+            var offset = new Vector2(
+                player.X - monster.Position.X, player.Z - monster.Position.Z);
+            var distanceSquared = offset.LengthSquared();
+            if (distanceSquared <= MonsterStopDistance * MonsterStopDistance ||
+                distanceSquared > MonsterWakeDistance * MonsterWakeDistance)
+            {
+                continue;
+            }
+            var distance = MathF.Sqrt(distanceSquared);
+            var direction = offset / distance;
+            var step = MathF.Min(MonsterMoveSpeed * deltaTime,
+                distance - MonsterStopDistance);
+            var candidate = monster.Position;
+            candidate.X += direction.X * step;
+            candidate.Z += direction.Y * step;
+            if (!_terrain.TrySample(candidate, out var ground) ||
+                Vector3.Dot(ground.Normal, Vector3.UnitY) < ServerCharacterMotor.CosMaximumSlope)
+            {
+                continue;
+            }
+            candidate.Y = ground.Height;
+            monster.Position = candidate;
+            monster.FacingYaw = MathF.Atan2(direction.X, direction.Y);
+        }
+        SeparateMonsters();
+    }
+
+    /// <summary>Projects living monsters apart so their rendered surfaces cannot overlap.</summary>
+    private void SeparateMonsters()
+    {
+        for (var firstIndex = 0; firstIndex < _monsters.Length - 1; firstIndex++)
+        {
+            var first = _monsters[firstIndex];
+            if (first.Health == 0)
+                continue;
+            for (var secondIndex = firstIndex + 1;
+                 secondIndex < _monsters.Length;
+                 secondIndex++)
+            {
+                var second = _monsters[secondIndex];
+                if (second.Health == 0)
+                    continue;
+                var offset = new Vector2(
+                    second.Position.X - first.Position.X,
+                    second.Position.Z - first.Position.Z);
+                var distanceSquared = offset.LengthSquared();
+                if (distanceSquared >=
+                    MonsterSeparationDistance * MonsterSeparationDistance)
+                {
+                    continue;
+                }
+                var distance = MathF.Sqrt(distanceSquared);
+                var direction = distance > 1e-5f
+                    ? offset / distance
+                    : Vector2.UnitX;
+                var correction = direction *
+                    ((MonsterSeparationDistance - distance) * 0.5f);
+                TryMoveMonsterToTerrain(first,
+                    new Vector2(first.Position.X, first.Position.Z) - correction);
+                TryMoveMonsterToTerrain(second,
+                    new Vector2(second.Position.X, second.Position.Z) + correction);
+            }
+        }
+    }
+
+    /// <summary>Places a monster at a horizontal position when its terrain is walkable.</summary>
+    /// <param name="monster">Monster to place.</param>
+    /// <param name="horizontalPosition">Requested XZ position.</param>
+    private void TryMoveMonsterToTerrain(
+        MonsterState monster,
+        Vector2 horizontalPosition)
+    {
+        var candidate = new Vector3(
+            horizontalPosition.X, monster.Position.Y, horizontalPosition.Y);
+        if (!_terrain.TrySample(candidate, out var ground) ||
+            Vector3.Dot(ground.Normal, Vector3.UnitY) <
+            ServerCharacterMotor.CosMaximumSlope)
+        {
+            return;
+        }
+        candidate.Y = ground.Height;
+        monster.Position = candidate;
+    }
+
+    /// <summary>Finds the closest connected player to one monster position.</summary>
+    /// <param name="monsterPosition">Monster world position.</param>
+    /// <param name="playerPosition">Closest player position when present.</param>
+    /// <returns>True when at least one player is connected.</returns>
+    private bool TryGetClosestPlayer(Vector3 monsterPosition, out Vector3 playerPosition)
+    {
+        playerPosition = default;
+        var found = false;
+        var closestDistanceSquared = float.PositiveInfinity;
+        foreach (var session in _sessions.Values)
+        {
+            var candidate = session.Motor.Position;
+            var distanceSquared = Vector3.DistanceSquared(monsterPosition, candidate);
+            if (distanceSquared >= closestDistanceSquared)
+                continue;
+            found = true;
+            closestDistanceSquared = distanceSquared;
+            playerPosition = candidate;
+        }
+        return found;
     }
 
     /// <summary>Creates a session or repeats its welcome after a lost response.</summary>
@@ -191,10 +373,23 @@ internal sealed class UdpGameServer : IDisposable
                 session.Motor.Position,
                 session.Motor.Velocity,
                 session.FacingYaw,
-                session.Motor.IsGrounded);
+                session.Motor.IsGrounded,
+                session.AttackSequence,
+                GetMonsterSnapshot(0),
+                GetMonsterSnapshot(1));
             GameProtocol.WriteServerSnapshot(datagram, snapshot);
             Send(datagram, session.Endpoint);
         }
+    }
+
+    /// <summary>Creates one fixed protocol state from an authoritative monster.</summary>
+    /// <param name="index">Monster slot index.</param>
+    /// <returns>Current monster snapshot.</returns>
+    private MonsterSnapshotMessage GetMonsterSnapshot(int index)
+    {
+        var monster = _monsters[index];
+        return new MonsterSnapshotMessage(
+            monster.Position, monster.FacingYaw, monster.Health);
     }
 
     /// <summary>Removes sessions that stopped sending authenticated datagrams.</summary>
@@ -310,5 +505,17 @@ internal sealed class UdpGameServer : IDisposable
         internal uint LastInputSequence { get; set; }
         internal long LastReceiveTimestamp { get; set; }
         internal float FacingYaw { get; set; }
+        internal bool AttackRequested { get; set; }
+        internal long LastAttackTick { get; set; } = long.MinValue;
+        internal uint AttackSequence { get; set; }
+    }
+
+    /// <summary>Stores one authoritative fixed-scene monster.</summary>
+    /// <param name="position">Initial world-space foot position.</param>
+    private sealed class MonsterState(Vector3 position)
+    {
+        internal Vector3 Position { get; set; } = position;
+        internal float FacingYaw { get; set; }
+        internal byte Health { get; set; } = 100;
     }
 }

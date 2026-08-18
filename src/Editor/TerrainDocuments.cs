@@ -13,7 +13,10 @@ public enum TerrainToolMode
     Paint,
 
     /// <summary>Paints persistent mesh instances onto the terrain surface.</summary>
-    Objects
+    Objects,
+
+    /// <summary>Locally increases or decreases active terrain sample density.</summary>
+    Samples
 }
 
 /// <summary>Identifies the height operation performed by a terrain brush.</summary>
@@ -46,6 +49,19 @@ public readonly record struct TerrainEditRegion(
 /// <summary>Stores shared Scene terrain-tool settings independently of Inspector lifetime.</summary>
 public sealed class TerrainBrushSettings
 {
+    /// <summary>Gets or sets whether the sample-density brush increases local detail.</summary>
+    public bool IncreaseSamples
+    {
+        get;
+        set
+        {
+            if (field == value)
+                return;
+            field = value;
+            Changed?.Invoke();
+        }
+    } = true;
+
     /// <summary>Gets or sets whether the brush edits heights, layers, or scene objects.</summary>
     public TerrainToolMode ToolMode
     {
@@ -275,11 +291,12 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
 {
     private readonly AssetDocumentLocation _location;
     private readonly Action<AssetReference> _saved;
-    private readonly Stack<float[]> _undo = [];
-    private readonly Stack<float[]> _redo = [];
-    private float[] _heights;
-    private float[] _smoothSource;
-    private float[]? _strokeBefore;
+    private readonly Stack<TerrainResource> _undo = [];
+    private readonly Stack<TerrainResource> _redo = [];
+    private TerrainSamplePoint[] _activeSamples = [];
+    private int[] _activeSampleLookup = [];
+    private float[] _smoothSource = [];
+    private TerrainResource? _strokeBefore;
     private bool _strokeChanged;
     private bool _strokeWasDirty;
     private bool _disposed;
@@ -328,8 +345,7 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         _location = location ?? throw new ArgumentNullException(nameof(location));
         Value = value ?? throw new ArgumentNullException(nameof(value));
         _saved = saved ?? throw new ArgumentNullException(nameof(saved));
-        _heights = value.CopyHeights();
-        _smoothSource = new float[_heights.Length];
+        RefreshActiveSampleCache();
     }
 
     /// <summary>Begins one undoable sculpt stroke.</summary>
@@ -339,7 +355,8 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         EnsureEditable();
         if (_strokeBefore is not null)
             throw new InvalidOperationException("A terrain stroke is already active.");
-        _strokeBefore = (float[])_heights.Clone();
+        _strokeBefore = Value.Clone();
+        RefreshActiveSampleCache();
         _strokeChanged = false;
         _strokeWasDirty = IsDirty;
     }
@@ -349,9 +366,9 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
     /// <param name="v">Normalized brush center along Z.</param>
     /// <param name="radiusU">Normalized X radius.</param>
     /// <param name="radiusV">Normalized Z radius.</param>
-    /// <param name="amount">Normalized height influence.</param>
+    /// <param name="amount">Height-sample influence.</param>
     /// <param name="mode">Requested height operation.</param>
-    /// <param name="flattenHeight">Normalized target used by flatten mode.</param>
+    /// <param name="flattenHeight">Height-sample target used by flatten mode.</param>
     /// <returns>The changed inclusive sample rectangle, or null when no sample changed.</returns>
     public TerrainEditRegion? ApplyBrush(
         float u,
@@ -371,60 +388,118 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
             !float.IsFinite(amount) || amount <= 0f || !float.IsFinite(flattenHeight))
             throw new ArgumentOutOfRangeException(nameof(amount));
 
-        var minimumX = Math.Max(0, (int)MathF.Floor((u - radiusU) * (Value.Width - 1)));
-        var maximumX = Math.Min(Value.Width - 1,
-            (int)MathF.Ceiling((u + radiusU) * (Value.Width - 1)));
-        var minimumZ = Math.Max(0, (int)MathF.Floor((v - radiusV) * (Value.Depth - 1)));
-        var maximumZ = Math.Min(Value.Depth - 1,
-            (int)MathF.Ceiling((v + radiusV) * (Value.Depth - 1)));
-        var source = _heights;
+        var source = _smoothSource;
         if (mode == TerrainBrushMode.Smooth)
         {
-            Array.Copy(_heights, _smoothSource, _heights.Length);
-            source = _smoothSource;
+            for (var index = 0; index < _activeSamples.Length; index++)
+                source[index] = Value.GetSampleHeight(_activeSamples[index]);
         }
         var changedMinimumX = Value.Width;
         var changedMinimumZ = Value.Depth;
         var changedMaximumX = -1;
         var changedMaximumZ = -1;
-        for (var z = minimumZ; z <= maximumZ; z++)
+        for (var sampleIndex = 0; sampleIndex < _activeSamples.Length; sampleIndex++)
         {
-            var sampleV = z / (float)(Value.Depth - 1);
+            var sample = _activeSamples[sampleIndex];
+            var sampleV = sample.FineZ / (float)(Value.FineDepth - 1);
             var distanceV = (sampleV - v) / radiusV;
-            for (var x = minimumX; x <= maximumX; x++)
+            var sampleU = sample.FineX / (float)(Value.FineWidth - 1);
+            var distanceU = (sampleU - u) / radiusU;
+            var distanceSquared = distanceU * distanceU + distanceV * distanceV;
+            if (distanceSquared > 1f)
+                continue;
+            var falloff = 1f - MathF.Sqrt(distanceSquared);
+            falloff = falloff * falloff * (3f - 2f * falloff);
+            var previous = Value.GetSampleHeight(sample);
+            var next = mode switch
             {
-                var sampleU = x / (float)(Value.Width - 1);
+                TerrainBrushMode.Lower => previous - amount * falloff,
+                TerrainBrushMode.Smooth => previous +
+                    (GetNeighborAverage(source, sample) - previous) *
+                    Math.Clamp(amount * falloff, 0f, 1f),
+                TerrainBrushMode.Flatten => previous + (flattenHeight - previous) *
+                    Math.Clamp(amount * falloff, 0f, 1f),
+                _ => previous + amount * falloff
+            };
+            if (!float.IsFinite(next))
+            {
+                throw new InvalidOperationException(
+                    "Terrain sculpting produced a non-finite height sample.");
+            }
+            if (MathF.Abs(next - previous) <= 0.000001f)
+                continue;
+            Value.SetSampleHeight(sample, next);
+            var minimumBaseX = sample.FineX / 2;
+            var minimumBaseZ = sample.FineZ / 2;
+            var maximumBaseX = Math.Min(Value.Width - 1, (sample.FineX + 1) / 2);
+            var maximumBaseZ = Math.Min(Value.Depth - 1, (sample.FineZ + 1) / 2);
+            changedMinimumX = Math.Min(changedMinimumX, minimumBaseX);
+            changedMinimumZ = Math.Min(changedMinimumZ, minimumBaseZ);
+            changedMaximumX = Math.Max(changedMaximumX, maximumBaseX);
+            changedMaximumZ = Math.Max(changedMaximumZ, maximumBaseZ);
+        }
+        if (changedMaximumX < 0)
+            return null;
+        _strokeChanged = true;
+        IsDirty = true;
+        LastError = null;
+        return new TerrainEditRegion(
+            changedMinimumX, changedMinimumZ, changedMaximumX, changedMaximumZ);
+    }
+
+    /// <summary>Locally increases or decreases active terrain sample density under a brush.</summary>
+    /// <param name="u">Normalized brush center along X.</param>
+    /// <param name="v">Normalized brush center along Z.</param>
+    /// <param name="radiusU">Normalized X radius.</param>
+    /// <param name="radiusV">Normalized Z radius.</param>
+    /// <param name="increase">True to refine touched quads; false to coarsen them.</param>
+    /// <returns>The changed inclusive base-sample rectangle, or null.</returns>
+    public TerrainEditRegion? ApplySampleDensity(
+        float u,
+        float v,
+        float radiusU,
+        float radiusV,
+        bool increase)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        EnsureEditable();
+        if (_strokeBefore is null)
+            throw new InvalidOperationException("BeginStroke must be called before resizing samples.");
+        if (!float.IsFinite(u) || !float.IsFinite(v) || !float.IsFinite(radiusU) ||
+            !float.IsFinite(radiusV) || radiusU <= 0f || radiusV <= 0f)
+            throw new ArgumentOutOfRangeException(nameof(radiusU));
+        var minimumQuadX = Math.Max(0,
+            (int)MathF.Floor((u - radiusU) * (Value.Width - 1)));
+        var maximumQuadX = Math.Min(Value.Width - 2,
+            (int)MathF.Floor((u + radiusU) * (Value.Width - 1)));
+        var minimumQuadZ = Math.Max(0,
+            (int)MathF.Floor((v - radiusV) * (Value.Depth - 1)));
+        var maximumQuadZ = Math.Min(Value.Depth - 2,
+            (int)MathF.Floor((v + radiusV) * (Value.Depth - 1)));
+        var changedMinimumX = Value.Width;
+        var changedMinimumZ = Value.Depth;
+        var changedMaximumX = -1;
+        var changedMaximumZ = -1;
+        for (var z = minimumQuadZ; z <= maximumQuadZ; z++)
+        {
+            var sampleV = (z + 0.5f) / (Value.Depth - 1);
+            var distanceV = (sampleV - v) / radiusV;
+            for (var x = minimumQuadX; x <= maximumQuadX; x++)
+            {
+                var sampleU = (x + 0.5f) / (Value.Width - 1);
                 var distanceU = (sampleU - u) / radiusU;
-                var distanceSquared = distanceU * distanceU + distanceV * distanceV;
-                if (distanceSquared > 1f)
+                if (distanceU * distanceU + distanceV * distanceV > 1f ||
+                    !Value.SetQuadRefined(x, z, increase))
                     continue;
-                var falloff = 1f - MathF.Sqrt(distanceSquared);
-                falloff = falloff * falloff * (3f - 2f * falloff);
-                var index = z * Value.Width + x;
-                var previous = _heights[index];
-                var next = mode switch
-                {
-                    TerrainBrushMode.Lower => previous - amount * falloff,
-                    TerrainBrushMode.Smooth => previous +
-                        (GetNeighborAverage(source, x, z) - previous) *
-                        Math.Clamp(amount * falloff, 0f, 1f),
-                    TerrainBrushMode.Flatten => previous + (flattenHeight - previous) *
-                        Math.Clamp(amount * falloff, 0f, 1f),
-                    _ => previous + amount * falloff
-                };
-                next = Math.Clamp(next, 0f, 1f);
-                if (MathF.Abs(next - previous) <= 0.000001f)
-                    continue;
-                _heights[index] = next;
                 changedMinimumX = Math.Min(changedMinimumX, x);
                 changedMinimumZ = Math.Min(changedMinimumZ, z);
-                changedMaximumX = Math.Max(changedMaximumX, x);
-                changedMaximumZ = Math.Max(changedMaximumZ, z);
+                changedMaximumX = Math.Max(changedMaximumX, x + 1);
+                changedMaximumZ = Math.Max(changedMaximumZ, z + 1);
             }
         }
         if (changedMaximumX < 0)
             return null;
-        Value.UpdateHeights(_heights);
+        RefreshActiveSampleCache();
         _strokeChanged = true;
         IsDirty = true;
         LastError = null;
@@ -466,8 +541,8 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         var changed = _strokeChanged;
         if (changed)
         {
-            _heights = _strokeBefore;
-            Value.UpdateHeights(_heights);
+            Value = _strokeBefore;
+            RefreshActiveSampleCache();
         }
         _strokeBefore = null;
         _strokeChanged = false;
@@ -486,8 +561,8 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         EnsureNoActiveStroke();
         if (!_undo.TryPop(out var previous))
             return false;
-        _redo.Push((float[])_heights.Clone());
-        ReplaceSamples(previous);
+        _redo.Push(Value.Clone());
+        ReplaceResource(previous);
         return true;
     }
 
@@ -500,8 +575,8 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         EnsureNoActiveStroke();
         if (!_redo.TryPop(out var next))
             return false;
-        _undo.Push((float[])_heights.Clone());
-        ReplaceSamples(next);
+        _undo.Push(Value.Clone());
+        ReplaceResource(next);
         return true;
     }
 
@@ -554,8 +629,7 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
         {
             using var stream = _location.OpenRead();
             Value = TerrainResource.Load(stream);
-            _heights = Value.CopyHeights();
-            _smoothSource = new float[_heights.Length];
+            RefreshActiveSampleCache();
             _undo.Clear();
             _redo.Clear();
             IsDirty = false;
@@ -598,42 +672,73 @@ public sealed class TerrainDocument : IAssetDocument<TerrainResource>
     /// <param name="x">Sample column.</param>
     /// <param name="z">Sample row.</param>
     /// <returns>Average including the center sample.</returns>
-    private float GetNeighborAverage(float[] source, int x, int z)
+    private float GetNeighborAverage(float[] source, TerrainSamplePoint sample)
     {
-        var sum = source[z * Value.Width + x];
+        var centerIndex = _activeSampleLookup[
+            sample.FineZ * Value.FineWidth + sample.FineX];
+        var sum = source[centerIndex];
         var count = 1;
-        if (x > 0)
-        {
-            sum += source[z * Value.Width + x - 1];
-            count++;
-        }
-        if (x + 1 < Value.Width)
-        {
-            sum += source[z * Value.Width + x + 1];
-            count++;
-        }
-        if (z > 0)
-        {
-            sum += source[(z - 1) * Value.Width + x];
-            count++;
-        }
-        if (z + 1 < Value.Depth)
-        {
-            sum += source[(z + 1) * Value.Width + x];
-            count++;
-        }
+        AddNearestNeighbor(source, sample, -1, 0, ref sum, ref count);
+        AddNearestNeighbor(source, sample, 1, 0, ref sum, ref count);
+        AddNearestNeighbor(source, sample, 0, -1, ref sum, ref count);
+        AddNearestNeighbor(source, sample, 0, 1, ref sum, ref count);
         return sum / count;
     }
 
-    /// <summary>Replaces all samples from a history entry and publishes the change.</summary>
-    /// <param name="samples">Owned replacement samples.</param>
-    private void ReplaceSamples(float[] samples)
+    /// <summary>Adds the nearest active sample along one lattice direction.</summary>
+    /// <param name="source">Stable active height payload.</param>
+    /// <param name="sample">Center sample.</param>
+    /// <param name="stepX">Horizontal direction from minus one through one.</param>
+    /// <param name="stepZ">Depth direction from minus one through one.</param>
+    /// <param name="sum">Accumulated height sum.</param>
+    /// <param name="count">Accumulated sample count.</param>
+    private void AddNearestNeighbor(
+        float[] source,
+        TerrainSamplePoint sample,
+        int stepX,
+        int stepZ,
+        ref float sum,
+        ref int count)
     {
-        _heights = samples;
-        Value.UpdateHeights(_heights);
+        for (var distance = 1; distance <= 2; distance++)
+        {
+            var fineX = sample.FineX + stepX * distance;
+            var fineZ = sample.FineZ + stepZ * distance;
+            if ((uint)fineX >= (uint)Value.FineWidth ||
+                (uint)fineZ >= (uint)Value.FineDepth)
+                return;
+            var index = _activeSampleLookup[fineZ * Value.FineWidth + fineX];
+            if (index < 0)
+                continue;
+            sum += source[index];
+            count++;
+            return;
+        }
+    }
+
+    /// <summary>Replaces the terrain from a history entry and publishes the change.</summary>
+    /// <param name="resource">Owned replacement terrain state.</param>
+    private void ReplaceResource(TerrainResource resource)
+    {
+        Value = resource;
+        RefreshActiveSampleCache();
         IsDirty = true;
         LastError = null;
         Changed?.Invoke();
+    }
+
+    /// <summary>Rebuilds allocation-free active-sample lookup storage after topology changes.</summary>
+    private void RefreshActiveSampleCache()
+    {
+        _activeSamples = Value.GetActiveSamples().ToArray();
+        _smoothSource = new float[_activeSamples.Length];
+        _activeSampleLookup = new int[checked(Value.FineWidth * Value.FineDepth)];
+        Array.Fill(_activeSampleLookup, -1);
+        for (var index = 0; index < _activeSamples.Length; index++)
+        {
+            var sample = _activeSamples[index];
+            _activeSampleLookup[sample.FineZ * Value.FineWidth + sample.FineX] = index;
+        }
     }
 
     /// <summary>Rejects mutation of imported read-only terrain outputs.</summary>
@@ -658,11 +763,11 @@ public static class TerrainAuthoring
     /// <param name="path">Destination source path.</param>
     /// <param name="width">Sample columns.</param>
     /// <param name="depth">Sample rows.</param>
-    /// <param name="height">Initial normalized height.</param>
+    /// <param name="height">Initial height sample.</param>
     public static void SaveFlat(string path, int width = 65, int depth = 65, float height = 0.2f)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        if (!float.IsFinite(height) || height < 0f || height > 1f)
+        if (!float.IsFinite(height))
             throw new ArgumentOutOfRangeException(nameof(height));
         var heights = new float[checked(width * depth)];
         Array.Fill(heights, height);

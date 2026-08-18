@@ -3,6 +3,7 @@ using System.Globalization;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Editor;
+using Engine.Core;
 using Engine.Graphics;
 using Engine.UI;
 using Xunit;
@@ -1763,6 +1764,92 @@ public class UIHostTests
         Assert.False(menu.IsOpen);
     }
 
+    /// <summary>Retains terrain mesh and texture identities across coalesced sculpt updates.</summary>
+    [Fact]
+    public void EditorViewportRenderer_SculptUpdates_RetainsGpuResources()
+    {
+        var services = new HostServices();
+        var root = new Node3D();
+        var terrainReference = new AssetReference(AssetId.New(), "main");
+        var instance = new MeshInstance3D { Mesh = terrainReference };
+        var collider = new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(8f, 8f),
+            HeightScale = 5f
+        };
+        instance.AddComponent(collider);
+        root.AddChild(instance);
+        var camera = new PerspectiveCamera();
+        var selection = new SceneSelectionController(
+            [instance], camera, () => new GizmoViewport(0f, 0f, 200f, 200f));
+        using var viewportRenderer = new EditorViewportRenderer(
+            services, new RenderViewHandle(1), new RenderViewHandle(2),
+            camera, camera, [instance], root, selection);
+        var terrain = new TerrainResource(5, 5, new float[25]);
+        var texture = new TextureResource(1, 1, [255, 255, 255, 255],
+            TextureColorSpace.Srgb);
+        viewportRenderer.SetTerrainResource(
+            instance, terrain, collider, new StandardMaterialAsset(), texture);
+        var heights = terrain.CopyHeights();
+        heights[12] = 0.5f;
+        terrain.UpdateHeights(heights);
+
+        viewportRenderer.QueueTerrainGeometryUpdate(
+            instance, terrain, collider, new TerrainEditRegion(2, 2, 2, 2));
+        viewportRenderer.QueueTerrainGeometryUpdate(
+            instance, terrain, collider, new TerrainEditRegion(2, 2, 2, 2));
+        viewportRenderer.RenderGame(new ViewportPanel(200f, 200f, Color.Black));
+
+        Assert.Equal(1, services.StaticMeshCreateCount);
+        Assert.Equal(1, services.TextureCreateCount);
+        Assert.Equal(0, services.MeshDestroyCount);
+        Assert.Equal(0, services.TextureDestroyCount);
+        Assert.Equal(1, services.StaticMeshUpdateCount);
+        Assert.InRange(services.LastStaticMeshUpdate.VertexCount, 1, 24);
+    }
+
+    /// <summary>Coalesces sample-density topology changes while retaining material textures.</summary>
+    [Fact]
+    public void EditorViewportRenderer_SampleDensityUpdates_CoalescesTopologyReplacement()
+    {
+        var services = new HostServices();
+        var root = new Node3D();
+        var terrainReference = new AssetReference(AssetId.New(), "main");
+        var instance = new MeshInstance3D { Mesh = terrainReference };
+        var collider = new TerrainColliderComponent
+        {
+            TerrainData = terrainReference,
+            HorizontalSize = new Vector2(8f, 8f),
+            HeightScale = 5f
+        };
+        instance.AddComponent(collider);
+        root.AddChild(instance);
+        var camera = new PerspectiveCamera();
+        var selection = new SceneSelectionController(
+            [instance], camera, () => new GizmoViewport(0f, 0f, 200f, 200f));
+        using var viewportRenderer = new EditorViewportRenderer(
+            services, new RenderViewHandle(1), new RenderViewHandle(2),
+            camera, camera, [instance], root, selection);
+        var terrain = new TerrainResource(5, 5, new float[25]);
+        var texture = new TextureResource(1, 1, [255, 255, 255, 255],
+            TextureColorSpace.Srgb);
+        viewportRenderer.SetTerrainResource(
+            instance, terrain, collider, new StandardMaterialAsset(), texture);
+        terrain.SetQuadRefined(1, 1, true);
+        viewportRenderer.QueueTerrainTopologyUpdate(instance, terrain, collider);
+        terrain.SetQuadRefined(2, 1, true);
+        viewportRenderer.QueueTerrainTopologyUpdate(instance, terrain, collider);
+
+        viewportRenderer.RenderGame(new ViewportPanel(200f, 200f, Color.Black));
+
+        Assert.Equal(2, services.StaticMeshCreateCount);
+        Assert.Equal(1, services.MeshDestroyCount);
+        Assert.Equal(1, services.TextureCreateCount);
+        Assert.Equal(0, services.TextureDestroyCount);
+        Assert.Equal(0, services.StaticMeshUpdateCount);
+    }
+
     /// <summary>Minimal window, input, and renderer used to exercise UIHost boundaries.</summary>
     private class HostServices : IWindow, IInputSource, IPointerGestureSource, IRenderer,
         IInteractiveFrameScheduler
@@ -1817,6 +1904,18 @@ public class UIHostTests
 
         /// <summary>Gets the number of retained meshes destroyed.</summary>
         internal int MeshDestroyCount { get; private set; }
+
+        /// <summary>Gets the number of sampled textures created.</summary>
+        internal int TextureCreateCount { get; private set; }
+
+        /// <summary>Gets the number of sampled textures destroyed.</summary>
+        internal int TextureDestroyCount { get; private set; }
+
+        /// <summary>Gets the number of retained static vertex updates.</summary>
+        internal int StaticMeshUpdateCount { get; private set; }
+
+        /// <summary>Gets the latest retained static vertex update.</summary>
+        internal StaticMeshVertexUpdate LastStaticMeshUpdate { get; private set; }
 
         /// <summary>Gets the number of render views destroyed.</summary>
         internal int RenderViewDestroyCount { get; private set; }
@@ -1988,13 +2087,24 @@ public class UIHostTests
         public void DestroySkinPalette(SkinPaletteHandle palette) { }
 
         /// <inheritdoc/>
-        public TextureHandle CreateTexture(TextureResource texture) => default;
+        public TextureHandle CreateTexture(TextureResource texture)
+        {
+            TextureCreateCount++;
+            return new TextureHandle((ulong)TextureCreateCount);
+        }
 
         /// <inheritdoc/>
-        public void DestroyTexture(TextureHandle texture) { }
+        public void DestroyTexture(TextureHandle texture) => TextureDestroyCount++;
 
         /// <inheritdoc/>
         public void UpdateMesh(MeshHandle mesh, MeshUpdate update) { }
+
+        /// <inheritdoc/>
+        public void UpdateStaticMeshVertices(MeshHandle mesh, StaticMeshVertexUpdate update)
+        {
+            StaticMeshUpdateCount++;
+            LastStaticMeshUpdate = update;
+        }
 
         /// <inheritdoc/>
         public void DestroyMesh(MeshHandle mesh) => MeshDestroyCount++;

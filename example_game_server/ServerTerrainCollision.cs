@@ -21,16 +21,29 @@ internal sealed class ServerTerrainCollision
         Node root,
         Func<AssetReference, TerrainResource> resolveTerrain)
     {
-        ArgumentNullException.ThrowIfNull(root);
-        ArgumentNullException.ThrowIfNull(resolveTerrain);
-        AddNode(root, resolveTerrain);
-        if (_surfaces.Count == 0)
-            throw new InvalidDataException(
-                "The authoritative scene has no enabled terrain collider with terrain data.");
+        Reload(root, resolveTerrain);
     }
 
     /// <summary>Gets the number of terrain colliders shared with the authoritative scene.</summary>
     internal int SurfaceCount => _surfaces.Count;
+
+    /// <summary>Atomically replaces all sampled surfaces from current terrain resources.</summary>
+    /// <param name="root">Authoritative scene root.</param>
+    /// <param name="resolveTerrain">Resolver for freshly imported terrain artifacts.</param>
+    internal void Reload(
+        Node root,
+        Func<AssetReference, TerrainResource> resolveTerrain)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(resolveTerrain);
+        var replacements = new List<TerrainSurface>();
+        AddNode(root, resolveTerrain, replacements);
+        if (replacements.Count == 0)
+            throw new InvalidDataException(
+                "The authoritative scene has no enabled terrain collider with terrain data.");
+        _surfaces.Clear();
+        _surfaces.AddRange(replacements);
+    }
 
     /// <summary>Samples the highest terrain surface beneath one world XZ coordinate.</summary>
     /// <param name="worldPosition">World position whose XZ coordinates are queried.</param>
@@ -66,7 +79,11 @@ internal sealed class ServerTerrainCollision
     /// <summary>Recursively discovers terrain components without iterator allocation.</summary>
     /// <param name="node">Current scene node.</param>
     /// <param name="resolveTerrain">Resolver for imported terrain artifacts.</param>
-    private void AddNode(Node node, Func<AssetReference, TerrainResource> resolveTerrain)
+    /// <param name="surfaces">Destination surface collection.</param>
+    private static void AddNode(
+        Node node,
+        Func<AssetReference, TerrainResource> resolveTerrain,
+        List<TerrainSurface> surfaces)
     {
         if (node is Node3D node3D)
         {
@@ -81,13 +98,13 @@ internal sealed class ServerTerrainCollision
                 {
                     continue;
                 }
-                _surfaces.Add(new TerrainSurface(
+                surfaces.Add(new TerrainSurface(
                     resolveTerrain(reference), collider, node3D.GetModelMatrix()));
             }
         }
         var children = node.Children;
         for (var index = 0; index < children.Count; index++)
-            AddNode(children[index], resolveTerrain);
+            AddNode(children[index], resolveTerrain, surfaces);
     }
 
     /// <summary>Stores one decoded grid and its authored world placement.</summary>

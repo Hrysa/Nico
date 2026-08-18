@@ -625,24 +625,24 @@ public sealed class PhysicsWorld : IDisposable
         TerrainColliderComponent collider, Vector3 scale, TerrainResource resource,
         TerrainChunkRegion region)
     {
-        var startZ = region.StartZ;
-        var endZ = startZ + region.QuadCountZ;
-        var startX = region.StartX;
-        var endX = startX + region.QuadCountX;
-        var triangleCount = checked(region.QuadCountX * region.QuadCountZ * 2);
+        var terrainMesh = TerrainMeshBuilder.BuildStaticMesh(
+            resource, collider.HorizontalSize, collider.HeightScale);
+        var triangleCount = 0;
+        for (var index = 0; index < terrainMesh.Indices.Length; index += 3)
+        {
+            if (TriangleBelongsToTerrainRegion(terrainMesh, resource, region, index))
+                triangleCount++;
+        }
         _bufferPool.Take<Triangle>(triangleCount, out var triangles);
         var triangleIndex = 0;
-        for (var z = startZ; z < endZ; z++)
+        for (var index = 0; index < terrainMesh.Indices.Length; index += 3)
         {
-            for (var x = startX; x < endX; x++)
-            {
-                var a = GetTerrainVertex(resource, collider, x, z);
-                var b = GetTerrainVertex(resource, collider, x + 1, z);
-                var c = GetTerrainVertex(resource, collider, x + 1, z + 1);
-                var d = GetTerrainVertex(resource, collider, x, z + 1);
-                triangles[triangleIndex++] = new Triangle(a, b, c);
-                triangles[triangleIndex++] = new Triangle(a, c, d);
-            }
+            if (!TriangleBelongsToTerrainRegion(terrainMesh, resource, region, index))
+                continue;
+            var a = terrainMesh.Vertices[terrainMesh.Indices[index]].Position;
+            var b = terrainMesh.Vertices[terrainMesh.Indices[index + 2]].Position;
+            var c = terrainMesh.Vertices[terrainMesh.Indices[index + 1]].Position;
+            triangles[triangleIndex++] = new Triangle(a, b, c);
         }
         var mesh = new BepuMesh(triangles, scale, _bufferPool);
         var shapeIndex = _simulation.Shapes.Add(mesh);
@@ -651,7 +651,31 @@ public sealed class PhysicsWorld : IDisposable
         RegisterHandle(_staticHandles, handle.Value, body);
     }
 
-    /// <summary>Computes one centered local terrain vertex from a normalized sample.</summary>
+    /// <summary>Tests whether an adaptive triangle centroid lies inside one base-grid chunk.</summary>
+    /// <param name="mesh">Complete adaptive terrain mesh.</param>
+    /// <param name="resource">Terrain base-grid dimensions.</param>
+    /// <param name="region">Requested base-quad chunk.</param>
+    /// <param name="indexOffset">First triangle index offset.</param>
+    /// <returns>True when the triangle belongs to the chunk.</returns>
+    private static bool TriangleBelongsToTerrainRegion(
+        StaticMeshResource mesh,
+        TerrainResource resource,
+        TerrainChunkRegion region,
+        int indexOffset)
+    {
+        var first = mesh.Vertices[mesh.Indices[indexOffset]].TexCoord;
+        var second = mesh.Vertices[mesh.Indices[indexOffset + 1]].TexCoord;
+        var third = mesh.Vertices[mesh.Indices[indexOffset + 2]].TexCoord;
+        var center = (first + second + third) / 3f;
+        var x = Math.Min(resource.Width - 2,
+            Math.Max(0, (int)(center.X * (resource.Width - 1))));
+        var z = Math.Min(resource.Depth - 2,
+            Math.Max(0, (int)(center.Y * (resource.Depth - 1))));
+        return x >= region.StartX && x < region.StartX + region.QuadCountX &&
+            z >= region.StartZ && z < region.StartZ + region.QuadCountZ;
+    }
+
+    /// <summary>Computes one centered local terrain vertex from a finite height sample.</summary>
     /// <param name="resource">Height sample grid.</param><param name="collider">Terrain dimensions.</param>
     /// <param name="x">Sample column.</param><param name="z">Sample row.</param>
     /// <returns>Local terrain vertex.</returns>

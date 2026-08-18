@@ -48,6 +48,8 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     private RenderViewHandle _renderView;
     private PerspectiveCamera? _camera;
     private Node3D? _sceneRoot;
+    private Skybox3D? _skybox;
+    private TextureHandle _skyboxTexture;
     private readonly RenderQueue _renderQueue = new();
     private RenderPipeline _renderPipeline = BasicForwardRenderPipeline.Instance;
     private readonly List<RuntimeRenderable> _renderables = [];
@@ -111,6 +113,16 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
 
         _camera = scene.GameCamera;
         _sceneRoot = scene.Root;
+        _skybox = FindSkybox(scene.Root);
+        if (_skybox?.Texture is { } skyboxReference)
+        {
+            var skyboxResource = LoadOptionalTexture(skyboxReference);
+            if (skyboxResource is not null)
+            {
+                _skyboxTexture = _window.CreateTexture(
+                    skyboxResource with { ColorSpace = TextureColorSpace.Srgb });
+            }
+        }
         _renderView = _window.CreateRenderView(_width, _height);
         ConfigurePresentation(_width, _height);
         _window.SetViewportClearColor(_renderView, 0.05f, 0.05f, 0.12f);
@@ -306,6 +318,11 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         _scriptCatalog = null;
         _runtimeResources?.Dispose();
         _runtimeResources = null;
+        if (_skyboxTexture.IsValid)
+        {
+            _window.DestroyTexture(_skyboxTexture);
+            _skyboxTexture = default;
+        }
         foreach (var renderable in _renderables)
         {
             if (renderable.Palette.IsValid)
@@ -703,6 +720,12 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         _renderQueue.Clear();
         if (_sceneRoot is not null)
             _renderQueue.ResolveLighting(_sceneRoot);
+        if (_skybox is { IsEnabled: true } skybox && _skyboxTexture.IsValid)
+        {
+            _renderQueue.Skybox = SkyboxRenderSettings.Create(
+                _skyboxTexture, skybox.Tint, skybox.Intensity,
+                skybox.GetWorldRotation().Y);
+        }
         _camera.UpdateViewport(_width, _height);
         _renderQueue.Camera = RenderCameraData.Create(
             _camera.GetViewMatrix(), _camera.GetProjectionMatrix());
@@ -733,6 +756,23 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
             }
         }
         RenderPipeline.Render(_window, _renderView, _renderQueue);
+    }
+
+    /// <summary>Finds the first authored skybox in hierarchy order.</summary>
+    /// <param name="node">Subtree root.</param>
+    /// <returns>The authored skybox, or null when absent.</returns>
+    private static Skybox3D? FindSkybox(Node node)
+    {
+        if (node is Skybox3D skybox)
+            return skybox;
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            var found = FindSkybox(children[index]);
+            if (found is not null)
+                return found;
+        }
+        return null;
     }
 
     /// <summary>Advances active controllers and uploads only changed skin palettes.</summary>

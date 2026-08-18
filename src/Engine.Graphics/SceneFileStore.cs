@@ -11,7 +11,7 @@ namespace Engine.Graphics;
 /// </summary>
 public static class SceneFileStore
 {
-    private const int CurrentFormatVersion = 13;
+    private const int CurrentFormatVersion = 14;
     private const int MinimumFormatVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -109,6 +109,7 @@ public static class SceneFileStore
             DirectionalLight3D => SceneNodeType.DirectionalLight,
             PointLight3D => SceneNodeType.PointLight,
             SpotLight3D => SceneNodeType.SpotLight,
+            Skybox3D => SceneNodeType.Skybox,
             MeshInstance3D => SceneNodeType.AssetMesh,
             Node3D when node.GetType() == typeof(Node3D) => SceneNodeType.Node3D,
             ICustomSceneNode => SceneNodeType.Custom,
@@ -118,6 +119,7 @@ public static class SceneFileStore
         var light = node as DirectionalLight3D;
         var pointLight = node as PointLight3D;
         var spotLight = node as SpotLight3D;
+        var skybox = node as Skybox3D;
         var children = node.Children.Select(child => EncodeNode(child, context)).ToList();
         return new SceneNodeData(
             id,
@@ -140,6 +142,9 @@ public static class SceneFileStore
                 SceneVector3.From(spotLight.Color), spotLight.Intensity,
                 spotLight.Range, spotLight.InnerAngle, spotLight.OuterAngle,
                 spotLight.IsEnabled, spotLight.CastsShadows),
+            skybox is null ? null : new SkyboxData(
+                skybox.IsEnabled, skybox.Texture, SceneVector3.From(skybox.Tint),
+                skybox.Intensity),
             node is MeshInstance3D meshInstance
                 ? new ModelData(meshInstance.Mesh.Asset, meshInstance.Mesh.SubAsset,
                     meshInstance.Materials.ToList()) : null,
@@ -172,6 +177,7 @@ public static class SceneFileStore
             SceneNodeType.DirectionalLight => CreateDirectionalLight(data.DirectionalLight),
             SceneNodeType.PointLight => CreatePointLight(data.PointLight),
             SceneNodeType.SpotLight => CreateSpotLight(data.SpotLight),
+            SceneNodeType.Skybox => CreateSkybox(data.Skybox),
             SceneNodeType.Custom => CreateCustomNode(data.CustomType, nodeFactory),
             _ => throw new InvalidDataException($"Unsupported scene node type '{data.Type}'.")
         };
@@ -506,6 +512,22 @@ public static class SceneFileStore
         };
     }
 
+    /// <summary>Creates a skybox from serialized settings.</summary>
+    /// <param name="data">Serialized skybox settings.</param>
+    /// <returns>A configured skybox node.</returns>
+    private static Skybox3D CreateSkybox(SkyboxData? data)
+    {
+        if (data is null)
+            throw new InvalidDataException("A skybox node is missing skybox settings.");
+        return new Skybox3D
+        {
+            IsEnabled = data.IsEnabled,
+            Texture = data.Texture,
+            Tint = data.Tint.ToVector3(),
+            Intensity = data.Intensity
+        };
+    }
+
     /// <summary>Creates a mesh node from its persistent resource references.</summary>
     /// <param name="model">Serialized imported mesh reference.</param>
     /// <returns>The reconstructed mesh node.</returns>
@@ -538,6 +560,7 @@ public static class SceneFileStore
         DirectionalLightData? DirectionalLight,
         PointLightData? PointLight,
         SpotLightData? SpotLight,
+        SkyboxData? Skybox,
         ModelData? Model,
         List<SceneNodeData> Children);
 
@@ -579,6 +602,12 @@ public static class SceneFileStore
         float OuterAngle,
         bool IsEnabled,
         bool CastsShadows);
+
+    private sealed record SkyboxData(
+        bool IsEnabled,
+        AssetReference? Texture,
+        SceneVector3 Tint,
+        float Intensity);
 
     private sealed record ColliderData(
         LegacyColliderShape? Shape = null,
@@ -736,6 +765,7 @@ public static class SceneFileStore
         DirectionalLight,
         PointLight,
         SpotLight,
+        Skybox,
         Custom
     }
 

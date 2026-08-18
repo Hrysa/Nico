@@ -44,6 +44,26 @@
       },
       "inPlace": true,
       "rootMotionJoint": "mixamorig:Hips"
+    },
+    {
+      "alias": "Jump",
+      "source": {
+        "asset": "019ff631-d73f-79eb-9d1d-9578b394fd2e",
+        "subAsset": "animation/0"
+      },
+      "loop": false,
+      "inPlace": true,
+      "retarget": "humanoid"
+    },
+    {
+      "alias": "Attack",
+      "source": {
+        "asset": "019ff631-d6c4-704f-a84c-830bb3d99df8",
+        "subAsset": "animation/0"
+      },
+      "loop": false,
+      "inPlace": true,
+      "retarget": "humanoid"
     }
   ]
 }

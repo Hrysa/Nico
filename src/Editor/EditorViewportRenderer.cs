@@ -19,6 +19,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private IReadOnlyList<MeshInstance3D> _sceneObjects;
     private IReadOnlyList<MeshInstance3D> _gameObjects;
     private Node _sceneRoot;
+    private Node _gameRoot;
     private readonly SceneSelectionController _selection;
     private readonly ScenePreviewRegistry _previewRegistry;
     private readonly ScenePreviewList _previews = new();
@@ -30,8 +31,13 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private readonly Dictionary<Mesh, MeshHandle> _meshHandles = [];
     private readonly Dictionary<Vector4, MeshHandle> _previewLineMeshes = [];
     private readonly Dictionary<MeshInstance3D, AssetMeshGpuResource> _assetMeshes = [];
+    private readonly Dictionary<MeshInstance3D, PendingTerrainUpdate> _pendingTerrainUpdates = [];
+    private readonly Dictionary<MeshInstance3D, PendingTerrainTopologyUpdate>
+        _pendingTerrainTopologyUpdates = [];
     private readonly SceneAnimationRegistry _animationRegistry;
     private readonly LiveAssetDependencyRegistry? _liveAssetDependencies;
+    private readonly Func<AssetReference, TextureResource?>? _skyboxTextureResolver;
+    private readonly Dictionary<AssetReference, TextureHandle> _skyboxTextures = [];
     private GizmoViewport _lastSceneViewport;
     private ScenePreviewPickingId? _hoveredPreview;
     private TerrainBrushPreview? _terrainBrushPreview;
@@ -85,6 +91,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="previewMeshResolver">Optional explicit collision-mesh preview resolver.</param>
     /// <param name="previewTerrainResolver">Optional explicit terrain preview resolver.</param>
     /// <param name="animationSetResolver">Optional script-selected animation-set resolver.</param>
+    /// <param name="skyboxTextureResolver">Optional equirectangular skybox texture resolver.</param>
     /// <param name="liveAssetDependencies">Optional registry for republished live values.</param>
     /// <param name="renderPipeline">Optional render-pass composition.</param>
     public EditorViewportRenderer(
@@ -100,6 +107,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         Func<AssetReference, TerrainResource?>? previewTerrainResolver = null,
         Func<AssetReference, SkinnedMeshResource, AnimationClipResource[]>?
             animationSetResolver = null,
+        Func<AssetReference, TextureResource?>? skyboxTextureResolver = null,
         LiveAssetDependencyRegistry? liveAssetDependencies = null,
         RenderPipeline? renderPipeline = null)
     {
@@ -111,12 +119,14 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         _sceneObjects = sceneObjects;
         _gameObjects = sceneObjects;
         _sceneRoot = sceneRoot;
+        _gameRoot = sceneRoot;
         _selection = selection;
         _sceneRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
         _gameRenderPipeline = renderPipeline ?? BasicForwardRenderPipeline.Instance;
         _previewRegistry = ScenePreviewRegistry.CreateDefault(
             previewMeshResolver, previewTerrainResolver);
         _liveAssetDependencies = liveAssetDependencies;
+        _skyboxTextureResolver = skyboxTextureResolver;
         _animationRegistry = new SceneAnimationRegistry((_, animationSet, controller) =>
         {
             if (animationSetResolver is null)
@@ -135,14 +145,17 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <summary>Changes the camera and objects rendered in the Game viewport.</summary>
     /// <param name="gameCamera">Active game camera.</param>
     /// <param name="gameObjects">Objects belonging to the active game scene.</param>
+    /// <param name="gameRoot">Optional root belonging to the active game scene.</param>
     public void SetGameScene(
         ICamera gameCamera,
-        IReadOnlyList<MeshInstance3D> gameObjects)
+        IReadOnlyList<MeshInstance3D> gameObjects,
+        Node? gameRoot = null)
     {
         ArgumentNullException.ThrowIfNull(gameCamera);
         ArgumentNullException.ThrowIfNull(gameObjects);
         _gameCamera = gameCamera;
         _gameObjects = gameObjects;
+        _gameRoot = gameRoot ?? _sceneRoot;
         ReleaseUnusedMeshes();
     }
 
@@ -175,6 +188,25 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     public void InvalidatePreviewAsset(AssetReference reference)
     {
         _previewRegistry.InvalidateAsset(reference);
+    }
+
+    /// <summary>Invalidates cached skybox textures decoded from one edited asset.</summary>
+    /// <param name="asset">Edited or reimported asset identity.</param>
+    public void InvalidateSkyboxAsset(AssetId asset)
+    {
+        List<AssetReference>? staleReferences = null;
+        foreach (var pair in _skyboxTextures)
+        {
+            if (pair.Key.Asset != asset)
+                continue;
+            _renderer.DestroyTexture(pair.Value);
+            staleReferences ??= [];
+            staleReferences.Add(pair.Key);
+        }
+        if (staleReferences is null)
+            return;
+        for (var index = 0; index < staleReferences.Count; index++)
+            _skyboxTextures.Remove(staleReferences[index]);
     }
 
     /// <summary>Changes the current Scene terrain-brush ring.</summary>
@@ -249,10 +281,15 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             DestroyAssetMeshResource(resource);
         foreach (var handle in _previewLineMeshes.Values)
             _renderer.DestroyMesh(handle);
+        foreach (var handle in _skyboxTextures.Values)
+            _renderer.DestroyTexture(handle);
         _animationRegistry.Dispose();
         _assetMeshes.Clear();
+        _pendingTerrainUpdates.Clear();
+        _pendingTerrainTopologyUpdates.Clear();
         _meshHandles.Clear();
         _previewLineMeshes.Clear();
+        _skyboxTextures.Clear();
     }
 
     /// <summary>Builds and submits all editor viewport work for one frame.</summary>
@@ -288,6 +325,9 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         ArgumentNullException.ThrowIfNull(material);
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
+        _pendingTerrainUpdates.Remove(instance);
+        _pendingTerrainTopologyUpdates.Remove(instance);
+        _pendingTerrainTopologyUpdates.Remove(instance);
         var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
         var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
         var metallicRoughnessHandle = CreateMaterialTexture(
@@ -299,7 +339,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             var meshHandle = _renderer.CreateStaticMesh(mesh, resolvedMaterial);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, meshHandle, baseColorHandle, normalHandle,
-                metallicRoughnessHandle, default, null, resolvedMaterial.SurfaceType));
+                metallicRoughnessHandle, default, null, resolvedMaterial));
         }
         catch
         {
@@ -345,9 +385,11 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         ArgumentNullException.ThrowIfNull(material);
         if (_assetMeshes.Remove(instance, out var previous))
             DestroyAssetMeshResource(previous);
-        var mesh = TerrainMeshBuilder.BuildStaticMesh(
+        _pendingTerrainUpdates.Remove(instance);
+        var terrainMesh = TerrainMeshBuilder.BuildTerrainStaticMesh(
             terrain, collider.HorizontalSize, collider.HeightScale, collider.Center,
             useHeightTint);
+        var mesh = terrainMesh.Mesh;
         var baseColorHandle = CreateMaterialTexture(baseColorTexture, TextureColorSpace.Srgb);
         var normalHandle = CreateMaterialTexture(normalTexture, TextureColorSpace.Linear);
         var metallicRoughnessHandle = CreateMaterialTexture(
@@ -361,7 +403,12 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
                 terrain, collider.HorizontalSize, collider.HeightScale, collider.Center);
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, handle, baseColorHandle, normalHandle, metallicRoughnessHandle,
-                default, null, resolvedMaterial.SurfaceType, isTerrain: true));
+                default, null, resolvedMaterial, isTerrain: true,
+                terrainVertices: mesh.Vertices,
+                terrainSamples: terrainMesh.Samples,
+                terrainIndices: mesh.Indices,
+                terrainTopologyVersion: terrain.TopologyVersion,
+                useHeightTint: useHeightTint));
         }
         catch
         {
@@ -403,6 +450,54 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     {
         SetTerrainResource(instance, terrain, collider, material, baseColorTexture,
             normalTexture, metallicRoughnessTexture, useHeightTint);
+    }
+
+    /// <summary>Queues one live sculpt region for a retained update before the next render.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Current edited height samples.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    /// <param name="region">Inclusive sample rectangle changed by the sculpt dab.</param>
+    public void QueueTerrainGeometryUpdate(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider,
+        TerrainEditRegion region)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(collider);
+        if (!_assetMeshes.TryGetValue(instance, out var resource) ||
+            resource.TerrainVertices is null ||
+            resource.TerrainSamples is null ||
+            resource.TerrainIndices is null ||
+            resource.TerrainTopologyVersion != terrain.TopologyVersion)
+            return;
+        var expanded = ExpandTerrainRegion(region, terrain.Width, terrain.Depth);
+        if (_pendingTerrainUpdates.TryGetValue(instance, out var pending))
+        {
+            expanded = UnionTerrainRegions(pending.Region, expanded);
+        }
+        _pendingTerrainUpdates[instance] = new PendingTerrainUpdate(
+            terrain, collider, resource, expanded);
+    }
+
+    /// <summary>Queues a coalesced adaptive-topology replacement before the next render.</summary>
+    /// <param name="instance">Persistent scene terrain instance.</param>
+    /// <param name="terrain">Latest adaptive terrain state.</param>
+    /// <param name="collider">Terrain dimensions shared with collision.</param>
+    public void QueueTerrainTopologyUpdate(
+        MeshInstance3D instance,
+        TerrainResource terrain,
+        TerrainColliderComponent collider)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(collider);
+        if (!_assetMeshes.TryGetValue(instance, out var resource) || !resource.IsTerrain)
+            return;
+        _pendingTerrainUpdates.Remove(instance);
+        _pendingTerrainTopologyUpdates[instance] = new PendingTerrainTopologyUpdate(
+            terrain, collider, resource);
     }
 
     /// <summary>Creates or replaces renderer resources for one imported skinned model.</summary>
@@ -450,7 +545,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             _assetMeshes.Add(instance, new AssetMeshGpuResource(
                 instance, handles.Mesh, baseColorHandle, normalHandle,
                 metallicRoughnessHandle, handles.Palette, controller,
-                resolvedMaterial.SurfaceType, ownsController)
+                resolvedMaterial, ownsController)
             { UploadedPoseRevision = controller.PoseRevision });
         }
         catch
@@ -502,6 +597,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             ClearSceneOverlay();
             return;
         }
+        FlushTerrainUpdates();
         _sceneQueue.Clear();
         _lastSceneViewport = new GizmoViewport(sceneViewport.Left, sceneViewport.Top,
             sceneViewport.Width, sceneViewport.Height);
@@ -616,6 +712,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     {
         if (!gameViewport.IsEffectivelyVisible)
             return;
+        FlushTerrainUpdates();
         _gameQueue.Clear();
         RenderGameViewport(gameViewport.Width, gameViewport.Height);
     }
@@ -624,6 +721,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     private void RenderSceneViewport()
     {
         _sceneQueue.ResolveLighting(_sceneRoot);
+        PrepareSkybox(_sceneQueue, _sceneRoot);
         var view = _sceneCamera.GetViewMatrix();
         var projection = _sceneCamera.GetProjectionMatrix();
         _renderer.DrawGroundGrid(_sceneViewport, view, projection);
@@ -724,7 +822,8 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
     /// <param name="height">Game viewport height.</param>
     private void RenderGameViewport(float width, float height)
     {
-        _gameQueue.ResolveLighting(_sceneRoot);
+        _gameQueue.ResolveLighting(_gameRoot);
+        PrepareSkybox(_gameQueue, _gameRoot);
         _gameCamera.UpdateViewport(width, height);
         _gameQueue.Camera = RenderCameraData.Create(
             _gameCamera.GetViewMatrix(), _gameCamera.GetProjectionMatrix());
@@ -738,6 +837,44 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             }
         }
         _gameRenderPipeline.Render(_renderer, _gameViewport, _gameQueue);
+    }
+
+    /// <summary>Resolves the first enabled authored skybox into one render submission.</summary>
+    /// <param name="queue">Queue receiving the skybox settings.</param>
+    /// <param name="root">Active scene hierarchy.</param>
+    private void PrepareSkybox(RenderQueue queue, Node root)
+    {
+        var skybox = FindSkybox(root);
+        if (skybox?.Texture is not { } textureReference ||
+            _skyboxTextureResolver is null)
+            return;
+        if (!_skyboxTextures.TryGetValue(textureReference, out var texture))
+        {
+            var resource = _skyboxTextureResolver(textureReference);
+            if (resource is null)
+                return;
+            texture = _renderer.CreateTexture(resource with { ColorSpace = TextureColorSpace.Srgb });
+            _skyboxTextures.Add(textureReference, texture);
+        }
+        queue.Skybox = SkyboxRenderSettings.Create(
+            texture, skybox.Tint, skybox.Intensity, skybox.GetWorldRotation().Y);
+    }
+
+    /// <summary>Finds the first enabled textured skybox in hierarchy order.</summary>
+    /// <param name="node">Subtree root.</param>
+    /// <returns>The authored skybox, or null when this subtree has none.</returns>
+    private static Skybox3D? FindSkybox(Node node)
+    {
+        if (node is Skybox3D { IsEnabled: true, Texture: not null } skybox)
+            return skybox;
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+        {
+            var found = FindSkybox(children[index]);
+            if (found is not null)
+                return found;
+        }
+        return null;
     }
 
     /// <summary>Gets or creates the retained renderer resource for a mesh.</summary>
@@ -769,8 +906,117 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         {
             DestroyAssetMeshResource(_assetMeshes[instance]);
             _assetMeshes.Remove(instance);
+            _pendingTerrainUpdates.Remove(instance);
+            _pendingTerrainTopologyUpdates.Remove(instance);
         }
     }
+
+    /// <summary>Applies all coalesced terrain regions to retained CPU and GPU vertices.</summary>
+    private void FlushTerrainUpdates()
+    {
+        FlushTerrainTopologyUpdates();
+        if (_pendingTerrainUpdates.Count == 0)
+            return;
+        foreach (var pair in _pendingTerrainUpdates)
+        {
+            var update = pair.Value;
+            var vertices = update.Resource.TerrainVertices!;
+            if (update.Terrain.RefinedQuadCount == 0)
+            {
+                var region = update.Region;
+                TerrainMeshBuilder.UpdateStaticMeshVertices(
+                    update.Terrain,
+                    update.Collider.HorizontalSize,
+                    update.Collider.HeightScale,
+                    update.Collider.Center,
+                    update.Resource.UseHeightTint,
+                    vertices,
+                    region.MinimumX,
+                    region.MinimumZ,
+                    region.MaximumX,
+                    region.MaximumZ);
+                var firstVertex = region.MinimumZ * update.Terrain.Width + region.MinimumX;
+                var lastVertex = region.MaximumZ * update.Terrain.Width + region.MaximumX;
+                _renderer.UpdateStaticMeshVertices(update.Resource.Mesh,
+                    new StaticMeshVertexUpdate(
+                        checked((uint)firstVertex), vertices, firstVertex,
+                        lastVertex - firstVertex + 1));
+            }
+            else
+            {
+                TerrainMeshBuilder.UpdateStaticMeshVertices(
+                    update.Terrain,
+                    update.Collider.HorizontalSize,
+                    update.Collider.HeightScale,
+                    update.Collider.Center,
+                    update.Resource.UseHeightTint,
+                    update.Resource.TerrainSamples!,
+                    update.Resource.TerrainIndices!,
+                    vertices);
+                _renderer.UpdateStaticMeshVertices(update.Resource.Mesh,
+                    new StaticMeshVertexUpdate(0, vertices, 0, vertices.Length));
+            }
+            pair.Key.LocalBounds = TerrainMeshBuilder.GetBounds(
+                update.Terrain, update.Collider.HorizontalSize,
+                update.Collider.HeightScale, update.Collider.Center);
+        }
+        _pendingTerrainUpdates.Clear();
+    }
+
+    /// <summary>Replaces coalesced adaptive indices while retaining material textures.</summary>
+    private void FlushTerrainTopologyUpdates()
+    {
+        if (_pendingTerrainTopologyUpdates.Count == 0)
+            return;
+        foreach (var pair in _pendingTerrainTopologyUpdates)
+        {
+            var update = pair.Value;
+            var terrainMesh = TerrainMeshBuilder.BuildTerrainStaticMesh(
+                update.Terrain,
+                update.Collider.HorizontalSize,
+                update.Collider.HeightScale,
+                update.Collider.Center,
+                update.Resource.UseHeightTint);
+            var replacement = _renderer.CreateStaticMesh(
+                terrainMesh.Mesh, update.Resource.Material);
+            _renderer.DestroyMesh(update.Resource.Mesh);
+            update.Resource.Mesh = replacement;
+            update.Resource.TerrainVertices = terrainMesh.Mesh.Vertices;
+            update.Resource.TerrainSamples = terrainMesh.Samples;
+            update.Resource.TerrainIndices = terrainMesh.Mesh.Indices;
+            update.Resource.TerrainTopologyVersion = update.Terrain.TopologyVersion;
+            pair.Key.LocalBounds = TerrainMeshBuilder.GetBounds(
+                update.Terrain, update.Collider.HorizontalSize,
+                update.Collider.HeightScale, update.Collider.Center);
+        }
+        _pendingTerrainTopologyUpdates.Clear();
+    }
+
+    /// <summary>Expands a dirty sample rectangle for neighboring normal recalculation.</summary>
+    /// <param name="region">Changed sample rectangle.</param>
+    /// <param name="width">Terrain sample columns.</param>
+    /// <param name="depth">Terrain sample rows.</param>
+    /// <returns>Clamped expanded rectangle.</returns>
+    private static TerrainEditRegion ExpandTerrainRegion(
+        TerrainEditRegion region,
+        int width,
+        int depth) => new(
+            Math.Max(0, region.MinimumX - 1),
+            Math.Max(0, region.MinimumZ - 1),
+            Math.Min(width - 1, region.MaximumX + 1),
+            Math.Min(depth - 1, region.MaximumZ + 1));
+
+    /// <summary>Unites two inclusive dirty sample rectangles.</summary>
+    /// <param name="first">First rectangle.</param>
+    /// <param name="second">Second rectangle.</param>
+    /// <returns>Smallest rectangle containing both inputs.</returns>
+    private static TerrainEditRegion UnionTerrainRegions(
+        TerrainEditRegion first,
+        TerrainEditRegion second) => new(
+            Math.Min(first.MinimumX, second.MinimumX),
+            Math.Min(first.MinimumZ, second.MinimumZ),
+            Math.Max(first.MaximumX, second.MaximumX),
+            Math.Max(first.MaximumZ, second.MaximumZ));
 
     /// <summary>Queues renderer-owned imported model resources for destruction.</summary>
     /// <param name="resource">Imported GPU resource pair.</param>
@@ -854,7 +1100,7 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         internal MeshInstance3D Instance { get; }
 
         /// <summary>Gets the indexed mesh handle.</summary>
-        internal MeshHandle Mesh { get; }
+        internal MeshHandle Mesh { get; set; }
 
         /// <summary>Gets the optional base-color texture handle.</summary>
         internal TextureHandle BaseColorTexture { get; }
@@ -869,7 +1115,10 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         internal SkinPaletteHandle Palette { get; }
 
         /// <summary>Gets the SRP queue class owned by the resolved material.</summary>
-        internal RenderSurfaceType SurfaceType { get; }
+        internal RenderSurfaceType SurfaceType => Material.SurfaceType;
+
+        /// <summary>Gets renderer-resolved material retained across topology replacements.</summary>
+        internal ResolvedStandardMaterial Material { get; }
 
         /// <summary>Gets the optional runtime animation controller.</summary>
         internal AnimationController? Animation { get; }
@@ -879,6 +1128,21 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
 
         /// <summary>Gets whether the handle uses the mutable colored terrain path.</summary>
         internal bool IsTerrain { get; }
+
+        /// <summary>Gets reusable model vertices for a mutable terrain mesh.</summary>
+        internal ModelVertex[]? TerrainVertices { get; set; }
+
+        /// <summary>Gets the active source sample corresponding to each terrain vertex.</summary>
+        internal TerrainSamplePoint[]? TerrainSamples { get; set; }
+
+        /// <summary>Gets stable adaptive triangle indices used for normal recalculation.</summary>
+        internal uint[]? TerrainIndices { get; set; }
+
+        /// <summary>Gets the terrain topology revision used to create the mesh handle.</summary>
+        internal int TerrainTopologyVersion { get; set; }
+
+        /// <summary>Gets whether mutable terrain vertices use procedural height tint.</summary>
+        internal bool UseHeightTint { get; }
 
         /// <summary>Gets or sets the pose revision most recently uploaded.</summary>
         internal ulong UploadedPoseRevision { get; set; }
@@ -890,16 +1154,26 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
         /// <param name="metallicRoughnessTexture">Optional metallic-roughness texture handle.</param>
         /// <param name="palette">Optional joint-palette handle.</param>
         /// <param name="animation">Optional runtime animation controller.</param>
-        /// <param name="surfaceType">SRP queue class owned by the resolved material.</param>
+        /// <param name="material">Renderer-resolved material retained by this resource.</param>
         /// <param name="ownsAnimation">Whether this resource owns controller lifetime.</param>
         /// <param name="isTerrain">Whether this is a mutable colored terrain mesh.</param>
+        /// <param name="terrainVertices">Optional reusable indexed terrain vertices.</param>
+        /// <param name="terrainSamples">Optional source sample mapping for terrain vertices.</param>
+        /// <param name="terrainIndices">Optional adaptive terrain indices.</param>
+        /// <param name="terrainTopologyVersion">Topology revision used by the mesh.</param>
+        /// <param name="useHeightTint">Whether terrain vertices use procedural height tint.</param>
         /// <param name="instance">Owning scene mesh instance.</param>
         internal AssetMeshGpuResource(MeshInstance3D instance, MeshHandle mesh,
             TextureHandle baseColorTexture, TextureHandle normalTexture,
             TextureHandle metallicRoughnessTexture, SkinPaletteHandle palette,
-            AnimationController? animation, RenderSurfaceType surfaceType,
+            AnimationController? animation, ResolvedStandardMaterial material,
             bool ownsAnimation = false,
-            bool isTerrain = false)
+            bool isTerrain = false,
+            ModelVertex[]? terrainVertices = null,
+            TerrainSamplePoint[]? terrainSamples = null,
+            uint[]? terrainIndices = null,
+            int terrainTopologyVersion = 0,
+            bool useHeightTint = true)
         {
             Instance = instance;
             Mesh = mesh;
@@ -907,10 +1181,35 @@ public sealed class EditorViewportRenderer : IDisposable, ISceneRenderingService
             NormalTexture = normalTexture;
             MetallicRoughnessTexture = metallicRoughnessTexture;
             Palette = palette;
-            SurfaceType = surfaceType;
+            Material = material;
             Animation = animation;
             OwnsAnimation = ownsAnimation;
             IsTerrain = isTerrain;
+            TerrainVertices = terrainVertices;
+            TerrainSamples = terrainSamples;
+            TerrainIndices = terrainIndices;
+            TerrainTopologyVersion = terrainTopologyVersion;
+            UseHeightTint = useHeightTint;
         }
     }
+
+    /// <summary>Stores one renderer-local coalesced terrain geometry update.</summary>
+    /// <param name="Terrain">Latest mutable terrain samples.</param>
+    /// <param name="Collider">Terrain dimensions.</param>
+    /// <param name="Resource">Retained renderer resource.</param>
+    /// <param name="Region">Expanded inclusive dirty sample rectangle.</param>
+    private readonly record struct PendingTerrainUpdate(
+        TerrainResource Terrain,
+        TerrainColliderComponent Collider,
+        AssetMeshGpuResource Resource,
+        TerrainEditRegion Region);
+
+    /// <summary>Stores one renderer-local coalesced adaptive topology replacement.</summary>
+    /// <param name="Terrain">Latest adaptive terrain state.</param>
+    /// <param name="Collider">Terrain dimensions.</param>
+    /// <param name="Resource">Retained renderer resource and material.</param>
+    private readonly record struct PendingTerrainTopologyUpdate(
+        TerrainResource Terrain,
+        TerrainColliderComponent Collider,
+        AssetMeshGpuResource Resource);
 }

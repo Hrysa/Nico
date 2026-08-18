@@ -260,21 +260,25 @@ public sealed class GlbModelImporterTests : IDisposable
         using var setStream = File.OpenRead(Path.Combine(
             project, "models", "Locomotion.nanimset"));
         var set = AnimationSetResource.Load(setStream);
-        Assert.Equal(["Idle", "Run", "Block"],
-            set.Entries.Select(entry => entry.Alias));
-        Assert.All(set.Entries,
-            entry => Assert.Equal(AnimationRetargetMode.Humanoid, entry.Retarget));
+        var humanoidEntries = set.Entries
+            .Where(entry => entry.Retarget == AnimationRetargetMode.Humanoid)
+            .ToArray();
+        Assert.Equal(["Fight Idle", "RPG Run", "Block", "Jump", "Attack"],
+            humanoidEntries.Select(entry => entry.Alias));
+        var humanoidSet = new AnimationSetResource(humanoidEntries);
 
         var expectedSources = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["Idle"] = "RPG-Character@Unarmed-Idle.glb",
-            ["Run"] = "RPG-Character@Unarmed-Run-Forward.glb",
-            ["Block"] = "RPG-Character@Unarmed-Block.glb"
+            ["Fight Idle"] = "RPG-Character@Unarmed-Idle.glb",
+            ["RPG Run"] = "RPG-Character@Unarmed-Run-Forward.glb",
+            ["Block"] = "RPG-Character@Unarmed-Block.glb",
+            ["Jump"] = "RPG-Character@Unarmed-Jump.glb",
+            ["Attack"] = "RPG-Character@Unarmed-Attack-R1.glb"
         };
         var resolved = new Dictionary<AssetReference, SkeletalAnimationResource>();
-        for (var index = 0; index < set.Entries.Count; index++)
+        for (var index = 0; index < humanoidEntries.Length; index++)
         {
-            var entry = set.Entries[index];
+            var entry = humanoidEntries[index];
             var sourcePath = Path.Combine(
                 project, "animations", expectedSources[entry.Alias]);
             Assert.Equal(ReadAssetId(sourcePath + ".meta"), entry.Source.Asset);
@@ -292,11 +296,15 @@ public sealed class GlbModelImporterTests : IDisposable
             characterStaging, characterArtifact.RelativePath));
         var character = SkinnedMeshResource.Load(characterStream);
 
-        var clips = set.BindTo(character.Skeleton,
+        var clips = humanoidSet.BindTo(character.Skeleton,
             reference => resolved.GetValueOrDefault(reference), character.MeshNodeTransform);
 
-        Assert.Equal(["Idle", "Run", "Block"], clips.Select(clip => clip.Name));
-        var run = clips[1];
+        Assert.Equal(["Fight Idle", "RPG Run", "Block", "Jump", "Attack"],
+            clips.Select(clip => clip.Name));
+        var run = Assert.Single(clips, clip => clip.Name == "RPG Run");
+        var jump = Assert.Single(clips, clip => clip.Name == "Jump");
+        Assert.False(jump.DefaultLoop);
+        Assert.False(Assert.Single(clips, clip => clip.Name == "Attack").DefaultLoop);
         var hips = character.Skeleton.FindJoint("mixamorig:Hips");
         Assert.NotNull(run.Tracks[hips]?.Translation);
         var pose = new SkeletonPose(character.Skeleton);
@@ -311,6 +319,47 @@ public sealed class GlbModelImporterTests : IDisposable
             Assert.Equal(anchor.X, position.X, 3);
             Assert.Equal(anchor.Z, position.Z, 3);
         }
+    }
+
+    /// <summary>Uses the RPG animation GLB mesh as a monster and binds every authored action.</summary>
+    [Fact]
+    public void MonsterSet_RpgMeshAndActions_BindExactly()
+    {
+        var project = Path.GetFullPath("../../example_game",
+            Path.GetDirectoryName(GetSourceFilePath())!);
+        var animationsDirectory = Path.Combine(project, "animations");
+        var idlePath = Path.Combine(
+            animationsDirectory, "RPG-Character@Unarmed-Idle.glb");
+        var monster = ImportSkinnedMesh(idlePath, "monster-character");
+        using var setStream = File.OpenRead(Path.Combine(
+            project, "models", "Monster.nanimset"));
+        var set = AnimationSetResource.Load(setStream);
+        Assert.Equal(["Idle", "Run", "Hit", "Death"],
+            set.Entries.Select(entry => entry.Alias));
+        var expectedSources = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Idle"] = "RPG-Character@Unarmed-Idle.glb",
+            ["Run"] = "RPG-Character@Unarmed-Run-Forward.glb",
+            ["Hit"] = "RPG-Character@Unarmed-GetHit-F1.glb",
+            ["Death"] = "RPG-Character@Unarmed-Death1.glb"
+        };
+        var resolved = new Dictionary<AssetReference, SkeletalAnimationResource>();
+        for (var index = 0; index < set.Entries.Count; index++)
+        {
+            var entry = set.Entries[index];
+            var sourcePath = Path.Combine(animationsDirectory, expectedSources[entry.Alias]);
+            Assert.Equal(ReadAssetId(sourcePath + ".meta"), entry.Source.Asset);
+            resolved.Add(entry.Source,
+                ImportAnimation(sourcePath, $"monster-{entry.Alias}"));
+        }
+
+        var clips = set.BindTo(monster.Skeleton,
+            reference => resolved.GetValueOrDefault(reference), monster.MeshNodeTransform);
+
+        Assert.Equal(["Idle", "Run", "Hit", "Death"],
+            clips.Select(clip => clip.Name));
+        Assert.False(Assert.Single(clips, clip => clip.Name == "Hit").DefaultLoop);
+        Assert.False(Assert.Single(clips, clip => clip.Name == "Death").DefaultLoop);
     }
 
     /// <summary>Gets this test source path independently of the test host working directory.</summary>

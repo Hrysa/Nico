@@ -18,6 +18,11 @@ public interface IRenderer : IRenderQueueSubmitter
     /// <returns>Opaque handle used by render submissions.</returns>
     MeshHandle CreateStaticMesh(StaticMeshResource mesh, ResolvedStandardMaterial material);
 
+    /// <summary>Updates a contiguous range of retained static-model vertices.</summary>
+    /// <param name="mesh">Mutable indexed mesh to update.</param>
+    /// <param name="update">Replacement source and destination range.</param>
+    void UpdateStaticMeshVertices(MeshHandle mesh, StaticMeshVertexUpdate update);
+
     /// <summary>Creates an immutable mesh and mutable joint palette for GPU skinning.</summary>
     /// <param name="mesh">Indexed skinned geometry and skeleton.</param>
     /// <param name="material">Initial standard material.</param>

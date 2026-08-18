@@ -55,6 +55,10 @@ internal unsafe sealed class PipelineResources : IDisposable
     internal ShaderModule GridFragmentShader;
     internal PipelineLayout GridLayout;
     internal Pipeline GridPipeline;
+    internal ShaderModule SkyboxVertexShader;
+    internal ShaderModule SkyboxFragmentShader;
+    internal PipelineLayout SkyboxLayout;
+    internal Pipeline SkyboxPipeline;
     internal DescriptorSetLayout TextureDescriptorSetLayout;
     internal DescriptorPool TextureDescriptorPool;
     internal ShaderModule TextureVertexShader;
@@ -83,6 +87,7 @@ internal unsafe sealed class PipelineResources : IDisposable
 
         _disposed = true;
         DestroyPipeline(TexturePipeline);
+        DestroyPipeline(SkyboxPipeline);
         DestroyPipeline(GridPipeline);
         DestroyPipeline(ModelPipeline);
         DestroyPipeline(ModelDoubleSidedPipeline);
@@ -101,6 +106,7 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyPipeline(UiShapePipeline);
         DestroyPipeline(UiPipeline);
         DestroyPipelineLayout(TextureLayout);
+        DestroyPipelineLayout(SkyboxLayout);
         DestroyPipelineLayout(GridLayout);
         DestroyPipelineLayout(ModelLayout);
         DestroyPipelineLayout(SkinnedModelLayout);
@@ -134,6 +140,8 @@ internal unsafe sealed class PipelineResources : IDisposable
         DestroyShaderModule(TextureFragmentShader);
         DestroyShaderModule(GridVertexShader);
         DestroyShaderModule(GridFragmentShader);
+        DestroyShaderModule(SkyboxVertexShader);
+        DestroyShaderModule(SkyboxFragmentShader);
         DestroyShaderModule(ModelVertexShader);
         DestroyShaderModule(ModelFragmentShader);
         DestroyShaderModule(SkinnedModelVertexShader);

@@ -12,7 +12,7 @@ public sealed class ScriptableRenderPipelineTests
     {
         var passes = BasicForwardRenderPipeline.Instance.Passes;
 
-        Assert.Equal(7, passes.Length);
+        Assert.Equal(8, passes.Length);
         Assert.Equal(RenderPipelineStage.CameraSetup, passes[0].Stage);
         Assert.IsType<CameraClearRenderPass>(passes[0]);
         Assert.Equal(RenderPipelineStage.Shadows, passes[1].Stage);
@@ -21,11 +21,35 @@ public sealed class ScriptableRenderPipelineTests
         Assert.IsType<LocalShadowRenderPass>(passes[2]);
         Assert.Equal(RenderPipelineStage.DepthPrepass, passes[3].Stage);
         Assert.IsType<DepthPrepassRenderPass>(passes[3]);
-        Assert.Equal(RenderPipelineStage.Opaque, passes[4].Stage);
-        Assert.Equal(RenderPipelineStage.Transparent, passes[5].Stage);
-        Assert.IsType<ForwardTransparentRenderPass>(passes[5]);
-        Assert.Equal(RenderPipelineStage.PostProcess, passes[6].Stage);
-        Assert.IsType<OutputPostProcessRenderPass>(passes[6]);
+        Assert.Equal(RenderPipelineStage.Skybox, passes[4].Stage);
+        Assert.IsType<SkyboxRenderPass>(passes[4]);
+        Assert.Equal(RenderPipelineStage.Opaque, passes[5].Stage);
+        Assert.Equal(RenderPipelineStage.Transparent, passes[6].Stage);
+        Assert.IsType<ForwardTransparentRenderPass>(passes[6]);
+        Assert.Equal(RenderPipelineStage.PostProcess, passes[7].Stage);
+        Assert.IsType<OutputPostProcessRenderPass>(passes[7]);
+    }
+
+    /// <summary>Schedules an authored environment between depth and opaque rendering.</summary>
+    [Fact]
+    public void BasicForwardPipeline_EnabledSkybox_RecordsExplicitStage()
+    {
+        var queue = new RenderQueue
+        {
+            Skybox = SkyboxRenderSettings.Create(
+                new TextureHandle(7), new Vector3(0.8f, 0.9f, 1f), 1.5f, 0.25f)
+        };
+
+        BasicForwardRenderPipeline.Instance.Render(
+            new RecordingSubmitter(), new RenderViewHandle(1), queue);
+
+        var commands = queue.PipelineCommandSpan;
+        Assert.Equal(8, commands.Length);
+        Assert.Equal(RenderPipelineCommandKind.DrawSkybox, commands[4].Kind);
+        Assert.Equal(RenderPipelineStage.Skybox, commands[4].Stage);
+        Assert.Equal(RenderPipelineResource.CameraDepth, commands[4].Reads);
+        Assert.Equal(RenderPipelineResource.CameraColor, commands[4].Writes);
+        Assert.Equal(RenderPipelineCommandKind.DrawRenderers, commands[5].Kind);
     }
 
     /// <summary>Records a real depth-only draw before forward color rendering.</summary>

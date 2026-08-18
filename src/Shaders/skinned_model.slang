@@ -19,6 +19,7 @@ Sampler2D metallicRoughnessTexture;
 
 #include "shadow_sampling.slang"
 #include "forward_lighting.slang"
+#include "surface_normal.slang"
 
 [[vk::binding(0, 5)]]
 StructuredBuffer<row_major float4x4> jointMatrices;
@@ -80,13 +81,9 @@ VertexOutput vertexMain(VertexInput input)
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_Target0
 {
-    float3 geometricNormal = normalize(input.worldNormal) * (isFrontFace ? 1.0 : -1.0);
-    float3 tangent = normalize(input.worldTangent.xyz - geometricNormal *
-        dot(input.worldTangent.xyz, geometricNormal));
-    float3 bitangent = normalize(cross(geometricNormal, tangent)) * input.worldTangent.w;
     float3 sampledNormal = normalTexture.Sample(input.texCoord).xyz * 2.0 - 1.0;
-    float3 normal = normalize(tangent * sampledNormal.x + bitangent * sampledNormal.y +
-        geometricNormal * sampledNormal.z);
+    float3 normal = ResolveSurfaceNormal(
+        input.worldNormal, input.worldTangent, sampledNormal, isFrontFace);
 
     float4 surfaceColor = input.baseColor * baseColorTexture.Sample(input.texCoord);
     float4 materialSample = metallicRoughnessTexture.Sample(input.texCoord);

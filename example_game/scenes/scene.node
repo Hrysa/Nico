@@ -1,9 +1,9 @@
 {
-  "formatVersion": 13,
-  "gameCameraId": "ca2ff3f7f22a409090d7c80c750be921",
+  "formatVersion": 14,
+  "gameCameraId": "7b0ee0bb9b5140a1b9d6a85930db4980",
   "nodes": [
     {
-      "id": "2ea54c2961f04efd9a2460e14e91ecd4",
+      "id": "b69f630dbac141048e64bec11723a1b2",
       "type": "assetMesh",
       "name": "SceneCube",
       "position": {
@@ -63,6 +63,7 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/cube",
@@ -71,11 +72,11 @@
       "children": []
     },
     {
-      "id": "851cc243605543d1ac3948863af14214",
+      "id": "a75395470815425e9bf515ed236a190c",
       "type": "assetMesh",
       "name": "Ch03_nonPBR",
       "position": {
-        "x": 0.65508884,
+        "x": -7.915055,
         "y": 1.628846,
         "z": 0.6121162
       },
@@ -158,6 +159,7 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": {
         "asset": "019fd0bc-b445-7c89-81f1-d2c17ab1358b",
         "subAsset": "mesh/Mesh/0",
@@ -171,7 +173,103 @@
       "children": []
     },
     {
-      "id": "ca2ff3f7f22a409090d7c80c750be921",
+      "id": "599a82991b2e4ed59d3538a19f6f1e11",
+      "type": "assetMesh",
+      "name": "Monster 1",
+      "position": {
+        "x": 2,
+        "y": 1,
+        "z": 2
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.1415927,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [
+        {
+          "type": "script",
+          "enabled": true,
+          "scriptId": "d636b268-c90d-46d8-9728-300866a90e50",
+          "properties": [],
+          "rigidBody": null,
+          "collider": null
+        }
+      ],
+      "customType": null,
+      "camera": null,
+      "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
+      "skybox": null,
+      "model": {
+        "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
+        "subAsset": "mesh/Mesh/0",
+        "materials": [
+          {
+            "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
+            "subAsset": "material/0"
+          }
+        ]
+      },
+      "children": []
+    },
+    {
+      "id": "8e31918d99544852be7f5393823aed7c",
+      "type": "assetMesh",
+      "name": "Monster 2",
+      "position": {
+        "x": -2.5,
+        "y": 1,
+        "z": 3
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.1415927,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [
+        {
+          "type": "script",
+          "enabled": true,
+          "scriptId": "d636b268-c90d-46d8-9728-300866a90e50",
+          "properties": [],
+          "rigidBody": null,
+          "collider": null
+        }
+      ],
+      "customType": null,
+      "camera": null,
+      "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
+      "skybox": null,
+      "model": {
+        "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
+        "subAsset": "mesh/Mesh/0",
+        "materials": [
+          {
+            "asset": "019ff631-d738-7c7e-b986-bc383379cb20",
+            "subAsset": "material/0"
+          }
+        ]
+      },
+      "children": []
+    },
+    {
+      "id": "7b0ee0bb9b5140a1b9d6a85930db4980",
       "type": "perspectiveCamera",
       "name": "GameCamera",
       "position": {
@@ -200,11 +298,12 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": null,
       "children": []
     },
     {
-      "id": "55852b2f214049d994da4a4c2a074597",
+      "id": "04d072c523ed4760a13739fc13ec0fee",
       "type": "custom",
       "name": "HUD",
       "position": {
@@ -238,11 +337,12 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": null,
       "children": []
     },
     {
-      "id": "a3d08e42ce0f475e8ab0cb8e7d2ab941",
+      "id": "d74e2116a3204fef886f0e054cde63d5",
       "type": "assetMesh",
       "name": "Plane 1",
       "position": {
@@ -302,6 +402,7 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": {
         "asset": "00000000-0000-7000-8000-000000000001",
         "subAsset": "mesh/plane",
@@ -315,7 +416,7 @@
       "children": []
     },
     {
-      "id": "6735ccb5692246619468447eaf6e9da3",
+      "id": "bbbe87673ed74a7c9069a05bb3507700",
       "type": "directionalLight",
       "name": "Directional Light 1",
       "position": {
@@ -350,11 +451,12 @@
       },
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": null,
       "children": []
     },
     {
-      "id": "b8cc3f23dbc945d19a980096d5349399",
+      "id": "abec814d64e3404ab4c1dc621bfce259",
       "type": "assetMesh",
       "name": "island",
       "position": {
@@ -417,6 +519,7 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": {
         "asset": "019ffabc-d53b-792b-b6c9-8847cf62d626",
         "subAsset": "main",
@@ -427,10 +530,4475 @@
           }
         ]
       },
-      "children": []
+      "children": [
+        {
+          "id": "4a2a38ce602a4bd6bccb93c1ec74c25b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -6.864038,
+            "y": 1,
+            "z": 5.410886
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.095338255,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9224072,
+            "y": 0.9224072,
+            "z": 0.9224072
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f24cd23ca6354a94a53ffc04b6275e3e",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -5.24599,
+            "y": 1,
+            "z": 5.252099
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -1.1533582,
+            "z": -3.1397657
+          },
+          "scale": {
+            "x": 0.96066386,
+            "y": 0.96066386,
+            "z": 0.96066386
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "7c8c456cfb0742f38b7712d789c835ed",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -3.7873416,
+            "y": 1.0077735,
+            "z": 4.01805
+          },
+          "rotation": {
+            "x": 3.1401813,
+            "y": -0.5523371,
+            "z": -3.123206
+          },
+          "scale": {
+            "x": 0.92255217,
+            "y": 0.92255217,
+            "z": 0.92255217
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "7d1b1e8d6c8343a68824f51325677ccc",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -3.724709,
+            "y": 1.0018927,
+            "z": 6.33173
+          },
+          "rotation": {
+            "x": 3.139299,
+            "y": -0.07613916,
+            "z": -3.1273437
+          },
+          "scale": {
+            "x": 1.1014938,
+            "y": 1.1014938,
+            "z": 1.1014938
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "d7d6cf569fe74708ba23066aeaddff52",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -2.1818936,
+            "y": 1.0611378,
+            "z": 3.5394967
+          },
+          "rotation": {
+            "x": -3.1374147,
+            "y": -0.48458767,
+            "z": -3.080529
+          },
+          "scale": {
+            "x": 0.97609425,
+            "y": 0.97609425,
+            "z": 0.97609425
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "140aee356c9a42588b52112d742a382e",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -1.068148,
+            "y": 1.1185808,
+            "z": 2.3862362
+          },
+          "rotation": {
+            "x": -3.108897,
+            "y": -0.70946354,
+            "z": -3.0468032
+          },
+          "scale": {
+            "x": 1.1433115,
+            "y": 1.1433115,
+            "z": 1.1433115
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4d831ebc9fbd4e77a6ddb96778f47ce8",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 0.88483095,
+            "y": 1.3175565,
+            "z": 2.5161684
+          },
+          "rotation": {
+            "x": -0.18214664,
+            "y": 1.1745288,
+            "z": 0.2750947
+          },
+          "scale": {
+            "x": 1.1320951,
+            "y": 1.1320951,
+            "z": 1.1320951
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "d8043ce830414cf4aeb6e2d299f6afc6",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -0.6783515,
+            "y": 1.0879086,
+            "z": 0.69748163
+          },
+          "rotation": {
+            "x": -3.1048863,
+            "y": -0.35522458,
+            "z": -3.0814528
+          },
+          "scale": {
+            "x": 1.0017576,
+            "y": 1.0017576,
+            "z": 1.0017576
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "61d2c0aff5b04f02b5ac57c613cd62b6",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 1.6465485,
+            "y": 1.1471788,
+            "z": -0.26686192
+          },
+          "rotation": {
+            "x": -3.0759382,
+            "y": -0.034578994,
+            "z": -3.0832396
+          },
+          "scale": {
+            "x": 1.0765966,
+            "y": 1.0765966,
+            "z": 1.0765966
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "cf9c240b99384eb5be7ae3b10125a44a",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 0.53792596,
+            "y": 1.0492908,
+            "z": -1.4693111
+          },
+          "rotation": {
+            "x": -0.034849912,
+            "y": -0.47252917,
+            "z": 0.016462741
+          },
+          "scale": {
+            "x": 1.0536188,
+            "y": 1.0536188,
+            "z": 1.0536188
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "7ec8b693371a432a8d111ad15985cd11",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.3042083,
+            "y": 1.1191838,
+            "z": -2.1258326
+          },
+          "rotation": {
+            "x": -3.0637598,
+            "y": 1.2279568,
+            "z": 3.135356
+          },
+          "scale": {
+            "x": 1.0179814,
+            "y": 1.0179814,
+            "z": 1.0179814
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "bc71acb44a79495c8bef56594abd73ad",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.392602,
+            "y": 1.0975302,
+            "z": -4.228324
+          },
+          "rotation": {
+            "x": -0.023519522,
+            "y": -0.9392036,
+            "z": 0.05010725
+          },
+          "scale": {
+            "x": 1.099642,
+            "y": 1.099642,
+            "z": 1.099642
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "b3ae0d7f4d7c413194a80c0e9c24d503",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 3.5633385,
+            "y": 1.1578833,
+            "z": -5.650246
+          },
+          "rotation": {
+            "x": -3.05058,
+            "y": 1.2090331,
+            "z": 3.1326497
+          },
+          "scale": {
+            "x": 1.0739092,
+            "y": 1.0739092,
+            "z": 1.0739092
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "456ec6e7213c4159b617d60ebadbb23c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.2978187,
+            "y": 1.0488656,
+            "z": -6.8041296
+          },
+          "rotation": {
+            "x": -0.0407033,
+            "y": -1.1186997,
+            "z": 0.0039213607
+          },
+          "scale": {
+            "x": 0.88402736,
+            "y": 0.88402736,
+            "z": 0.88402736
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "59f56458271e4aa4a222a46e5250ee56",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.1676242,
+            "y": 1.0117674,
+            "z": -8.917257
+          },
+          "rotation": {
+            "x": -3.1309328,
+            "y": 0.3370433,
+            "z": -3.1318166
+          },
+          "scale": {
+            "x": 1.1213249,
+            "y": 1.1213249,
+            "z": 1.1213249
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "65c5282952fe48c5a4a57c3640fd87fd",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 3.4235,
+            "y": 1.015707,
+            "z": -9.807939
+          },
+          "rotation": {
+            "x": -3.124903,
+            "y": -0.06041821,
+            "z": -3.1284258
+          },
+          "scale": {
+            "x": 1.0160613,
+            "y": 1.0160613,
+            "z": 1.0160613
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "fa378d1dfa10477ab4ddf8491743721b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.1027982,
+            "y": 1.0001336,
+            "z": -11.03003
+          },
+          "rotation": {
+            "x": -0.0019873339,
+            "y": 0.5709872,
+            "z": 0.0018872384
+          },
+          "scale": {
+            "x": 0.89518607,
+            "y": 0.89518607,
+            "z": 0.89518607
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f99fd2db1ff54af5868a811cb9fbe7da",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -22.35117,
+            "y": 1,
+            "z": -6.739557
+          },
+          "rotation": {
+            "x": -0,
+            "y": -1.0886927,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9538946,
+            "y": 0.9538946,
+            "z": 0.9538946
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "bca95bf797dd4b5d8b8bdfd4aaf5d397",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -22.618366,
+            "y": 1,
+            "z": -8.510247
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.36200345,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9973453,
+            "y": 0.9973453,
+            "z": 0.9973453
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "9429b36494f44befa54c840ea4be9d78",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -24.07671,
+            "y": 1,
+            "z": -9.497961
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.5494117,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.90811586,
+            "y": 0.90811586,
+            "z": 0.90811586
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "5fe5eb66dcac411b80547f6abd07e49d",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -22.523916,
+            "y": 1,
+            "z": -10.216737
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.9018924,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.1049387,
+            "y": 1.1049387,
+            "z": 1.1049387
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "c1ddaa22e9b547f287e04a6fb06ed4f9",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.710072,
+            "y": 1,
+            "z": -11.531159
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.9308046,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1328979,
+            "y": 1.1328979,
+            "z": 1.1328979
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "a9d7b32a3ac042fa9810caf344dc8786",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -20.607817,
+            "y": 1,
+            "z": -12.593561
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.22730479,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0292064,
+            "y": 1.0292064,
+            "z": 1.0292064
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "54c4e9ed8886470591c943a4282c0ff3",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.728266,
+            "y": 1,
+            "z": -13.70351
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.457045,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.85519236,
+            "y": 0.85519236,
+            "z": 0.85519236
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "e77ce1ffb6af47e7a29ee9385508cdd9",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -19.86326,
+            "y": 1,
+            "z": -14.707518
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.4305046,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.92392063,
+            "y": 0.92392063,
+            "z": 0.92392063
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "00c772217c394430b25c9bc66e7a22e3",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.156233,
+            "y": 1,
+            "z": -16.217936
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.4011614,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1481731,
+            "y": 1.1481731,
+            "z": 1.1481731
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4444f32b55e547b0a4f53d908fff8ceb",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -19.409523,
+            "y": 1,
+            "z": -16.180044
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.6365594,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.8823037,
+            "y": 0.8823037,
+            "z": 0.8823037
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "3800cceee4f0420b88676b162c79f70f",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -18.272404,
+            "y": 1,
+            "z": -17.493244
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.3393899,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.93355983,
+            "y": 0.93355983,
+            "z": 0.93355983
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4b2a6a05905b4fc2ad857ac8912dd6d1",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -19.926102,
+            "y": 1,
+            "z": -18.738255
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.3156314,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.872034,
+            "y": 0.872034,
+            "z": 0.872034
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "88c26f329bbf46758aa84a7a1736cb74",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -18.451845,
+            "y": 1,
+            "z": -19.4887
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.2903705,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1281952,
+            "y": 1.1281952,
+            "z": 1.1281952
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "e4a68ecda5754930bb936b5cbaabad2c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -17.505419,
+            "y": 1,
+            "z": -20.813105
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.4100366,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.1322359,
+            "y": 1.1322359,
+            "z": 1.1322359
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "cd63f5a591e84665b777a8ca1d06fe07",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -16.629192,
+            "y": 1,
+            "z": -22.268278
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.7046394,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9626452,
+            "y": 0.9626452,
+            "z": 0.9626452
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "cd0af04ac2d2408e8b67ca175d43bf0e",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -16.288528,
+            "y": 1,
+            "z": -24.444857
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.44938034,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.97204256,
+            "y": 0.97204256,
+            "z": 0.97204256
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f26535c6ba964e2bba9f9f84a421353a",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -14.751684,
+            "y": 1,
+            "z": -23.925167
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.79307306,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9277084,
+            "y": 0.9277084,
+            "z": 0.9277084
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "bee50f1571e4430c89daaa49b6c2e679",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -13.319386,
+            "y": 1,
+            "z": -24.464231
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.18248063,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.8516392,
+            "y": 0.8516392,
+            "z": 0.8516392
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "ce4660e400794db48c208472e83d46eb",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.688864,
+            "y": 1,
+            "z": -25.841232
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.29068938,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9365978,
+            "y": 0.9365978,
+            "z": 0.9365978
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "faf2ffee385745caaf5c342799fa03b1",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.037313,
+            "y": 1,
+            "z": -27.26318
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.119774,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.8722679,
+            "y": 0.8722679,
+            "z": 0.8722679
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "6b2ac26722dc4aa984b1e037d3a42557",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -11.231637,
+            "y": 1,
+            "z": -28.63344
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.1676754,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.082343,
+            "y": 1.082343,
+            "z": 1.082343
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "0c539b59323245a9994a8f675274366b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.453326,
+            "y": 1,
+            "z": -30.940166
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.3807435,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0120709,
+            "y": 1.0120709,
+            "z": 1.0120709
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "a006186a24c74ac9a1a690fff26e2317",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.23509,
+            "y": 1,
+            "z": -32.840347
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.5215572,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9126268,
+            "y": 0.9126268,
+            "z": 0.9126268
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "fd8f715cb2bc45d3b7129031613ff39f",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -10.400897,
+            "y": 1,
+            "z": -32.027615
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.656834,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.93245375,
+            "y": 0.93245375,
+            "z": 0.93245375
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "c723a3e7a2914fbe95ca68f18fc6f986",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -11.856079,
+            "y": 1,
+            "z": -34.55962
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.3625393,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.88802034,
+            "y": 0.88802034,
+            "z": 0.88802034
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f5a3f6eb62c54bf991997d553b63d684",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.037695,
+            "y": 1,
+            "z": -36.716164
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.50862825,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.94314075,
+            "y": 0.94314075,
+            "z": 0.94314075
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "3b448ea8a7404ee487d75fb01e887cb8",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.369296,
+            "y": 1,
+            "z": -38.40702
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.6622913,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0788865,
+            "y": 1.0788865,
+            "z": 1.0788865
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "5c8713c98961424b8d1f4855354491b9",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -12.80981,
+            "y": 1,
+            "z": -40.699944
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.3094491,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.86216533,
+            "y": 0.86216533,
+            "z": 0.86216533
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "5587978d5ac9431bb131ac30c7f1d647",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -13.157415,
+            "y": 1,
+            "z": -42.287502
+          },
+          "rotation": {
+            "x": -0,
+            "y": -1.2640045,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.8898585,
+            "y": 0.8898585,
+            "z": 0.8898585
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "91a38f423bd84e98aca444264b28afd5",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -13.530755,
+            "y": 1,
+            "z": -44.510452
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.6822934,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.066136,
+            "y": 1.066136,
+            "z": 1.066136
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "c4cf54772fc94f54abfea42fb63a25e5",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -14.95263,
+            "y": 1,
+            "z": -45.262833
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.8502954,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0890366,
+            "y": 1.0890366,
+            "z": 1.0890366
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "1a12d5071b61409ca3dd70e9987ab75f",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -17.157343,
+            "y": 1,
+            "z": -45.76664
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.32580766,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.94138473,
+            "y": 0.94138473,
+            "z": 0.94138473
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "fd1ed4c20ba140879f04a1723084a598",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -15.908456,
+            "y": 1,
+            "z": -47.002155
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.5338813,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0302713,
+            "y": 1.0302713,
+            "z": 1.0302713
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "63b237b6a8d74afda22327ab9d52156c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -18.081879,
+            "y": 1,
+            "z": -47.02771
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.5348816,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.8539367,
+            "y": 0.8539367,
+            "z": 0.8539367
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "9649574b500a40ce9266b98f7c2a61f7",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -18.577326,
+            "y": 1,
+            "z": -48.612778
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.08199183,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0733391,
+            "y": 1.0733391,
+            "z": 1.0733391
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "47304f7d4e014fb2af5b95dc454d0f0c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -20.207872,
+            "y": 1,
+            "z": -48.821785
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.42447034,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0659015,
+            "y": 1.0659015,
+            "z": 1.0659015
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "d28ffc8b71544e1a93b4f98a9558acf4",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.67181,
+            "y": 1,
+            "z": -47.396904
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.76478696,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9340332,
+            "y": 0.9340332,
+            "z": 0.9340332
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "51cd74d6a6a94f9b8c130fdbc0676d70",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -23.629787,
+            "y": 1,
+            "z": -46.659782
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.7585018,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.1475724,
+            "y": 1.1475724,
+            "z": 1.1475724
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "29a369f2f2f6444bb0bed90dd8d2cd06",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -25.588358,
+            "y": 1,
+            "z": -45.922646
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.5502737,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.1146901,
+            "y": 1.1146901,
+            "z": 1.1146901
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4158d6c602c049ff9d8d247641dc8f30",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -27.103716,
+            "y": 1,
+            "z": -45.966145
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.6698429,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.89844745,
+            "y": 0.89844745,
+            "z": 0.89844745
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "befaa10c55464717abd2388d0dad4f2b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -27.00703,
+            "y": 1,
+            "z": -44.35
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.76622045,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0902271,
+            "y": 1.0902271,
+            "z": 1.0902271
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "3e6a1d3b2da84c73a95eee9c71da6846",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -28.267912,
+            "y": 1,
+            "z": -42.85918
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.6594246,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0965565,
+            "y": 1.0965565,
+            "z": 1.0965565
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "3f34028d19de45f38bd1b43074eb4fef",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -29.653109,
+            "y": 1,
+            "z": -42.143387
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.3005215,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.97341365,
+            "y": 0.97341365,
+            "z": 0.97341365
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "21ac4d13db6049258f710d5339b0f756",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -29.334957,
+            "y": 1,
+            "z": -40.49106
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.54031724,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.030505,
+            "y": 1.030505,
+            "z": 1.030505
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4006d18f5f894ff8839c016ef7539983",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -30.08221,
+            "y": 1,
+            "z": -38.937023
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.1544512,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9383857,
+            "y": 0.9383857,
+            "z": 0.9383857
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "c46321a418e94aecb74c93545db3a614",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -31.432182,
+            "y": 1,
+            "z": -37.402164
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.27537575,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0304705,
+            "y": 1.0304705,
+            "z": 1.0304705
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f317ef65b61e4c2a9dab15ad65b09c67",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -28.920967,
+            "y": 1,
+            "z": -37.53557
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.48733702,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.908028,
+            "y": 0.908028,
+            "z": 0.908028
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "af7cc3dfee004e258e042a615077fa54",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -31.164364,
+            "y": 1,
+            "z": -35.220085
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.1516546,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9206732,
+            "y": 0.9206732,
+            "z": 0.9206732
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "9011bfbc905b486fafa585264e928867",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -31.231712,
+            "y": 1,
+            "z": -33.42268
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.98758584,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0802248,
+            "y": 1.0802248,
+            "z": 1.0802248
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "e8894cb9e87549918faf719feb412b7b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -31.155527,
+            "y": 1,
+            "z": -31.599941
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.50261015,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.92990625,
+            "y": 0.92990625,
+            "z": 0.92990625
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "b99c5caaf7894ac69cf382639db4815a",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -30.88647,
+            "y": 1,
+            "z": -29.775738
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.124069795,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.90906745,
+            "y": 0.90906745,
+            "z": 0.90906745
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "daf5688d27e846debddc53fc63ea3abb",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -31.665981,
+            "y": 1,
+            "z": -28.081585
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 1.285521,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.051672,
+            "y": 1.051672,
+            "z": 1.051672
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "04babba1b66b4e80861fb304603398d2",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -28.918493,
+            "y": 1,
+            "z": -27.645355
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -1.4881487,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0759021,
+            "y": 1.0759021,
+            "z": 1.0759021
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "bf4d786b0b9545149d0fdb7a80cb824c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -27.310858,
+            "y": 1,
+            "z": -27.323807
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.31209356,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9952214,
+            "y": 0.9952214,
+            "z": 0.9952214
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "2bd209167c5547cc937347259ec6406b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -25.55401,
+            "y": 1,
+            "z": -27.2937
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.25843605,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0168766,
+            "y": 1.0168766,
+            "z": 1.0168766
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "e7fdd6b1abcd469586553b70df894d6a",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -22.677094,
+            "y": 1,
+            "z": -27.69743
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.21812025,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.90764225,
+            "y": 0.90764225,
+            "z": 0.90764225
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "2baf2f2a474846bb9719cdcc76ced3ea",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -20.83986,
+            "y": 1,
+            "z": -28.641165
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.7132532,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1201708,
+            "y": 1.1201708,
+            "z": 1.1201708
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "4348ca4e28544012a4190a18f02d41a4",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.009605,
+            "y": 1,
+            "z": -32.086914
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.020631619,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.98852354,
+            "y": 0.98852354,
+            "z": 0.98852354
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "58f61d82c1ba44afbd9dd084d854dcb1",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -21.428957,
+            "y": 1,
+            "z": -34.149597
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.46059194,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1155131,
+            "y": 1.1155131,
+            "z": 1.1155131
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "c9296aa889914d2f90db9a2ce8056e63",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -22.11372,
+            "y": 1,
+            "z": -35.821224
+          },
+          "rotation": {
+            "x": -0,
+            "y": -1.1107855,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9907017,
+            "y": 0.9907017,
+            "z": 0.9907017
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "dca713323979477fbd5b2eb7ea283a84",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -19.57859,
+            "y": 1,
+            "z": -36.72369
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.9318322,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0263435,
+            "y": 1.0263435,
+            "z": 1.0263435
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "21e5bfa93e7f42b98ae96ed05d04039b",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -18.80604,
+            "y": 1,
+            "z": -35.26255
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.9425925,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.9226895,
+            "y": 0.9226895,
+            "z": 0.9226895
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "cfbdc763901e4d208506bdab19235184",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -16.801039,
+            "y": 1,
+            "z": -36.217545
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.5888618,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0820309,
+            "y": 1.0820309,
+            "z": 1.0820309
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "abfffc5e33f34c11bf7820e4724dacc4",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -15.498921,
+            "y": 1,
+            "z": -33.83249
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -1.1509179,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0338315,
+            "y": 1.0338315,
+            "z": 1.0338315
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f8b43ac41c9c4f38ad2c89ac3d3fe221",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -14.138347,
+            "y": 1,
+            "z": -34.88347
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -1.4213862,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1443115,
+            "y": 1.1443115,
+            "z": 1.1443115
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "78f7a0661a48427f8830bfeab2e6ae70",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -10.711443,
+            "y": 1,
+            "z": -33.572292
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -1.5661129,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.1362616,
+            "y": 1.1362616,
+            "z": 1.1362616
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "de29bd220ded4fd59b2f30d47ce06234",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -9.003199,
+            "y": 1,
+            "z": -33.97924
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.1013957,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.8963608,
+            "y": 0.8963608,
+            "z": 0.8963608
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "709d4347519f42c7991a3964194ffbe1",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -6.940365,
+            "y": 1,
+            "z": -33.395424
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.31549346,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.905374,
+            "y": 0.905374,
+            "z": 0.905374
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "d2209f8c8b0d4506834a20b35b01a30c",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -4.9229236,
+            "y": 1,
+            "z": -33.613663
+          },
+          "rotation": {
+            "x": -0,
+            "y": -1.4093362,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0088472,
+            "y": 1.0088472,
+            "z": 1.0088472
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "1967f59f24574e178cfad9367139f8aa",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -5.1700473,
+            "y": 1,
+            "z": -32.01157
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.61859643,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 0.8695133,
+            "y": 0.8695133,
+            "z": 0.8695133
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "d92c31176f404ab4b612bde400149828",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -3.2945633,
+            "y": 1,
+            "z": -32.641937
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": 0.7448791,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0229619,
+            "y": 1.0229619,
+            "z": 1.0229619
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "f668270387244d34abae555f014bae18",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": -1.5953571,
+            "y": 1,
+            "z": -33.032494
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.30756173,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.8616635,
+            "y": 0.8616635,
+            "z": 0.8616635
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "a5a5c6d4177a494f88413028bbbab284",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 0.2116561,
+            "y": 1,
+            "z": -33.088913
+          },
+          "rotation": {
+            "x": -0,
+            "y": -0.22804245,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9452911,
+            "y": 0.9452911,
+            "z": 0.9452911
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "ba0c83d48f494ac1a04dedec6a1dafbd",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 2.321732,
+            "y": 1,
+            "z": -33.671463
+          },
+          "rotation": {
+            "x": -3.1415927,
+            "y": -0.0111742895,
+            "z": -3.1415927
+          },
+          "scale": {
+            "x": 1.0286722,
+            "y": 1.0286722,
+            "z": 1.0286722
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "fc8e64d771b94e28ac5247b0fe1305cb",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 3.7894905,
+            "y": 1,
+            "z": -34.227882
+          },
+          "rotation": {
+            "x": -0,
+            "y": 0.9311935,
+            "z": -0
+          },
+          "scale": {
+            "x": 0.9569496,
+            "y": 0.9569496,
+            "z": 0.9569496
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        },
+        {
+          "id": "7b8847f24c1b4ec19fb3b00db5635e15",
+          "type": "assetMesh",
+          "name": "Scattered models/forest/tree.glb / mesh/tree/0",
+          "position": {
+            "x": 5.5754185,
+            "y": 1,
+            "z": -33.69438
+          },
+          "rotation": {
+            "x": -0,
+            "y": 1.3493574,
+            "z": -0
+          },
+          "scale": {
+            "x": 1.0570539,
+            "y": 1.0570539,
+            "z": 1.0570539
+          },
+          "scriptId": null,
+          "components": [
+            {
+              "type": "terrainScatterInstance",
+              "enabled": true,
+              "scriptId": null,
+              "properties": null,
+              "rigidBody": null,
+              "collider": null
+            }
+          ],
+          "customType": null,
+          "camera": null,
+          "directionalLight": null,
+          "pointLight": null,
+          "spotLight": null,
+          "skybox": null,
+          "model": {
+            "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+            "subAsset": "mesh/tree/0",
+            "materials": [
+              {
+                "asset": "019ffe35-eebb-7cfa-8779-7dd38f034d3e",
+                "subAsset": "material/0"
+              }
+            ]
+          },
+          "children": []
+        }
+      ]
     },
     {
-      "id": "209c8ffc92984281b2422773bd58a6f7",
+      "id": "82fa0e293d614589959ec9f54145befd",
       "type": "node3D",
       "name": "tree-high",
       "position": {
@@ -490,10 +5058,11 @@
       "directionalLight": null,
       "pointLight": null,
       "spotLight": null,
+      "skybox": null,
       "model": null,
       "children": [
         {
-          "id": "b423e959e3564b9c839bd4a4c18f67e3",
+          "id": "3019e3cc1fa749f2abbcb1f87ddc5cb8",
           "type": "node3D",
           "name": "tree-high",
           "position": {
@@ -518,11 +5087,12 @@
           "directionalLight": null,
           "pointLight": null,
           "spotLight": null,
+          "skybox": null,
           "model": null,
           "children": []
         },
         {
-          "id": "9eb0a7446df8469999bc2b6494b31e2a",
+          "id": "dc75fdde23ec46fc9d43174a295ffbb0",
           "type": "assetMesh",
           "name": "Static Batch 0",
           "position": {
@@ -547,6 +5117,7 @@
           "directionalLight": null,
           "pointLight": null,
           "spotLight": null,
+          "skybox": null,
           "model": {
             "asset": "019ffe35-eeb9-7a20-b670-a6cb2acf27f9",
             "subAsset": "model-batch/0",
@@ -560,6 +5131,48 @@
           "children": []
         }
       ]
+    },
+    {
+      "id": "5c4032c3428a472a935601c167d9fbab",
+      "type": "skybox",
+      "name": "Skybox",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "scriptId": null,
+      "components": [],
+      "customType": null,
+      "camera": null,
+      "directionalLight": null,
+      "pointLight": null,
+      "spotLight": null,
+      "skybox": {
+        "isEnabled": true,
+        "texture": {
+          "asset": "01a00f06-fefb-7d09-8d79-e5910f12d696",
+          "subAsset": "main"
+        },
+        "tint": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "intensity": 1
+      },
+      "model": null,
+      "children": []
     }
   ]
 }

@@ -28,7 +28,7 @@ public sealed class TerrainBrushController
     private readonly Func<AssetReference, TerrainDocument?> _resolveDocument;
     private readonly Func<AssetReference, TerrainMaterialDocument?> _resolveMaterialDocument;
     private readonly Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
-        TerrainEditRegion, bool> _terrainEdited;
+        TerrainEditRegion, bool, bool> _terrainEdited;
     private readonly Action<TerrainBrushPreview?> _previewChanged;
     private readonly Action<IReadOnlyList<MeshInstance3D>, IReadOnlyList<MeshInstance3D>>
         _objectsEdited;
@@ -40,6 +40,7 @@ public sealed class TerrainBrushController
     private readonly List<ObjectPlacement> _strokeRemoved = [];
     private readonly List<MeshInstance3D> _changedAdded = [];
     private readonly List<MeshInstance3D> _changedRemoved = [];
+    private readonly TerrainSurfaceRaycaster _surfaceRaycaster = new();
     private BrushTarget? _activeTarget;
     private Vector3 _lastDabWorld;
     private float _flattenHeight;
@@ -77,7 +78,7 @@ public sealed class TerrainBrushController
         Func<AssetReference, TerrainDocument?> resolveDocument,
         Func<AssetReference, TerrainMaterialDocument?> resolveMaterialDocument,
         Action<MeshInstance3D, TerrainColliderComponent, TerrainResource,
-            TerrainEditRegion, bool> terrainEdited,
+            TerrainEditRegion, bool, bool> terrainEdited,
         Action<TerrainBrushPreview?> previewChanged,
         TerrainBrushSettings? settings = null,
         Action<IReadOnlyList<MeshInstance3D>, IReadOnlyList<MeshInstance3D>>?
@@ -196,10 +197,18 @@ public sealed class TerrainBrushController
         _activeTarget = null;
         _hasLastDab = false;
         if (changed && target.ToolMode != TerrainToolMode.Objects)
+        {
+            var fullRegion = new TerrainEditRegion(0, 0,
+                target.Document.Value.Width - 1,
+                target.Document.Value.Depth - 1);
+            if (target.ToolMode is TerrainToolMode.Sculpt or TerrainToolMode.Samples)
+                _surfaceRaycaster.Invalidate(
+                    target.Document.Value, target.Collider, fullRegion);
             _terrainEdited(target.Instance, target.Collider, target.Document.Value,
-                new TerrainEditRegion(0, 0,
-                    target.Document.Value.Width - 1,
-                    target.Document.Value.Depth - 1), target.ToolMode == TerrainToolMode.Sculpt);
+                fullRegion,
+                target.ToolMode is TerrainToolMode.Sculpt or TerrainToolMode.Samples,
+                target.ToolMode == TerrainToolMode.Samples);
+        }
         ClearPreview();
         return true;
     }
@@ -207,6 +216,7 @@ public sealed class TerrainBrushController
     /// <summary>Clears stale hover state after tool settings or selection change.</summary>
     public void RefreshToolState()
     {
+        _surfaceRaycaster.Clear();
         if (!Settings.IsEnabled)
             Cancel();
         else
@@ -233,7 +243,7 @@ public sealed class TerrainBrushController
         if (!document.IsEditable)
             return null;
         if (Settings.ToolMode != TerrainToolMode.Paint)
-            return new BrushTarget(instance, collider, document, null, TerrainToolMode.Sculpt);
+            return new BrushTarget(instance, collider, document, null, Settings.ToolMode);
         var materialReference = instance.Materials.FirstOrDefault();
         if (materialReference.Asset.Value == Guid.Empty ||
             _resolveMaterialDocument(materialReference) is not { IsEditable: true } material)
@@ -265,12 +275,18 @@ public sealed class TerrainBrushController
             return;
         }
         var painting = target.ToolMode == TerrainToolMode.Paint;
+        var resizingSamples = target.ToolMode == TerrainToolMode.Samples;
         TerrainEditRegion? region;
         if (painting)
         {
             region = target.MaterialDocument!.ApplyPaint(
                 hit.U, hit.V, hit.RadiusU, hit.RadiusV,
                 Math.Clamp(Settings.Strength, 0.001f, 1f), Settings.PaintLayer);
+        }
+        else if (resizingSamples)
+        {
+            region = target.Document.ApplySampleDensity(
+                hit.U, hit.V, hit.RadiusU, hit.RadiusV, Settings.IncreaseSamples);
         }
         else
         {
@@ -287,7 +303,12 @@ public sealed class TerrainBrushController
         if (region is not { } changed)
             return;
         var terrain = target.Document.Value;
-        _terrainEdited(target.Instance, target.Collider, terrain, changed, !painting);
+        if (resizingSamples)
+            _surfaceRaycaster.Clear();
+        else if (!painting)
+            _surfaceRaycaster.Invalidate(terrain, target.Collider, changed);
+        _terrainEdited(target.Instance, target.Collider, terrain, changed,
+            !painting, resizingSamples);
     }
 
     /// <summary>Undoes the most recently completed terrain object stroke.</summary>
@@ -591,7 +612,7 @@ public sealed class TerrainBrushController
             return false;
         var localOrigin = Vector3.Transform(rayOrigin, inverse);
         var localDirection = Vector3.TransformNormal(rayDirection, inverse);
-        if (!TryIntersectTerrain(target.Document.Value, target.Collider,
+        if (!_surfaceRaycaster.TryIntersect(target.Document.Value, target.Collider,
                 localOrigin, localDirection, out var localPosition))
             return false;
         var u = localPosition.X / target.Collider.HorizontalSize.X + 0.5f;
@@ -646,108 +667,6 @@ public sealed class TerrainBrushController
             return false;
         direction = Vector3.Normalize(delta);
         return true;
-    }
-
-    /// <summary>Finds the nearest two-sided triangle hit on a local terrain grid.</summary>
-    /// <param name="terrain">Current height samples.</param>
-    /// <param name="collider">Terrain surface dimensions.</param>
-    /// <param name="origin">Local ray origin.</param>
-    /// <param name="direction">Local ray direction.</param>
-    /// <param name="position">Closest local hit position.</param>
-    /// <returns>True when the ray intersects the finite surface.</returns>
-    private static bool TryIntersectTerrain(
-        TerrainResource terrain,
-        TerrainColliderComponent collider,
-        Vector3 origin,
-        Vector3 direction,
-        out Vector3 position)
-    {
-        position = default;
-        var closest = float.PositiveInfinity;
-        for (var z = 0; z < terrain.Depth - 1; z++)
-        {
-            for (var x = 0; x < terrain.Width - 1; x++)
-            {
-                var a = GetLocalPoint(terrain, collider, x, z);
-                var b = GetLocalPoint(terrain, collider, x + 1, z);
-                var c = GetLocalPoint(terrain, collider, x + 1, z + 1);
-                var d = GetLocalPoint(terrain, collider, x, z + 1);
-                if (TryIntersectTriangle(origin, direction, a, d, c, out var first) &&
-                    first < closest)
-                    closest = first;
-                if (TryIntersectTriangle(origin, direction, a, c, b, out var second) &&
-                    second < closest)
-                    closest = second;
-            }
-        }
-        if (!float.IsFinite(closest))
-            return false;
-        position = origin + direction * closest;
-        return IsFinite(position);
-    }
-
-    /// <summary>Computes one centered local terrain sample position.</summary>
-    /// <param name="terrain">Height grid.</param>
-    /// <param name="collider">Terrain dimensions.</param>
-    /// <param name="x">Sample column.</param>
-    /// <param name="z">Sample row.</param>
-    /// <returns>Local sample position.</returns>
-    private static Vector3 GetLocalPoint(
-        TerrainResource terrain,
-        TerrainColliderComponent collider,
-        int x,
-        int z)
-    {
-        var u = x / (float)(terrain.Width - 1);
-        var v = z / (float)(terrain.Depth - 1);
-        return new Vector3(
-            (u - 0.5f) * collider.HorizontalSize.X,
-            terrain.GetHeight(x, z) * collider.HeightScale,
-            (v - 0.5f) * collider.HorizontalSize.Y);
-    }
-
-    /// <summary>Intersects a two-sided triangle using the Möller-Trumbore test.</summary>
-    /// <param name="origin">Ray origin.</param>
-    /// <param name="direction">Ray direction.</param>
-    /// <param name="a">First triangle vertex.</param>
-    /// <param name="b">Second triangle vertex.</param>
-    /// <param name="c">Third triangle vertex.</param>
-    /// <param name="distance">Positive ray parameter when hit.</param>
-    /// <returns>True when the finite triangle is hit in front of the ray.</returns>
-    private static bool TryIntersectTriangle(
-        Vector3 origin,
-        Vector3 direction,
-        Vector3 a,
-        Vector3 b,
-        Vector3 c,
-        out float distance)
-    {
-        var edge1 = b - a;
-        var edge2 = c - a;
-        var p = Vector3.Cross(direction, edge2);
-        var determinant = Vector3.Dot(edge1, p);
-        if (MathF.Abs(determinant) <= 0.000001f)
-        {
-            distance = 0f;
-            return false;
-        }
-        var inverse = 1f / determinant;
-        var translated = origin - a;
-        var u = Vector3.Dot(translated, p) * inverse;
-        if (u < 0f || u > 1f)
-        {
-            distance = 0f;
-            return false;
-        }
-        var q = Vector3.Cross(translated, edge1);
-        var v = Vector3.Dot(direction, q) * inverse;
-        if (v < 0f || u + v > 1f)
-        {
-            distance = 0f;
-            return false;
-        }
-        distance = Vector3.Dot(edge2, q) * inverse;
-        return distance >= 0f && float.IsFinite(distance);
     }
 
     /// <summary>Publishes a brush preview only when its geometry changed.</summary>

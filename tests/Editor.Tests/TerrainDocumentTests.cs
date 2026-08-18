@@ -39,6 +39,182 @@ public sealed class TerrainDocumentTests : IDisposable
         Assert.Equal(raisedHeight, document.Value.GetHeight(2, 2), 5);
     }
 
+    /// <summary>Allows sculpting beyond the terrain collider's former zero-to-one range.</summary>
+    [Fact]
+    public void ApplyBrush_RaiseAndLower_HeightSamplesAreNotClamped()
+    {
+        var path = Path.Combine(_directory, "Unbounded.nterrain");
+        TerrainAuthoring.SaveFlat(path, 3, 3, 0.9f);
+        var document = CreateDocument(path, _ => { });
+
+        document.BeginStroke();
+        document.ApplyBrush(0.5f, 0.5f, 1f, 1f, 0.4f,
+            TerrainBrushMode.Raise, 0f);
+        Assert.True(document.EndStroke());
+
+        var raised = document.Value.GetHeight(1, 1);
+        Assert.True(raised > 1f);
+        Assert.True(raised * 5f > 5f);
+
+        document.BeginStroke();
+        document.ApplyBrush(0.5f, 0.5f, 1f, 1f, 2f,
+            TerrainBrushMode.Lower, 0f);
+        Assert.True(document.EndStroke());
+        Assert.True(document.Value.GetHeight(1, 1) < 0f);
+    }
+
+    /// <summary>Refines locally, sculpts the new half-cell sample, and restores both operations.</summary>
+    [Fact]
+    public void SampleDensityBrush_RefineSculptAndUndo_PreservesSeparateHistory()
+    {
+        var path = Path.Combine(_directory, "Adaptive.nterrain");
+        TerrainAuthoring.SaveFlat(path, 3, 3, 0f);
+        var document = CreateDocument(path, _ => { });
+
+        document.BeginStroke();
+        Assert.NotNull(document.ApplySampleDensity(
+            0.25f, 0.25f, 0.2f, 0.2f, increase: true));
+        Assert.True(document.EndStroke(save: false));
+        Assert.True(document.Value.IsQuadRefined(0, 0));
+
+        document.BeginStroke();
+        Assert.NotNull(document.ApplyBrush(
+            0.25f, 0.25f, 0.1f, 0.1f, 0.5f, TerrainBrushMode.Raise, 0f));
+        Assert.True(document.EndStroke(save: false));
+        Assert.True(document.Value.GetSampleHeight(new TerrainSamplePoint(1, 1)) > 0f);
+
+        Assert.True(document.Undo());
+        Assert.True(document.Value.IsQuadRefined(0, 0));
+        Assert.Equal(0f, document.Value.GetSampleHeight(new TerrainSamplePoint(1, 1)));
+        Assert.True(document.Undo());
+        Assert.False(document.Value.IsQuadRefined(0, 0));
+    }
+
+    /// <summary>Coarsens locally through the density brush and restores refinement with undo.</summary>
+    [Fact]
+    public void SampleDensityBrush_Decrease_RemovesActiveDetailAndIsUndoable()
+    {
+        var path = Path.Combine(_directory, "Coarsen.nterrain");
+        TerrainAuthoring.SaveFlat(path, 3, 3, 0f);
+        var document = CreateDocument(path, _ => { });
+        document.BeginStroke();
+        document.ApplySampleDensity(0.25f, 0.25f, 0.2f, 0.2f, increase: true);
+        document.EndStroke(save: false);
+        var refinedSamples = document.Value.GetActiveSamples().Length;
+
+        document.BeginStroke();
+        Assert.NotNull(document.ApplySampleDensity(
+            0.25f, 0.25f, 0.2f, 0.2f, increase: false));
+        Assert.True(document.EndStroke(save: false));
+
+        Assert.False(document.Value.IsQuadRefined(0, 0));
+        Assert.True(document.Value.GetActiveSamples().Length < refinedSamples);
+        Assert.True(document.Undo());
+        Assert.True(document.Value.IsQuadRefined(0, 0));
+    }
+
+    /// <summary>Does not allocate during repeated sculpt dabs over established local detail.</summary>
+    [Fact]
+    public void ApplyBrush_RefinedDabs_DoNotAllocate()
+    {
+        var path = Path.Combine(_directory, "AdaptiveAllocation.nterrain");
+        TerrainAuthoring.SaveFlat(path, 17, 17, 0.2f);
+        var document = CreateDocument(path, _ => { });
+        document.BeginStroke();
+        document.ApplySampleDensity(0.5f, 0.5f, 0.2f, 0.2f, increase: true);
+        document.EndStroke(save: false);
+        document.BeginStroke();
+        document.ApplyBrush(0.5f, 0.5f, 0.2f, 0.2f, 0.0001f,
+            TerrainBrushMode.Raise, 0f);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 100; index++)
+        {
+            document.ApplyBrush(0.5f, 0.5f, 0.2f, 0.2f, 0.0001f,
+                TerrainBrushMode.Raise, 0f);
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0, allocated);
+        document.CancelStroke();
+    }
+
+    /// <summary>Uses cached terrain chunks and refreshes edited bounds without scanning the full grid.</summary>
+    [Fact]
+    public void SurfaceRaycaster_ChunkCache_TracksDirtyHeightRegion()
+    {
+        const int size = 65;
+        var heights = new float[size * size];
+        var terrain = new TerrainResource(size, size, heights);
+        var collider = new TerrainColliderComponent
+        {
+            HorizontalSize = new Vector2(64f, 64f),
+            HeightScale = 5f
+        };
+        var raycaster = new TerrainSurfaceRaycaster();
+        var origin = new Vector3(0f, 10f, 0f);
+
+        Assert.True(raycaster.TryIntersect(
+            terrain, collider, origin, -Vector3.UnitY, out var flatHit));
+        Assert.Equal(0f, flatHit.Y, 5);
+        Assert.True(raycaster.LastTriangleTestCount < (size - 1) * (size - 1) * 2);
+
+        heights[(size / 2) * size + size / 2] = 1f;
+        terrain.UpdateHeights(heights);
+        var dirty = new TerrainEditRegion(size / 2, size / 2, size / 2, size / 2);
+        raycaster.Invalidate(terrain, collider, dirty);
+
+        Assert.True(raycaster.TryIntersect(
+            terrain, collider, origin, -Vector3.UnitY, out var raisedHit));
+        Assert.Equal(5f, raisedHit.Y, 4);
+    }
+
+    /// <summary>Does not allocate while querying an established terrain chunk cache.</summary>
+    [Fact]
+    public void SurfaceRaycaster_WarmQueries_DoNotAllocate()
+    {
+        const int size = 65;
+        var terrain = new TerrainResource(size, size, new float[size * size]);
+        var collider = new TerrainColliderComponent
+        {
+            HorizontalSize = new Vector2(64f, 64f),
+            HeightScale = 5f
+        };
+        var raycaster = new TerrainSurfaceRaycaster();
+        var origin = new Vector3(0f, 10f, 0f);
+        Assert.True(raycaster.TryIntersect(
+            terrain, collider, origin, -Vector3.UnitY, out _));
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 100; index++)
+            Assert.True(raycaster.TryIntersect(
+                terrain, collider, origin, -Vector3.UnitY, out _));
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0, allocated);
+    }
+
+    /// <summary>Hits locally refined detail triangles rather than the coarse base surface.</summary>
+    [Fact]
+    public void SurfaceRaycaster_LocalRefinement_HitsDetailSampleHeight()
+    {
+        var terrain = new TerrainResource(3, 3, new float[9]);
+        terrain.SetQuadRefined(0, 0, true);
+        terrain.SetSampleHeight(new TerrainSamplePoint(1, 1), 1f);
+        var collider = new TerrainColliderComponent
+        {
+            HorizontalSize = new Vector2(4f, 4f),
+            HeightScale = 2f
+        };
+        var raycaster = new TerrainSurfaceRaycaster();
+
+        Assert.True(raycaster.TryIntersect(
+            terrain, collider, new Vector3(-1f, 5f, -1f),
+            -Vector3.UnitY, out var hit));
+
+        Assert.Equal(2f, hit.Y, 4);
+    }
+
     /// <summary>Cancelling a stroke restores both samples and the prior dirty state.</summary>
     [Fact]
     public void CancelStroke_ChangedCleanDocument_RestoresOriginalState()
@@ -118,7 +294,7 @@ public sealed class TerrainDocumentTests : IDisposable
             () => instance,
             _ => document,
             _ => null,
-            (_, _, _, _, _) => editCount++,
+            (_, _, _, _, _, _) => editCount++,
             value => preview = value,
             settings);
 
@@ -128,6 +304,54 @@ public sealed class TerrainDocumentTests : IDisposable
         Assert.True(document.Value.GetHeight(2, 2) > 0.2f);
         Assert.True(editCount > 0);
         Assert.NotNull(preview);
+        Assert.False(document.IsDirty);
+    }
+
+    /// <summary>Routes the sample-density tool through a topology-changing Scene stroke.</summary>
+    [Fact]
+    public void BrushController_SampleIncrease_RefinesAndPublishesTopologyChange()
+    {
+        var path = Path.Combine(_directory, "SampleBrush.nterrain");
+        TerrainAuthoring.SaveFlat(path, 5, 5, 0.2f);
+        var document = CreateDocument(path, _ => { });
+        var reference = document.Reference;
+        var instance = new MeshInstance3D { Mesh = reference };
+        var collider = new TerrainColliderComponent
+        {
+            TerrainData = reference,
+            HorizontalSize = new Vector2(8f, 8f),
+            HeightScale = 4f
+        };
+        instance.AddComponent(collider);
+        var camera = new PerspectiveCamera(MathF.PI / 4f, 4f / 3f, 0.1f, 100f)
+        {
+            Position = new Vector3(0f, 8f, 8f)
+        };
+        camera.LookAt(new Vector3(0f, 0.8f, 0f));
+        camera.UpdateViewport(800f, 600f);
+        var topologyChanged = false;
+        var settings = new TerrainBrushSettings
+        {
+            ToolMode = TerrainToolMode.Samples,
+            IncreaseSamples = true,
+            IsEnabled = true,
+            Radius = 2f
+        };
+        var controller = new TerrainBrushController(
+            camera,
+            () => new GizmoViewport(0f, 0f, 800f, 600f),
+            () => instance,
+            _ => document,
+            _ => null,
+            (_, _, _, _, _, topology) => topologyChanged |= topology,
+            _ => { },
+            settings);
+
+        Assert.True(controller.PrimaryDown(new Vector2(400f, 300f)));
+        Assert.True(controller.PrimaryUp());
+
+        Assert.True(document.Value.RefinedQuadCount > 0);
+        Assert.True(topologyChanged);
         Assert.False(document.IsDirty);
     }
 
@@ -172,7 +396,7 @@ public sealed class TerrainDocumentTests : IDisposable
             () => terrain,
             _ => document,
             _ => null,
-            (_, _, _, _, _) => { },
+            (_, _, _, _, _, _) => { },
             _ => { },
             settings,
             (added, removed) =>
@@ -233,6 +457,12 @@ public sealed class TerrainDocumentTests : IDisposable
 
         Assert.Contains(content.Children.OfType<ToggleButton>(),
             control => control.Name == "TerrainSculptEnabled");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainSampleResizeEnabled");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainSamplesIncrease");
+        Assert.Contains(content.Children.OfType<ToggleButton>(),
+            control => control.Name == "TerrainSamplesDecrease");
         foreach (var mode in Enum.GetValues<TerrainBrushMode>())
         {
             Assert.Contains(content.Children.OfType<ToggleButton>(),

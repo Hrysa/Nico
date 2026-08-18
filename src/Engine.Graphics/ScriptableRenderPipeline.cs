@@ -56,6 +56,8 @@ public enum RenderPipelineStage
     Shadows,
     /// <summary>Produces camera-space depth before color rendering.</summary>
     DepthPrepass,
+    /// <summary>Renders the camera environment behind scene geometry.</summary>
+    Skybox,
     /// <summary>Renders opaque surfaces with forward lighting.</summary>
     Opaque,
     /// <summary>Renders blended surfaces after opaque geometry.</summary>
@@ -75,6 +77,8 @@ public enum RenderPipelineCommandKind
     LocalShadows,
     /// <summary>Draws a filtered subset of scene geometry with a material pass.</summary>
     DrawRenderers,
+    /// <summary>Draws the submitted equirectangular camera environment.</summary>
+    DrawSkybox,
     /// <summary>Transforms camera color into the view's presentation output.</summary>
     ApplyPostProcess
 }
@@ -403,6 +407,18 @@ public struct RenderPipelineContext
             filter, materialPass, reads, writes));
     }
 
+    /// <summary>Schedules the submitted environment behind camera-depth geometry.</summary>
+    public void DrawSkybox()
+    {
+        if (!Queue.Skybox.IsEnabled)
+            return;
+        Queue.AddPipelineCommand(new RenderPipelineCommand(
+            _activeStage,
+            RenderPipelineCommandKind.DrawSkybox,
+            Reads: RenderPipelineResource.CameraDepth,
+            Writes: RenderPipelineResource.CameraColor));
+    }
+
     /// <summary>Schedules the final camera-color transform for presentation.</summary>
     /// <param name="settings">Validated output-effect settings.</param>
     public void ApplyPostProcess(RenderOutputSettings settings)
@@ -581,6 +597,18 @@ public sealed class DepthPrepassRenderPass : RenderPipelinePass
         RenderPipelineResource.CameraDepth);
 }
 
+/// <summary>Schedules the active equirectangular environment behind scene geometry.</summary>
+public sealed class SkyboxRenderPass : RenderPipelinePass
+{
+    /// <summary>Creates the built-in skybox stage.</summary>
+    public SkyboxRenderPass() : base(RenderPipelineStage.Skybox)
+    {
+    }
+
+    /// <inheritdoc/>
+    public override void Execute(ref RenderPipelineContext context) => context.DrawSkybox();
+}
+
 /// <summary>Schedules blended geometry after solid forward rendering.</summary>
 public sealed class ForwardTransparentRenderPass : RenderPipelinePass
 {
@@ -686,6 +714,7 @@ public sealed class BasicForwardRenderPipeline : RenderPipeline
             new DirectionalShadowRenderPass(),
             new LocalShadowRenderPass(),
             new DepthPrepassRenderPass(),
+            new SkyboxRenderPass(),
             new ForwardOpaqueRenderPass(),
             new ForwardTransparentRenderPass(),
             new OutputPostProcessRenderPass())

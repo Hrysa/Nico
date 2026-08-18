@@ -23,6 +23,8 @@ public sealed partial class ThirdPersonController : SceneScript
     private uint _inputSequence;
     private double _inputAccumulator;
     private bool _jumpRequested;
+    private bool _attackRequested;
+    private bool _attackButtonDown;
     private Vector3 _authoritativePosition;
     private float _requestedYaw;
     private float _characterPitch;
@@ -54,6 +56,7 @@ public sealed partial class ThirdPersonController : SceneScript
     /// <inheritdoc />
     public override void OnReady()
     {
+        CombatPresentationState.Clear();
         if (Owner is not Node3D owner3D)
             throw new InvalidOperationException("Network character control requires a Node3D owner.");
         var serverHost = ServerHost;
@@ -119,6 +122,9 @@ public sealed partial class ThirdPersonController : SceneScript
         UpdateCameraOrbit();
         var movement = ReadMovement();
         _jumpRequested |= Scene.Input.WasKeyPressed(InputKey.Space);
+        var attackButtonDown = Scene.Input.IsPointerButtonDown(InputPointerButton.Primary);
+        _attackRequested |= attackButtonDown && !_attackButtonDown;
+        _attackButtonDown = attackButtonDown;
         if (movement.LengthSquared() > float.Epsilon)
             _requestedYaw = MathF.Atan2(movement.X, movement.Z);
         _inputAccumulator += Math.Max(0d, deltaTime);
@@ -130,13 +136,16 @@ public sealed partial class ThirdPersonController : SceneScript
                 ++_inputSequence,
                 new Vector2(movement.X, movement.Z),
                 _requestedYaw,
-                _jumpRequested);
+                _jumpRequested,
+                _attackRequested);
             _jumpRequested = false;
+            _attackRequested = false;
         }
         if (_networkClient.TryReceiveLatestSnapshot(out var snapshot))
         {
             _authoritativePosition = snapshot.Position;
             _body.LinearVelocity = snapshot.Velocity;
+            CombatPresentationState.Publish(snapshot);
             if (snapshot.AcknowledgedInput == _inputSequence)
                 _requestedYaw = snapshot.FacingYaw;
         }
@@ -178,6 +187,7 @@ public sealed partial class ThirdPersonController : SceneScript
         _connectionCancellation = null;
         _networkClient?.Dispose();
         _networkClient = null;
+        CombatPresentationState.Clear();
     }
 
     /// <summary>Reads normalized camera-relative WASD movement.</summary>

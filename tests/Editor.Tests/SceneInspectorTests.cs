@@ -78,6 +78,38 @@ public class SceneInspectorTests
         Assert.True(light.CastsShadows);
     }
 
+    /// <summary>Edits skybox appearance and accepts only imported texture artifacts.</summary>
+    [Fact]
+    public void Skybox_Fields_UpdateAuthoredSettings()
+    {
+        var skybox = new Skybox3D();
+        var inspector = new SceneInspector(320f, 700f);
+        inspector.Bind(skybox);
+        var texture = Assert.IsType<AssetReferenceField>(
+            FindByName<AssetReferenceField>(inspector, "SkyboxTexture"));
+        var color = Assert.IsType<ColorPicker>(
+            FindByName<ColorPicker>(inspector, "SkyboxTint"));
+        var intensity = Assert.IsType<TextField>(
+            FindByName<TextField>(inspector, "SkyboxIntensity"));
+        var enabled = Assert.IsType<ToggleButton>(
+            FindByName<ToggleButton>(inspector, "SkyboxEnabled"));
+
+        var reference = new AssetReference(AssetId.New(), "main");
+        Assert.True(texture.Assign(reference));
+        color.Value = new Vector4(0.4f, 0.6f, 0.8f, 1f);
+        intensity.SetFocus(true);
+        intensity.InvokeKeyDown((int)InputKey.Backspace);
+        intensity.InvokeTextInput('2');
+        Assert.True(inspector.EditForm.CommitAll());
+        enabled.InvokeClick();
+
+        Assert.Equal("nico/texture2d", texture.AcceptedContentType);
+        Assert.Equal(reference, skybox.Texture);
+        Assert.Equal(new Vector3(0.4f, 0.6f, 0.8f), skybox.Tint);
+        Assert.Equal(2f, skybox.Intensity);
+        Assert.False(skybox.IsEnabled);
+    }
+
     /// <summary>Verifies an empty Inspector has no obsolete property-filter input.</summary>
     [Fact]
     public void EmptyInspector_DoesNotContainFilterField()

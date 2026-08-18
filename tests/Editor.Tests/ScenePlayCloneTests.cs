@@ -118,6 +118,56 @@ public class ScenePlayCloneTests
         Assert.Equal("Character", clone.Name);
     }
 
+    /// <summary>Verifies terrain-scatter identity enters play mode without sharing state.</summary>
+    [Fact]
+    public void Create_TerrainScatterMarker_ClonesIndependentState()
+    {
+        var root = new Node3D { Name = "Scene" };
+        var tree = new MeshInstance3D { Name = "Scattered Tree" };
+        var marker = new TerrainScatterInstanceComponent { Enabled = false };
+        tree.AddComponent(marker);
+        var camera = new PerspectiveCamera { Name = "Camera" };
+        root.AddChild(tree);
+        root.AddChild(camera);
+
+        var playScene = ScenePlayClone.Create(root, camera);
+
+        var clone = Assert.IsType<TerrainScatterInstanceComponent>(
+            Assert.Single(playScene.MeshInstances[0].Components));
+        Assert.NotSame(marker, clone);
+        Assert.False(clone.Enabled);
+    }
+
+    /// <summary>Preserves skybox authoring without sharing its scene-node identity.</summary>
+    [Fact]
+    public void Create_Skybox_ClonesAppearanceAndTexture()
+    {
+        var root = new Node3D { Name = "Scene" };
+        var reference = new AssetReference(AssetId.New(), "main");
+        var skybox = new Skybox3D
+        {
+            Name = "Environment",
+            Texture = reference,
+            Tint = new Vector3(0.5f, 0.75f, 1f),
+            Intensity = 1.8f,
+            IsEnabled = false,
+            Rotation = new Vector3(0f, 0.4f, 0f)
+        };
+        var camera = new PerspectiveCamera { Name = "Camera" };
+        root.AddChild(skybox);
+        root.AddChild(camera);
+
+        var playScene = ScenePlayClone.Create(root, camera);
+
+        var clone = Assert.IsType<Skybox3D>(playScene.Root.Children[0]);
+        Assert.NotSame(skybox, clone);
+        Assert.Equal(reference, clone.Texture);
+        Assert.Equal(skybox.Tint, clone.Tint);
+        Assert.Equal(1.8f, clone.Intensity);
+        Assert.InRange(MathF.Abs(skybox.Rotation.Y - clone.Rotation.Y), 0f, 0.00001f);
+        Assert.False(clone.IsEnabled);
+    }
+
     /// <summary>Verifies authored HUD identity and scripts are cloned without sharing runtime content.</summary>
     [Fact]
     public void Create_HudRoot_CreatesIndependentRuntimeRoot()

@@ -103,12 +103,18 @@ public sealed class UdpGameClient : IDisposable
     /// <param name="movement">Normalized world-space XZ movement intent.</param>
     /// <param name="facingYaw">World-space facing angle in radians.</param>
     /// <param name="jump">Whether this input requests a jump.</param>
-    public void SendInput(uint sequence, Vector2 movement, float facingYaw, bool jump)
+    /// <param name="attack">Whether this input requests a primary attack.</param>
+    public void SendInput(
+        uint sequence,
+        Vector2 movement,
+        float facingYaw,
+        bool jump,
+        bool attack)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Span<byte> datagram = stackalloc byte[GameProtocol.ClientInputSize];
         var message = new ClientInputMessage(
-            ClientId, _sessionToken, sequence, movement, facingYaw, jump);
+            ClientId, _sessionToken, sequence, movement, facingYaw, jump, attack);
         GameProtocol.WriteClientInput(datagram, message);
         _socket.Send(datagram, SocketFlags.None);
     }

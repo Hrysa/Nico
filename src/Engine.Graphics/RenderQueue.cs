@@ -30,6 +30,62 @@ public readonly record struct RenderCommand(
     bool CastsShadows = true,
     RenderSurfaceType SurfaceType = RenderSurfaceType.Opaque);
 
+/// <summary>Describes one renderer-owned equirectangular skybox submission.</summary>
+public readonly record struct SkyboxRenderSettings
+{
+    /// <summary>Gets the sampled equirectangular texture.</summary>
+    public TextureHandle Texture { get; }
+
+    /// <summary>Gets the nonnegative linear RGB texture multiplier.</summary>
+    public System.Numerics.Vector3 Tint { get; }
+
+    /// <summary>Gets the nonnegative linear brightness multiplier.</summary>
+    public float Intensity { get; }
+
+    /// <summary>Gets world-space rotation around the vertical axis in radians.</summary>
+    public float Rotation { get; }
+
+    /// <summary>Gets whether this submission contains a visible texture.</summary>
+    public bool IsEnabled => Texture.IsValid && Intensity > 0f;
+
+    /// <summary>Creates validated skybox render settings.</summary>
+    /// <param name="texture">Renderer-owned equirectangular texture.</param>
+    /// <param name="tint">Nonnegative linear RGB multiplier.</param>
+    /// <param name="intensity">Nonnegative brightness multiplier.</param>
+    /// <param name="rotation">World-space vertical rotation in radians.</param>
+    /// <returns>Validated skybox settings.</returns>
+    public static SkyboxRenderSettings Create(
+        TextureHandle texture,
+        System.Numerics.Vector3 tint,
+        float intensity,
+        float rotation)
+    {
+        if (!texture.IsValid)
+            throw new ArgumentException("A valid skybox texture is required.", nameof(texture));
+        if (!float.IsFinite(tint.X) || !float.IsFinite(tint.Y) || !float.IsFinite(tint.Z) ||
+            tint.X < 0f || tint.Y < 0f || tint.Z < 0f)
+            throw new ArgumentOutOfRangeException(nameof(tint));
+        if (!float.IsFinite(intensity) || intensity < 0f)
+            throw new ArgumentOutOfRangeException(nameof(intensity));
+        if (!float.IsFinite(rotation))
+            throw new ArgumentOutOfRangeException(nameof(rotation));
+        return new SkyboxRenderSettings(texture, tint, intensity, rotation);
+    }
+
+    /// <summary>Creates one validated immutable submission.</summary>
+    private SkyboxRenderSettings(
+        TextureHandle texture,
+        System.Numerics.Vector3 tint,
+        float intensity,
+        float rotation)
+    {
+        Texture = texture;
+        Tint = tint;
+        Intensity = intensity;
+        Rotation = rotation;
+    }
+}
+
 /// <summary>
 /// Collects ordered render commands for one viewport and one frame.
 /// </summary>
@@ -44,6 +100,9 @@ public sealed class RenderQueue
 
     /// <summary>Gets or sets explicit camera state consumed by view-dependent passes.</summary>
     public RenderCameraData Camera { get; set; }
+
+    /// <summary>Gets or sets the optional environment rendered behind scene geometry.</summary>
+    public SkyboxRenderSettings Skybox { get; set; }
 
     /// <summary>Gets or sets presentation effects applied to this rendered view.</summary>
     public RenderOutputSettings Output { get; internal set; } = RenderOutputSettings.None;
@@ -69,7 +128,8 @@ public sealed class RenderQueue
         {
             for (var index = 0; index < _pipelineCommands.Count; index++)
             {
-                if (_pipelineCommands[index].Kind == RenderPipelineCommandKind.DrawRenderers)
+                if (_pipelineCommands[index].Kind is RenderPipelineCommandKind.DrawRenderers or
+                    RenderPipelineCommandKind.DrawSkybox)
                     return true;
             }
             return false;
@@ -143,6 +203,7 @@ public sealed class RenderQueue
         _pipelineBarriers.Clear();
         Lights.Clear();
         Camera = default;
+        Skybox = default;
         Output = RenderOutputSettings.None;
     }
 

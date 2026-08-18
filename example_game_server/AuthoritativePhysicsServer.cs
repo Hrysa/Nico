@@ -3,6 +3,7 @@ using Engine.Core;
 using Engine.Graphics;
 using Engine.Physics;
 using Microsoft.Extensions.Logging;
+using System.Numerics;
 
 namespace ExampleGame.Server;
 
@@ -15,7 +16,11 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
     private readonly LoadedScene _scene;
     private readonly PhysicsWorld _physicsWorld;
     private readonly ServerTerrainCollision _terrainCollision;
+    private readonly string[] _terrainSourcePaths;
+    private readonly TerrainSourceStamp[] _terrainSourceStamps;
+    private readonly int _terrainReloadPollTicks;
     private readonly UdpGameServer _network;
+    private long _nextTerrainReloadPoll;
     private bool _disposed;
 
     /// <summary>Creates and attaches a BEPU world to one authored scene.</summary>
@@ -47,6 +52,11 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         registry.Register(new TerrainAssetImporter());
         _assetPipeline = new AssetImportPipeline(_assetDatabase, registry);
         _scene = SceneFileStore.Load(scenePath, ServerSceneNodeFactory.Instance);
+        _terrainSourcePaths = FindTerrainSourcePaths(_scene.Root);
+        _terrainSourceStamps = new TerrainSourceStamp[_terrainSourcePaths.Length];
+        for (var index = 0; index < _terrainSourcePaths.Length; index++)
+            _terrainSourceStamps[index] = ReadTerrainSourceStamp(_terrainSourcePaths[index]);
+        _terrainReloadPollTicks = Math.Max(1, tickRate / 4);
         _terrainCollision = new ServerTerrainCollision(_scene.Root, ResolveTerrain);
         _physicsWorld = new PhysicsWorld(ResolveCollisionMesh, ResolveTerrain)
         {
@@ -55,7 +65,8 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         };
         _physicsWorld.Attach(_scene.Root);
         _network = new UdpGameServer(
-            port, tickRate, networkSnapshotRate, clientTimeout, _terrainCollision, logger);
+            port, tickRate, networkSnapshotRate, clientTimeout, _terrainCollision,
+            FindMonsterSpawnPositions(_scene.Root), logger);
         TickRate = tickRate;
         _logger.LogInformation(
             "Loaded authoritative scene {ScenePath} with {BodyCount} BEPU bodies and " +
@@ -111,6 +122,36 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         return TerrainResource.Load(stream);
     }
 
+    /// <summary>Finds the two authored monster nodes in deterministic name order.</summary>
+    /// <param name="root">Authoritative scene root.</param>
+    /// <returns>Exactly two world-space spawn positions.</returns>
+    private static Vector3[] FindMonsterSpawnPositions(Node root)
+    {
+        var monsters = new List<Node3D>(2);
+        AddMonsterNodes(root, monsters);
+        monsters.Sort(static (left, right) =>
+            string.Compare(left.Name, right.Name, StringComparison.Ordinal));
+        if (monsters.Count != 2)
+            throw new InvalidDataException(
+                "The authoritative example scene requires exactly two named Monster nodes.");
+        return [monsters[0].GetWorldPosition(), monsters[1].GetWorldPosition()];
+    }
+
+    /// <summary>Recursively collects nodes whose names begin with the monster prefix.</summary>
+    /// <param name="node">Current scene node.</param>
+    /// <param name="monsters">Destination monster list.</param>
+    private static void AddMonsterNodes(Node node, List<Node3D> monsters)
+    {
+        if (node is Node3D node3D && node.Name.StartsWith("Monster ",
+                StringComparison.Ordinal))
+        {
+            monsters.Add(node3D);
+        }
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+            AddMonsterNodes(children[index], monsters);
+    }
+
     /// <summary>Gets the configured authoritative simulation frequency.</summary>
     internal int TickRate { get; }
 
@@ -127,9 +168,95 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
     internal void Step()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ReloadTerrainIfChanged();
         _network.Step(Tick + 1, (float)_physicsWorld.FixedTimeStep);
         _physicsWorld.Update(_physicsWorld.FixedTimeStep);
         Tick++;
+    }
+
+    /// <summary>Reloads sampled and native collision when an authored terrain source changes.</summary>
+    private void ReloadTerrainIfChanged()
+    {
+        if (Tick < _nextTerrainReloadPoll)
+            return;
+        _nextTerrainReloadPoll = Tick + _terrainReloadPollTicks;
+        var changed = false;
+        for (var index = 0; index < _terrainSourcePaths.Length; index++)
+        {
+            if (ReadTerrainSourceStamp(_terrainSourcePaths[index]) !=
+                _terrainSourceStamps[index])
+            {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed)
+            return;
+        try
+        {
+            _terrainCollision.Reload(_scene.Root, ResolveTerrain);
+            _physicsWorld.Attach(_scene.Root);
+            for (var index = 0; index < _terrainSourcePaths.Length; index++)
+                _terrainSourceStamps[index] = ReadTerrainSourceStamp(_terrainSourcePaths[index]);
+            _logger.LogInformation(
+                "Reloaded authoritative terrain collision after a source edit");
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException)
+        {
+            _logger.LogWarning(exception,
+                "Could not reload edited terrain collision; the server will retry");
+        }
+    }
+
+    /// <summary>Finds the physical sources of all enabled terrain colliders in a scene.</summary>
+    /// <param name="root">Scene root to inspect.</param>
+    /// <returns>Distinct absolute terrain source paths.</returns>
+    private string[] FindTerrainSourcePaths(Node root)
+    {
+        var paths = new HashSet<string>(OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal);
+        AddTerrainSourcePaths(root, paths);
+        return paths.OrderBy(path => path, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>Recursively collects terrain source paths without iterator allocation.</summary>
+    /// <param name="node">Current scene node.</param>
+    /// <param name="paths">Distinct destination path set.</param>
+    private void AddTerrainSourcePaths(Node node, HashSet<string> paths)
+    {
+        var components = node.Components;
+        for (var index = 0; index < components.Count; index++)
+        {
+            if (components[index] is not TerrainColliderComponent
+                {
+                    Enabled: true,
+                    TerrainData: { } reference
+                })
+            {
+                continue;
+            }
+            var record = _assetDatabase.Find(reference.Asset)
+                ?? throw new FileNotFoundException(
+                    $"Terrain asset '{reference.Asset}' is missing.");
+            paths.Add(Path.GetFullPath(Path.Combine(
+                _assetDatabase.ProjectRoot,
+                record.ProjectPath.Replace('/', Path.DirectorySeparatorChar))));
+        }
+        var children = node.Children;
+        for (var index = 0; index < children.Count; index++)
+            AddTerrainSourcePaths(children[index], paths);
+    }
+
+    /// <summary>Reads a cheap change signature for one physical terrain source.</summary>
+    /// <param name="path">Absolute source path.</param>
+    /// <returns>Current length and last-write timestamp.</returns>
+    private static TerrainSourceStamp ReadTerrainSourceStamp(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists)
+            throw new FileNotFoundException("Terrain source is missing.", path);
+        return new TerrainSourceStamp(info.Length, info.LastWriteTimeUtc);
     }
 
     /// <summary>Logs the latest authoritative transform and velocity of every dynamic body.</summary>
@@ -177,4 +304,9 @@ internal sealed class AuthoritativePhysicsServer : IDisposable
         _network.Dispose();
         _physicsWorld.Dispose();
     }
+
+    /// <summary>Identifies one observed version of a physical terrain source.</summary>
+    /// <param name="Length">Source byte length.</param>
+    /// <param name="LastWriteTimeUtc">Source last-write timestamp.</param>
+    private readonly record struct TerrainSourceStamp(long Length, DateTime LastWriteTimeUtc);
 }

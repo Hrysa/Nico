@@ -70,6 +70,26 @@ public sealed class TerrainResourceTests
         Assert.True(normal.Y > 0f);
     }
 
+    /// <summary>Rebuilds a dirty indexed region to match a complete terrain rebuild.</summary>
+    [Fact]
+    public void UpdateStaticMeshVertices_DirtyRegion_MatchesFullRebuild()
+    {
+        var terrain = new TerrainResource(5, 5, new float[25]);
+        var size = new Vector2(8f, 8f);
+        var initial = TerrainMeshBuilder.BuildStaticMesh(terrain, size, 3f);
+        var heights = terrain.CopyHeights();
+        heights[2 * terrain.Width + 2] = 1f;
+        terrain.UpdateHeights(heights);
+
+        TerrainMeshBuilder.UpdateStaticMeshVertices(
+            terrain, size, 3f, default, true, initial.Vertices,
+            1, 1, 3, 3);
+        var rebuilt = TerrainMeshBuilder.BuildStaticMesh(terrain, size, 3f);
+
+        Assert.Equal(rebuilt.Vertices, initial.Vertices);
+        Assert.Equal(rebuilt.Indices, initial.Indices);
+    }
+
     /// <summary>Returns independently owned sample storage for editor documents.</summary>
     [Fact]
     public void CopyHeights_MutatedCopy_DoesNotChangeResource()
@@ -80,5 +100,87 @@ public sealed class TerrainResourceTests
         copy[0] = 1f;
 
         Assert.Equal(0f, terrain.GetHeight(0, 0));
+    }
+
+    /// <summary>Refines one local quad with stitched neighbors and coarsens it non-destructively.</summary>
+    [Fact]
+    public void LocalRefinement_BuildStaticMesh_UsesCrackFreeAdaptiveTopology()
+    {
+        var terrain = new TerrainResource(3, 3, new float[9]);
+        var baseMesh = TerrainMeshBuilder.BuildStaticMesh(
+            terrain, new Vector2(2f, 2f), 1f);
+
+        Assert.True(terrain.SetQuadRefined(0, 0, true));
+        var refinedMesh = TerrainMeshBuilder.BuildStaticMesh(
+            terrain, new Vector2(2f, 2f), 1f);
+
+        Assert.Equal(1, terrain.RefinedQuadCount);
+        Assert.Equal(16, terrain.GetActiveSamples().Length);
+        Assert.True(refinedMesh.Vertices.Length > baseMesh.Vertices.Length);
+        Assert.True(refinedMesh.Indices.Length > baseMesh.Indices.Length);
+        AssertMeshHasNoInternalBoundaryCracks(refinedMesh);
+
+        Assert.True(terrain.SetQuadRefined(0, 0, false));
+        var coarsenedMesh = TerrainMeshBuilder.BuildStaticMesh(
+            terrain, new Vector2(2f, 2f), 1f);
+        Assert.Equal(0, terrain.RefinedQuadCount);
+        Assert.Equal(baseMesh.Vertices.Length, coarsenedMesh.Vertices.Length);
+        Assert.Equal(baseMesh.Indices.Length, coarsenedMesh.Indices.Length);
+    }
+
+    /// <summary>Persists local density and retained detail heights in the current terrain format.</summary>
+    [Fact]
+    public void SaveAndLoad_LocalRefinement_PreservesDetailSample()
+    {
+        var terrain = new TerrainResource(3, 3, new float[9]);
+        terrain.SetQuadRefined(0, 0, true);
+        var center = new TerrainSamplePoint(1, 1);
+        terrain.SetSampleHeight(center, 2.5f);
+        using var stream = new MemoryStream();
+
+        terrain.Save(stream);
+        stream.Position = 0;
+        var loaded = TerrainResource.Load(stream);
+
+        Assert.True(loaded.IsQuadRefined(0, 0));
+        Assert.Equal(2.5f, loaded.GetSampleHeight(center));
+        Assert.Equal(terrain.GetActiveSamples().Length, loaded.GetActiveSamples().Length);
+    }
+
+    /// <summary>Verifies every non-boundary adaptive mesh edge is shared by two triangles.</summary>
+    /// <param name="mesh">Adaptive mesh to inspect.</param>
+    private static void AssertMeshHasNoInternalBoundaryCracks(StaticMeshResource mesh)
+    {
+        var edges = new Dictionary<(uint Minimum, uint Maximum), int>();
+        for (var index = 0; index < mesh.Indices.Length; index += 3)
+        {
+            AddEdge(edges, mesh.Indices[index], mesh.Indices[index + 1]);
+            AddEdge(edges, mesh.Indices[index + 1], mesh.Indices[index + 2]);
+            AddEdge(edges, mesh.Indices[index + 2], mesh.Indices[index]);
+        }
+        foreach (var pair in edges)
+        {
+            var first = mesh.Vertices[pair.Key.Minimum].TexCoord;
+            var second = mesh.Vertices[pair.Key.Maximum].TexCoord;
+            var boundary = first.X == 0f && second.X == 0f ||
+                first.X == 1f && second.X == 1f ||
+                first.Y == 0f && second.Y == 0f ||
+                first.Y == 1f && second.Y == 1f;
+            Assert.Equal(boundary ? 1 : 2, pair.Value);
+        }
+    }
+
+    /// <summary>Adds one normalized undirected mesh edge occurrence.</summary>
+    /// <param name="edges">Occurrence map.</param>
+    /// <param name="first">First vertex index.</param>
+    /// <param name="second">Second vertex index.</param>
+    private static void AddEdge(
+        Dictionary<(uint Minimum, uint Maximum), int> edges,
+        uint first,
+        uint second)
+    {
+        var key = first < second ? (first, second) : (second, first);
+        edges.TryGetValue(key, out var count);
+        edges[key] = count + 1;
     }
 }

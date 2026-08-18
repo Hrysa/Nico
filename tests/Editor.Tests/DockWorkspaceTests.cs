@@ -293,9 +293,9 @@ public sealed class DockWorkspaceTests
         Assert.Equal(2, gameTools.Tabs.Count);
     }
 
-    /// <summary>Verifies session panel activation rejects unknown IDs and refreshes registered panels.</summary>
+    /// <summary>Verifies absent registered panels open in floating roots with registry titles.</summary>
     [Fact]
-    public void DockSession_OpenPanel_UsesRegistryTitleAndAnchor()
+    public void DockSession_OpenPanel_UsesRegistryTitleAndFloatsAbsentPanel()
     {
         var group = new DockTabGroup([new DockTab("game", "Game")]);
         var registry = new DockPanelRegistry();
@@ -308,8 +308,14 @@ public sealed class DockWorkspaceTests
 
         Assert.True(session.OpenPanel("profiler", "game"));
         Assert.False(session.OpenPanel("missing", "game"));
-        Assert.Equal("CPU Profiler", group.Tabs[1].Title);
-        Assert.Equal("profiler", group.SelectedId);
+        var floating = Assert.Single(session.Workspace.FloatingRoots);
+        var floatingGroup = Assert.IsType<DockTabGroup>(floating.Root);
+        var floatingTab = Assert.Single(floatingGroup.Tabs);
+        Assert.Equal("profiler", floatingTab.Id);
+        Assert.Equal("CPU Profiler", floatingTab.Title);
+        Assert.Equal("profiler", floatingGroup.SelectedId);
+        Assert.Single(group.Tabs);
+        Assert.Equal("game", group.SelectedId);
     }
 
     /// <summary>Verifies panel visibility operations update membership and notify menu-style observers.</summary>

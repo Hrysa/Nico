@@ -23,7 +23,7 @@ public class EditorProjectContextTests
         Assert.Throws<DirectoryNotFoundException>(() => EditorProjectContext.Open(missingPath));
     }
 
-    /// <summary>Verifies scene discovery includes the primary scene and nested named scenes.</summary>
+    /// <summary>Verifies scene discovery includes root and nested named scenes.</summary>
     [Fact]
     public void FindSceneFiles_ReturnsProjectScenesInRelativePathOrder()
     {
