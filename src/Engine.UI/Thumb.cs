@@ -6,15 +6,26 @@ namespace Engine.UI;
 /// <summary>Provides reusable pointer-captured drag behavior for sliders and scroll bars.</summary>
 public sealed class Thumb : UIElement
 {
-    private readonly UITheme _theme;
-    private bool _isDragging;
-    private Vector2 _lastPosition;
+    private readonly PointerCaptureGesture _dragGesture;
     private readonly bool _isTransparent;
     private readonly bool _enableHoverState;
-    private readonly Color? _overrideColor;
+    private UIInteractionColors _interactionColors;
 
     /// <summary>Gets whether this thumb currently owns an active drag.</summary>
-    public bool IsDragging => _isDragging;
+    public bool IsDragging => _dragGesture.IsActive;
+
+    /// <summary>Gets or sets the common interaction palette used by this thumb.</summary>
+    public UIInteractionColors InteractionColors
+    {
+        get => _interactionColors;
+        set
+        {
+            if (_interactionColors == value)
+                return;
+            _interactionColors = value;
+            InvalidateVisual();
+        }
+    }
 
     /// <summary>Gets or sets the pointer cursor requested while this thumb is hovered.</summary>
     public PointerCursorKind CursorKind { get; set; } = PointerCursorKind.Default;
@@ -39,11 +50,16 @@ public sealed class Thumb : UIElement
         bool enableHoverState = true,
         Color? overrideColor = null)
     {
-        _theme = theme ?? UITheme.Dark;
+        var resolvedTheme = theme ?? UITheme.Dark;
         _isTransparent = isTransparent;
         _enableHoverState = enableHoverState;
-        _overrideColor = overrideColor;
-        Pointer += OnPointer;
+        _interactionColors = overrideColor is { } color
+            ? new UIInteractionColors(color, color, color, color, color, color)
+            : resolvedTheme.GetThumbInteractionColors();
+        _dragGesture = new PointerCaptureGesture(this, handleMoves: true);
+        _dragGesture.Started += OnDragStarted;
+        _dragGesture.Delta += OnDragDelta;
+        _dragGesture.Completed += OnDragCompleted;
     }
 
     /// <inheritdoc/>
@@ -51,48 +67,19 @@ public sealed class Thumb : UIElement
     {
         if (_isTransparent)
             return;
-        var color = _overrideColor ?? (_enableHoverState switch
-        {
-            true when IsPressed => _theme.SurfacePressed,
-            true when IsHovered => _theme.SurfaceHover,
-            _ => _theme.BorderStrong
-        });
+        var state = _enableHoverState ? GetInteractionState() : UIInteractionState.Normal;
+        var color = _interactionColors.Resolve(state);
         drawList.AddRoundedRectangle(Left, Top, Right, Bottom,
             MathF.Min(MathF.Min(Width, Height) / 2f, 4f), color);
     }
 
-    /// <summary>Starts, advances, or completes one captured drag.</summary>
-    /// <param name="sender">Current routed receiver.</param>
-    /// <param name="pointerEvent">Routed pointer data.</param>
-    private void OnPointer(UIElement sender, UIPointerEventArgs pointerEvent)
-    {
-        if (pointerEvent.RoutePhase != UIRoutePhase.Target)
-            return;
-        if (pointerEvent.Kind == UIPointerEventKind.Press &&
-            pointerEvent.Button == InputPointerButton.Primary)
-        {
-            _isDragging = true;
-            _lastPosition = pointerEvent.Position;
-            SetPressed(true);
-            pointerEvent.CapturePointer();
-            pointerEvent.Handled = true;
-            DragStarted?.Invoke();
-        }
-        else if (pointerEvent.Kind == UIPointerEventKind.Move && _isDragging)
-        {
-            var delta = pointerEvent.Position - _lastPosition;
-            _lastPosition = pointerEvent.Position;
-            pointerEvent.Handled = true;
-            if (delta != Vector2.Zero)
-                DragDelta?.Invoke(delta);
-        }
-        else if (pointerEvent.Kind == UIPointerEventKind.Release && _isDragging)
-        {
-            _isDragging = false;
-            SetPressed(false);
-            pointerEvent.ReleasePointerCapture();
-            pointerEvent.Handled = true;
-            DragCompleted?.Invoke();
-        }
-    }
+    /// <summary>Forwards the shared gesture start to thumb consumers.</summary>
+    private void OnDragStarted() => DragStarted?.Invoke();
+
+    /// <summary>Forwards shared captured movement to thumb consumers.</summary>
+    /// <param name="delta">Logical captured movement.</param>
+    private void OnDragDelta(Vector2 delta) => DragDelta?.Invoke(delta);
+
+    /// <summary>Forwards shared gesture completion to thumb consumers.</summary>
+    private void OnDragCompleted() => DragCompleted?.Invoke();
 }

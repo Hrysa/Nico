@@ -634,7 +634,7 @@ public sealed class ModelPreviewInspectorContent : Panel, IInspectorContentLifec
         HasAnimation = FindFirstAnimationName() is not null;
         AddChild(new Label(CreateDescription(), 0f, 28f)
         {
-            ForegroundColor = resolvedTheme.TextSecondary,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Secondary),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0f, PreviewHeight + 8f, 0f, 0f)
         });
@@ -642,7 +642,7 @@ public sealed class ModelPreviewInspectorContent : Panel, IInspectorContentLifec
         {
             AddChild(new Label($"Preview model: {PreviewModelName}", 0f, 24f)
             {
-                ForegroundColor = resolvedTheme.TextMuted,
+                TextStyle = resolvedTheme.GetTextStyle(UITextRole.Muted),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(0f, PreviewHeight + 34f, 0f, 0f)
             });

@@ -150,7 +150,7 @@ public class UIThemeTests
     public void Button_ContentConstructor_AllowsCustomLayout()
     {
         var icon = new Box(12f, 12f) { BackgroundColor = Color.White };
-        var label = new Label("Import") { PaddingLeft = 0f };
+        var label = new Label("Import") { Padding = Thickness.Zero };
         var content = UI.Row(UITheme.Dark.Surface, icon, label.Grow());
         content.Gap = 4f;
         content.AlignItems = FlexAlignment.Center;
@@ -164,7 +164,7 @@ public class UIThemeTests
             command => command.Type == UIDrawCommandType.Text && command.Text == "Import");
     }
 
-    /// <summary>Verifies fixed button content cannot paint across neighboring controls.</summary>
+    /// <summary>Verifies fixed button content clips to the padding-defined content box.</summary>
     [Fact]
     public void Button_Content_IsClippedToButtonBounds()
     {
@@ -174,7 +174,11 @@ public class UIThemeTests
             command => command.Type == UIDrawCommandType.Text);
 
         Assert.True(button.ClipToBounds);
-        Assert.Equal(new UIClipRect(button.Left, button.Top, button.Right, button.Bottom), text.Clip);
+        Assert.Equal(new UIClipRect(
+            button.ContentLeft,
+            button.ContentTop,
+            button.ContentLeft + button.ContentWidth,
+            button.ContentTop + button.ContentHeight), text.Clip);
     }
 
     /// <summary>Verifies a rounded surface paints an outer border and inset fill.</summary>
@@ -386,7 +390,7 @@ public class UIThemeTests
         Assert.Equal(
             Assert.IsType<Label>(listRow.Content).FontSize,
             Assert.IsType<Label>(treeRow.Content).FontSize);
-        Assert.Equal(listRow.PaddingLeft, treeRow.PaddingLeft);
+        Assert.Equal(listRow.Padding.Left, treeRow.Padding.Left);
     }
 
     /// <summary>Verifies drag previews paint above content without intercepting drop hit tests.</summary>
@@ -439,6 +443,30 @@ public class UIThemeTests
         Assert.True(drawList.Commands.Count(command =>
             command.Type == UIDrawCommandType.RoundedRectangle &&
             command.CornerRadius > 0f) >= 2);
+    }
+
+    /// <summary>Verifies long text is clipped to its owning field while unfocused.</summary>
+    [Fact]
+    public void TextField_LongUnfocusedValue_ClipsContentToBounds()
+    {
+        var field = new TextField(60f, 30f)
+        {
+            Text = "This value is much wider than the field",
+            Padding = new Thickness(7f, 3f, 9f, 5f)
+        };
+
+        var textCommand = Assert.Single(field.BuildDrawList().Commands,
+            command => command.Type == UIDrawCommandType.Text);
+
+        Assert.True(field.ClipToBounds);
+        Assert.Equal(field.Text, textCommand.Text);
+        Assert.Equal(
+            new UIClipRect(
+                field.ContentLeft,
+                field.ContentTop,
+                field.ContentLeft + field.ContentWidth,
+                field.ContentTop + field.ContentHeight),
+            textCommand.Clip);
     }
 
     /// <summary>Verifies a focused long value keeps its editable tail and caret visible.</summary>
@@ -620,8 +648,8 @@ public class UIThemeTests
         var close = Assert.IsType<Button>(titleBar.RightZone.Children.Single(
             child => child.Name == "WindowClose"));
         Assert.Equal(titleBar.Right, close.Right);
-        Assert.Equal(Color.FromSrgb(0xE8, 0x11, 0x23), close.HoverColor);
-        Assert.Equal(Color.FromSrgb(0xC5, 0x0F, 0x1F), close.PressedColor);
+        Assert.Equal(Color.FromSrgb(0xE8, 0x11, 0x23), close.InteractionColors.Hovered);
+        Assert.Equal(Color.FromSrgb(0xC5, 0x0F, 0x1F), close.InteractionColors.Pressed);
         Assert.All(titleBar.RightZone.Children.OfType<Button>(),
             button => Assert.Equal(0f, button.CornerRadius));
         Assert.All(titleBar.RightZone.Children.OfType<Button>(),

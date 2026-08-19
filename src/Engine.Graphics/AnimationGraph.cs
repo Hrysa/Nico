@@ -20,10 +20,7 @@ public sealed class AnimationState
 {
     private readonly AnimationController _controller;
     private double _time;
-    private float _speed = 1f;
     private bool _endedRaised;
-    private bool _loop = true;
-    private bool _isPlaying;
 
     /// <summary>Gets the stable registry key.</summary>
     public string Key { get; }
@@ -62,15 +59,15 @@ public sealed class AnimationState
     /// <summary>Gets or sets the signed playback-rate multiplier.</summary>
     public float Speed
     {
-        get => _speed;
+        get;
         set
         {
             _controller.EnsureAlive();
             if (!float.IsFinite(value))
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _speed = value;
+            field = value;
         }
-    }
+    } = 1f;
 
     /// <summary>Gets the current contribution to the base layer.</summary>
     public float Weight { get; internal set; }
@@ -87,22 +84,22 @@ public sealed class AnimationState
     /// <summary>Gets or sets whether playback wraps at clip boundaries.</summary>
     public bool Loop
     {
-        get => _loop;
+        get;
         set
         {
             _controller.EnsureAlive();
-            _loop = value;
+            field = value;
         }
-    }
+    } = true;
 
     /// <summary>Gets or sets whether clip time advances.</summary>
     public bool IsPlaying
     {
-        get => _isPlaying;
+        get;
         set
         {
             _controller.EnsureAlive();
-            _isPlaying = value;
+            field = value;
         }
     }
 
@@ -393,7 +390,6 @@ public sealed class AnimationController : IDisposable
     private readonly List<AnimationState> _endedQueue = [];
     private readonly JointTransform[] _blendedLocals;
     private bool _disposed;
-    private float _defaultFadeDuration;
 
     /// <summary>Gets the target skinned resource.</summary>
     public SkinnedMeshResource Resource { get; }
@@ -422,12 +418,12 @@ public sealed class AnimationController : IDisposable
     /// <summary>Gets or sets the fade used by the single-argument Play overload.</summary>
     public float DefaultFadeDuration
     {
-        get => _defaultFadeDuration;
+        get;
         set
         {
             if (!float.IsFinite(value) || value < 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _defaultFadeDuration = value;
+            field = value;
         }
     }
 

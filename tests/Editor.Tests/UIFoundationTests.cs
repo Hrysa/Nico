@@ -44,17 +44,23 @@ public class UIFoundationTests
         root.Resources.SetStyle(new UIStyle<Button>()
             .Add(button => button.Padding = new Thickness(12f, 3f))
             .Add(button => button.ForegroundColor = Color.Yellow), "primary");
+        root.Resources.SetStyle(new UIStyle<Label>()
+            .Add(label => label.TextStyle = new UITextStyle(13f, Color.Cyan)), "caption");
         var branch = new Panel(Color.Black);
         branch.Resources.Set("spacing", new ResourceBox(8f));
         var button = new Button(100f, 30f, "Apply") { StyleKey = "primary" };
+        var label = new Label("Status") { StyleKey = "caption" };
         root.AddChild(branch);
         branch.AddChild(button);
+        branch.AddChild(label);
 
         Assert.True(button.TryFindResource("spacing", out ResourceBox? resource));
         Assert.Equal(8f, resource!.Value);
         Assert.True(button.ApplyStyle());
         Assert.Equal(new Thickness(12f, 3f), button.Padding);
         Assert.Equal(Color.Yellow, button.ForegroundColor);
+        Assert.True(label.ApplyStyle());
+        Assert.Equal(new UITextStyle(13f, Color.Cyan), label.TextStyle);
     }
 
     /// <summary>Verifies control templates replace their owned visual root deterministically.</summary>

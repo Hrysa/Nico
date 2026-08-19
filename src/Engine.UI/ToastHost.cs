@@ -64,8 +64,7 @@ public sealed class ToastNotification : Surface
         Padding = new Thickness(10f, 0f);
         _message = new Label(text)
         {
-            ForegroundColor = theme.TextPrimary,
-            FontSize = theme.CaptionFontSize,
+            TextStyle = theme.GetTextStyle(UITextRole.Caption),
             IsHitTestVisible = false
         };
         AddChild(_message);
@@ -165,7 +164,6 @@ public sealed class ToastHost : UIElement
     private const float EdgeInset = 12f;
     private readonly List<ToastEntry> _entries = [];
     private readonly UITheme _theme;
-    private int _maxVisible = 5;
 
     /// <summary>Gets the number of visible notifications.</summary>
     public int Count => _entries.Count;
@@ -173,16 +171,16 @@ public sealed class ToastHost : UIElement
     /// <summary>Gets or sets the maximum number of retained notifications; oldest entries are discarded first.</summary>
     public int MaxVisible
     {
-        get => _maxVisible;
+        get;
         set
         {
             if (value < 1)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _maxVisible = value;
-            while (_entries.Count > _maxVisible)
+            field = value;
+            while (_entries.Count > field)
                 Dismiss(_entries[0].Notification);
         }
-    }
+    } = 5;
 
     /// <summary>Gets or sets whether a notification's lifetime pauses while it or a child is hovered.</summary>
     public bool PauseOnHover { get; set; } = true;
@@ -355,11 +353,6 @@ public sealed class ToastHost : UIElement
                 return _entries[index];
         }
         return null;
-    }
-
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
     }
 
     /// <summary>Stores one notification and its remaining lifetime.</summary>

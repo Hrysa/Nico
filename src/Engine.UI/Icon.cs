@@ -115,7 +115,7 @@ public sealed class Icon : UIElement
     }
 
     /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
+    protected override void PaintContent(UIDrawList drawList)
     {
         if (_kind == IconKind.Texture)
         {

@@ -25,8 +25,7 @@ public sealed class UIValidationSummary : Label, IDisposable
         ArgumentNullException.ThrowIfNull(form);
         var resolvedTheme = theme ?? UITheme.Dark;
         _form = form;
-        ForegroundColor = resolvedTheme.Error;
-        FontSize = resolvedTheme.CaptionFontSize;
+        TextStyle = resolvedTheme.GetTextStyle(UITextRole.Error);
         _form.StateChanged += Refresh;
         Refresh();
     }

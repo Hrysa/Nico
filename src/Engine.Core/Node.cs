@@ -10,11 +10,8 @@ public class Node
     private readonly List<Node> _children = new();
     private readonly List<Component> _components = new();
     private Node? _parent;
-    private Vector3 _position;
     private Vector3 _rotation;
     private Quaternion _orientation = Quaternion.Identity;
-    private Vector3 _scale = Vector3.One;
-    private string _name = string.Empty;
 
     /// <summary>Occurs after authored state on this node changes.</summary>
     public event Action<NodeChangeKind>? Changed;
@@ -22,12 +19,12 @@ public class Node
     /// <summary>Gets or sets the local position relative to the parent.</summary>
     public Vector3 Position
     {
-        get => _position;
+        get;
         set
         {
-            if (_position == value)
+            if (field == value)
                 return;
-            _position = value;
+            field = value;
             NotifyTransformChanged();
         }
     }
@@ -68,29 +65,29 @@ public class Node
     /// <summary>Gets or sets the local scale.</summary>
     public Vector3 Scale
     {
-        get => _scale;
+        get;
         set
         {
-            if (_scale == value)
+            if (field == value)
                 return;
-            _scale = value;
+            field = value;
             NotifyTransformChanged();
         }
-    }
+    } = Vector3.One;
 
     /// <summary>Gets or sets the node name for debugging.</summary>
     public string Name
     {
-        get => _name;
+        get;
         set
         {
             value ??= string.Empty;
-            if (string.Equals(_name, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
                 return;
-            _name = value;
+            field = value;
             Changed?.Invoke(NodeChangeKind.Name);
         }
-    }
+    } = string.Empty;
 
     /// <summary>Gets or sets the first persistent game script attached to this node.</summary>
     /// <remarks>This compatibility facade removes all scripts when assigned null. Use

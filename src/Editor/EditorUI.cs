@@ -31,9 +31,8 @@ public static class EditorUI
         var projectLabel = new Label("Untitled.node", 180f, titleBarHeight)
         {
             Name = "ProjectLabel",
-            FontSize = theme.FontSize,
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero,
             Margin = new Thickness(5f, 0f, 0f, 0f)
         };
         var windowMenu = new ContextMenu(180f, theme) { Name = "WindowMenu" };
@@ -108,9 +107,8 @@ public static class EditorUI
 
         var profilerPauseLabel = new Label("Record")
         {
-            FontSize = theme.CaptionFontSize,
-            ForegroundColor = theme.TextPrimary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Caption),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         var profilerLayout = UI.Column(
@@ -170,9 +168,8 @@ public static class EditorUI
                 new FlexPanel().Grow(),
                 new Label("Perspective", 96f, viewportToolbarHeight)
                 {
-                    ForegroundColor = theme.TextSecondary,
-                    FontSize = theme.CaptionFontSize,
-                    PaddingLeft = 0f
+                    TextStyle = theme.GetTextStyle(UITextRole.SecondaryCaption),
+                    Padding = Thickness.Zero
                 }
             ],
             backgroundColor: theme.SurfaceRaised,

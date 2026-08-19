@@ -12,12 +12,9 @@ public enum UIOrientation
 }
 
 /// <summary>Displays and edits one normalized view over a scrollable extent.</summary>
-public sealed class ScrollBar : UIElement
+public sealed class ScrollBar : RangeBase
 {
     private readonly UITheme _theme;
-    private float _value;
-    private float _maximum;
-    private float _viewportSize;
 
     /// <summary>Gets the bar orientation.</summary>
     public UIOrientation ScrollOrientation { get; }
@@ -25,49 +22,26 @@ public sealed class ScrollBar : UIElement
     /// <summary>Gets the reusable draggable thumb.</summary>
     public Thumb Thumb { get; }
 
-    /// <summary>Gets or sets the current offset.</summary>
-    public float Value
-    {
-        get => _value;
-        set => SetValue(value, notify: true);
-    }
-
-    /// <summary>Gets or sets the greatest permitted offset.</summary>
-    public float Maximum
-    {
-        get => _maximum;
-        set
-        {
-            var resolved = MathF.Max(0f, value);
-            if (_maximum == resolved)
-                return;
-            _maximum = resolved;
-            SetValue(_value, notify: false);
-            InvalidateVisual();
-        }
-    }
-
     /// <summary>Gets or sets the visible size used to calculate thumb length.</summary>
     public float ViewportSize
     {
-        get => _viewportSize;
+        get;
         set
         {
             var resolved = MathF.Max(0f, value);
-            if (_viewportSize == resolved)
+            if (field == resolved)
                 return;
-            _viewportSize = resolved;
+            field = resolved;
+            InvalidateArrange();
             InvalidateVisual();
         }
     }
-
-    /// <summary>Occurs when user or application input changes the value.</summary>
-    public event Action<float>? ValueChanged;
 
     /// <summary>Creates a scroll bar.</summary>
     /// <param name="orientation">Scrolling axis.</param>
     /// <param name="theme">Theme supplying track and thumb colors.</param>
     public ScrollBar(UIOrientation orientation, UITheme? theme = null)
+        : base(0f, 0f, 0f, 0f)
     {
         ScrollOrientation = orientation;
         _theme = theme ?? UITheme.Dark;
@@ -79,7 +53,7 @@ public sealed class ScrollBar : UIElement
 
     /// <summary>Updates the bar without reporting a user-facing value change.</summary>
     /// <param name="value">New offset.</param>
-    public void SynchronizeValue(float value) => SetValue(value, notify: false);
+    public void SynchronizeValue(float value) => SetValueCore(value, notify: false);
 
     /// <inheritdoc/>
     protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
@@ -94,7 +68,7 @@ public sealed class ScrollBar : UIElement
         var trackLength = ScrollOrientation == UIOrientation.Horizontal ? contentSize.X : contentSize.Y;
         var thumbLength = ResolveThumbLength(trackLength);
         var travel = MathF.Max(0f, trackLength - thumbLength);
-        var start = Maximum <= 0f ? 0f : travel * Value / Maximum;
+        var start = travel * NormalizedValue;
         if (ScrollOrientation == UIOrientation.Horizontal)
             Thumb.Arrange(new System.Numerics.Vector2(start, 0f),
                 new System.Numerics.Vector2(thumbLength, contentSize.Y));
@@ -116,7 +90,7 @@ public sealed class ScrollBar : UIElement
             return;
         var coordinate = ScrollOrientation == UIOrientation.Horizontal
             ? pointerEvent.LocalPosition.X : pointerEvent.LocalPosition.Y;
-        Value = Maximum * Math.Clamp(coordinate / length, 0f, 1f);
+        Value = ValueFromRatio(coordinate / length);
         pointerEvent.Handled = true;
     }
 
@@ -126,10 +100,10 @@ public sealed class ScrollBar : UIElement
     {
         var trackLength = ScrollOrientation == UIOrientation.Horizontal ? Width : Height;
         var travel = MathF.Max(0f, trackLength - ResolveThumbLength(trackLength));
-        if (travel <= 0f || Maximum <= 0f)
+        if (travel <= 0f || RangeLength <= 0f)
             return;
         var axisDelta = ScrollOrientation == UIOrientation.Horizontal ? delta.X : delta.Y;
-        Value += axisDelta * Maximum / travel;
+        Value += axisDelta * RangeLength / travel;
     }
 
     /// <summary>Calculates thumb length from extent and viewport state.</summary>
@@ -137,23 +111,22 @@ public sealed class ScrollBar : UIElement
     /// <returns>Clamped thumb length.</returns>
     private float ResolveThumbLength(float trackLength)
     {
-        var total = Maximum + ViewportSize;
+        var total = RangeLength + ViewportSize;
         var thumbLength = total <= 0f ? trackLength : trackLength * ViewportSize / total;
         return Math.Clamp(thumbLength, MathF.Min(trackLength, 12f), trackLength);
     }
 
-    /// <summary>Clamps and optionally reports a value change.</summary>
-    /// <param name="value">Requested value.</param>
-    /// <param name="notify">Whether to raise <see cref="ValueChanged"/>.</param>
-    private void SetValue(float value, bool notify)
+    /// <inheritdoc/>
+    protected override void OnRangeChanged()
     {
-        var resolved = Math.Clamp(value, 0f, Maximum);
-        if (_value == resolved)
-            return;
-        _value = resolved;
-        InvalidateVisual();
         InvalidateArrange();
-        if (notify)
-            ValueChanged?.Invoke(_value);
+        base.OnRangeChanged();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnValueChanged(float previousValue, float value)
+    {
+        InvalidateArrange();
+        base.OnValueChanged(previousValue, value);
     }
 }

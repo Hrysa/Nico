@@ -59,10 +59,8 @@ public sealed class CharacterLocomotionAnimator : SceneScript
     /// <inheritdoc />
     public override void OnDestroy()
     {
-        if (_jumpAnimation is not null)
-            _jumpAnimation.Ended -= OnJumpEnded;
-        if (_attackAnimation is not null)
-            _attackAnimation.Ended -= OnAttackEnded;
+        _jumpAnimation?.Ended -= OnJumpEnded;
+        _attackAnimation?.Ended -= OnAttackEnded;
     }
 
     /// <summary>Returns to current locomotion after the one-shot jump finishes.</summary>

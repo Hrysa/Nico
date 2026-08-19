@@ -251,7 +251,7 @@ public sealed class DockHost : UIElement
         return new Label($"Missing dock panel: {id}")
         {
             ForegroundColor = _theme.TextMuted,
-            PaddingLeft = _theme.ItemRowPadding,
+            Padding = new Thickness(_theme.ItemRowPadding, 0f, 0f, 0f),
             IsHitTestVisible = false
         };
     }
@@ -438,7 +438,7 @@ internal sealed class DockTabGroupPresenter : Box
 /// <summary>Arranges two dock presenters around a draggable splitter.</summary>
 internal sealed class DockSplitPresenter : UIElement
 {
-    private const float SplitterThickness = 4f;
+    private readonly float _splitterThickness;
     private readonly DockSplit _model;
     private readonly UIElement _first;
     private readonly UIElement _second;
@@ -459,6 +459,7 @@ internal sealed class DockSplitPresenter : UIElement
         UITheme theme)
     {
         _model = model;
+        _splitterThickness = theme.DockSplitterThickness;
         _first = first;
         _second = second;
         _splitter = new Thumb(theme, isTransparent: true, enableHoverState: false);
@@ -478,7 +479,7 @@ internal sealed class DockSplitPresenter : UIElement
         var availableLength = MathF.Max(0f,
             (_model.Orientation == DockSplitOrientation.Horizontal
                 ? availableSize.X
-                : availableSize.Y) - SplitterThickness);
+                : availableSize.Y) - _splitterThickness);
         var firstLength = availableLength * _model.Ratio;
         if (_model.Orientation == DockSplitOrientation.Horizontal)
         {
@@ -500,22 +501,22 @@ internal sealed class DockSplitPresenter : UIElement
         var availableLength = MathF.Max(0f,
             (_model.Orientation == DockSplitOrientation.Horizontal
                 ? contentSize.X
-                : contentSize.Y) - SplitterThickness);
+                : contentSize.Y) - _splitterThickness);
         var firstLength = availableLength * _model.Ratio;
         if (_model.Orientation == DockSplitOrientation.Horizontal)
         {
             _first.Arrange(Vector2.Zero, new Vector2(firstLength, contentSize.Y));
             _splitter.Arrange(new Vector2(firstLength, 0f),
-                new Vector2(SplitterThickness, contentSize.Y));
-            _second.Arrange(new Vector2(firstLength + SplitterThickness, 0f),
+                new Vector2(_splitterThickness, contentSize.Y));
+            _second.Arrange(new Vector2(firstLength + _splitterThickness, 0f),
                 new Vector2(availableLength - firstLength, contentSize.Y));
         }
         else
         {
             _first.Arrange(Vector2.Zero, new Vector2(contentSize.X, firstLength));
             _splitter.Arrange(new Vector2(0f, firstLength),
-                new Vector2(contentSize.X, SplitterThickness));
-            _second.Arrange(new Vector2(0f, firstLength + SplitterThickness),
+                new Vector2(contentSize.X, _splitterThickness));
+            _second.Arrange(new Vector2(0f, firstLength + _splitterThickness),
                 new Vector2(contentSize.X, availableLength - firstLength));
         }
     }
@@ -526,7 +527,7 @@ internal sealed class DockSplitPresenter : UIElement
     {
         var availableLength = (_model.Orientation == DockSplitOrientation.Horizontal
             ? _arrangedSize.X
-            : _arrangedSize.Y) - SplitterThickness;
+            : _arrangedSize.Y) - _splitterThickness;
         if (availableLength <= 0f)
             return;
         var movement = _model.Orientation == DockSplitOrientation.Horizontal ? delta.X : delta.Y;

@@ -273,12 +273,9 @@ public sealed class UIHost : IDisposable
             _input.KeyUp += OnKeyUp;
             _input.TextInput += OnTextInput;
         }
-        if (_textInputMethod is not null)
-            _textInputMethod.TextCompositionChanged += OnTextCompositionChanged;
-        if (_gestureInput is not null)
-            _gestureInput.PointerMagnified += OnPointerMagnified;
-        if (_navigationInput is not null)
-            _navigationInput.NavigationChanged += OnNavigationChanged;
+        _textInputMethod?.TextCompositionChanged += OnTextCompositionChanged;
+        _gestureInput?.PointerMagnified += OnPointerMagnified;
+        _navigationInput?.NavigationChanged += OnNavigationChanged;
         _windowsAccessibility = WindowsAccessibilityAdapter.TryCreate(
             window, root, Dispatcher, Refresh);
         _macOSAccessibility = MacOSAccessibilityAdapter.TryCreate(
@@ -424,12 +421,9 @@ public sealed class UIHost : IDisposable
             _input.KeyUp -= OnKeyUp;
             _input.TextInput -= OnTextInput;
         }
-        if (_textInputMethod is not null)
-            _textInputMethod.TextCompositionChanged -= OnTextCompositionChanged;
-        if (_gestureInput is not null)
-            _gestureInput.PointerMagnified -= OnPointerMagnified;
-        if (_navigationInput is not null)
-            _navigationInput.NavigationChanged -= OnNavigationChanged;
+        _textInputMethod?.TextCompositionChanged -= OnTextCompositionChanged;
+        _gestureInput?.PointerMagnified -= OnPointerMagnified;
+        _navigationInput?.NavigationChanged -= OnNavigationChanged;
         if (_schedulingMode != UIHostSchedulingMode.ExternallyManaged)
             _window.SetContinuousRendering(false);
         if (_pointerCursor != PointerCursorKind.Default)

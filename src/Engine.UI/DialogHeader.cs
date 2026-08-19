@@ -20,17 +20,15 @@ public sealed class DialogHeader : Panel
         var resolvedTheme = theme ?? UITheme.Dark;
         _title = new Label(title)
         {
-            FontSize = 25.5f,
-            ForegroundColor = resolvedTheme.TextPrimary,
-            PaddingLeft = 0f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.DialogTitle),
+            Padding = Thickness.Zero
         };
         if (!string.IsNullOrWhiteSpace(subtitle))
         {
             _subtitle = new Label(subtitle)
             {
-                FontSize = resolvedTheme.CaptionFontSize,
-                ForegroundColor = resolvedTheme.TextSecondary,
-                PaddingLeft = 0f
+                TextStyle = resolvedTheme.GetTextStyle(UITextRole.SecondaryCaption),
+                Padding = Thickness.Zero
             };
         }
         _separator = new Separator(0f, 1f, resolvedTheme);

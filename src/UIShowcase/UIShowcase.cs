@@ -186,7 +186,7 @@ public static class UIShowcase
         section.AddRow("Typography",
             new Label("Latin · العربية · עברית · 日本語 · 😀", 420f, ControlHeight)
             {
-                ForegroundColor = theme.TextPrimary
+                TextStyle = theme.GetTextStyle(UITextRole.Body)
             });
 
         var field = new TextField(260f, ControlHeight, theme)
@@ -369,7 +369,7 @@ public static class UIShowcase
             "ViewportPanel is shown without a registered render view. Image requires a renderer-owned TextureHandle.",
             470f, 72f)
         {
-            ForegroundColor = theme.TextSecondary,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
             Wrapping = TextWrapMode.Wrap
         };
         section.AddRow(new ShowcaseRow(RowWidth, 88f, "Graphics-backed", theme, viewport, note));
@@ -395,7 +395,7 @@ public static class UIShowcase
         content.AddItem(new TextBlock(
             "This dialog is hosted in the same overlay as popups and notifications.", 360f, 42f)
         {
-            ForegroundColor = theme.TextPrimary,
+            TextStyle = theme.GetTextStyle(UITextRole.Body),
             Wrapping = TextWrapMode.Wrap
         });
         var close = new Button(100f, ControlHeight, "Close", theme, ButtonStyle.Primary);
@@ -417,8 +417,8 @@ public static class UIShowcase
     {
         return new Label(text)
         {
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 14f
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = new Thickness(14f, 0f, 0f, 0f)
         };
     }
 
@@ -430,10 +430,10 @@ public static class UIShowcase
     {
         return new Label(text)
         {
-            ForegroundColor = theme.TextPrimary,
+            TextStyle = theme.GetTextStyle(UITextRole.Body),
             BackgroundColor = theme.Surface,
             PaintBackground = true,
-            PaddingLeft = 10f,
+            Padding = new Thickness(10f, 0f, 0f, 0f),
             Margin = new Thickness(2f)
         };
     }
@@ -446,8 +446,8 @@ public static class UIShowcase
         Name = "Interaction status",
         BackgroundColor = theme.SurfaceRaised,
         PaintBackground = true,
-        ForegroundColor = theme.TextSecondary,
-        PaddingLeft = 12f,
+        TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+        Padding = new Thickness(12f, 0f, 0f, 0f),
         IsHitTestVisible = false
     };
 
@@ -566,7 +566,7 @@ internal sealed class ShowcaseRow : UIElement
     {
         _label = new Label(label, LabelWidth, height)
         {
-            ForegroundColor = theme.TextSecondary,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
         };
         AddChild(_label);
     }

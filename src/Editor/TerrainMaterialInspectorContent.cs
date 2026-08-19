@@ -361,7 +361,7 @@ public sealed class TerrainMaterialInspectorContent : Panel, IInspectorContentLi
         var status = new Label(string.Empty, width, 30f)
         {
             Name = "TerrainMaterialDocumentStatus",
-            ForegroundColor = resolvedTheme.TextMuted,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Muted),
             Margin = new Thickness(0f, 248f, 0f, 0f)
         };
         AddChild(status);

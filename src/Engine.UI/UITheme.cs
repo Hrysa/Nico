@@ -88,6 +88,9 @@ public sealed record UITheme
     /// <summary>Gets the font size used by panel titles.</summary>
     public float PanelTitleFontSize { get; init; } = 16f;
 
+    /// <summary>Gets the font size used by prominent dialog titles.</summary>
+    public float DialogTitleFontSize { get; init; } = 25.5f;
+
     /// <summary>Gets the standard corner radius used by panels.</summary>
     public float PanelCornerRadius { get; init; } = 6f;
 
@@ -109,9 +112,121 @@ public sealed record UITheme
     /// <summary>Gets the normal control height.</summary>
     public float ControlHeight { get; init; } = 30f;
 
+    /// <summary>Gets the standard corner radius of interactive controls.</summary>
+    public float ControlCornerRadius { get; init; } = 5f;
+
+    /// <summary>Gets the standard horizontal content inset of interactive controls.</summary>
+    public float ControlHorizontalPadding { get; init; } = 7f;
+
+    /// <summary>Gets the standard content inset of text-bearing controls.</summary>
+    public float TextContentPadding { get; init; } = 4f;
+
+    /// <summary>Gets the standard scrollbar cross-axis thickness.</summary>
+    public float ScrollBarThickness { get; init; } = 10f;
+
+    /// <summary>Gets the standard slider thumb length along its track.</summary>
+    public float SliderThumbSize { get; init; } = 14f;
+
+    /// <summary>Gets the standard context-menu item height.</summary>
+    public float MenuItemHeight { get; init; } = 26f;
+
+    /// <summary>Gets the standard context-menu separator height.</summary>
+    public float MenuSeparatorHeight { get; init; } = 9f;
+
+    /// <summary>Gets the standard draggable dock-splitter thickness.</summary>
+    public float DockSplitterThickness { get; init; } = 4f;
+
     /// <summary>Gets the standard small spacing unit.</summary>
     public float SpacingSmall { get; init; } = 5f;
 
     /// <summary>Gets the standard spacing unit.</summary>
     public float Spacing { get; init; } = 10f;
+
+    /// <summary>Resolves a reusable typography style from a semantic role.</summary>
+    /// <param name="role">Semantic text role.</param>
+    /// <returns>The role's font size and foreground color.</returns>
+    public UITextStyle GetTextStyle(UITextRole role) => role switch
+    {
+        UITextRole.Secondary => new UITextStyle(FontSize, TextSecondary),
+        UITextRole.Muted => new UITextStyle(FontSize, TextMuted),
+        UITextRole.Caption => new UITextStyle(CaptionFontSize, TextPrimary),
+        UITextRole.SecondaryCaption => new UITextStyle(CaptionFontSize, TextSecondary),
+        UITextRole.MutedCaption => new UITextStyle(CaptionFontSize, TextMuted),
+        UITextRole.PanelTitle => new UITextStyle(PanelTitleFontSize, TextSecondary),
+        UITextRole.PrimaryPanelTitle => new UITextStyle(PanelTitleFontSize, TextPrimary),
+        UITextRole.DialogTitle => new UITextStyle(DialogTitleFontSize, TextPrimary),
+        UITextRole.AccentCaption => new UITextStyle(CaptionFontSize, AccentHover),
+        UITextRole.Error => new UITextStyle(CaptionFontSize, Error),
+        _ => new UITextStyle(FontSize, TextPrimary)
+    };
+
+    /// <summary>Resolves all reusable presentation properties for a button emphasis.</summary>
+    /// <param name="style">Requested button emphasis.</param>
+    /// <returns>The complete button visual style.</returns>
+    public UIButtonVisualStyle GetButtonStyle(ButtonStyle style)
+    {
+        var normal = style switch
+        {
+            ButtonStyle.Primary => SurfacePressed,
+            ButtonStyle.Header => Surface,
+            _ => SurfaceRaised
+        };
+        var pressed = style == ButtonStyle.Primary ? BorderStrong : SurfacePressed;
+        return new UIButtonVisualStyle(
+            new UIInteractionColors(
+                normal,
+                SurfaceHover,
+                pressed,
+                AccentPressed,
+                AccentHover,
+                normal),
+            style switch
+            {
+                ButtonStyle.Primary => Accent,
+                ButtonStyle.Header => TextSecondary,
+                _ => TextPrimary
+            },
+            style == ButtonStyle.Primary,
+            style == ButtonStyle.Header ? 0f : ControlCornerRadius);
+    }
+
+    /// <summary>Gets the shared interaction palette for selectable item rows.</summary>
+    /// <returns>List and tree item interaction colors.</returns>
+    public UIInteractionColors GetItemInteractionColors() => new(
+        Surface,
+        SurfaceHover,
+        SurfacePressed,
+        SurfacePressed,
+        SurfaceHover,
+        Surface);
+
+    /// <summary>Gets the shared interaction palette for draggable thumbs.</summary>
+    /// <returns>Thumb interaction colors.</returns>
+    public UIInteractionColors GetThumbInteractionColors() => new(
+        BorderStrong,
+        SurfaceHover,
+        SurfacePressed,
+        BorderStrong,
+        SurfaceHover,
+        BorderStrong);
+
+    /// <summary>Gets the shared interaction palette for a toggle-switch track.</summary>
+    /// <returns>Track colors for unchecked and selected states.</returns>
+    public UIInteractionColors GetToggleSwitchTrackColors() => new(
+        SurfaceRaised,
+        SurfaceHover,
+        SurfacePressed,
+        AccentPressed,
+        AccentHover,
+        SurfaceRaised);
+
+    /// <summary>Gets the shared interaction palette for a toggle-switch knob.</summary>
+    /// <returns>Knob colors for unchecked and selected states.</returns>
+    public UIInteractionColors GetToggleSwitchKnobColors() => new(
+        TextSecondary,
+        TextPrimary,
+        TextPrimary,
+        Accent,
+        AccentHover,
+        TextMuted);
 }

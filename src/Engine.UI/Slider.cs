@@ -4,13 +4,10 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>Edits a bounded scalar value with pointer drag, track press, and keyboard input.</summary>
-public sealed class Slider : UIElement
+public sealed class Slider : RangeBase
 {
-    private const float DefaultThumbSize = 14f;
     private readonly UITheme _theme;
-    private float _minimum;
-    private float _maximum = 1f;
-    private float _value;
+    private readonly float _thumbSize;
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -49,50 +46,8 @@ public sealed class Slider : UIElement
     /// <summary>Gets the draggable slider thumb.</summary>
     public Thumb Thumb { get; }
 
-    /// <summary>Gets or sets the minimum value.</summary>
-    public float Minimum
-    {
-        get => _minimum;
-        set
-        {
-            if (_minimum == value)
-                return;
-            _minimum = value;
-            if (_maximum < _minimum)
-                _maximum = _minimum;
-            SetValue(_value);
-            InvalidateArrange();
-            InvalidateVisual();
-        }
-    }
-
-    /// <summary>Gets or sets the maximum value.</summary>
-    public float Maximum
-    {
-        get => _maximum;
-        set
-        {
-            if (_maximum == value)
-                return;
-            _maximum = MathF.Max(Minimum, value);
-            SetValue(_value);
-            InvalidateArrange();
-            InvalidateVisual();
-        }
-    }
-
-    /// <summary>Gets or sets the current clamped value.</summary>
-    public float Value
-    {
-        get => _value;
-        set => SetValue(value);
-    }
-
     /// <summary>Gets or sets the keyboard increment.</summary>
     public float SmallChange { get; set; } = 0.1f;
-
-    /// <summary>Occurs when the current value changes.</summary>
-    public event Action<float>? ValueChanged;
 
     /// <summary>Creates a slider.</summary>
     /// <param name="orientation">Slider axis.</param>
@@ -104,10 +59,11 @@ public sealed class Slider : UIElement
         float width,
         float height,
         UITheme? theme = null)
-        : base(width, height)
+        : base(width, height, 0f, 1f)
     {
         SliderOrientation = orientation;
         _theme = theme ?? UITheme.Dark;
+        _thumbSize = _theme.SliderThumbSize;
         IsTabStop = true;
         Thumb = new Thumb(_theme);
         Thumb.DragDelta += OnThumbDragDelta;
@@ -126,16 +82,16 @@ public sealed class Slider : UIElement
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
-        var ratio = ResolveRatio();
+        var ratio = NormalizedValue;
         if (SliderOrientation == UIOrientation.Horizontal)
         {
-            var size = MathF.Min(DefaultThumbSize, contentSize.X);
+            var size = MathF.Min(_thumbSize, contentSize.X);
             Thumb.Arrange(new Vector2((contentSize.X - size) * ratio, 0f),
                 new Vector2(size, contentSize.Y));
         }
         else
         {
-            var size = MathF.Min(DefaultThumbSize, contentSize.Y);
+            var size = MathF.Min(_thumbSize, contentSize.Y);
             Thumb.Arrange(new Vector2(0f, (contentSize.Y - size) * (1f - ratio)),
                 new Vector2(contentSize.X, size));
         }
@@ -147,21 +103,21 @@ public sealed class Slider : UIElement
         if (SliderOrientation == UIOrientation.Horizontal)
         {
             var y = Top + Height / 2f;
-            drawList.AddLine(Left + DefaultThumbSize / 2f, y,
-                Right - DefaultThumbSize / 2f, y, 2f, _theme.BorderStrong);
-            drawList.AddLine(Left + DefaultThumbSize / 2f, y,
-                Left + DefaultThumbSize / 2f +
-                    MathF.Max(0f, Width - DefaultThumbSize) * ResolveRatio(),
+            drawList.AddLine(Left + _thumbSize / 2f, y,
+                Right - _thumbSize / 2f, y, 2f, _theme.BorderStrong);
+            drawList.AddLine(Left + _thumbSize / 2f, y,
+                Left + _thumbSize / 2f +
+                    MathF.Max(0f, Width - _thumbSize) * NormalizedValue,
                 y, 2f, _theme.Accent);
         }
         else
         {
             var x = Left + Width / 2f;
-            drawList.AddLine(x, Top + DefaultThumbSize / 2f,
-                x, Bottom - DefaultThumbSize / 2f, 2f, _theme.BorderStrong);
-            drawList.AddLine(x, Bottom - DefaultThumbSize / 2f,
-                x, Bottom - DefaultThumbSize / 2f -
-                    MathF.Max(0f, Height - DefaultThumbSize) * ResolveRatio(),
+            drawList.AddLine(x, Top + _thumbSize / 2f,
+                x, Bottom - _thumbSize / 2f, 2f, _theme.BorderStrong);
+            drawList.AddLine(x, Bottom - _thumbSize / 2f,
+                x, Bottom - _thumbSize / 2f -
+                    MathF.Max(0f, Height - _thumbSize) * NormalizedValue,
                 2f, _theme.Accent);
         }
     }
@@ -177,7 +133,7 @@ public sealed class Slider : UIElement
         var ratio = SliderOrientation == UIOrientation.Horizontal
             ? pointerEvent.LocalPosition.X / MathF.Max(1f, Width)
             : 1f - pointerEvent.LocalPosition.Y / MathF.Max(1f, Height);
-        SetValue(Minimum + Math.Clamp(ratio, 0f, 1f) * (Maximum - Minimum));
+        Value = ValueFromRatio(ratio);
         pointerEvent.Handled = true;
     }
 
@@ -198,8 +154,8 @@ public sealed class Slider : UIElement
         };
         if (direction == 0f)
             return;
-        SetValue(float.IsNegativeInfinity(direction) ? Minimum :
-            float.IsPositiveInfinity(direction) ? Maximum : Value + direction * SmallChange);
+        Value = float.IsNegativeInfinity(direction) ? Minimum :
+            float.IsPositiveInfinity(direction) ? Maximum : Value + direction * SmallChange;
         keyEvent.Handled = true;
     }
 
@@ -208,28 +164,25 @@ public sealed class Slider : UIElement
     private void OnThumbDragDelta(Vector2 delta)
     {
         var travel = SliderOrientation == UIOrientation.Horizontal
-            ? MathF.Max(0f, Width - DefaultThumbSize)
-            : MathF.Max(0f, Height - DefaultThumbSize);
+            ? MathF.Max(0f, Width - _thumbSize)
+            : MathF.Max(0f, Height - _thumbSize);
         if (travel <= 0f)
             return;
         var movement = SliderOrientation == UIOrientation.Horizontal ? delta.X : -delta.Y;
-        SetValue(Value + movement * (Maximum - Minimum) / travel);
+        Value += movement * RangeLength / travel;
     }
 
-    /// <summary>Gets the normalized current value.</summary>
-    /// <returns>A value in the inclusive zero-to-one range.</returns>
-    private float ResolveRatio() => Maximum <= Minimum ? 0f : (Value - Minimum) / (Maximum - Minimum);
-
-    /// <summary>Clamps, invalidates, and reports a value change.</summary>
-    /// <param name="value">Requested value.</param>
-    private void SetValue(float value)
+    /// <inheritdoc/>
+    protected override void OnRangeChanged()
     {
-        var resolved = Math.Clamp(value, Minimum, Maximum);
-        if (_value == resolved)
-            return;
-        _value = resolved;
         InvalidateArrange();
-        InvalidateVisual();
-        ValueChanged?.Invoke(_value);
+        base.OnRangeChanged();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnValueChanged(float previousValue, float value)
+    {
+        InvalidateArrange();
+        base.OnValueChanged(previousValue, value);
     }
 }

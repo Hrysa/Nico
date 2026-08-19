@@ -89,7 +89,7 @@ Raw `System.Numerics.Matrix4x4` values are pushed without an explicit transpose.
 
 ## UI and windows
 
-Each native window owns one `UIHost`, dispatcher, input router, retained root, and rendering context. `DockSession` coordinates one authoritative workspace across main and floating windows. Layout changes are persisted by the editor dock session.
+Each native window owns one `UIHost`, dispatcher, input router, retained root, and rendering context. `UIElement` supplies the common content rectangle and clipped `PaintContent` phase; component states therefore share padding and clipping instead of implementing separate paint geometry. Interaction palettes, selectable state, numeric ranges, pointer capture, text styling, text fitting, popup placement, and collection selection are reusable UI foundations rather than control-local algorithms. `DockSession` coordinates one authoritative workspace across main and floating windows. Layout changes are persisted by the editor dock session.
 
 UI scheduling modes are `ExternallyManaged`, `EventDriven`, `Continuous`, and `Hybrid`. Hidden dock content sets `IsVisible = false`, removing the subtree from layout, painting, hit testing, and retained time updates.
 

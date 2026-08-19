@@ -65,15 +65,15 @@ public sealed class AnimationSetEditor : ContentControl
         _pathLabel = new Label("Open a .nanimset asset", 0f, resolvedTheme.ControlHeight)
         {
             Name = "AnimationSetPath",
-            ForegroundColor = resolvedTheme.TextSecondary,
-            PaddingLeft = 6f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Secondary),
+            Padding = new Thickness(6f, 0f, 0f, 0f)
         };
         _statusLabel = new Label("Drop imported animations here to add clips", 0f,
             resolvedTheme.ControlHeight)
         {
             Name = "AnimationSetStatus",
-            ForegroundColor = resolvedTheme.TextSecondary,
-            PaddingLeft = 6f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Secondary),
+            Padding = new Thickness(6f, 0f, 0f, 0f)
         };
         _entryList = new ListView(220f, 0f, resolvedTheme)
         {
@@ -270,8 +270,8 @@ public sealed class AnimationSetEditor : ContentControl
     [
         new Label(label, 92f, theme.ControlHeight)
         {
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero,
             FlexShrink = 0f
         },
         field.Grow()
@@ -287,8 +287,8 @@ public sealed class AnimationSetEditor : ContentControl
     [
         new Label(label, 92f, theme.ControlHeight)
         {
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero,
             FlexShrink = 0f
         },
         field.Grow()
@@ -304,8 +304,8 @@ public sealed class AnimationSetEditor : ContentControl
     [
         new Label(label, 92f, theme.ControlHeight)
         {
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero,
             FlexShrink = 0f
         },
         field.Grow()

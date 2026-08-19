@@ -45,8 +45,7 @@ public sealed class ToolTip : Popup, IDisposable
         var resolvedTheme = theme ?? UITheme.Dark;
         _label = new Label(text)
         {
-            FontSize = resolvedTheme.CaptionFontSize,
-            ForegroundColor = resolvedTheme.TextPrimary,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Caption),
             IsHitTestVisible = false
         };
         AddChild(_label);

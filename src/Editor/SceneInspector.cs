@@ -1513,7 +1513,7 @@ public sealed class SceneInspector : Panel
         {
             FontSize = _theme.FontSize,
             ForegroundColor = color,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             Margin = new Thickness(x, y, 0f, 0f)
         };
     }

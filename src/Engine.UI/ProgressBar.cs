@@ -3,14 +3,10 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>Displays determinate progress or a host-time-driven indeterminate segment.</summary>
-public sealed class ProgressBar : UIElement
+public sealed class ProgressBar : RangeBase
 {
     private readonly UITheme _theme;
-    private float _minimum;
-    private float _maximum = 1f;
-    private float _value;
     private float _animationPhase;
-    private bool _isIndeterminate;
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -25,54 +21,15 @@ public sealed class ProgressBar : UIElement
         Minimum: Minimum,
         Maximum: Maximum);
 
-    /// <summary>Gets or sets the minimum progress value.</summary>
-    public float Minimum
-    {
-        get => _minimum;
-        set
-        {
-            _minimum = value;
-            _maximum = MathF.Max(_maximum, value);
-            _value = Math.Clamp(_value, _minimum, _maximum);
-            InvalidateVisual();
-        }
-    }
-
-    /// <summary>Gets or sets the maximum progress value.</summary>
-    public float Maximum
-    {
-        get => _maximum;
-        set
-        {
-            _maximum = MathF.Max(Minimum, value);
-            _value = Math.Clamp(_value, _minimum, _maximum);
-            InvalidateVisual();
-        }
-    }
-
-    /// <summary>Gets or sets the current clamped progress value.</summary>
-    public float Value
-    {
-        get => _value;
-        set
-        {
-            var resolved = Math.Clamp(value, Minimum, Maximum);
-            if (_value == resolved)
-                return;
-            _value = resolved;
-            InvalidateVisual();
-        }
-    }
-
     /// <summary>Gets or sets whether an animated segment replaces determinate progress.</summary>
     public bool IsIndeterminate
     {
-        get => _isIndeterminate;
+        get;
         set
         {
-            if (_isIndeterminate == value)
+            if (field == value)
                 return;
-            _isIndeterminate = value;
+            field = value;
             InvalidateVisual();
         }
     }
@@ -84,7 +41,8 @@ public sealed class ProgressBar : UIElement
     /// <param name="width">Bar width.</param>
     /// <param name="height">Bar height.</param>
     /// <param name="theme">Theme supplying track and fill colors.</param>
-    public ProgressBar(float width, float height, UITheme? theme = null) : base(width, height)
+    public ProgressBar(float width, float height, UITheme? theme = null)
+        : base(width, height, 0f, 1f)
     {
         _theme = theme ?? UITheme.Dark;
         IsHitTestVisible = false;
@@ -108,7 +66,7 @@ public sealed class ProgressBar : UIElement
                 MathF.Min(Height / 2f, 4f), _theme.Accent);
             return;
         }
-        var ratio = Maximum <= Minimum ? 0f : (Value - Minimum) / (Maximum - Minimum);
+        var ratio = NormalizedValue;
         if (ratio > 0f)
             drawList.AddRoundedRectangle(Left, Top, Left + Width * ratio, Bottom,
                 MathF.Min(Height / 2f, 4f), _theme.Accent);

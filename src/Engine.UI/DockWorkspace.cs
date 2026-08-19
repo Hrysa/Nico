@@ -128,8 +128,6 @@ public sealed class DockTabGroup : DockNode
 /// <summary>Stores two dock nodes separated by a resizable split.</summary>
 public sealed class DockSplit : DockNode
 {
-    private float _ratio = 0.5f;
-
     /// <summary>Gets or sets the split axis.</summary>
     public DockSplitOrientation Orientation { get; set; }
 
@@ -142,9 +140,9 @@ public sealed class DockSplit : DockNode
     /// <summary>Gets or sets the first child's normalized share.</summary>
     public float Ratio
     {
-        get => _ratio;
-        set => _ratio = Math.Clamp(value, 0.1f, 0.9f);
-    }
+        get;
+        set => field = Math.Clamp(value, 0.1f, 0.9f);
+    } = 0.5f;
 
     /// <summary>Creates an empty split for serialization.</summary>
     public DockSplit()

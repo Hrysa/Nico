@@ -4,13 +4,12 @@ using System.Globalization;
 namespace Engine.UI;
 
 /// <summary>Displays one standardized selectable hierarchy row.</summary>
-public sealed class TreeViewItem : Button
+public sealed class TreeViewItem : SelectableButton
 {
     private readonly UITheme _theme;
     private readonly Label? _label;
     private readonly IReadOnlyList<TreeViewColumn> _columns;
     private readonly string[] _columnTexts;
-    private bool _isSelected;
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => base.GetSemanticInfo() with
@@ -55,21 +54,6 @@ public sealed class TreeViewItem : Button
     private Action<Node>? _activateItem;
     private Engine.Graphics.InputModifiers _selectionModifiers;
 
-    /// <summary>Gets or sets whether this row is selected.</summary>
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (_isSelected == value)
-                return;
-            _isSelected = value;
-            NormalColor = value ? _theme.SurfacePressed : _theme.Surface;
-            PaintNormalBackground = value;
-            InvalidateVisual();
-        }
-    }
-
     /// <summary>Creates a hierarchy row from the shared item-row visual tokens.</summary>
     /// <param name="width">Row width.</param>
     /// <param name="height">Row height.</param>
@@ -97,22 +81,18 @@ public sealed class TreeViewItem : Button
         {
             _label = new Label(BuildLabel(item, isExpanded, displayText))
             {
-                FontSize = _theme.FontSize,
-                ForegroundColor = _theme.TextPrimary,
-                PaddingLeft = 0f,
+                TextStyle = _theme.GetTextStyle(UITextRole.Body),
+                Padding = Thickness.Zero,
                 IsHitTestVisible = false
             };
             Content = _label;
-            PaddingLeft = _theme.ItemRowPadding + depth * _theme.TreeIndent;
+            Padding = Padding with { Left = _theme.ItemRowPadding + depth * _theme.TreeIndent };
         }
         else
         {
-            PaddingLeft = 0f;
-            PaddingRight = 0f;
+            Padding = Padding with { Left = 0f, Right = 0f };
         }
-        NormalColor = _theme.Surface;
-        HoverColor = _theme.SurfaceHover;
-        PressedColor = _theme.SurfacePressed;
+        InteractionColors = _theme.GetItemInteractionColors();
         PaintNormalBackground = false;
         CornerRadius = 0f;
         Click += OnSelect;
@@ -167,7 +147,7 @@ public sealed class TreeViewItem : Button
         if (_label is not null)
         {
             _label.Text = BuildLabel(item, isExpanded, displayText);
-            PaddingLeft = _theme.ItemRowPadding + depth * _theme.TreeIndent;
+            Padding = Padding with { Left = _theme.ItemRowPadding + depth * _theme.TreeIndent };
         }
         for (var index = 0; index < _columns.Count; index++)
             _columnTexts[index] = _columns[index].Value(item);
@@ -199,9 +179,8 @@ public sealed class TreeViewItem : Button
     private void OnActivate() => _activateItem?.Invoke(Item);
 
     /// <inheritdoc/>
-    protected override void Paint(Engine.Graphics.UIDrawList drawList)
+    protected override void PaintContent(Engine.Graphics.UIDrawList drawList)
     {
-        base.Paint(drawList);
         if (_columns.Count == 0)
             return;
 
@@ -218,7 +197,12 @@ public sealed class TreeViewItem : Button
                 ? Item.CanHaveChildren ? IsExpanded ? "- " : "+ " : "  "
                 : string.Empty;
             var availableTextWidth = MathF.Max(0f, width - leadingInset - trailingInset);
-            var text = FitText(marker + _columnTexts[index], availableTextWidth, _theme.FontSize);
+            var text = UITextFitting.Ellipsize(
+                marker + _columnTexts[index],
+                availableTextWidth,
+                TextLayout,
+                _theme.FontSize,
+                FlowDirection.ToTextFlowDirection());
             var measuredWidth = MeasureTextWidth(text.AsSpan(), _theme.FontSize);
             var textX = column.Alignment == TreeViewColumnAlignment.Right
                 ? x + MathF.Max(leadingInset, width - measuredWidth - trailingInset)
@@ -231,37 +215,6 @@ public sealed class TreeViewItem : Button
             if (index + 1 < _columns.Count)
                 drawList.AddRectangle(x - 1f, Top, x, Bottom, _theme.Border);
         }
-    }
-
-    /// <summary>Truncates text to the available width and appends an ellipsis.</summary>
-    /// <param name="text">Text to fit.</param>
-    /// <param name="availableWidth">Available horizontal space.</param>
-    /// <param name="fontSize">Text font size.</param>
-    /// <returns>Original or truncated text.</returns>
-    private string FitText(string text, float availableWidth, float fontSize)
-    {
-        if (MeasureTextWidth(text.AsSpan(), fontSize) <= availableWidth)
-            return text;
-        const string ellipsis = "...";
-        var ellipsisWidth = MeasureTextWidth(ellipsis.AsSpan(), fontSize);
-        if (ellipsisWidth >= availableWidth)
-            return string.Empty;
-        var boundaries = StringInfo.ParseCombiningCharacters(text);
-        var low = 0;
-        var high = boundaries.Length;
-        while (low < high)
-        {
-            var boundaryCount = (low + high + 1) / 2;
-            var length = boundaryCount < boundaries.Length
-                ? boundaries[boundaryCount]
-                : text.Length;
-            if (MeasureTextWidth(text.AsSpan(0, length), fontSize) + ellipsisWidth <= availableWidth)
-                low = boundaryCount;
-            else
-                high = boundaryCount - 1;
-        }
-        var fit = low < boundaries.Length ? boundaries[low] : text.Length;
-        return text[..fit] + ellipsis;
     }
 
     /// <summary>Measures text using the inherited paragraph direction.</summary>

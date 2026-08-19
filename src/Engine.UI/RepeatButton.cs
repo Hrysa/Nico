@@ -5,7 +5,7 @@ namespace Engine.UI;
 /// <summary>A button that invokes immediately and repeatedly while held.</summary>
 public sealed class RepeatButton : Button
 {
-    private bool _isRepeating;
+    private readonly PointerCaptureGesture _holdGesture;
     private double _elapsed;
     private double _nextInvocation;
 
@@ -23,13 +23,15 @@ public sealed class RepeatButton : Button
     public RepeatButton(float width, float height, string label, UITheme? theme = null)
         : base(width, height, label, theme ?? UITheme.Dark)
     {
-        Pointer += OnPointer;
+        _holdGesture = new PointerCaptureGesture(this, handleMoves: false);
+        _holdGesture.Started += OnHoldStarted;
+        _holdGesture.Completed += OnHoldCompleted;
     }
 
     /// <inheritdoc/>
     protected override bool UpdateElement(double deltaTime)
     {
-        if (!_isRepeating || deltaTime <= 0d)
+        if (!_holdGesture.IsActive || deltaTime <= 0d)
             return false;
         _elapsed += deltaTime;
         var invoked = false;
@@ -44,32 +46,16 @@ public sealed class RepeatButton : Button
     }
 
     /// <inheritdoc/>
-    protected override bool IsTimeUpdateActive => _isRepeating;
+    protected override bool IsTimeUpdateActive => _holdGesture.IsActive;
 
-    /// <summary>Starts or stops captured repetition.</summary>
-    /// <param name="sender">Current routed receiver.</param>
-    /// <param name="pointerEvent">Routed pointer data.</param>
-    private void OnPointer(UIElement sender, UIPointerEventArgs pointerEvent)
+    /// <summary>Starts the repeat schedule and invokes the initial press.</summary>
+    private void OnHoldStarted()
     {
-        if (pointerEvent.RoutePhase != UIRoutePhase.Target)
-            return;
-        if (pointerEvent.Kind == UIPointerEventKind.Press &&
-            pointerEvent.Button == InputPointerButton.Primary)
-        {
-            _isRepeating = true;
-            _elapsed = 0d;
-            _nextInvocation = Math.Max(0d, Delay);
-            SetPressed(true);
-            pointerEvent.CapturePointer();
-            pointerEvent.Handled = true;
-            base.OnClick();
-        }
-        else if (pointerEvent.Kind == UIPointerEventKind.Release && _isRepeating)
-        {
-            _isRepeating = false;
-            SetPressed(false);
-            pointerEvent.ReleasePointerCapture();
-            pointerEvent.Handled = true;
-        }
+        _elapsed = 0d;
+        _nextInvocation = Math.Max(0d, Delay);
+        base.OnClick();
     }
+
+    /// <summary>Invalidates the recurring-update cache after hold completion.</summary>
+    private void OnHoldCompleted() => InvalidateTimeUpdateActivity();
 }

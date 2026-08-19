@@ -5,12 +5,9 @@ using Engine.Graphics;
 namespace Engine.UI;
 
 /// <summary>Edits a bounded numeric value through text, keyboard, and repeating step buttons.</summary>
-public sealed class NumericField : UIElement
+public sealed class NumericField : RangeBase<double>
 {
-    private double _minimum = double.NegativeInfinity;
-    private double _maximum = double.PositiveInfinity;
-    private double _value;
-    private string _formatString = "G";
+    private bool _synchronizeTextOnValueChange = true;
 
     /// <summary>Gets the editable text field.</summary>
     public TextField TextField { get; }
@@ -21,60 +18,27 @@ public sealed class NumericField : UIElement
     /// <summary>Gets the increment repeat button.</summary>
     public RepeatButton IncrementButton { get; }
 
-    /// <summary>Gets or sets the minimum value.</summary>
-    public double Minimum
-    {
-        get => _minimum;
-        set
-        {
-            _minimum = value;
-            if (_maximum < _minimum)
-                _maximum = _minimum;
-            SetValue(_value);
-        }
-    }
-
-    /// <summary>Gets or sets the maximum value.</summary>
-    public double Maximum
-    {
-        get => _maximum;
-        set
-        {
-            _maximum = Math.Max(Minimum, value);
-            SetValue(_value);
-        }
-    }
-
-    /// <summary>Gets or sets the current clamped value.</summary>
-    public double Value
-    {
-        get => _value;
-        set => SetValue(value);
-    }
-
     /// <summary>Gets or sets the amount applied by each step action.</summary>
     public double Step { get; set; } = 1d;
 
     /// <summary>Gets or sets the invariant numeric format string.</summary>
     public string FormatString
     {
-        get => _formatString;
+        get;
         set
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(value);
-            _formatString = value;
+            field = value;
             SynchronizeText();
         }
-    }
-
-    /// <summary>Occurs when the parsed or stepped value changes.</summary>
-    public event Action<double>? ValueChanged;
+    } = "G";
 
     /// <summary>Creates a numeric field.</summary>
     /// <param name="width">Control width.</param>
     /// <param name="height">Control height.</param>
     /// <param name="theme">Theme supplying child visuals.</param>
-    public NumericField(float width, float height, UITheme? theme = null) : base(width, height)
+    public NumericField(float width, float height, UITheme? theme = null)
+        : base(width, height, double.NegativeInfinity, double.PositiveInfinity)
     {
         var resolvedTheme = theme ?? UITheme.Dark;
         var buttonWidth = MathF.Min(height, 22f);
@@ -88,8 +52,8 @@ public sealed class NumericField : UIElement
         TextField.ValueUpdateRequested += OnTextCommitted;
         TextField.Blur += OnTextEditBlur;
         TextField.Key += OnTextFieldKey;
-        DecrementButton.Click += () => SetValue(Value - Step);
-        IncrementButton.Click += () => SetValue(Value + Step);
+        DecrementButton.Click += () => Value -= Step;
+        IncrementButton.Click += () => Value += Step;
         AddChild(TextField);
         AddChild(DecrementButton);
         AddChild(IncrementButton);
@@ -121,7 +85,7 @@ public sealed class NumericField : UIElement
     private void OnTextCommitted(string text)
     {
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-            SetValue(value, synchronizeText: false);
+            SetNumericValue(value, synchronizeText: false);
     }
 
     /// <summary>Validates pending invariant numeric text.</summary>
@@ -147,9 +111,9 @@ public sealed class NumericField : UIElement
         if (keyEvent.RoutePhase != UIRoutePhase.Target || keyEvent.Kind != UIKeyEventKind.KeyDown)
             return;
         if (keyEvent.Key == InputKey.Up)
-            SetValue(Value + Step);
+            Value += Step;
         else if (keyEvent.Key == InputKey.Down)
-            SetValue(Value - Step);
+            Value -= Step;
         else
             return;
         keyEvent.Handled = true;
@@ -158,19 +122,26 @@ public sealed class NumericField : UIElement
     /// <summary>Clamps, synchronizes, and reports a numeric value.</summary>
     /// <param name="value">Requested value.</param>
     /// <param name="synchronizeText">Whether to normalize the editor text.</param>
-    private void SetValue(double value, bool synchronizeText = true)
+    private void SetNumericValue(double value, bool synchronizeText)
     {
-        var resolved = Math.Clamp(value, Minimum, Maximum);
-        if (_value == resolved)
+        _synchronizeTextOnValueChange = synchronizeText;
+        try
         {
-            if (synchronizeText)
+            if (!SetValueCore(value, notify: true) && synchronizeText)
                 SynchronizeText();
-            return;
         }
-        _value = resolved;
-        if (synchronizeText)
+        finally
+        {
+            _synchronizeTextOnValueChange = true;
+        }
+    }
+
+    /// <inheritdoc/>
+    protected override void OnValueChanged(double previousValue, double value)
+    {
+        if (_synchronizeTextOnValueChange)
             SynchronizeText();
-        ValueChanged?.Invoke(_value);
+        base.OnValueChanged(previousValue, value);
     }
 
     /// <summary>Formats the current value into the text editor using invariant culture.</summary>

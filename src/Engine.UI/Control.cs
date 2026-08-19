@@ -3,7 +3,6 @@ namespace Engine.UI;
 /// <summary>Base class for retained controls supporting resources, styles, and visual templates.</summary>
 public class Control : Box
 {
-    private IUIStyle? _style;
     private IUIControlTemplate? _template;
     private UIElement? _templateRoot;
 
@@ -13,23 +12,6 @@ public class Control : Box
     public Control(float width = 0f, float height = 0f)
         : base(width, height)
     {
-    }
-
-    /// <summary>Gets or sets an optional named style variant resolved through inherited resources.</summary>
-    public string? StyleKey { get; set; }
-
-    /// <summary>Gets or sets an explicit typed style.</summary>
-    public IUIStyle? Style
-    {
-        get => _style;
-        set
-        {
-            if (ReferenceEquals(_style, value))
-                return;
-            _style = value;
-            if (value is not null)
-                value.Apply(this);
-        }
     }
 
     /// <summary>Gets or sets the factory producing this control's optional visual presentation.</summary>
@@ -47,27 +29,6 @@ public class Control : Box
 
     /// <summary>Gets the visual root created by the active template.</summary>
     public UIElement? TemplateRoot => _templateRoot;
-
-    /// <summary>Resolves and applies an explicit or inherited typed style.</summary>
-    /// <returns>True when a compatible style was applied.</returns>
-    public bool ApplyStyle()
-    {
-        if (Style is { } explicitStyle)
-        {
-            explicitStyle.Apply(this);
-            return true;
-        }
-        for (Type? type = GetType(); type is not null && typeof(UIElement).IsAssignableFrom(type);
-             type = type.BaseType)
-        {
-            if (!TryFindResource(new UIStyleResourceKey(type, StyleKey), out IUIStyle? style)
-                || style is null)
-                continue;
-            style.Apply(this);
-            return true;
-        }
-        return false;
-    }
 
     /// <summary>Rebuilds the optional template-owned visual root.</summary>
     /// <returns>True when a template root is active.</returns>

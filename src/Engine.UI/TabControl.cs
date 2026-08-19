@@ -14,7 +14,7 @@ public sealed class TabControl : UIElement
     private readonly List<ToggleButton> _headers = [];
     private readonly UITheme _theme;
     private readonly FlexPanel _headerStrip;
-    private float _headerWidthRatio = DefaultHeaderWidthRatio;
+    private readonly UISelectionModel _selection = new();
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -49,7 +49,7 @@ public sealed class TabControl : UIElement
     }
 
     /// <summary>Gets the selected tab index, or -1.</summary>
-    public int SelectedIndex { get; private set; } = -1;
+    public int SelectedIndex => _selection.PrimaryIndex;
 
     /// <summary>Gets the selected tab, or null.</summary>
     public TabItem? SelectedItem => SelectedIndex >= 0 ? _items[SelectedIndex] : null;
@@ -84,17 +84,17 @@ public sealed class TabControl : UIElement
     /// <summary>Gets or sets the fraction of control width available to tab headers.</summary>
     public float HeaderWidthRatio
     {
-        get => _headerWidthRatio;
+        get;
         set
         {
             if (!float.IsFinite(value) || value <= 0f || value > 1f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_headerWidthRatio == value)
+            if (field == value)
                 return;
-            _headerWidthRatio = value;
+            field = value;
             InvalidateMeasure();
         }
-    }
+    } = DefaultHeaderWidthRatio;
 
     /// <summary>Adds a retained tab and selects the first tab automatically.</summary>
     /// <param name="header">Header text.</param>
@@ -109,10 +109,14 @@ public sealed class TabControl : UIElement
         var button = new ToggleButton(
             0f, HeaderHeight, header, _theme, ButtonStyle.Header)
         {
-            CheckedColor = _theme.Surface,
             CornerRadius = _theme.PanelCornerRadius,
             CornerMode = BoxCornerMode.Top,
             MinWidth = HeaderHeight * 2f
+        };
+        button.InteractionColors = button.InteractionColors with
+        {
+            Selected = _theme.Surface,
+            SelectedHovered = _theme.Surface
         };
         button.Click += () =>
         {
@@ -187,23 +191,16 @@ public sealed class TabControl : UIElement
     /// <param name="index">Tab index.</param>
     public void Select(int index)
     {
-        if (index < 0 || index >= _items.Count)
-            throw new ArgumentOutOfRangeException(nameof(index));
-        if (SelectedIndex == index)
+        var previousIndex = SelectedIndex;
+        if (!_selection.Select(index, _items.Count, UISelectionMode.Single,
+            UISelectionIntent.Replace))
             return;
-        if (SelectedIndex >= 0)
+        if (previousIndex >= 0)
         {
-            _headers[SelectedIndex].IsChecked = false;
-            _headers[SelectedIndex].HoverColor = _theme.SurfaceHover;
-            if (_headers[SelectedIndex].IsHovered)
-                _headers[SelectedIndex].BackgroundColor = _theme.SurfaceHover;
-            _items[SelectedIndex].Content.IsVisible = false;
+            _headers[previousIndex].IsChecked = false;
+            _items[previousIndex].Content.IsVisible = false;
         }
-        SelectedIndex = index;
         _headers[index].IsChecked = true;
-        _headers[index].HoverColor = _headers[index].CheckedColor;
-        if (_headers[index].IsHovered)
-            _headers[index].BackgroundColor = _headers[index].CheckedColor;
         _items[index].Content.IsVisible = true;
         InvalidateMeasure();
         SelectionChanged?.Invoke(index, _items[index]);

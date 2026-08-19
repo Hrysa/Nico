@@ -44,39 +44,35 @@ public enum BoxCornerMode
 /// <summary>Paints the visual border box used by compositional controls.</summary>
 public class Box : UIElement
 {
-    private float _cornerRadius;
-    private BoxCornerMode _cornerMode = BoxCornerMode.All;
-    private BoxVisualStateMode _visualStateMode;
-
     /// <summary>Gets or sets the background corner radius.</summary>
     public float CornerRadius
     {
-        get => _cornerRadius;
-        set { if (_cornerRadius != value) { _cornerRadius = value; InvalidateVisual(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateVisual(); } }
     }
 
     /// <summary>Gets or sets which edge retains rounded background corners.</summary>
     public BoxCornerMode CornerMode
     {
-        get => _cornerMode;
+        get;
         set
         {
-            if (_cornerMode == value)
+            if (field == value)
                 return;
-            _cornerMode = value;
+            field = value;
             InvalidateVisual();
         }
-    }
+    } = BoxCornerMode.All;
 
     /// <summary>Gets or sets whether interaction state may alter this box's presentation.</summary>
     public BoxVisualStateMode VisualStateMode
     {
-        get => _visualStateMode;
+        get;
         set
         {
-            if (_visualStateMode == value)
+            if (field == value)
                 return;
-            _visualStateMode = value;
+            field = value;
             OnVisualStateModeChanged();
             InvalidateVisual();
         }

@@ -51,7 +51,6 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     private Skybox3D? _skybox;
     private TextureHandle _skyboxTexture;
     private readonly RenderQueue _renderQueue = new();
-    private RenderPipeline _renderPipeline = BasicForwardRenderPipeline.Instance;
     private readonly List<RuntimeRenderable> _renderables = [];
     private CompiledScriptCatalog? _scriptCatalog;
     private SceneScriptRuntime? _scriptRuntime;
@@ -70,9 +69,9 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <summary>Gets or sets the pass composition used to render the game scene.</summary>
     public RenderPipeline RenderPipeline
     {
-        get => _renderPipeline;
-        set => _renderPipeline = value ?? throw new ArgumentNullException(nameof(value));
-    }
+        get;
+        set => field = value ?? throw new ArgumentNullException(nameof(value));
+    } = BasicForwardRenderPipeline.Instance;
 
     /// <summary>
     /// Creates an application around an initialized window.
@@ -211,8 +210,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
         _simulationTimeScale = timeScale;
         if (timeScale > 0d)
             _runningSimulationTimeScale = timeScale;
-        if (_uiHost is not null)
-            _uiHost.SimulationTimeScale = timeScale;
+        _uiHost?.SimulationTimeScale = timeScale;
     }
 
     /// <summary>Attaches a pause layer hosted inside the current UI root.</summary>
@@ -605,8 +603,7 @@ public sealed class EngineApplication : IDisposable, ISceneRenderingService
     /// <summary>Disconnects the authored HUD without disposing its scene node.</summary>
     private void DetachSceneHud()
     {
-        if (_sceneHud is not null)
-            _sceneHud.ContentChanged -= HandleSceneHudContentChanged;
+        _sceneHud?.ContentChanged -= HandleSceneHudContentChanged;
         _sceneHud = null;
     }
 

@@ -11,7 +11,8 @@ public sealed class ToggleSwitch : ToggleButton
         Role = UISemanticRole.Switch
     };
 
-    private readonly UITheme _theme;
+    private readonly UIInteractionColors _trackColors;
+    private readonly UIInteractionColors _knobColors;
 
     /// <summary>Creates a toggle switch.</summary>
     /// <param name="width">Switch width.</param>
@@ -20,18 +21,21 @@ public sealed class ToggleSwitch : ToggleButton
     public ToggleSwitch(float width = 42f, float height = 22f, UITheme? theme = null)
         : base(width, height, string.Empty, theme)
     {
-        _theme = theme ?? UITheme.Dark;
+        var resolvedTheme = theme ?? UITheme.Dark;
+        _trackColors = resolvedTheme.GetToggleSwitchTrackColors();
+        _knobColors = resolvedTheme.GetToggleSwitchKnobColors();
     }
 
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
         var radius = Height / 2f;
+        var state = GetInteractionState(IsChecked);
         drawList.AddRoundedRectangle(Left, Top, Right, Bottom, radius,
-            IsChecked ? _theme.AccentPressed : _theme.SurfaceRaised);
+            _trackColors.Resolve(state));
         var knobSize = MathF.Max(0f, Height - 4f);
         var knobLeft = IsChecked ? Right - knobSize - 2f : Left + 2f;
         drawList.AddEllipse(knobLeft, Top + 2f, knobLeft + knobSize, Top + 2f + knobSize,
-            IsChecked ? _theme.Accent : _theme.TextSecondary);
+            _knobColors.Resolve(state));
     }
 }

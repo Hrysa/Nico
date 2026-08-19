@@ -48,8 +48,6 @@ public sealed class PhysicsWorld : IDisposable
     private readonly List<string> _validationIssues = [];
     private Simulation _simulation;
     private double _accumulator;
-    private double _fixedTimeStep = 1d / 60d;
-    private int _maxSubsteps = 8;
     private int _colliderCount;
     private bool _disposed;
 
@@ -76,27 +74,27 @@ public sealed class PhysicsWorld : IDisposable
     /// <summary>Gets or sets fixed simulation step duration in seconds.</summary>
     public double FixedTimeStep
     {
-        get => _fixedTimeStep;
+        get;
         set
         {
             if (!double.IsFinite(value) || value <= 0d)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _fixedTimeStep = value;
+            field = value;
             _accumulator = Math.Min(_accumulator, value * MaxSubsteps);
         }
-    }
+    } = 1d / 60d;
 
     /// <summary>Gets or sets the maximum catch-up steps performed by one update.</summary>
     public int MaxSubsteps
     {
-        get => _maxSubsteps;
+        get;
         set
         {
             if (value <= 0)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _maxSubsteps = value;
+            field = value;
         }
-    }
+    } = 8;
 
     /// <summary>Gets the number of attached colliders.</summary>
     public int BodyCount => _colliderCount;

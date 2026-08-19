@@ -66,22 +66,19 @@ public sealed class UILocalizationCatalog
 /// <summary>Displays a catalog string resolved from the inherited runtime UI culture.</summary>
 public sealed class UILocalizedLabel : Label
 {
-    private string _resourceKey;
-    private string? _fallback;
-
     /// <summary>Gets the localization catalog used by this label.</summary>
     public UILocalizationCatalog Catalog { get; }
 
     /// <summary>Gets or sets the stable localized resource key.</summary>
     public string ResourceKey
     {
-        get => _resourceKey;
+        get;
         set
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(value);
-            if (_resourceKey == value)
+            if (field == value)
                 return;
-            _resourceKey = value;
+            field = value;
             InvalidateMeasure();
         }
     }
@@ -89,12 +86,12 @@ public sealed class UILocalizedLabel : Label
     /// <summary>Gets or sets text used when no catalog entry exists.</summary>
     public string? Fallback
     {
-        get => _fallback;
+        get;
         set
         {
-            if (_fallback == value)
+            if (field == value)
                 return;
-            _fallback = value;
+            field = value;
             InvalidateMeasure();
         }
     }
@@ -116,8 +113,8 @@ public sealed class UILocalizedLabel : Label
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceKey);
         Catalog = catalog;
-        _resourceKey = resourceKey;
-        _fallback = fallback;
+        ResourceKey = resourceKey;
+        Fallback = fallback;
     }
 
     /// <summary>Invalidates the label after its mutable catalog is updated.</summary>

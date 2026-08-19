@@ -5,23 +5,21 @@ namespace Engine.Core;
 /// <summary>Base class for attachable node behavior and authored component data.</summary>
 public abstract class Component
 {
-    private bool _enabled = true;
-
     /// <summary>Gets the node that owns this component, or null before attachment.</summary>
     public Node? Owner { get; internal set; }
 
     /// <summary>Gets or sets whether the component participates in runtime behavior.</summary>
     public bool Enabled
     {
-        get => _enabled;
+        get;
         set
         {
-            if (_enabled == value)
+            if (field == value)
                 return;
-            _enabled = value;
+            field = value;
             Owner?.NotifyComponentChanged(NodeChangeKind.Components);
         }
-    }
+    } = true;
 
     /// <summary>Notifies the owning node after one authored component value changes.</summary>
     protected void NotifyValueChanged()

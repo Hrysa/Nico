@@ -7,12 +7,9 @@ namespace Engine.UI;
 /// <summary>A themed multiline text editor with caret, selection, and clipboard editing.</summary>
 public class TextBox : Surface
 {
-    private const float HorizontalTextPadding = 4f;
-    private const float VerticalTextPadding = 4f;
     private readonly UITheme _theme;
     private readonly bool _acceptsReturn;
     private string _text = string.Empty;
-    private string _placeholder = string.Empty;
     private int _caretIndex;
     private int _textWindowStart;
     private int _firstVisibleLine;
@@ -26,7 +23,6 @@ public class TextBox : Surface
     private EditKind _coalescingEdit;
     private int _preferredCaretColumn = -1;
     private int _historyCapacity = 128;
-    private bool _isPassword;
     private char _passwordCharacter = '\u2022';
     private string _maskedText = string.Empty;
     private PasswordRevealMode _passwordRevealMode = PasswordRevealMode.Never;
@@ -80,16 +76,16 @@ public class TextBox : Surface
     /// <summary>Gets or sets placeholder text displayed when empty and unfocused.</summary>
     public string Placeholder
     {
-        get => _placeholder;
+        get;
         set
         {
             var resolved = value ?? string.Empty;
-            if (_placeholder == resolved)
+            if (field == resolved)
                 return;
-            _placeholder = resolved;
+            field = resolved;
             InvalidateVisual();
         }
-    }
+    } = string.Empty;
 
     /// <summary>Gets or sets whether editing is allowed.</summary>
     public bool IsReadOnly { get; set; }
@@ -127,12 +123,12 @@ public class TextBox : Surface
     /// <summary>Gets or sets whether text is rendered using the password character.</summary>
     public bool IsPassword
     {
-        get => _isPassword;
+        get;
         set
         {
-            if (_isPassword == value)
+            if (field == value)
                 return;
-            _isPassword = value;
+            field = value;
             InvalidateVisual();
         }
     }
@@ -294,6 +290,8 @@ public class TextBox : Surface
     {
         _theme = theme ?? UITheme.Dark;
         _acceptsReturn = acceptsReturn;
+        Padding = new Thickness(_theme.TextContentPadding);
+        ClipToBounds = true;
         IsTabStop = true;
         ForegroundColor = _theme.TextPrimary;
         CommandBindings.Add(new UICommandBinding(
@@ -350,12 +348,15 @@ public class TextBox : Surface
             ? _theme.Error
             : IsFocused ? _theme.Accent : _theme.BorderStrong;
         base.Paint(drawList);
+    }
+
+    /// <inheritdoc/>
+    protected override void PaintContent(UIDrawList drawList)
+    {
         if (!_acceptsReturn)
-        {
             PaintSingleLine(drawList);
-            return;
-        }
-        PaintMultipleLines(drawList);
+        else
+            PaintMultipleLines(drawList);
     }
 
     /// <inheritdoc/>
@@ -382,15 +383,12 @@ public class TextBox : Surface
             displayText = Placeholder;
             color = _theme.TextMuted;
         }
-        else if (IsFocused)
-        {
-            var displayEnd = ResolveEditingWindowEnd(MathF.Max(0f, Width - HorizontalTextPadding * 2f));
-            displayText = sourceText.Substring(_textWindowStart, displayEnd - _textWindowStart);
-            displayCaretIndex -= _textWindowStart;
-        }
-        var left = Left + HorizontalTextPadding;
-        var top = Top + MathF.Max(0f, (Height - _theme.FontSize) / 2f);
-        PaintSelection(drawList, displayText, _textWindowStart, left, top, GetLineHeight());
+        var displayStart = ResolveSingleLineStart(displayText, IsFocused, ContentWidth);
+        displayText = displayText[displayStart..];
+        displayCaretIndex -= displayStart;
+        var left = ContentLeft;
+        var top = ContentTop + MathF.Max(0f, (ContentHeight - _theme.FontSize) / 2f);
+        PaintSelection(drawList, displayText, displayStart, left, top, GetLineHeight());
         if (IsFocused)
             drawList.AddTextWithCaret(displayText, left, top, _theme.FontSize,
                 color, BackgroundColor, displayCaretIndex, FlowDirection.ToTextFlowDirection());
@@ -405,8 +403,8 @@ public class TextBox : Surface
     /// <param name="drawList">Draw-list receiving text commands.</param>
     private void PaintMultipleLines(UIDrawList drawList)
     {
-        var left = Left + HorizontalTextPadding;
-        var top = Top + VerticalTextPadding;
+        var left = ContentLeft;
+        var top = ContentTop;
         var lineHeight = GetLineHeight();
         if (_text.Length == 0 && !IsFocused)
         {
@@ -510,27 +508,39 @@ public class TextBox : Surface
         }
     }
 
-    /// <summary>Moves the horizontal editing window to the caret.</summary>
-    /// <param name="availableWidth">Horizontal space available for editable text.</param>
-    /// <returns>The exclusive UTF-16 end index of the visible editing window.</returns>
-    private int ResolveEditingWindowEnd(float availableWidth)
+    /// <summary>Resolves the first displayed text element while keeping an editing caret visible.</summary>
+    /// <param name="displayText">Stored, masked, or placeholder text to display.</param>
+    /// <param name="keepCaretVisible">Whether the window follows the editing caret.</param>
+    /// <param name="availableWidth">Shared content-box width.</param>
+    /// <returns>Inclusive UTF-16 display start.</returns>
+    private int ResolveSingleLineStart(
+        string displayText,
+        bool keepCaretVisible,
+        float availableWidth)
     {
-        if (_caretIndex < _textWindowStart)
-            _textWindowStart = _caretIndex;
-        while (_textWindowStart < _caretIndex &&
-               MeasureTextWidth(_text.AsSpan(_textWindowStart, _caretIndex - _textWindowStart)) >
-                   availableWidth)
-            _textWindowStart = FindNextTextElement(_textWindowStart);
-        var end = _textWindowStart;
-        while (end < _text.Length)
+        var start = keepCaretVisible ? Math.Min(_textWindowStart, displayText.Length) : 0;
+        var caret = Math.Min(_caretIndex, displayText.Length);
+        if (keepCaretVisible && caret < start)
+            start = caret;
+        while (keepCaretVisible && start < caret &&
+               MeasureTextWidth(displayText.AsSpan(start, caret - start)) > availableWidth)
         {
-            var candidateEnd = FindNextTextElement(end);
-            if (MeasureTextWidth(
-                    _text.AsSpan(_textWindowStart, candidateEnd - _textWindowStart)) > availableWidth)
-                break;
-            end = candidateEnd;
+            start = FindNextDisplayTextElement(displayText, start);
         }
-        return end;
+        if (keepCaretVisible)
+            _textWindowStart = start;
+        return start;
+    }
+
+    /// <summary>Finds the next grapheme boundary in arbitrary rendered text.</summary>
+    /// <param name="text">Stored, masked, or placeholder display text.</param>
+    /// <param name="index">Current UTF-16 index.</param>
+    /// <returns>Next UTF-16 grapheme boundary or the text length.</returns>
+    private static int FindNextDisplayTextElement(string text, int index)
+    {
+        if (index >= text.Length)
+            return text.Length;
+        return index + StringInfo.GetNextTextElementLength(text.AsSpan(index));
     }
 
     /// <inheritdoc/>
@@ -720,8 +730,7 @@ public class TextBox : Surface
     {
         var lineStart = _acceptsReturn ? GetLineStartByVisibleOffset(position.Y) : _textWindowStart;
         var lineEnd = _acceptsReturn ? GetLineEnd(lineStart) : _text.Length;
-        var targetX = Math.Clamp(position.X - HorizontalTextPadding, 0f,
-            MathF.Max(0f, Width - HorizontalTextPadding * 2f));
+        var targetX = Math.Clamp(position.X - Padding.Left, 0f, ContentWidth);
         var displayText = GetDisplayText();
         return lineStart + TextLayout.HitTestCaret(
             displayText.AsSpan(lineStart, lineEnd - lineStart), _theme.FontSize, targetX,
@@ -764,7 +773,7 @@ public class TextBox : Surface
     private int GetLineStartByVisibleOffset(float localY)
     {
         var visibleLine = Math.Clamp((int)MathF.Floor(
-            MathF.Max(0f, localY - VerticalTextPadding) / GetLineHeight()),
+            MathF.Max(0f, localY - Padding.Top) / GetLineHeight()),
             0, GetVisibleLineCount() - 1);
         var targetLine = _firstVisibleLine + visibleLine;
         var line = 0;
@@ -786,15 +795,15 @@ public class TextBox : Surface
     {
         if (!_acceptsReturn)
         {
-            if (position.X < HorizontalTextPadding && _textWindowStart > 0)
+            if (position.X < Padding.Left && _textWindowStart > 0)
                 _textWindowStart = FindPreviousTextElement(_textWindowStart);
-            else if (position.X > Width - HorizontalTextPadding && _textWindowStart < _text.Length)
+            else if (position.X > Width - Padding.Right && _textWindowStart < _text.Length)
                 _textWindowStart = FindNextTextElement(_textWindowStart);
             return;
         }
-        if (position.Y < VerticalTextPadding)
+        if (position.Y < Padding.Top)
             _firstVisibleLine = Math.Max(0, _firstVisibleLine - 1);
-        else if (position.Y > Height - VerticalTextPadding)
+        else if (position.Y > Height - Padding.Bottom)
             _firstVisibleLine = Math.Min(GetMaximumFirstVisibleLine(), _firstVisibleLine + 1);
     }
 
@@ -1182,7 +1191,7 @@ public class TextBox : Surface
     /// <summary>Gets the number of complete logical lines visible in the text area.</summary>
     /// <returns>At least one visible line.</returns>
     private int GetVisibleLineCount() => Math.Max(1, (int)MathF.Floor(
-        MathF.Max(0f, Height - VerticalTextPadding * 2f) / GetLineHeight()));
+        ContentHeight / GetLineHeight()));
 
     /// <summary>Selects the complete text buffer.</summary>
     private void SelectAll()

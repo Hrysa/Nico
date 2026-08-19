@@ -46,9 +46,8 @@ public sealed class FileSystemCreateDialog : Modal
         _errorLabel = new Label(string.Empty, Dialog.Width - 32f, 28f)
         {
             Name = "ValidationError",
-            ForegroundColor = resolvedTheme.AccentHover,
-            FontSize = resolvedTheme.CaptionFontSize,
-            PaddingLeft = 0f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.AccentCaption),
+            Padding = Thickness.Zero
         };
         _errorLabel.Text = _nameField.ValidationMessage ?? string.Empty;
         _nameField.ValidationChanged += message => _errorLabel.Text = message ?? string.Empty;

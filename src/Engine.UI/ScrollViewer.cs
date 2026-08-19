@@ -20,7 +20,7 @@ internal interface IScrollViewportContent
 /// <summary>Clips one content element and provides two-axis scrolling with synchronized bars.</summary>
 public sealed class ScrollViewer : Panel
 {
-    private const float DefaultBarThickness = 10f;
+    private readonly float _barThickness;
     private UIElement? _content;
     private float _horizontalOffset;
     private float _verticalOffset;
@@ -84,6 +84,7 @@ public sealed class ScrollViewer : Panel
     public ScrollViewer(float width = 0f, float height = 0f, UITheme? theme = null)
         : base(null, width, height)
     {
+        _barThickness = (theme ?? UITheme.Dark).ScrollBarThickness;
         ClipToBounds = true;
         HorizontalScrollBar = new ScrollBar(UIOrientation.Horizontal, theme);
         VerticalScrollBar = new ScrollBar(UIOrientation.Vertical, theme);
@@ -135,12 +136,12 @@ public sealed class ScrollViewer : Panel
 
         var showVertical = CanScrollVertically && _extentHeight > contentSize.Y;
         var showHorizontal = CanScrollHorizontally &&
-            _extentWidth > contentSize.X - (showVertical ? DefaultBarThickness : 0f);
+            _extentWidth > contentSize.X - (showVertical ? _barThickness : 0f);
         if (showHorizontal && !showVertical)
             showVertical = CanScrollVertically &&
-                _extentHeight > contentSize.Y - DefaultBarThickness;
-        _viewportWidth = MathF.Max(0f, contentSize.X - (showVertical ? DefaultBarThickness : 0f));
-        _viewportHeight = MathF.Max(0f, contentSize.Y - (showHorizontal ? DefaultBarThickness : 0f));
+                _extentHeight > contentSize.Y - _barThickness;
+        _viewportWidth = MathF.Max(0f, contentSize.X - (showVertical ? _barThickness : 0f));
+        _viewportHeight = MathF.Max(0f, contentSize.Y - (showHorizontal ? _barThickness : 0f));
         ClampOffsets();
 
         if (_content is not null)
@@ -165,10 +166,10 @@ public sealed class ScrollViewer : Panel
         SynchronizeBars();
         if (showHorizontal)
             HorizontalScrollBar.Arrange(new Vector2(Padding.Left, Padding.Top + _viewportHeight),
-                new Vector2(_viewportWidth, DefaultBarThickness));
+                new Vector2(_viewportWidth, _barThickness));
         if (showVertical)
             VerticalScrollBar.Arrange(new Vector2(Padding.Left + _viewportWidth, Padding.Top),
-                new Vector2(DefaultBarThickness, _viewportHeight));
+                new Vector2(_barThickness, _viewportHeight));
     }
 
     /// <summary>Consumes routed wheel deltas only when this viewer can move.</summary>

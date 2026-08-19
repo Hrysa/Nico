@@ -44,7 +44,7 @@ public sealed class ExampleHud : SceneScript
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(16f),
-            PaddingLeft = 10f,
+            Padding = new Thickness(10f, 0f, 0f, 0f),
             BackgroundColor = Color.FromSrgb(0x12, 0x13, 0x14),
             ForegroundColor = theme.TextPrimary,
             IsHitTestVisible = false,
@@ -55,7 +55,7 @@ public sealed class ExampleHud : SceneScript
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(16f, 56f, 0f, 0f),
-            PaddingLeft = 10f,
+            Padding = new Thickness(10f, 0f, 0f, 0f),
             BackgroundColor = Color.FromSrgb(0x12, 0x13, 0x14),
             ForegroundColor = theme.TextPrimary,
             IsHitTestVisible = false,
@@ -65,7 +65,7 @@ public sealed class ExampleHud : SceneScript
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            PaddingLeft = 6f,
+            Padding = new Thickness(6f, 0f, 0f, 0f),
             FontSize = 20f,
             ForegroundColor = Color.White,
             IsHitTestVisible = false

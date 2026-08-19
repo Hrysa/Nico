@@ -1,6 +1,8 @@
 # C# scripting
 
-Opening a game project creates `<Project>.slnx` and `Scripts/<Project>.Scripts.csproj`. The Editor maintains engine references and the observed-property source generator without replacing user properties or package references.
+Opening a game project creates `<Project>.slnx` and `Scripts/<Project>.Scripts.csproj`. The Editor maintains engine references and the observed-property source generator without replacing user properties or package references. Machine-local engine assembly references are written to the ignored `.csproj.user` file; direct command-line script builds therefore consume the normal Editor output under `src/Editor/bin`, not an isolated test build directory.
+
+`.nico/cache` contains regenerable imported and compiled artifacts. It is ignored by Git and may be deleted when engine APIs or importer formats change; the Editor rebuilds required artifacts from tracked sources and metadata.
 
 ## Creating and attaching a script
 
@@ -106,3 +108,12 @@ Scripts do not execute in normal Editor edit mode. Play mode:
 5. calls `OnDestroy` and discards the clone on Stop.
 
 Compilation errors leave the Editor in edit mode. An unhandled runtime script exception stops Play mode instead of crashing the renderer.
+
+To verify a game script project after changing an engine API, first rebuild the normal Editor output and then build the script project explicitly:
+
+```powershell
+dotnet build src/Editor/Editor.csproj --no-restore -m:1
+dotnet build example_game/Scripts/example_game.Scripts.csproj --no-restore -m:1
+```
+
+The main solution does not compile project-local game scripts, so a successful `GameEngine.slnx` build alone does not prove that generated game projects are current.

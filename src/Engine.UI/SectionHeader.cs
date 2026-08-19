@@ -21,10 +21,9 @@ public sealed class SectionHeader : ContentControl
         TitleLabel = new Label(text)
         {
             Name = "Title",
-            FontSize = resolvedTheme.PanelTitleFontSize,
-            ForegroundColor = resolvedTheme.TextSecondary,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.PanelTitle),
             BackgroundColor = resolvedTheme.Surface,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         Content = TitleLabel;

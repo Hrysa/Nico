@@ -5,7 +5,7 @@ namespace Engine.UI;
 /// <summary>
 /// Displays renderer-independent TrueType text.
 /// </summary>
-public class Label : Box
+public class Label : TextElement
 {
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -17,39 +17,6 @@ public class Label : Box
         false,
         null);
 
-    /// <summary>Gets or sets the displayed text.</summary>
-    private string _text = string.Empty;
-    private float _fontSize = UITheme.Dark.FontSize;
-    private float _paddingLeft = 4f;
-
-    /// <summary>Gets or sets the displayed text.</summary>
-    public string Text
-    {
-        get => _text;
-        set
-        {
-            ArgumentNullException.ThrowIfNull(value);
-            if (_text == value)
-                return;
-            _text = value;
-            InvalidateMeasure();
-        }
-    }
-
-    /// <summary>Gets or sets the font height in logical pixels.</summary>
-    public float FontSize
-    {
-        get => _fontSize;
-        set { if (_fontSize != value) { _fontSize = value; InvalidateMeasure(); } }
-    }
-
-    /// <summary>Gets or sets the left text inset.</summary>
-    public float PaddingLeft
-    {
-        get => _paddingLeft;
-        set { if (_paddingLeft != value) { _paddingLeft = value; InvalidateMeasure(); } }
-    }
-
     /// <summary>
     /// Creates a text label.
     /// </summary>
@@ -59,6 +26,7 @@ public class Label : Box
     private Label(float width, float height, string text)
         : base(width, height)
     {
+        Padding = new Thickness(UITheme.Dark.TextContentPadding, 0f, 0f, 0f);
         Text = text;
     }
 
@@ -89,21 +57,22 @@ public class Label : Box
         return FallbackTextLayoutService.Instance.MeasureWidth(text.AsSpan(), fontSize);
     }
 
-    /// <summary>Measures text content and its leading inset.</summary>
+    /// <summary>Measures text content and its common padding.</summary>
     /// <param name="availableSize">Space offered by the parent.</param>
     /// <returns>Desired label size.</returns>
     protected override System.Numerics.Vector2 MeasureOverride(System.Numerics.Vector2 availableSize)
     {
-        return new System.Numerics.Vector2(PaddingLeft + MeasureTextWidth(), FontSize);
+        return new System.Numerics.Vector2(
+            Padding.Horizontal + MeasureTextWidth(),
+            Padding.Vertical + FontSize);
     }
 
     /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
+    protected override void PaintContent(UIDrawList drawList)
     {
-        base.Paint(drawList);
-
         var textHeight = FontSize;
-        drawList.AddText(Text, Left + PaddingLeft, Top + MathF.Max(0f, (Height - textHeight) / 2f),
+        drawList.AddText(Text, ContentLeft,
+            ContentTop + MathF.Max(0f, (ContentHeight - textHeight) / 2f),
             FontSize, ForegroundColor, BackgroundColor, FlowDirection.ToTextFlowDirection());
     }
 }

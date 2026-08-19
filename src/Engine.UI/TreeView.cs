@@ -20,7 +20,6 @@ public sealed class TreeView : Panel, IScrollViewportContent
     private float _viewportOffsetY;
     private readonly UITheme _theme;
     private Vector2 _arrangedSize;
-    private float _rowHeight;
     private Func<Node, string>? _itemText;
     private bool _showColumnHeaders;
     private float _columnHeaderHeight = 20f;
@@ -38,8 +37,6 @@ public sealed class TreeView : Panel, IScrollViewportContent
     private double _typeAheadElapsed;
     private Func<Node, UIDragData?>? _itemDragData;
     private readonly Dictionary<Node, UIDragData?> _itemDragDataCache = [];
-    private UIDragEffect _itemDragEffects = UIDragEffect.Copy;
-    private bool _allowItemDrop;
 
     /// <summary>Gets or sets the policy deciding whether a row exposes an inside drop zone.</summary>
     /// <remarks>When unset, <see cref="Node.CanHaveChildren"/> supplies the default policy.</remarks>
@@ -62,25 +59,25 @@ public sealed class TreeView : Panel, IScrollViewportContent
     /// <summary>Gets or sets the effects allowed by draggable item rows.</summary>
     public UIDragEffect ItemDragEffects
     {
-        get => _itemDragEffects;
+        get;
         set
         {
-            if (_itemDragEffects == value)
+            if (field == value)
                 return;
-            _itemDragEffects = value;
+            field = value;
             RebuildRows();
         }
-    }
+    } = UIDragEffect.Copy;
 
     /// <summary>Gets or sets whether item rows can be routed drop targets.</summary>
     public bool AllowItemDrop
     {
-        get => _allowItemDrop;
+        get;
         set
         {
-            if (_allowItemDrop == value)
+            if (field == value)
                 return;
-            _allowItemDrop = value;
+            field = value;
             RebuildRows();
         }
     }
@@ -98,14 +95,14 @@ public sealed class TreeView : Panel, IScrollViewportContent
     /// <summary>Gets or sets the height of one hierarchy row.</summary>
     public float RowHeight
     {
-        get => _rowHeight;
+        get;
         set
         {
             if (value <= 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_rowHeight == value)
+            if (field == value)
                 return;
-            _rowHeight = value;
+            field = value;
             RebuildRows();
         }
     }

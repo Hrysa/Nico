@@ -61,32 +61,29 @@ public sealed class StretchUIViewportPolicy : IUIViewportPolicy
 /// </summary>
 public sealed class ReferenceResolutionUIViewportPolicy : IUIViewportPolicy
 {
-    private Vector2 _referenceResolution = new(1920f, 1080f);
-    private float _userScale = 1f;
-
     /// <summary>Gets or sets the authored reference resolution.</summary>
     public Vector2 ReferenceResolution
     {
-        get => _referenceResolution;
+        get;
         set
         {
             if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || value.X <= 0f || value.Y <= 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _referenceResolution = value;
+            field = value;
         }
-    }
+    } = new(1920f, 1080f);
 
     /// <summary>Gets or sets the player-selected UI scale multiplier.</summary>
     public float UserScale
     {
-        get => _userScale;
+        get;
         set
         {
             if (!float.IsFinite(value) || value <= 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _userScale = value;
+            field = value;
         }
-    }
+    } = 1f;
 
     /// <summary>Gets or sets whether upscaling snaps to a whole framebuffer-pixel multiple.</summary>
     public bool PixelPerfect { get; set; }

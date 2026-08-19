@@ -10,6 +10,7 @@ public sealed class ComboBox : UIElement
     private readonly UITheme _theme;
     private readonly Button _header;
     private readonly Popup _popup;
+    private readonly UISelectionModel _selection = new();
 
     /// <inheritdoc/>
     public override UISemanticInfo GetSemanticInfo() => new(
@@ -48,7 +49,7 @@ public sealed class ComboBox : UIElement
     }
 
     /// <summary>Gets the selected item index, or -1.</summary>
-    public int SelectedIndex { get; private set; } = -1;
+    public int SelectedIndex => _selection.PrimaryIndex;
 
     /// <summary>Gets the selected item text, or null.</summary>
     public string? SelectedItem => SelectedIndex >= 0 ? _items[SelectedIndex] : null;
@@ -87,7 +88,7 @@ public sealed class ComboBox : UIElement
         ArgumentNullException.ThrowIfNull(items);
         _items.Clear();
         _items.AddRange(items);
-        SelectedIndex = -1;
+        _selection.Clear();
         RebuildPopup();
         UpdateHeader();
     }
@@ -96,11 +97,9 @@ public sealed class ComboBox : UIElement
     /// <param name="index">Choice index.</param>
     public void Select(int index)
     {
-        if (index < -1 || index >= _items.Count)
-            throw new ArgumentOutOfRangeException(nameof(index));
-        if (SelectedIndex == index)
+        if (!_selection.Select(index, _items.Count, UISelectionMode.Single,
+            UISelectionIntent.Replace))
             return;
-        SelectedIndex = index;
         UpdateHeader();
         SelectionChanged?.Invoke(index, SelectedItem);
     }
@@ -182,8 +181,7 @@ public sealed class ComboBox : UIElement
     {
         _header.Content = new Label(SelectedItem ?? "Select…")
         {
-            ForegroundColor = _theme.TextPrimary,
-            FontSize = _theme.FontSize,
+            TextStyle = _theme.GetTextStyle(UITextRole.Body),
             IsHitTestVisible = false
         };
     }

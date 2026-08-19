@@ -98,8 +98,12 @@ public sealed class TitleBar : Surface
             var closeButton = new Button(36f, height, resolvedTheme)
                 { Name = "WindowClose", Padding = new Thickness(3f, 0f), CornerRadius = 0f,
                     ForegroundColor = Color.White,
-                    HoverColor = Color.FromSrgb(0xE8, 0x11, 0x23),
-                    PressedColor = Color.FromSrgb(0xC5, 0x0F, 0x1F) };
+                    InteractionColors = resolvedTheme.GetButtonStyle(ButtonStyle.Subtle)
+                        .InteractionColors with
+                        {
+                            Hovered = Color.FromSrgb(0xE8, 0x11, 0x23),
+                            Pressed = Color.FromSrgb(0xC5, 0x0F, 0x1F)
+                        } };
             minimizeButton.Content = new WindowsWindowGlyph(
                 WindowControlGlyph.Minimize, WindowControlGlyphSize, resolvedTheme.TextPrimary);
             maximizeButton.Content = new WindowsWindowGlyph(

@@ -63,9 +63,4 @@ public class ContentControl : Control
         _content.Arrange(new System.Numerics.Vector2(Padding.Left, Padding.Top), contentSize);
     }
 
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-        base.Paint(drawList);
-    }
 }

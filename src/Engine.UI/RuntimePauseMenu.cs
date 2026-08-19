@@ -41,8 +41,7 @@ public sealed class RuntimePauseMenu : UIElement
         };
         var heading = new Label(title, 272f, 42f)
         {
-            FontSize = resolvedTheme.PanelTitleFontSize,
-            ForegroundColor = resolvedTheme.TextPrimary,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.PrimaryPanelTitle),
             HorizontalAlignment = HorizontalAlignment.Center,
             IsHitTestVisible = false
         };
@@ -93,8 +92,4 @@ public sealed class RuntimePauseMenu : UIElement
         _menu.Arrange((contentSize - menuSize) * 0.5f, menuSize);
     }
 
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-    }
 }

@@ -67,30 +67,8 @@ public class UIElement : Node
     private bool _visualValid;
     private readonly UIDrawList _cachedPaintCommands = new();
     private bool _paintValid;
-    private HorizontalAlignment _horizontalAlignment = HorizontalAlignment.Stretch;
-    private VerticalAlignment _verticalAlignment = VerticalAlignment.Stretch;
-    private Thickness _margin = Thickness.Zero;
-    private Thickness _padding = Thickness.Zero;
-    private float _minWidth;
-    private float _minHeight;
-    private float _maxWidth = float.PositiveInfinity;
-    private float _maxHeight = float.PositiveInfinity;
-    private float _flexGrow;
-    private float _flexShrink = 1f;
-    private float? _flexBasis;
-    private FlexAlignment _alignSelf;
-    private Color _backgroundColor = Color.Black;
     private bool _hasBackgroundColor;
     private bool _paintBackground;
-    private Color _foregroundColor = Color.White;
-    private bool _isVisible = true;
-    private float _opacity = 1f;
-    private bool _isEnabled = true;
-    private bool _isOverlay;
-    private bool _clipToBounds;
-    private bool _isHovered;
-    private bool _isPressed;
-    private bool _isFocused;
     private UIDispatcher? _hostDispatcher;
     private ITextLayoutService? _textLayoutOverride;
     private UIFlowDirection? _flowDirectionOverride;
@@ -284,6 +262,43 @@ public class UIElement : Node
         return false;
     }
 
+    /// <summary>Gets or sets an optional named style variant resolved through inherited resources.</summary>
+    public string? StyleKey { get; set; }
+
+    /// <summary>Gets or sets an explicit typed style.</summary>
+    public IUIStyle? Style
+    {
+        get;
+        set
+        {
+            if (ReferenceEquals(field, value))
+                return;
+            field = value;
+            value?.Apply(this);
+        }
+    }
+
+    /// <summary>Resolves and applies an explicit or inherited typed style.</summary>
+    /// <returns>True when a compatible style was applied.</returns>
+    public bool ApplyStyle()
+    {
+        if (Style is { } explicitStyle)
+        {
+            explicitStyle.Apply(this);
+            return true;
+        }
+        for (Type? type = GetType(); type is not null && typeof(UIElement).IsAssignableFrom(type);
+             type = type.BaseType)
+        {
+            if (!TryFindResource(new UIStyleResourceKey(type, StyleKey), out IUIStyle? style)
+                || style is null)
+                continue;
+            style.Apply(this);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Gets the dispatcher inherited from this element's UI host.</summary>
     public UIDispatcher? Dispatcher => InheritanceParent is { } parent
         ? parent.Dispatcher
@@ -394,17 +409,17 @@ public class UIElement : Node
     /// <summary>Gets or sets multiplicative subtree opacity from zero through one.</summary>
     public float Opacity
     {
-        get => _opacity;
+        get;
         set
         {
             if (value < 0f || value > 1f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_opacity == value)
+            if (field == value)
                 return;
-            _opacity = value;
+            field = value;
             InvalidateVisual();
         }
-    }
+    } = 1f;
 
     /// <summary>Assigns or clears the dispatcher owned by this root's host.</summary>
     /// <param name="dispatcher">Host dispatcher, or null during detachment.</param>
@@ -481,102 +496,102 @@ public class UIElement : Node
     /// <summary>Gets or sets horizontal placement within the parent allocation.</summary>
     public HorizontalAlignment HorizontalAlignment
     {
-        get => _horizontalAlignment;
-        set { if (_horizontalAlignment != value) { _horizontalAlignment = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = HorizontalAlignment.Stretch;
 
     /// <summary>Gets or sets vertical placement within the parent allocation.</summary>
     public VerticalAlignment VerticalAlignment
     {
-        get => _verticalAlignment;
-        set { if (_verticalAlignment != value) { _verticalAlignment = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = VerticalAlignment.Stretch;
 
     /// <summary>Gets the size requested by the most recent measure pass, including margin.</summary>
     public Vector2 DesiredSize => _desiredSize;
     /// <summary>Gets or sets spacing outside the element's border box.</summary>
     public Thickness Margin
     {
-        get => _margin;
-        set { if (_margin != value) { _margin = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = Thickness.Zero;
 
     /// <summary>Gets or sets spacing between the element border and its content.</summary>
     public Thickness Padding
     {
-        get => _padding;
-        set { if (_padding != value) { _padding = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = Thickness.Zero;
 
     /// <summary>Gets or sets the minimum permitted width.</summary>
     public float MinWidth
     {
-        get => _minWidth;
-        set { if (_minWidth != value) { _minWidth = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>Gets or sets the minimum permitted height.</summary>
     public float MinHeight
     {
-        get => _minHeight;
-        set { if (_minHeight != value) { _minHeight = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>Gets or sets the maximum permitted width.</summary>
     public float MaxWidth
     {
-        get => _maxWidth;
-        set { if (_maxWidth != value) { _maxWidth = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = float.PositiveInfinity;
 
     /// <summary>Gets or sets the maximum permitted height.</summary>
     public float MaxHeight
     {
-        get => _maxHeight;
-        set { if (_maxHeight != value) { _maxHeight = value; InvalidateMeasure(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
+    } = float.PositiveInfinity;
 
     /// <summary>Gets or sets the share of positive main-axis free space assigned by a flex parent.</summary>
     public float FlexGrow
     {
-        get => _flexGrow;
+        get;
         set
         {
             if (!float.IsFinite(value) || value < 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_flexGrow != value) { _flexGrow = value; InvalidateMeasure(); }
+            if (field != value) { field = value; InvalidateMeasure(); }
         }
     }
 
     /// <summary>Gets or sets the share of main-axis overflow removed by a flex parent.</summary>
     public float FlexShrink
     {
-        get => _flexShrink;
+        get;
         set
         {
             if (!float.IsFinite(value) || value < 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_flexShrink != value) { _flexShrink = value; InvalidateMeasure(); }
+            if (field != value) { field = value; InvalidateMeasure(); }
         }
-    }
+    } = 1f;
 
     /// <summary>Gets or sets the preferred main-axis outer size used by a flex parent, or null for intrinsic size.</summary>
     public float? FlexBasis
     {
-        get => _flexBasis;
+        get;
         set
         {
             if (value is < 0f || value is { } finite && !float.IsFinite(finite))
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_flexBasis != value) { _flexBasis = value; InvalidateMeasure(); }
+            if (field != value) { field = value; InvalidateMeasure(); }
         }
     }
 
     /// <summary>Gets or sets an optional cross-axis alignment override used by a flex parent.</summary>
     public FlexAlignment AlignSelf
     {
-        get => _alignSelf;
-        set { if (_alignSelf != value) { _alignSelf = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>Gets or sets the element width in pixels.</summary>
@@ -606,17 +621,17 @@ public class UIElement : Node
     /// <summary>Gets or sets the background color and marks this element as having an explicit fill.</summary>
     public Color BackgroundColor
     {
-        get => _backgroundColor;
+        get;
         set
         {
-            if (_hasBackgroundColor && _paintBackground && _backgroundColor.Equals(value))
+            if (_hasBackgroundColor && _paintBackground && field.Equals(value))
                 return;
-            _backgroundColor = value;
+            field = value;
             _hasBackgroundColor = true;
             _paintBackground = true;
             InvalidateVisual();
         }
-    }
+    } = Color.Black;
 
     /// <summary>Gets or sets whether an explicitly configured background is painted.</summary>
     public bool PaintBackground
@@ -637,23 +652,23 @@ public class UIElement : Node
     /// <summary>Gets or sets the foreground (text/icon) color.</summary>
     public Color ForegroundColor
     {
-        get => _foregroundColor;
-        set { if (!_foregroundColor.Equals(value)) { _foregroundColor = value; InvalidateVisual(); } }
-    }
+        get;
+        set { if (!field.Equals(value)) { field = value; InvalidateVisual(); } }
+    } = Color.White;
 
     /// <summary>Gets or sets whether this element is visible.</summary>
     public bool IsVisible
     {
-        get => _isVisible;
+        get;
         set
         {
-            if (_isVisible == value)
+            if (field == value)
                 return;
-            _isVisible = value;
+            field = value;
             InvalidateInputTree();
             InvalidateMeasure();
         }
-    }
+    } = true;
 
     /// <summary>Gets whether this element and every retained ancestor are visible.</summary>
     public bool IsEffectivelyVisible
@@ -674,9 +689,9 @@ public class UIElement : Node
     /// <summary>Gets or sets whether this element and its descendants accept interaction.</summary>
     public bool IsEnabled
     {
-        get => _isEnabled;
-        set { if (_isEnabled != value) { _isEnabled = value; InvalidateVisual(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateVisual(); } }
+    } = true;
 
     /// <summary>Gets or sets whether this element can receive pointer hit tests.</summary>
     public bool IsHitTestVisible { get; set; } = true;
@@ -705,36 +720,36 @@ public class UIElement : Node
     /// <summary>Gets or sets whether this subtree is composited above viewport textures.</summary>
     public bool IsOverlay
     {
-        get => _isOverlay;
-        set { if (_isOverlay != value) { _isOverlay = value; InvalidatePaintSubtree(); InvalidateTreeSnapshot(); } }
+        get;
+        set { if (field != value) { field = value; InvalidatePaintSubtree(); InvalidateTreeSnapshot(); } }
     }
 
     /// <summary>Gets or sets whether descendants are clipped to this element's arranged bounds.</summary>
     public bool ClipToBounds
     {
-        get => _clipToBounds;
-        set { if (_clipToBounds != value) { _clipToBounds = value; InvalidateTreeSnapshot(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateTreeSnapshot(); } }
     }
 
     /// <summary>Gets or sets whether the mouse is hovering over this element.</summary>
     public bool IsHovered
     {
-        get => _isHovered;
-        set { if (_isHovered != value) { _isHovered = value; InvalidateVisual(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateVisual(); } }
     }
 
     /// <summary>Gets or sets whether this element is currently pressed.</summary>
     public bool IsPressed
     {
-        get => _isPressed;
-        set { if (_isPressed != value) { _isPressed = value; InvalidateVisual(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateVisual(); } }
     }
 
     /// <summary>Gets or sets whether this element has keyboard focus.</summary>
     public bool IsFocused
     {
-        get => _isFocused;
-        set { if (_isFocused != value) { _isFocused = value; InvalidateVisual(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateVisual(); } }
     }
 
     /// <summary>Occurs when the mouse enters this element.</summary>
@@ -829,6 +844,23 @@ public class UIElement : Node
 
     /// <summary>Gets the absolute top edge of the content box.</summary>
     public float ContentTop => Top + Padding.Top;
+
+    /// <summary>Builds the common interaction state used by control palettes.</summary>
+    /// <param name="selected">Whether the control has persistent selected state.</param>
+    /// <returns>Combined enabled, pointer, press, and selection state.</returns>
+    protected UIInteractionState GetInteractionState(bool selected = false)
+    {
+        var state = UIInteractionState.Normal;
+        if (!IsEnabled)
+            state |= UIInteractionState.Disabled;
+        if (IsHovered)
+            state |= UIInteractionState.Hovered;
+        if (IsPressed)
+            state |= UIInteractionState.Pressed;
+        if (selected)
+            state |= UIInteractionState.Selected;
+        return state;
+    }
 
     /// <summary>
     /// Creates a new UI element with an optional explicit size.
@@ -1759,6 +1791,12 @@ public class UIElement : Node
         return drawList;
     }
 
+    /// <summary>Paints content inside the element's padding-defined content box.</summary>
+    /// <param name="drawList">Draw list receiving content commands.</param>
+    protected virtual void PaintContent(UIDrawList drawList)
+    {
+    }
+
     /// <summary>Gets whether retained layout or paint state requires another draw-list build.</summary>
     internal bool RequiresDrawListRebuild => !_measureValid || !_arrangeValid || !_visualValid;
 
@@ -1799,6 +1837,23 @@ public class UIElement : Node
         {
             _cachedPaintCommands.Reset(layer);
             Paint(_cachedPaintCommands);
+            var previousClip = _cachedPaintCommands.CurrentClip;
+            var contentClip = new UIClipRect(
+                ContentLeft,
+                ContentTop,
+                ContentLeft + ContentWidth,
+                ContentTop + ContentHeight);
+            _cachedPaintCommands.CurrentClip = previousClip is { } localClip
+                ? UIClipRect.Intersect(localClip, contentClip)
+                : contentClip;
+            try
+            {
+                PaintContent(_cachedPaintCommands);
+            }
+            finally
+            {
+                _cachedPaintCommands.CurrentClip = previousClip;
+            }
             _paintValid = true;
         }
         var effectiveOpacity = inheritedOpacity * Opacity;

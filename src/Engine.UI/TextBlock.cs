@@ -44,11 +44,9 @@ public enum TextAlignment
 }
 
 /// <summary>Displays retained multiline text with wrapping, trimming, and alignment.</summary>
-public sealed class TextBlock : UIElement
+public sealed class TextBlock : TextElement
 {
     private readonly List<TextLine> _lines = [];
-    private string _text = string.Empty;
-    private float _fontSize = UITheme.Dark.FontSize;
     private float _lineHeight;
     private TextWrapMode _wrapping;
     private TextTrimming _trimming;
@@ -69,36 +67,6 @@ public sealed class TextBlock : UIElement
         Text = text;
         IsHitTestVisible = false;
         ClipToBounds = true;
-    }
-
-    /// <summary>Gets or sets the displayed text.</summary>
-    public string Text
-    {
-        get => _text;
-        set
-        {
-            var resolved = value ?? string.Empty;
-            if (_text == resolved)
-                return;
-            _text = resolved;
-            _textElementBoundaries = StringInfo.ParseCombiningCharacters(_text);
-            InvalidateTextLayout();
-        }
-    }
-
-    /// <summary>Gets or sets the font height in logical pixels.</summary>
-    public float FontSize
-    {
-        get => _fontSize;
-        set
-        {
-            if (value <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(value));
-            if (_fontSize == value)
-                return;
-            _fontSize = value;
-            InvalidateTextLayout();
-        }
     }
 
     /// <summary>Gets or sets the line advance, or zero to use 1.2 times the font size.</summary>
@@ -171,7 +139,7 @@ public sealed class TextBlock : UIElement
     }
 
     /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
+    protected override void PaintContent(UIDrawList drawList)
     {
         EnsureLines(ContentWidth);
         var lineHeight = GetLineHeight();
@@ -192,6 +160,16 @@ public sealed class TextBlock : UIElement
                 FontSize, ForegroundColor, BackgroundColor, FlowDirection.ToTextFlowDirection());
         }
     }
+
+    /// <inheritdoc/>
+    protected override void OnTextChanged()
+    {
+        _textElementBoundaries = StringInfo.ParseCombiningCharacters(Text);
+        InvalidateTextLayout();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnFontSizeChanged() => InvalidateTextLayout();
 
     /// <summary>Invalidates cached line construction and desired size.</summary>
     private void InvalidateTextLayout()
@@ -226,17 +204,17 @@ public sealed class TextBlock : UIElement
     private void BuildLines(float availableWidth)
     {
         var start = 0;
-        while (start <= _text.Length)
+        while (start <= Text.Length)
         {
-            var end = _text.IndexOf('\n', start);
+            var end = Text.IndexOf('\n', start);
             if (end < 0)
-                end = _text.Length;
-            var logicalEnd = end > start && _text[end - 1] == '\r' ? end - 1 : end;
+                end = Text.Length;
+            var logicalEnd = end > start && Text[end - 1] == '\r' ? end - 1 : end;
             if (_wrapping == TextWrapMode.Wrap && float.IsFinite(availableWidth))
                 AppendWrappedLine(start, logicalEnd, availableWidth);
             else
                 AppendUnwrappedLine(start, logicalEnd, availableWidth);
-            if (end == _text.Length)
+            if (end == Text.Length)
                 break;
             start = end + 1;
         }
@@ -248,18 +226,18 @@ public sealed class TextBlock : UIElement
     /// <param name="availableWidth">Available content width.</param>
     private void AppendUnwrappedLine(int start, int end, float availableWidth)
     {
-        var span = _text.AsSpan(start, end - start);
+        var span = Text.AsSpan(start, end - start);
         var width = MeasureTextWidth(span);
         if (_trimming != TextTrimming.CharacterEllipsis || !float.IsFinite(availableWidth) ||
             width <= availableWidth)
         {
-            _lines.Add(new TextLine(_text.Substring(start, end - start), width));
+            _lines.Add(new TextLine(Text.Substring(start, end - start), width));
             return;
         }
         const string ellipsis = "\u2026";
         var ellipsisWidth = MeasureTextWidth(ellipsis.AsSpan());
         var fit = FindFittingEnd(start, end, MathF.Max(0f, availableWidth - ellipsisWidth));
-        var displayed = _text.Substring(start, fit - start) + ellipsis;
+        var displayed = Text.Substring(start, fit - start) + ellipsis;
         _lines.Add(new TextLine(displayed, MathF.Min(availableWidth,
             MeasureTextWidth(displayed.AsSpan()))));
     }
@@ -277,7 +255,7 @@ public sealed class TextBlock : UIElement
         }
         while (start < end)
         {
-            while (start < end && char.IsWhiteSpace(_text[start]))
+            while (start < end && char.IsWhiteSpace(Text[start]))
                 start++;
             if (start == end)
                 break;
@@ -293,11 +271,11 @@ public sealed class TextBlock : UIElement
                 {
                     breakEnd = whitespace;
                     next = whitespace;
-                    while (next < end && char.IsWhiteSpace(_text[next]))
+                    while (next < end && char.IsWhiteSpace(Text[next]))
                         next++;
                 }
             }
-            var displayed = _text.Substring(start, breakEnd - start);
+            var displayed = Text.Substring(start, breakEnd - start);
             _lines.Add(new TextLine(displayed,
                 MeasureTextWidth(displayed.AsSpan())));
             start = next;
@@ -311,16 +289,15 @@ public sealed class TextBlock : UIElement
     /// <returns>Exclusive fitting UTF-16 boundary.</returns>
     private int FindFittingEnd(int start, int end, float availableWidth)
     {
-        var fit = start;
-        var candidate = start;
-        while (candidate < end)
-        {
-            candidate = NextTextElementIndex(candidate, end);
-            if (MeasureTextWidth(_text.AsSpan(start, candidate - start)) > availableWidth)
-                break;
-            fit = candidate;
-        }
-        return fit;
+        return UITextFitting.FindFittingEnd(
+            Text,
+            _textElementBoundaries,
+            start,
+            end,
+            availableWidth,
+            TextLayout,
+            FontSize,
+            FlowDirection.ToTextFlowDirection());
     }
 
     /// <summary>Advances one Unicode text-element boundary.</summary>
@@ -355,18 +332,13 @@ public sealed class TextBlock : UIElement
     /// <returns>Ellipsized cached line.</returns>
     private TextLine Ellipsize(string text, float availableWidth)
     {
-        const string ellipsis = "\u2026";
-        var ellipsisWidth = MeasureTextWidth(ellipsis.AsSpan());
-        var boundaries = StringInfo.ParseCombiningCharacters(text);
-        var fit = 0;
-        for (var index = 0; index < boundaries.Length; index++)
-        {
-            var end = index + 1 < boundaries.Length ? boundaries[index + 1] : text.Length;
-            if (MeasureTextWidth(text.AsSpan(0, end)) + ellipsisWidth > availableWidth)
-                break;
-            fit = end;
-        }
-        var displayed = text[..fit] + ellipsis;
+        var displayed = UITextFitting.Ellipsize(
+            text,
+            availableWidth,
+            TextLayout,
+            FontSize,
+            FlowDirection.ToTextFlowDirection(),
+            force: true);
         return new TextLine(displayed,
             MeasureTextWidth(displayed.AsSpan()));
     }
@@ -385,7 +357,7 @@ public sealed class TextBlock : UIElement
     {
         for (var index = end - 1; index >= start; index--)
         {
-            if (char.IsWhiteSpace(_text[index]))
+            if (char.IsWhiteSpace(Text[index]))
                 return index;
         }
         return start;

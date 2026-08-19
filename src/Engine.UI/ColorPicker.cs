@@ -523,8 +523,7 @@ public sealed class ColorPicker : UIElement
             _theme = theme;
             _label = new Label(string.Empty)
             {
-                ForegroundColor = theme.TextPrimary,
-                FontSize = theme.FontSize,
+                TextStyle = theme.GetTextStyle(UITextRole.Body),
                 IsHitTestVisible = false
             };
             AddChild(_label);
@@ -564,55 +563,19 @@ public sealed class ColorPicker : UIElement
     /// <summary>Provides pointer-captured normalized selection for picker surfaces.</summary>
     private abstract class ColorDragSurface : UIElement
     {
-        private bool _dragging;
-
         /// <summary>Creates a fixed-size drag surface.</summary>
         /// <param name="width">Surface width.</param>
         /// <param name="height">Surface height.</param>
         protected ColorDragSurface(float width, float height) : base(width, height)
         {
-            Pointer += OnPointer;
-            PointerCaptureLost += OnPointerCaptureLost;
+            var gesture = new PointerCaptureGesture(this, handleMoves: true);
+            gesture.PositionChanged += Select;
         }
 
         /// <summary>Applies one local pointer position to the selected channel.</summary>
         /// <param name="position">Surface-local pointer position.</param>
         protected abstract void Select(Vector2 position);
 
-        /// <summary>Starts, updates, or completes a captured pointer selection.</summary>
-        /// <param name="sender">Current routed receiver.</param>
-        /// <param name="pointerEvent">Routed pointer event.</param>
-        private void OnPointer(UIElement sender, UIPointerEventArgs pointerEvent)
-        {
-            if (pointerEvent.RoutePhase != UIRoutePhase.Target)
-                return;
-            if (pointerEvent.Kind == UIPointerEventKind.Press &&
-                pointerEvent.Button == InputPointerButton.Primary)
-            {
-                _dragging = true;
-                Select(pointerEvent.LocalPosition);
-                pointerEvent.CapturePointer();
-                pointerEvent.Handled = true;
-            }
-            else if (pointerEvent.Kind == UIPointerEventKind.Move && _dragging)
-            {
-                Select(pointerEvent.LocalPosition);
-                pointerEvent.Handled = true;
-            }
-            else if (pointerEvent.Kind == UIPointerEventKind.Release && _dragging)
-            {
-                Select(pointerEvent.LocalPosition);
-                _dragging = false;
-                pointerEvent.ReleasePointerCapture();
-                pointerEvent.Handled = true;
-            }
-        }
-
-        /// <summary>Clears drag state after external capture loss.</summary>
-        private void OnPointerCaptureLost()
-        {
-            _dragging = false;
-        }
     }
 
     /// <summary>Paints and edits the two-dimensional saturation/value plane.</summary>

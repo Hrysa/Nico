@@ -31,8 +31,8 @@ public sealed class AssetImportProgressDialog : Modal
         _assetLabel = new Label("Starting background import...", Dialog.Width - 40f, 28f)
         {
             Name = "AssetImportCurrentAsset",
-            ForegroundColor = resolvedTheme.TextPrimary,
-            PaddingLeft = 0f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Body),
+            Padding = Thickness.Zero
         };
         content.Add(_assetLabel, new Vector2(20f, 82f));
         _progressBar = new ProgressBar(Dialog.Width - 40f, 8f, resolvedTheme)
@@ -45,8 +45,8 @@ public sealed class AssetImportProgressDialog : Modal
         _countLabel = new Label($"0 of {totalCount}", Dialog.Width - 40f, 24f)
         {
             Name = "AssetImportCount",
-            ForegroundColor = resolvedTheme.TextSecondary,
-            PaddingLeft = 0f
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero
         };
         content.Add(_countLabel, new Vector2(20f, 142f));
     }

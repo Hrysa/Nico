@@ -126,7 +126,7 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         {
             Name = "TerrainDimensions",
             ForegroundColor = _theme.TextSecondary,
-            PaddingLeft = 0f
+            Padding = Thickness.Zero
         };
         AddChild(_dimensions);
 
@@ -244,7 +244,7 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         {
             Name = "TerrainDocumentStatus",
             ForegroundColor = _theme.TextMuted,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             Margin = new Thickness(0f, 232f, 0f, 0f)
         };
         AddChild(_status);
@@ -382,7 +382,7 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         {
             Name = "TerrainObjectStatus",
             ForegroundColor = _theme.TextMuted,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             Margin = new Thickness(0f, 646f, 0f, 0f)
         };
         AddChild(_objectStatus);
@@ -592,7 +592,7 @@ public sealed class TerrainInspectorContent : Panel, IInspectorContentLifecycle
         return new Label(text, 76f, 30f)
         {
             ForegroundColor = _theme.TextSecondary,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             Margin = new Thickness(0f, y, 0f, 0f)
         };
     }

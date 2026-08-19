@@ -10,8 +10,6 @@ public sealed class ContextMenu : Popup
     public override UISemanticInfo GetSemanticInfo() => new(
         UISemanticRole.Menu, Name, null, IsEnabled, true, false, null);
 
-    private const float ItemHeight = 26f;
-    private const float SeparatorHeight = 9f;
     private readonly UITheme _theme;
     private readonly List<ContextMenuItem> _items = [];
     private readonly List<ContextMenu> _submenus = [];
@@ -28,7 +26,6 @@ public sealed class ContextMenu : Popup
     private Vector2 _corridorOrigin;
     private float _contentHeight = 4f;
     private float _scrollOffset;
-    private float _maxVisibleHeight = float.PositiveInfinity;
 
     /// <summary>Gets or sets pointer-hover delay before a submenu opens.</summary>
     public double SubmenuOpenDelay { get; set; } = 0.25d;
@@ -39,15 +36,15 @@ public sealed class ContextMenu : Popup
     /// <summary>Gets or sets the maximum visible menu height before rows scroll.</summary>
     public float MaxVisibleHeight
     {
-        get => _maxVisibleHeight;
+        get;
         set
         {
             if (value <= 0f || float.IsNaN(value))
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _maxVisibleHeight = value;
+            field = value;
             RecalculateHeight();
         }
-    }
+    } = float.PositiveInfinity;
 
     /// <summary>Gets the current vertical row scroll offset.</summary>
     public float ScrollOffset => _scrollOffset;
@@ -179,7 +176,8 @@ public sealed class ContextMenu : Popup
     /// <summary>Adds a non-interactive visual separator.</summary>
     public void AddSeparator()
     {
-        var separator = new ContextMenuSeparator(_theme.BorderStrong, Width - 12f, SeparatorHeight);
+        var separator = new ContextMenuSeparator(
+            _theme.BorderStrong, Width - 12f, _theme.MenuSeparatorHeight);
         _rows.Add(separator);
         _rowViewport.AddChild(separator);
         RecalculateHeight();
@@ -245,7 +243,7 @@ public sealed class ContextMenu : Popup
     private ContextMenuItem CreateItem(string label)
     {
         var parsed = ParseMnemonic(label);
-        return new ContextMenuItem(Width - 4f, ItemHeight, parsed.Label, _theme)
+        return new ContextMenuItem(Width - 4f, _theme.MenuItemHeight, parsed.Label, _theme)
         {
             Mnemonic = parsed.Mnemonic
         };
@@ -486,7 +484,7 @@ public sealed class ContextMenu : Popup
     /// <param name="keyEvent">Key event providing focus access.</param>
     private void FocusPage(int currentIndex, int direction, UIKeyEventArgs keyEvent)
     {
-        var pageSize = Math.Max(1, (int)MathF.Floor(Height / ItemHeight));
+        var pageSize = Math.Max(1, (int)MathF.Floor(Height / _theme.MenuItemHeight));
         var target = Math.Clamp(currentIndex + direction * pageSize, 0, _items.Count - 1);
         for (var index = target; index >= 0 && index < _items.Count; index += direction)
         {
@@ -504,7 +502,9 @@ public sealed class ContextMenu : Popup
     {
         var height = 4f;
         for (var index = 0; index < _rows.Count; index++)
-            height += _rows[index] is ContextMenuSeparator ? SeparatorHeight : ItemHeight;
+            height += _rows[index] is ContextMenuSeparator
+                ? _theme.MenuSeparatorHeight
+                : _theme.MenuItemHeight;
         _contentHeight = height;
         Height = MathF.Min(height, MaxVisibleHeight);
         _scrollOffset = Math.Clamp(_scrollOffset, 0f, GetMaximumScrollOffset());
@@ -578,7 +578,9 @@ public sealed class ContextMenu : Popup
         for (var index = 0; index < _rows.Count; index++)
         {
             var row = _rows[index];
-            var rowHeight = row is ContextMenuSeparator ? SeparatorHeight : ItemHeight;
+            var rowHeight = row is ContextMenuSeparator
+                ? _theme.MenuSeparatorHeight
+                : _theme.MenuItemHeight;
             var horizontalInset = row is ContextMenuSeparator ? 6f : 2f;
             row.Measure(new Vector2(MathF.Max(0f, contentSize.X - horizontalInset * 2f), rowHeight));
             row.Arrange(new Vector2(horizontalInset, y),
@@ -602,24 +604,26 @@ public sealed class ContextMenu : Popup
     private Vector2 GetSubmenuPosition(ContextMenu submenu, float preferredY, float contentWidth)
     {
         var preferredX = contentWidth - 2f;
-        submenu.ActualPlacement = PopupPlacement.Right;
         if (!ConstrainSubmenusToHost || GetTopLevelRoot() is not { } root)
-            return new Vector2(preferredX, preferredY);
-
-        var hostRight = root.Right;
-        var hostBottom = root.Bottom;
-        var absoluteLeft = Left + preferredX;
-        if (absoluteLeft + submenu.Width > hostRight)
         {
-            preferredX = -submenu.Width + 2f;
-            submenu.ActualPlacement = PopupPlacement.Left;
+            submenu.ActualPlacement = PopupPlacement.Right;
+            return new Vector2(preferredX, preferredY);
         }
-        var absoluteTop = Top + preferredY;
-        if (absoluteTop + submenu.Height > hostBottom)
-            preferredY -= absoluteTop + submenu.Height - hostBottom;
-        if (Top + preferredY < root.Top)
-            preferredY += root.Top - (Top + preferredY);
-        return new Vector2(preferredX, preferredY);
+        var anchor = new UIClipRect(
+            Left + 2f,
+            Top + preferredY,
+            Left + contentWidth - 2f,
+            Top + preferredY);
+        var result = PopupPlacementResolver.Resolve(
+            anchor,
+            new Vector2(submenu.Width, submenu.Height),
+            PopupPlacement.Right,
+            Vector2.Zero,
+            new UIPopupWorkArea(root.Left, root.Top, root.Right, root.Bottom),
+            constrain: true,
+            allowFlip: true);
+        submenu.ActualPlacement = result.Placement;
+        return result.Position - new Vector2(Left, Top);
     }
 
     /// <summary>Gets the top-level UI root when this menu is attached beneath another element.</summary>
@@ -651,7 +655,7 @@ public sealed class ContextMenu : Popup
         }
         if (pointerEvent.Kind != UIPointerEventKind.Wheel || GetMaximumScrollOffset() <= 0f)
             return;
-        ScrollBy(-pointerEvent.WheelDelta.Y * ItemHeight);
+        ScrollBy(-pointerEvent.WheelDelta.Y * _theme.MenuItemHeight);
         pointerEvent.Handled = true;
     }
 
@@ -676,7 +680,9 @@ public sealed class ContextMenu : Popup
         for (var index = 0; index < _rows.Count; index++)
         {
             var row = _rows[index];
-            var rowHeight = row is ContextMenuSeparator ? SeparatorHeight : ItemHeight;
+            var rowHeight = row is ContextMenuSeparator
+                ? _theme.MenuSeparatorHeight
+                : _theme.MenuItemHeight;
             if (ReferenceEquals(row, item))
             {
                 if (top < _scrollOffset)
@@ -864,10 +870,13 @@ public sealed class ContextMenuItem : Button
         _presentation = new ContextMenuItemContent(label, _theme);
         Content = _presentation;
         var resolvedTheme = theme ?? UITheme.Dark;
-        PaddingLeft = 10f;
-        NormalColor = resolvedTheme.SurfaceRaised;
-        HoverColor = resolvedTheme.SurfaceHover;
-        PressedColor = resolvedTheme.SurfacePressed;
+        Padding = Padding with { Left = 10f };
+        InteractionColors = InteractionColors with
+        {
+            Normal = resolvedTheme.SurfaceRaised,
+            Hovered = resolvedTheme.SurfaceHover,
+            Pressed = resolvedTheme.SurfacePressed
+        };
         PaintNormalBackground = true;
         CornerRadius = 0f;
     }
@@ -937,16 +946,14 @@ internal sealed class ContextMenuItemContent : UIElement
         IsHitTestVisible = false;
         _primary = new Label(text)
         {
-            FontSize = theme.FontSize,
-            ForegroundColor = theme.TextPrimary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Body),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         _accelerator = new Label(string.Empty)
         {
-            FontSize = theme.CaptionFontSize,
-            ForegroundColor = theme.TextMuted,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.MutedCaption),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         AddChild(_primary);
@@ -1002,8 +1009,4 @@ internal sealed class ContextMenuItemContent : UIElement
             new Vector2(acceleratorWidth, contentSize.Y));
     }
 
-    /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
-    {
-    }
 }

@@ -105,7 +105,7 @@ public sealed class Image : UIElement
     }
 
     /// <inheritdoc/>
-    protected override void Paint(UIDrawList drawList)
+    protected override void PaintContent(UIDrawList drawList)
     {
         var destination = ResolveDestination();
         drawList.AddImage(_texture, destination.Left, destination.Top,

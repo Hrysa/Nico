@@ -77,8 +77,7 @@ public sealed class MonsterController : SceneScript
     /// <inheritdoc />
     public override void OnDestroy()
     {
-        if (_hitAnimation is not null)
-            _hitAnimation.Ended -= OnHitEnded;
+        _hitAnimation?.Ended -= OnHitEnded;
     }
 
     /// <summary>Returns this authored monster's slot from a fixed authoritative snapshot.</summary>

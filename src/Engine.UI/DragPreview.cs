@@ -21,10 +21,9 @@ public sealed class DragPreview : ContentControl
         ForegroundColor = resolvedTheme.TextPrimary;
         ItemLabel = new Label(text)
         {
-            FontSize = resolvedTheme.FontSize,
-            ForegroundColor = resolvedTheme.TextPrimary,
+            TextStyle = resolvedTheme.GetTextStyle(UITextRole.Body),
             BackgroundColor = resolvedTheme.SurfaceRaised,
-            PaddingLeft = 0f,
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         Width = MathF.Ceiling(ItemLabel.MeasureTextWidth() + Padding.Horizontal);

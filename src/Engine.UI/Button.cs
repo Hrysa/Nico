@@ -18,10 +18,7 @@ public enum ButtonStyle
 /// <summary>A clickable content box with hover and press visual states.</summary>
 public class Button : ContentControl
 {
-    private const float DefaultHorizontalPadding = 7f;
-    private Color _normalColor;
-    private Color _hoverColor;
-    private Color _pressedColor;
+    private UIInteractionColors _interactionColors;
     private bool _paintNormalBackground = true;
 
     /// <inheritdoc/>
@@ -51,65 +48,22 @@ public class Button : ContentControl
         set => _paintNormalBackground = value;
     }
 
-    /// <summary>Gets or sets the left content inset.</summary>
-    public float PaddingLeft
+    /// <summary>Gets or sets the complete common interaction palette.</summary>
+    public UIInteractionColors InteractionColors
     {
-        get => Padding.Left;
+        get => _interactionColors;
         set
         {
-            Padding = Padding with { Left = value };
+            if (_interactionColors == value)
+                return;
+            _interactionColors = value;
+            BackgroundColor = value.Normal;
+            InvalidateVisual();
         }
     }
 
-    /// <summary>Gets or sets the top content inset.</summary>
-    public float PaddingTop
-    {
-        get => Padding.Top;
-        set => Padding = Padding with { Top = value };
-    }
-
-    /// <summary>Gets or sets the right content inset.</summary>
-    public float PaddingRight
-    {
-        get => Padding.Right;
-        set
-        {
-            Padding = Padding with { Right = value };
-        }
-    }
-
-    /// <summary>Gets or sets the bottom content inset.</summary>
-    public float PaddingBottom
-    {
-        get => Padding.Bottom;
-        set => Padding = Padding with { Bottom = value };
-    }
-
-    /// <summary>Gets or sets the normal background color.</summary>
-    public Color NormalColor
-    {
-        get => _normalColor;
-        set
-        {
-            _normalColor = value;
-            if (!IsHovered && !IsPressed)
-                BackgroundColor = value;
-        }
-    }
-
-    /// <summary>Gets or sets the hover background color.</summary>
-    public Color HoverColor
-    {
-        get => _hoverColor;
-        set => _hoverColor = value;
-    }
-
-    /// <summary>Gets or sets the pressed background color.</summary>
-    public Color PressedColor
-    {
-        get => _pressedColor;
-        set => _pressedColor = value;
-    }
+    /// <summary>Gets whether this control contributes persistent selected visual state.</summary>
+    protected virtual bool IsVisualStateSelected => false;
 
     /// <summary>Creates a fixed-size button with a custom color scheme.</summary>
     /// <param name="width">Button width.</param>
@@ -129,13 +83,18 @@ public class Button : ContentControl
     public Button(float width, float height, Color normalColor)
         : base(width, height)
     {
+        var theme = UITheme.Dark;
         IsTabStop = true;
         ClipToBounds = true;
-        Padding = new Thickness(DefaultHorizontalPadding, 0f);
-        CornerRadius = 5f;
-        _normalColor = normalColor;
-        _hoverColor = Color.Lerp(normalColor, Color.White, 0.15f);
-        _pressedColor = Color.Lerp(normalColor, Color.Black, 0.2f);
+        Padding = new Thickness(theme.ControlHorizontalPadding, 0f);
+        CornerRadius = theme.ControlCornerRadius;
+        _interactionColors = new UIInteractionColors(
+            normalColor,
+            Color.Lerp(normalColor, Color.White, 0.15f),
+            Color.Lerp(normalColor, Color.Black, 0.2f),
+            normalColor,
+            Color.Lerp(normalColor, Color.White, 0.15f),
+            normalColor);
         BackgroundColor = normalColor;
     }
 
@@ -194,26 +153,13 @@ public class Button : ContentControl
         ArgumentNullException.ThrowIfNull(theme);
         IsTabStop = true;
         ClipToBounds = true;
-        Padding = new Thickness(DefaultHorizontalPadding, 0f);
-        CornerRadius = 5f;
-        _normalColor = style switch
-        {
-            ButtonStyle.Primary => theme.SurfacePressed,
-            ButtonStyle.Header => theme.Surface,
-            _ => theme.SurfaceRaised
-        };
-        _hoverColor = theme.SurfaceHover;
-        _pressedColor = style == ButtonStyle.Primary ? theme.BorderStrong : theme.SurfacePressed;
-        _paintNormalBackground = style == ButtonStyle.Primary;
-        if (style == ButtonStyle.Header)
-            CornerRadius = 0f;
-        BackgroundColor = _normalColor;
-        ForegroundColor = style switch
-        {
-            ButtonStyle.Primary => theme.Accent,
-            ButtonStyle.Header => theme.TextSecondary,
-            _ => theme.TextPrimary
-        };
+        Padding = new Thickness(theme.ControlHorizontalPadding, 0f);
+        var visualStyle = theme.GetButtonStyle(style);
+        CornerRadius = visualStyle.CornerRadius;
+        _interactionColors = visualStyle.InteractionColors;
+        _paintNormalBackground = visualStyle.PaintNormalBackground;
+        BackgroundColor = visualStyle.InteractionColors.Normal;
+        ForegroundColor = visualStyle.ForegroundColor;
     }
 
     /// <summary>Creates a non-interactive label child for text convenience constructors.</summary>
@@ -224,9 +170,8 @@ public class Button : ContentControl
     {
         return new Label(text)
         {
-            FontSize = fontSize,
-            ForegroundColor = ForegroundColor,
-            PaddingLeft = 0f,
+            TextStyle = new UITextStyle(fontSize, ForegroundColor),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
     }
@@ -234,48 +179,15 @@ public class Button : ContentControl
     /// <inheritdoc/>
     protected override void Paint(UIDrawList drawList)
     {
-        var paintBackground = _paintNormalBackground ||
-            VisualStateMode == BoxVisualStateMode.Interactive && (IsHovered || IsPressed);
-        base.PaintBackground = paintBackground;
-        base.Paint(drawList);
-    }
-
-    /// <inheritdoc/>
-    protected override void OnMouseEnter()
-    {
-        if (VisualStateMode == BoxVisualStateMode.Interactive)
-            BackgroundColor = IsPressed ? _pressedColor : _hoverColor;
-        base.OnMouseEnter();
-    }
-
-    /// <inheritdoc/>
-    protected override void OnMouseLeave()
-    {
-        BackgroundColor = _normalColor;
-        base.OnMouseLeave();
-    }
-
-    /// <inheritdoc/>
-    protected override void OnMouseDown()
-    {
-        if (VisualStateMode == BoxVisualStateMode.Interactive)
-            BackgroundColor = _pressedColor;
-        base.OnMouseDown();
-    }
-
-    /// <inheritdoc/>
-    protected override void OnMouseUp()
-    {
-        if (VisualStateMode == BoxVisualStateMode.Interactive)
-            BackgroundColor = IsHovered ? _hoverColor : _normalColor;
-        base.OnMouseUp();
-    }
-
-    /// <inheritdoc/>
-    protected override void OnVisualStateModeChanged()
-    {
-        if (VisualStateMode == BoxVisualStateMode.Static)
-            BackgroundColor = _normalColor;
-        base.OnVisualStateModeChanged();
+        var interactive = VisualStateMode == BoxVisualStateMode.Interactive;
+        var state = GetInteractionState(interactive && IsVisualStateSelected);
+        var hasTransientState = interactive &&
+            (state & (UIInteractionState.Hovered | UIInteractionState.Pressed |
+                UIInteractionState.Selected)) != 0;
+        if (!_paintNormalBackground && !hasTransientState)
+            return;
+        PaintBox(drawList, interactive
+            ? _interactionColors.Resolve(state)
+            : _interactionColors.Normal);
     }
 }

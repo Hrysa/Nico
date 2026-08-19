@@ -50,9 +50,8 @@ public sealed class DetachedToolWindow : IDisposable
         };
         TitleBar.CenterZone.AddChild(new Label(title)
         {
-            FontSize = theme.FontSize,
-            ForegroundColor = theme.TextSecondary,
-            PaddingLeft = 0f,
+            TextStyle = theme.GetTextStyle(UITextRole.Secondary),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         });
         content.FlexGrow = 1f;

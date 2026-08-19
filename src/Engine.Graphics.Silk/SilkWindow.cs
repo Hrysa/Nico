@@ -314,8 +314,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
             WindowsClipboard.SetText(GetWin32WindowHandle(), text);
             return;
         }
-        if (_keyboard is not null)
-            _keyboard.ClipboardText = text;
+        _keyboard?.ClipboardText = text;
     }
 
     /// <summary>Gets the native Win32 window handle used for clipboard ownership.</summary>
@@ -1114,8 +1113,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     /// <inheritdoc/>
     public void Minimize()
     {
-        if (_window is not null)
-            _window.WindowState = WindowState.Minimized;
+        _window?.WindowState = WindowState.Minimized;
     }
 
     /// <inheritdoc/>
@@ -1151,8 +1149,7 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
     /// <inheritdoc/>
     public void Close()
     {
-        if (_window is not null)
-            _window.IsClosing = true;
+        _window?.IsClosing = true;
     }
 
     /// <summary>Returns keyboard modifiers active at the current native input event.</summary>
@@ -6016,8 +6013,8 @@ public unsafe class SilkWindow : IWindow, IInputSourceV2, IPointerGestureSource,
         if (_eventDrivenIdle && enabled && !_updatingFrame)
             Interlocked.Exchange(ref _discardNextUpdateDelta, 1);
         _continuousRendering = enabled;
-        if (_eventDrivenIdle && _window is not null)
-            _window.IsEventDriven = !enabled;
+        if (_eventDrivenIdle)
+            _window?.IsEventDriven = !enabled;
         RequestFrame();
     }
 

@@ -13,7 +13,6 @@ public sealed class ListView : Panel
     private readonly UITheme _theme;
     private int _scrollIndex;
     private Vector2 _arrangedSize;
-    private float _rowHeight;
     private readonly UISelectionModel _selection = new();
     private string _typeAhead = string.Empty;
     private double _typeAheadElapsed;
@@ -34,14 +33,14 @@ public sealed class ListView : Panel
     /// <summary>Gets or sets the height of one item row.</summary>
     public float RowHeight
     {
-        get => _rowHeight;
+        get;
         set
         {
             if (value <= 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_rowHeight == value)
+            if (field == value)
                 return;
-            _rowHeight = value;
+            field = value;
             RebuildRows();
         }
     }
@@ -303,11 +302,10 @@ public sealed class ListView : Panel
 /// <summary>
 /// Displays one selectable row inside a <see cref="ListView"/>.
 /// </summary>
-public sealed class ListViewItem : Button
+public sealed class ListViewItem : SelectableButton
 {
     private readonly UITheme _theme;
     private readonly Label _label;
-    private bool _isSelected;
     private int _itemIndex = -1;
     private Action<int, InputModifiers>? _selectItem;
     private Action<int>? _activateItem;
@@ -340,20 +338,6 @@ public sealed class ListViewItem : Button
     /// <summary>Gets the displayed item text.</summary>
     public string Text => _label.Text;
 
-    /// <summary>Gets or sets whether this row is selected.</summary>
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (_isSelected == value)
-                return;
-            _isSelected = value;
-            NormalColor = value ? _theme.SurfacePressed : _theme.Surface;
-            PaintNormalBackground = value;
-        }
-    }
-
     /// <summary>
     /// Creates a list row.
     /// </summary>
@@ -368,16 +352,13 @@ public sealed class ListViewItem : Button
         ForegroundColor = _theme.TextPrimary;
         _label = new Label(text)
         {
-            FontSize = _theme.FontSize,
-            ForegroundColor = _theme.TextPrimary,
-            PaddingLeft = 0f,
+            TextStyle = _theme.GetTextStyle(UITextRole.Body),
+            Padding = Thickness.Zero,
             IsHitTestVisible = false
         };
         Content = _label;
-        PaddingLeft = _theme.ItemRowPadding;
-        NormalColor = _theme.Surface;
-        HoverColor = _theme.SurfaceHover;
-        PressedColor = _theme.SurfacePressed;
+        Padding = Padding with { Left = _theme.ItemRowPadding };
+        InteractionColors = _theme.GetItemInteractionColors();
         PaintNormalBackground = false;
         CornerRadius = 0f;
         Click += OnSelect;

@@ -8,21 +8,11 @@ namespace Engine.UI;
 /// </summary>
 public class StackPanel : Panel
 {
-    private float _spacing;
-    private float _paddingTop;
-
     /// <summary>Gets or sets the space between children.</summary>
     public float Spacing
     {
-        get => _spacing;
-        set { if (_spacing != value) { _spacing = value; InvalidateMeasure(); } }
-    }
-
-    /// <summary>Gets or sets the top content inset.</summary>
-    public float PaddingTop
-    {
-        get => _paddingTop;
-        set { if (_paddingTop != value) { _paddingTop = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>
@@ -49,7 +39,7 @@ public class StackPanel : Panel
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
         var desiredWidth = 0f;
-        var desiredHeight = PaddingTop;
+        var desiredHeight = 0f;
         var children = Children;
         for (var index = 0; index < children.Count; index++)
         {
@@ -67,7 +57,7 @@ public class StackPanel : Panel
     /// <inheritdoc/>
     protected override void ArrangeOverride(Vector2 contentSize)
     {
-        var y = Padding.Top + PaddingTop;
+        var y = Padding.Top;
         var children = Children;
         for (var index = 0; index < children.Count; index++)
         {

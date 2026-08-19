@@ -6,12 +6,6 @@ namespace Engine.UI;
 /// <summary>Measures and arranges children using a CSS-like one-dimensional flex algorithm.</summary>
 public sealed class FlexPanel : Panel
 {
-    private FlexDirection _direction;
-    private FlexJustify _justifyContent;
-    private FlexAlignment _alignItems = FlexAlignment.Stretch;
-    private FlexJustify _alignContent = FlexJustify.Start;
-    private FlexWrap _wrap;
-    private float _gap;
     private float[] _mainSizes = [];
     private float[] _crossSizes = [];
     private int[] _lineCounts = [];
@@ -23,52 +17,52 @@ public sealed class FlexPanel : Panel
     /// <summary>Gets or sets the main axis and item order.</summary>
     public FlexDirection Direction
     {
-        get => _direction;
-        set { if (_direction != value) { _direction = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>Gets or sets how unused main-axis space is distributed.</summary>
     public FlexJustify JustifyContent
     {
-        get => _justifyContent;
-        set { if (_justifyContent != value) { _justifyContent = value; InvalidateArrange(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateArrange(); } }
     }
 
     /// <summary>Gets or sets the default cross-axis alignment of items.</summary>
     public FlexAlignment AlignItems
     {
-        get => _alignItems;
+        get;
         set
         {
             if (value == FlexAlignment.Auto)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_alignItems != value) { _alignItems = value; InvalidateArrange(); }
+            if (field != value) { field = value; InvalidateArrange(); }
         }
-    }
+    } = FlexAlignment.Stretch;
 
     /// <summary>Gets or sets how unused cross-axis space is distributed between wrapped lines.</summary>
     public FlexJustify AlignContent
     {
-        get => _alignContent;
-        set { if (_alignContent != value) { _alignContent = value; InvalidateArrange(); } }
-    }
+        get;
+        set { if (field != value) { field = value; InvalidateArrange(); } }
+    } = FlexJustify.Start;
 
     /// <summary>Gets or sets whether overflowing items form additional lines.</summary>
     public FlexWrap Wrap
     {
-        get => _wrap;
-        set { if (_wrap != value) { _wrap = value; InvalidateMeasure(); } }
+        get;
+        set { if (field != value) { field = value; InvalidateMeasure(); } }
     }
 
     /// <summary>Gets or sets uniform spacing between adjacent items and wrapped lines.</summary>
     public float Gap
     {
-        get => _gap;
+        get;
         set
         {
             if (!float.IsFinite(value) || value < 0f)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            if (_gap != value) { _gap = value; InvalidateMeasure(); }
+            if (field != value) { field = value; InvalidateMeasure(); }
         }
     }
 

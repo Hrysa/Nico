@@ -23,8 +23,7 @@ internal sealed class EditorGameRenderingService : ISceneRenderingService
         {
             ArgumentNullException.ThrowIfNull(value);
             _primary.RenderPipeline = value;
-            if (_detached is not null)
-                _detached.RenderPipeline = value;
+            _detached?.RenderPipeline = value;
         }
     }
 
@@ -33,7 +32,6 @@ internal sealed class EditorGameRenderingService : ISceneRenderingService
     public void SetDetachedRenderer(EditorViewportRenderer? renderer)
     {
         _detached = renderer;
-        if (_detached is not null)
-            _detached.RenderPipeline = _primary.RenderPipeline;
+        _detached?.RenderPipeline = _primary.RenderPipeline;
     }
 }

@@ -621,8 +621,6 @@ public class SceneInspectorTests
             new(RuntimeCounterId, "RuntimeCounter", ObservedValueKind.SignedInteger,
                 ObserveScope.Runtime)
         ];
-        private double _speed;
-
         /// <summary>Stable generated property identifier.</summary>
         internal const int SpeedId = 31873;
 
@@ -635,12 +633,12 @@ public class SceneInspectorTests
         /// <summary>Gets or sets the observed test speed.</summary>
         internal double Speed
         {
-            get => _speed;
+            get;
             set
             {
-                if (_speed == value)
+                if (field == value)
                     return;
-                _speed = value;
+                field = value;
                 NotifyObservedPropertyChanged(SpeedId, ObserveScope.Editor);
             }
         }

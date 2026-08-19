@@ -867,8 +867,6 @@ public sealed class SkeletonPose
 /// <summary>Owns playback time and an allocation-free evaluated skeleton pose.</summary>
 public sealed class AnimationPlayer
 {
-    private float _speed = 1f;
-
     /// <summary>Gets the skinned resource being animated.</summary>
     public SkinnedMeshResource Resource { get; }
 
@@ -884,14 +882,14 @@ public sealed class AnimationPlayer
     /// <summary>Gets or sets the signed playback-rate multiplier.</summary>
     public float Speed
     {
-        get => _speed;
+        get;
         set
         {
             if (!float.IsFinite(value))
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _speed = value;
+            field = value;
         }
-    }
+    } = 1f;
 
     /// <summary>Gets or sets whether playback wraps at the clip boundary.</summary>
     public bool Loop { get; set; } = true;
