@@ -1,4 +1,6 @@
-use crate::{RuntimeError, RuntimeResult, SystemContext, Time, World};
+use nico_ecs::{CommandBuffer, World};
+
+use crate::{RuntimeError, RuntimeResult, SystemContext, Time};
 
 /// Ordered lifecycle stages supported by the minimal runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,8 +70,10 @@ impl Schedule {
         time: Time,
         exit_requested: &mut bool,
     ) -> RuntimeResult<()> {
+        let mut commands = CommandBuffer::new();
         let mut context = SystemContext {
             world,
+            commands: &mut commands,
             time,
             exit_requested,
         };
@@ -83,6 +87,7 @@ impl Schedule {
                     message: error.to_string(),
                 });
             }
+            context.commands.run_on(context.world.entities_mut());
         }
         Ok(())
     }

@@ -1,4 +1,4 @@
-use std::{any::type_name, error::Error, fmt};
+use std::{error::Error, fmt};
 
 use crate::AppState;
 
@@ -27,9 +27,11 @@ pub enum RuntimeError {
     },
 }
 
-impl RuntimeError {
-    pub(crate) fn missing_resource<R: 'static>() -> Self {
-        Self::MissingResource(type_name::<R>())
+impl From<nico_ecs::WorldError> for RuntimeError {
+    fn from(error: nico_ecs::WorldError) -> Self {
+        match error {
+            nico_ecs::WorldError::MissingResource(resource) => Self::MissingResource(resource),
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 use std::{error::Error, time::Duration};
 
 use clap::Parser;
-use minimal_game_shared::{GameState, MinimalGamePlugin};
+use minimal_game_shared::{GameState, MinimalGamePlugin, Position};
 use nico_launch::{CommonArgs, init_logging};
 use nico_presentation::{Presentation, RenderFrame};
 use nico_runtime::AppBuilder;
@@ -38,9 +38,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     presentation.shutdown()?;
 
     let state = app.world().resource::<GameState>()?;
+    let simulated_entities = app.world().query::<&Position>().iter().count();
     tracing::info!(
         fixed_updates = state.fixed_updates(),
         frame_updates = state.frame_updates(),
+        simulated_entities,
         "minimal game client stopped"
     );
     Ok(())

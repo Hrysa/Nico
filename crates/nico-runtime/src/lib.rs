@@ -7,16 +7,20 @@ mod error;
 mod host;
 mod schedule;
 mod time;
-mod world;
 
 pub use error::{RuntimeError, RuntimeResult};
 pub use host::AppRunner;
 pub use schedule::Stage;
 pub use time::Time;
-pub use world::{Resource, World};
+
+/// ECS provider vocabulary used by Nico gameplay and tooling.
+pub mod ecs {
+    pub use nico_ecs::*;
+}
 
 use std::time::Duration;
 
+use nico_ecs::{Resource, World};
 use schedule::Schedule;
 
 /// Current state of an [`App`].
@@ -37,6 +41,8 @@ pub enum AppState {
 pub struct SystemContext<'a> {
     /// The authoritative simulation world.
     pub world: &'a mut World,
+    /// Deferred ECS structural changes, flushed after this system succeeds.
+    pub commands: &'a mut nico_ecs::CommandBuffer,
     /// Timing values for this invocation.
     pub time: Time,
     exit_requested: &'a mut bool,
@@ -103,7 +109,7 @@ impl AppBuilder {
 
     /// Inserts or replaces a typed world resource.
     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> Option<R> {
-        self.world.insert(resource)
+        self.world.insert_resource(resource)
     }
 
     /// Registers a named system in a lifecycle stage.
@@ -478,6 +484,48 @@ mod tests {
             [Duration::from_millis(10), Duration::from_millis(20)]
         );
         assert!((observed.interpolation - 0.5).abs() < f64::EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_system_commands_are_visible_to_the_next_system() -> RuntimeResult<()> {
+        struct Spawned;
+
+        #[derive(Default)]
+        struct Observed(usize);
+
+        let mut builder = AppBuilder::new();
+        builder.insert_resource(Observed::default());
+        builder.add_system(Stage::Update, "spawn deferred", |context| {
+            context.commands.spawn((Spawned,));
+            Ok(())
+        });
+        builder.add_system(Stage::Update, "observe spawn", |context| {
+            let count = context.world.query::<&Spawned>().iter().count();
+            context.world.resource_mut::<Observed>()?.0 = count;
+            Ok(())
+        });
+        let mut app = builder.build()?;
+
+        app.run_for_frames(1, Duration::from_millis(16))?;
+
+        assert_eq!(app.world().resource::<Observed>()?.0, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_system_commands_are_discarded() -> RuntimeResult<()> {
+        struct Spawned;
+
+        let mut builder = AppBuilder::new();
+        builder.add_system(Stage::Update, "fail after spawn", |context| {
+            context.commands.spawn((Spawned,));
+            Err(super::RuntimeError::MissingResource("intentional failure"))
+        });
+        let mut app = builder.build()?;
+
+        assert!(app.run_for_frames(1, Duration::from_millis(16)).is_err());
+        assert_eq!(app.world().query::<&Spawned>().iter().count(), 0);
         Ok(())
     }
 
