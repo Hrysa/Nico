@@ -18,6 +18,8 @@ game server ──────────────────> runtime
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
   resources.
+- `nico-launch` provides command-line and diagnostics bootstrap for native
+  executables; non-CLI platforms supply their own launch integration.
 - `nico-presentation` contains window, input, rendering, audio, and UI contracts
   and coordinates optional providers.
 - `nico-physics` defines an authoritative runtime capability usable by servers.
@@ -43,6 +45,15 @@ cargo run -p minimal-game-server
 The minimal-game server runs continuously at 60 ticks per second until the
 process is stopped. The client remains a bounded smoke application until a native
 window/event-loop provider is selected.
+
+Native client and server executables accept `--log-level
+<off|error|warn|info|debug|trace>` and otherwise use `RUST_LOG`, defaulting to
+`info`. The server also accepts `--tick-rate <TICKS_PER_SECOND>`:
+
+```text
+cargo run -p minimal-game-server -- --tick-rate 30 --log-level debug
+RUST_LOG=nico_runtime=trace cargo run -p minimal-game-client
+```
 
 ## Creating a game
 

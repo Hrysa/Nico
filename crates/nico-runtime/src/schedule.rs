@@ -74,6 +74,8 @@ impl Schedule {
             exit_requested,
         };
         for system in &mut self.stages[stage.index()] {
+            let span = tracing::trace_span!("runtime_system", system = %system.name);
+            let _entered = span.enter();
             if let Err(error) = (system.run)(&mut context) {
                 return Err(RuntimeError::System {
                     stage: stage.name(),

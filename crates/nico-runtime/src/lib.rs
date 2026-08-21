@@ -190,19 +190,30 @@ impl App {
     /// Runs startup systems and begins accepting ticks.
     pub fn start(&mut self) -> RuntimeResult<()> {
         self.require_state(AppState::Created)?;
+        tracing::info!(
+            fixed_step_seconds = self.fixed_step.as_secs_f64(),
+            "runtime starting"
+        );
         self.state = AppState::Running;
         if let Err(error) = self.run_stage(Stage::Startup, Time::startup()) {
+            tracing::error!(error = %error, "runtime startup failed");
             self.state = AppState::Stopping;
             let _ = self.run_stage(Stage::Shutdown, Time::shutdown(0, Duration::ZERO));
             self.state = AppState::Stopped;
             return Err(error);
         }
+        tracing::info!("runtime started");
         Ok(())
     }
 
     /// Advances the simulation by one host frame.
     pub fn tick(&mut self, delta: Duration) -> RuntimeResult<()> {
         self.require_state(AppState::Running)?;
+        tracing::trace!(
+            frame = self.frame,
+            delta_seconds = delta.as_secs_f64(),
+            "runtime tick"
+        );
         self.accumulator = self.accumulator.saturating_add(delta);
 
         while self.accumulator >= self.fixed_step {
@@ -235,9 +246,11 @@ impl App {
     /// Runs shutdown systems exactly once.
     pub fn shutdown(&mut self) -> RuntimeResult<()> {
         self.require_state(AppState::Running)?;
+        tracing::info!(frame = self.frame, "runtime stopping");
         self.state = AppState::Stopping;
         let result = self.run_stage(Stage::Shutdown, Time::shutdown(self.frame, self.elapsed));
         self.state = AppState::Stopped;
+        tracing::info!("runtime stopped");
         result
     }
 
@@ -274,6 +287,13 @@ impl App {
     }
 
     fn run_stage(&mut self, stage: Stage, time: Time) -> RuntimeResult<()> {
+        let span = tracing::trace_span!(
+            "runtime_stage",
+            ?stage,
+            frame = time.frame_number(),
+            fixed_tick = time.fixed_tick()
+        );
+        let _entered = span.enter();
         self.schedule
             .run(stage, &mut self.world, time, &mut self.exit_requested)
     }

@@ -1,10 +1,26 @@
 use std::{error::Error, time::Duration};
 
+use clap::Parser;
 use minimal_game_shared::{GameState, MinimalGamePlugin};
+use nico_launch::{CommonArgs, init_logging};
 use nico_presentation::{Presentation, RenderFrame};
 use nico_runtime::AppBuilder;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[derive(Debug, Parser)]
+#[command(
+    name = "minimal-game-client",
+    about = "Runs the minimal Nico game client"
+)]
+struct ClientArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+}
+
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let args = ClientArgs::parse();
+    init_logging(args.common.log_level)?;
+
+    tracing::info!("minimal game client starting");
     let mut app = AppBuilder::new().add_plugin(MinimalGamePlugin).build()?;
     let mut presentation = Presentation::null();
 
@@ -22,10 +38,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     presentation.shutdown()?;
 
     let state = app.world().resource::<GameState>()?;
-    println!(
-        "Minimal game client: fixed_updates={}, frame_updates={}.",
-        state.fixed_updates(),
-        state.frame_updates()
+    tracing::info!(
+        fixed_updates = state.fixed_updates(),
+        frame_updates = state.frame_updates(),
+        "minimal game client stopped"
     );
     Ok(())
 }
