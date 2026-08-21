@@ -1,0 +1,12 @@
+[package]
+name = "minimal-game-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+minimal-game-shared = { path = "../shared" }
+nico-runtime = { path = "../../../crates/nico-runtime" }
+
+[lints]
+workspace = true

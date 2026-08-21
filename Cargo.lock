@@ -3,11 +3,31 @@
 version = 4
 
 [[package]]
-name = "nico-assets"
+name = "minimal-game-client"
 version = "0.1.0"
+dependencies = [
+ "minimal-game-shared",
+ "nico-presentation",
+ "nico-runtime",
+]
 
 [[package]]
-name = "nico-audio"
+name = "minimal-game-server"
+version = "0.1.0"
+dependencies = [
+ "minimal-game-shared",
+ "nico-runtime",
+]
+
+[[package]]
+name = "minimal-game-shared"
+version = "0.1.0"
+dependencies = [
+ "nico-runtime",
+]
+
+[[package]]
+name = "nico-assets"
 version = "0.1.0"
 
 [[package]]
@@ -18,10 +38,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nico-input"
-version = "0.1.0"
-
-[[package]]
 name = "nico-physics"
 version = "0.1.0"
 dependencies = [
@@ -29,55 +45,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "nico-player"
-version = "0.1.0"
-dependencies = [
- "nico-presentation",
- "nico-render",
- "nico-runtime",
-]
-
-[[package]]
 name = "nico-presentation"
 version = "0.1.0"
 dependencies = [
- "nico-audio",
- "nico-render",
  "nico-runtime",
 ]
-
-[[package]]
-name = "nico-render"
-version = "0.1.0"
 
 [[package]]
 name = "nico-runtime"
-version = "0.1.0"
-
-[[package]]
-name = "nico-sandbox"
-version = "0.1.0"
-dependencies = [
- "nico-devtools",
- "nico-presentation",
- "nico-render",
- "nico-runtime",
-]
-
-[[package]]
-name = "nico-server"
-version = "0.1.0"
-dependencies = [
- "nico-runtime",
-]
-
-[[package]]
-name = "nico-ui"
-version = "0.1.0"
-dependencies = [
- "nico-runtime",
-]
-
-[[package]]
-name = "nico-window"
 version = "0.1.0"

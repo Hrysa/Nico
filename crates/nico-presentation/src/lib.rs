@@ -1,13 +1,24 @@
 //! Optional client-side presentation coordinator.
 //!
-//! The runtime never depends on this crate. A player or sandbox may combine it
+//! The runtime never depends on this crate. A game client may combine it
 //! with the runtime, while a dedicated server omits it entirely.
+
+pub mod audio;
+pub mod input;
+pub mod render;
+pub mod ui;
+pub mod window;
+
+pub use render::RenderFrame;
 
 use std::{error::Error, fmt};
 
-use nico_audio::{AudioOutput, NullAudio};
-use nico_render::{NullRenderer, RenderFrame, Renderer};
 use nico_runtime::World;
+
+use crate::{
+    audio::{AudioOutput, NullAudio},
+    render::{NullRenderer, Renderer},
+};
 
 /// Failure produced while coordinating presentation services.
 #[derive(Debug, Eq, PartialEq)]
@@ -63,10 +74,11 @@ impl Presentation {
         Ok(())
     }
 
-    /// Extracts and presents one frame.
+    /// Presents one frame with immutable access to authoritative state.
     ///
-    /// Extraction is currently empty; accepting the world establishes the
-    /// one-way dependency that future extraction systems will use.
+    /// Null providers do not query the world. Concrete presentation systems may
+    /// query it directly or maintain selective caches when profiling justifies
+    /// that optimization.
     pub fn present(&mut self, _world: &World, frame: RenderFrame) -> Result<(), PresentationError> {
         if !self.started {
             return Err(PresentationError("presentation is not running".to_owned()));
@@ -99,10 +111,9 @@ impl Presentation {
 
 #[cfg(test)]
 mod tests {
-    use nico_render::RenderFrame;
     use nico_runtime::World;
 
-    use super::Presentation;
+    use super::{Presentation, RenderFrame};
 
     #[test]
     fn null_presentation_completes_a_frame() -> Result<(), super::PresentationError> {

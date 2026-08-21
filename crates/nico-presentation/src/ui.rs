@@ -21,6 +21,6 @@ impl Error for UiError {}
 
 /// One presentation-side UI layer.
 pub trait UiLayer: Send {
-    /// Updates UI state using the current runtime world.
-    fn update(&mut self, world: &mut World) -> Result<(), UiError>;
+    /// Updates UI state using immutable authoritative state.
+    fn update(&mut self, world: &World) -> Result<(), UiError>;
 }

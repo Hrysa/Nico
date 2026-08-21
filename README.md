@@ -12,15 +12,14 @@ yet. Those choices will be made after their abstraction boundaries are reviewed.
 The runtime never depends on presentation:
 
 ```text
-player/sandbox ──> presentation ──> runtime
-server ──────────────────────────> runtime
+game client ──> presentation ──> runtime
+game server ──────────────────> runtime
 ```
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
   resources.
-- `nico-presentation` coordinates optional rendering and audio providers.
-- `nico-window`, `nico-input`, `nico-render`, `nico-audio`, and `nico-ui` define
-  presentation-facing contracts.
+- `nico-presentation` contains window, input, rendering, audio, and UI contracts
+  and coordinates optional providers.
 - `nico-physics` defines an authoritative runtime capability usable by servers.
 - `nico-assets` owns shared asset identities and loading-state contracts.
 - `nico-devtools` demonstrates optional runtime observation through public APIs.
@@ -37,7 +36,19 @@ rules.
 ```text
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p nico-server
-cargo run -p nico-player
-cargo run -p nico-sandbox
+cargo run -p minimal-game-client
+cargo run -p minimal-game-server
 ```
+
+The minimal-game server runs continuously at 60 ticks per second until the
+process is stopped. The client remains a bounded smoke application until a native
+window/event-loop provider is selected.
+
+## Creating a game
+
+Games are directories under `games/` containing separate shared, client, and
+server Rust packages. The shared crate contains authoritative gameplay; only the
+client links presentation. Each game also owns `assets/logic` and
+`assets/presentation` roots.
+
+See [`games/minimal-game`](games/minimal-game) for the first executable template.

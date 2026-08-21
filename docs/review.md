@@ -23,7 +23,7 @@ The skeleton should be reviewed before detailed subsystem work begins.
    Extraction and caching remain optional presentation-side optimizations for
    cases where they provide a measured benefit.
 5. Asset identity remains a standalone shared crate.
-6. Window, input, rendering, audio, and UI contracts will be compacted into the
+6. Window, input, rendering, audio, and UI contracts are compacted into the
    presentation crate until concrete provider boundaries justify new crates.
 7. Devtools run in-process initially.
 
