@@ -31,7 +31,7 @@ pub trait Renderer: Send {
     /// Acquires backend resources.
     fn start(&mut self) -> Result<(), RenderError>;
 
-    /// Presents one previously extracted frame.
+    /// Presents one frame while presentation has immutable world access.
     fn render(&mut self, frame: RenderFrame) -> Result<(), RenderError>;
 
     /// Releases backend resources.

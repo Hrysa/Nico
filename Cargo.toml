@@ -1,19 +1,14 @@
 [workspace]
 resolver = "3"
 members = [
-    "apps/player",
-    "apps/sandbox",
-    "apps/server",
     "crates/nico-assets",
-    "crates/nico-audio",
     "crates/nico-devtools",
-    "crates/nico-input",
     "crates/nico-physics",
     "crates/nico-presentation",
-    "crates/nico-render",
     "crates/nico-runtime",
-    "crates/nico-ui",
-    "crates/nico-window",
+    "games/minimal-game/client",
+    "games/minimal-game/server",
+    "games/minimal-game/shared",
 ]
 
 [workspace.package]

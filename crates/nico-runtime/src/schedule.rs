@@ -61,8 +61,18 @@ impl Schedule {
         });
     }
 
-    pub(crate) fn run(&mut self, stage: Stage, world: &mut World, time: Time) -> RuntimeResult<()> {
-        let mut context = SystemContext { world, time };
+    pub(crate) fn run(
+        &mut self,
+        stage: Stage,
+        world: &mut World,
+        time: Time,
+        exit_requested: &mut bool,
+    ) -> RuntimeResult<()> {
+        let mut context = SystemContext {
+            world,
+            time,
+            exit_requested,
+        };
         for system in &mut self.stages[stage.index()] {
             if let Err(error) = (system.run)(&mut context) {
                 return Err(RuntimeError::System {

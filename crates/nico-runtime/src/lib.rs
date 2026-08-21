@@ -4,11 +4,13 @@
 //! input. Clients, servers, tests, and tools all drive the same [`App`].
 
 mod error;
+mod host;
 mod schedule;
 mod time;
 mod world;
 
 pub use error::{RuntimeError, RuntimeResult};
+pub use host::AppRunner;
 pub use schedule::Stage;
 pub use time::Time;
 pub use world::{Resource, World};
@@ -37,6 +39,20 @@ pub struct SystemContext<'a> {
     pub world: &'a mut World,
     /// Timing values for this invocation.
     pub time: Time,
+    exit_requested: &'a mut bool,
+}
+
+impl SystemContext<'_> {
+    /// Requests an orderly stop after the current host frame.
+    pub fn request_exit(&mut self) {
+        *self.exit_requested = true;
+    }
+
+    /// Returns whether this or an earlier system requested exit.
+    #[must_use]
+    pub const fn exit_requested(&self) -> bool {
+        *self.exit_requested
+    }
 }
 
 /// Adds a cohesive capability to an [`AppBuilder`].
@@ -118,6 +134,7 @@ impl AppBuilder {
             fixed_elapsed: Duration::ZERO,
             frame: 0,
             fixed_tick: 0,
+            exit_requested: false,
         })
     }
 }
@@ -133,6 +150,7 @@ pub struct App {
     fixed_elapsed: Duration,
     frame: u64,
     fixed_tick: u64,
+    exit_requested: bool,
 }
 
 impl App {
@@ -151,6 +169,22 @@ impl App {
     /// Returns mutable access to the simulation world.
     pub const fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Requests an orderly stop from the host loop.
+    pub fn request_exit(&mut self) {
+        self.exit_requested = true;
+    }
+
+    /// Returns whether application or system code requested exit.
+    #[must_use]
+    pub const fn exit_requested(&self) -> bool {
+        self.exit_requested
+    }
+
+    /// Gives control of this application to a host-owned runner.
+    pub fn run_with<R: AppRunner>(&mut self, runner: R) -> RuntimeResult<()> {
+        runner.run(self)
     }
 
     /// Runs startup systems and begins accepting ticks.
@@ -215,6 +249,9 @@ impl App {
         let mut execution = Ok(());
 
         for _ in 0..frames {
+            if self.exit_requested {
+                break;
+            }
             if let Err(error) = self.tick(delta) {
                 execution = Err(error);
                 break;
@@ -237,7 +274,8 @@ impl App {
     }
 
     fn run_stage(&mut self, stage: Stage, time: Time) -> RuntimeResult<()> {
-        self.schedule.run(stage, &mut self.world, time)
+        self.schedule
+            .run(stage, &mut self.world, time, &mut self.exit_requested)
     }
 }
 
@@ -420,6 +458,31 @@ mod tests {
             [Duration::from_millis(10), Duration::from_millis(20)]
         );
         assert!((observed.interpolation - 0.5).abs() < f64::EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn system_exit_request_stops_a_bounded_run_early() -> RuntimeResult<()> {
+        #[derive(Default)]
+        struct Updates(u64);
+
+        let mut builder = AppBuilder::new();
+        builder.insert_resource(Updates::default());
+        builder.add_system(Stage::Update, "exit after two frames", |context| {
+            let updates = context.world.resource_mut::<Updates>()?;
+            updates.0 += 1;
+            if updates.0 == 2 {
+                context.request_exit();
+            }
+            Ok(())
+        });
+        let mut app = builder.build()?;
+
+        app.run_for_frames(10, Duration::from_millis(16))?;
+
+        assert_eq!(app.world().resource::<Updates>()?.0, 2);
+        assert!(app.exit_requested());
+        assert_eq!(app.state(), AppState::Stopped);
         Ok(())
     }
 }

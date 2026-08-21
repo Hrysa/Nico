@@ -13,15 +13,15 @@ libraries or implementing engine subsystems in detail.
 
 ```text
                          applications
-             ┌───────────────┼───────────────┐
-             │               │               │
-           server          player          sandbox
-             │               │               │
-             │         presentation    presentation + devtools
-             │               │               │
-             └───────────────┴───────┬───────┘
-                                     ▼
-                                  runtime
+                 ┌────────────┴────────────┐
+                 │                         │
+            game server               game client
+                 │                         │
+                 │                    presentation
+                 │                         │
+                 └────────────┬────────────┘
+                              ▼
+                           runtime
 ```
 
 ### Runtime
@@ -36,18 +36,23 @@ runtime simulation rather than windowing, assets, rendering, UI, or devtools.
 The host drives the runtime through `start`, `tick`, and `shutdown`; the runtime
 does not own a native event loop.
 
+Runtime systems can request orderly termination through `SystemContext`. Host
+policies implement `AppRunner`: the dedicated server uses a paced fixed-rate loop,
+while tests use bounded frames. A permanent client loop is deferred until the
+native window/event-loop provider is selected.
+
 ### Presentation
 
 `nico-presentation` is optional and depends on the runtime. It coordinates
-client-facing capabilities represented by these boundary crates:
+client-facing capabilities represented by these modules:
 
-- `nico-window`
-- `nico-input`
-- `nico-render`
-- `nico-audio`
-- `nico-ui`
+- `nico_presentation::window`
+- `nico_presentation::input`
+- `nico_presentation::render`
+- `nico_presentation::audio`
+- `nico_presentation::ui`
 
-These crates contain high-level contracts only. Event-loop, graphics, audio, and
+These modules contain high-level contracts only. Event-loop, graphics, audio, and
 UI library choices remain open. Concrete adapters will be added after review.
 
 Runtime never depends on presentation. A dedicated server therefore has no
@@ -73,10 +78,34 @@ selected.
 world inspector, diagnostics, profiling, render debugging, and live value
 tweaking. It is not an authoring database and does not own game content.
 
-The `nico-sandbox` executable demonstrates code-authored setup, runtime systems,
-optional devtools, and null presentation in one small program.
+Devtools behavior is verified through crate tests until it provides enough
+independent functionality to justify a dedicated diagnostic application.
 
 ## Code-first game construction
+
+A game is a workspace package under `games/`:
+
+```text
+games/minimal-game/
+├── shared/
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── client/
+│   ├── Cargo.toml
+│   └── src/main.rs
+├── server/
+│   ├── Cargo.toml
+│   └── src/main.rs
+└── assets/
+    ├── logic/
+    └── presentation/
+```
+
+The shared crate owns authoritative game code used by the client and server. The
+client adds presentation; the server uses only the headless runtime. Logic assets
+are available to both sides, while presentation assets are client-only. Because
+gameplay is Rust code, there is no runtime folder discovery or dynamic game
+loading.
 
 For now, games register ordinary Rust functions through plugins:
 
@@ -93,6 +122,17 @@ impl Plugin for GamePlugin {
 Once an ECS is selected, `setup_game` may spawn entities using concise typed Rust
 APIs. Data files should be introduced only for content that benefits from runtime
 tuning, localization, save data, or external asset workflows.
+
+Run the example game with:
+
+```text
+cargo run -p minimal-game-client
+cargo run -p minimal-game-server
+```
+
+The server command continues ticking at a fixed rate until exit is requested or
+the process is stopped. `run_for_frames` remains available for deterministic
+tests and bounded smoke applications.
 
 ## Dependency rules
 
