@@ -1,0 +1,14 @@
+[package]
+name = "nico-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nico-devtools = { path = "../../crates/nico-devtools" }
+nico-presentation = { path = "../../crates/nico-presentation" }
+nico-render = { path = "../../crates/nico-render" }
+nico-runtime = { path = "../../crates/nico-runtime" }
+
+[lints]
+workspace = true
