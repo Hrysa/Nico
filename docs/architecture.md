@@ -41,6 +41,12 @@ policies implement `AppRunner`: the dedicated server uses a paced fixed-rate loo
 while tests use bounded frames. A permanent client loop is deferred until the
 native window/event-loop provider is selected.
 
+Runtime and engine libraries emit structured diagnostics through `tracing` but
+do not select output, filtering, or formatting policy. Native executables use
+`nico-launch` to parse shared command-line options and install a
+`tracing-subscriber`. Web and console hosts may provide different launch and
+diagnostics integration without changing runtime code.
+
 ### Presentation
 
 `nico-presentation` is optional and depends on the runtime. It coordinates
@@ -146,6 +152,8 @@ tests and bounded smoke applications.
 7. Devtools inspect the running application and do not define its content format.
 8. New crates require a real ownership or dependency boundary, not merely a new
    namespace.
+9. Engine libraries emit diagnostics but application hosts select and initialize
+   the diagnostics subscriber.
 
 ## Deliberately deferred
 

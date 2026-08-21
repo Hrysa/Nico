@@ -4,8 +4,9 @@
 
 Nico is a Rust 2024 workspace. Engine crates live under `crates/`: `nico-runtime`
 is the headless application kernel, while `nico-presentation`, `nico-assets`,
-`nico-physics`, and `nico-devtools` provide optional capabilities. Keep the
-dependency direction headless: runtime must not depend on presentation.
+`nico-physics`, and `nico-devtools` provide optional capabilities. `nico-launch`
+owns native CLI and diagnostics startup. Keep the dependency direction headless:
+runtime must not depend on presentation or launch policy.
 
 Executable development tools belong in `apps/` when a concrete tool justifies a
 standalone package. Games live in `games/<game>/` with `shared`, `client`, and

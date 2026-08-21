@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/nico-assets",
     "crates/nico-devtools",
+    "crates/nico-launch",
     "crates/nico-physics",
     "crates/nico-presentation",
     "crates/nico-runtime",
@@ -15,6 +16,11 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
