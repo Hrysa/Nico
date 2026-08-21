@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/player",
+    "apps/sandbox",
+    "apps/server",
+    "crates/nico-assets",
+    "crates/nico-audio",
+    "crates/nico-devtools",
+    "crates/nico-input",
+    "crates/nico-physics",
+    "crates/nico-presentation",
+    "crates/nico-render",
+    "crates/nico-runtime",
+    "crates/nico-ui",
+    "crates/nico-window",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
