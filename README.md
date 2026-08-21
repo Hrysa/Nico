@@ -4,8 +4,9 @@ Nico is an experimental game engine written in Rust. This repository currently
 contains a review-oriented architecture skeleton: a deterministic headless
 runtime, an optional presentation layer, and optional runtime devtools.
 
-No native window, renderer, ECS, physics, audio, or UI library has been selected
-yet. Those choices will be made after their abstraction boundaries are reviewed.
+Entity/component storage is provided by `hecs` behind Nico's focused world crate.
+No native window, renderer, physics, audio, or UI library has been selected yet;
+those choices remain under architectural review.
 
 ## Architecture
 
@@ -17,7 +18,10 @@ game server ──────────────────> runtime
 ```
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
-  resources.
+  execution.
+- `nico-ecs` owns the authoritative world, typed resources, entity storage,
+  queries, and deferred structural commands while exposing the real `hecs` query
+  vocabulary.
 - `nico-launch` provides command-line and diagnostics bootstrap for native
   executables; non-CLI platforms supply their own launch integration.
 - `nico-presentation` contains window, input, rendering, audio, and UI contracts
@@ -27,11 +31,29 @@ game server ──────────────────> runtime
 - `nico-devtools` demonstrates optional runtime observation through public APIs.
 
 Game structure and behavior are authored in Rust. Nico does not currently define
-a scene document, prefab format, visual editor, or ECS API. Those are deliberate
-review decisions rather than missing implementations.
+a scene document, prefab format, or visual editor. Those are deliberate review
+decisions rather than missing implementations.
 
 See [docs/architecture.md](docs/architecture.md) for dependency and ownership
 rules.
+
+## ECS usage
+
+Engine-facing code imports ECS vocabulary through the canonical runtime
+namespace:
+
+```rust,ignore
+use nico_runtime::{
+    ecs::{Entity, World},
+    RuntimeResult, SystemContext,
+};
+```
+
+`nico_runtime::ecs` exposes the selected `hecs` query and command types without
+duplicating them at the `nico_runtime` crate root. Systems query the authoritative
+world directly and record structural changes through `context.commands`.
+Successful commands are flushed before the next system runs; commands from a
+failed system are discarded.
 
 ## Commands
 

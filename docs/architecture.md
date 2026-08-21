@@ -22,16 +22,32 @@ libraries or implementing engine subsystems in detail.
                  └────────────┬────────────┘
                               ▼
                            runtime
+                              │
+                              ▼
+                              ecs
 ```
 
 ### Runtime
 
 `nico-runtime` is the headless application kernel. It owns lifecycle, time,
-schedules, plugins, and the authoritative world.
+schedules, plugins, and system execution. It depends on `nico-ecs`, which owns
+the authoritative world.
 
-The current world only stores typed resources. We have not selected an ECS or
-committed Nico to an ECS-first public API. If an ECS is selected, it will serve
-runtime simulation rather than windowing, assets, rendering, UI, or devtools.
+`nico-ecs` combines typed resources with a `hecs` world. Nico exposes the real
+provider query and command vocabulary through `nico_runtime::ecs` instead of
+building a second lowest-common-denominator ECS API. The separate crate isolates
+stable world infrastructure from runtime lifecycle and host policy. ECS remains
+a simulation tool rather than storage for windowing, assets, rendering, UI,
+mail, inventory databases, or other unrelated domains.
+
+`nico_runtime::ecs` is the canonical engine-facing import namespace for `World`,
+`Entity`, queries, and commands. ECS types are not also re-exported at the
+`nico_runtime` crate root.
+
+Each system receives a deferred ECS command buffer. Commands from a successful
+system are flushed before the next system runs, so ordering is deterministic and
+later systems observe structural changes. Commands produced by a failed system
+are discarded.
 
 The host drives the runtime through `start`, `tick`, and `shutdown`; the runtime
 does not own a native event loop.
@@ -113,20 +129,37 @@ are available to both sides, while presentation assets are client-only. Because
 gameplay is Rust code, there is no runtime folder discovery or dynamic game
 loading.
 
-For now, games register ordinary Rust functions through plugins:
+Games register ordinary Rust functions through plugins. Startup systems may
+create entities through deferred commands, and simulation systems query
+components directly:
 
 ```rust,ignore
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut AppBuilder) -> RuntimeResult<()> {
         app.add_system(Stage::Startup, "game::setup", setup_game);
-        app.add_system(Stage::Update, "game::update", update_game);
+        app.add_system(Stage::FixedUpdate, "game::movement", movement);
         Ok(())
     }
 }
+
+fn setup_game(context: &mut SystemContext<'_>) -> RuntimeResult<()> {
+    context.commands.spawn((Position::default(), Velocity::default()));
+    Ok(())
+}
+
+fn movement(context: &mut SystemContext<'_>) -> RuntimeResult<()> {
+    for (position, velocity) in context
+        .world
+        .query::<(&mut Position, &Velocity)>()
+        .iter()
+    {
+        position.advance(*velocity, context.time.delta());
+    }
+    Ok(())
+}
 ```
 
-Once an ECS is selected, `setup_game` may spawn entities using concise typed Rust
-APIs. Data files should be introduced only for content that benefits from runtime
+Data files should be introduced only for content that benefits from runtime
 tuning, localization, save data, or external asset workflows.
 
 Run the example game with:
@@ -148,16 +181,18 @@ tests and bounded smoke applications.
 3. Applications assemble capabilities and select concrete providers.
 4. Backend-specific types do not leak into unrelated public APIs.
 5. Gameplay consumes semantic commands rather than native device events.
-6. ECS, if adopted, is a simulation tool rather than the universal storage model.
+6. ECS is a simulation tool rather than the universal storage model.
 7. Devtools inspect the running application and do not define its content format.
 8. New crates require a real ownership or dependency boundary, not merely a new
    namespace.
 9. Engine libraries emit diagnostics but application hosts select and initialize
    the diagnostics subscriber.
+10. Persistent business identifiers such as player, asset, and network IDs are
+    distinct from temporary generational ECS entity IDs.
 
 ## Deliberately deferred
 
-- ECS library, component storage, queries, and commands.
+- Parallel scheduling, change detection, and higher-level ECS relationships.
 - Math library and public math representation.
 - Window/event-loop provider.
 - Graphics API and rendering provider.

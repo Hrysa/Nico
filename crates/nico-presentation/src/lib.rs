@@ -13,7 +13,7 @@ pub use render::RenderFrame;
 
 use std::{error::Error, fmt};
 
-use nico_runtime::World;
+use nico_runtime::ecs::World;
 
 use crate::{
     audio::{AudioOutput, NullAudio},
@@ -111,7 +111,7 @@ impl Presentation {
 
 #[cfg(test)]
 mod tests {
-    use nico_runtime::World;
+    use nico_runtime::ecs::World;
 
     use super::{Presentation, RenderFrame};
 

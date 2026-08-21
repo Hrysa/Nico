@@ -5,7 +5,7 @@
 
 use std::{error::Error, fmt};
 
-use nico_runtime::World;
+use nico_runtime::ecs::World;
 
 /// Provider-independent UI failure.
 #[derive(Debug, Eq, PartialEq)]

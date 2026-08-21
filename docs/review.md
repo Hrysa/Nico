@@ -10,12 +10,15 @@ The skeleton should be reviewed before detailed subsystem work begins.
 - Physics is authoritative rather than presentation-only.
 - Asset identity crosses the runtime/presentation boundary.
 - Game setup and behavior are authored in Rust.
-- ECS and backend libraries remain unselected.
+- `hecs` provides focused entity/component storage through `nico-ecs`; it does not
+  own Nico lifecycle or application architecture.
+- Presentation, physics, audio, and UI backend libraries remain unselected.
 
 ## Accepted decisions
 
-1. `nico-runtime` will expose a basic abstraction over a selected ECS library.
-   The wrapper remains thin and does not attempt to hide every ECS operation.
+1. `nico-ecs` owns the world/resource boundary. Engine-facing code uses the
+   canonical `nico_runtime::ecs` namespace, which exposes `hecs` query and command
+   types rather than recreating a provider-independent ECS API.
 2. `Plugin::build(&self, &mut AppBuilder)` remains the composition boundary.
 3. `Startup`, `FixedUpdate`, `Update`, and `Shutdown` are sufficient initial
    stages.

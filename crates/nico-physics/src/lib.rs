@@ -5,7 +5,7 @@
 
 use std::{error::Error, fmt, time::Duration};
 
-use nico_runtime::World;
+use nico_runtime::ecs::World;
 
 /// Provider-independent physics failure.
 #[derive(Debug, Eq, PartialEq)]

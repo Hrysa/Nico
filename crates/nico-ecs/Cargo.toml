@@ -1,12 +1,11 @@
 [package]
-name = "nico-runtime"
+name = "nico-ecs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nico-ecs = { path = "../nico-ecs" }
-tracing.workspace = true
+hecs.workspace = true
 
 [lints]
 workspace = true
