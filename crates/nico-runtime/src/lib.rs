@@ -7,6 +7,7 @@ mod error;
 pub mod events;
 mod host;
 mod schedule;
+pub mod services;
 mod time;
 
 pub use error::{RuntimeError, RuntimeResult};
@@ -24,6 +25,7 @@ use std::time::Duration;
 use events::{DEFAULT_EVENT_CAPACITY, Event, EventBus, SystemEvents};
 use nico_ecs::{Resource, World};
 use schedule::Schedule;
+use services::ServiceRuntime;
 
 /// Current state of an [`App`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -132,6 +134,38 @@ impl AppBuilder {
         F: FnMut(&mut SystemContext<'_>) -> RuntimeResult<()> + Send + 'static,
     {
         self.schedule.add(stage, name.into(), system);
+    }
+
+    /// Registers the completion bridge and shutdown hook for one typed service.
+    ///
+    /// Register completion consumers after this call so they observe events in
+    /// the same update stage. Keep a clone of `service` wherever requests are
+    /// submitted.
+    pub fn add_service<R: Send + 'static, C: Event>(
+        &mut self,
+        name: impl Into<String>,
+        service: ServiceRuntime<R, C>,
+    ) {
+        let name = name.into();
+        let publish_system_name = format!("{name}::publish_completions");
+        let shutdown_system_name = format!("{name}::close");
+        let diagnostic_name = name.clone();
+        let publisher = service.clone();
+        self.add_system(Stage::Update, publish_system_name, move |context| {
+            let report = publisher.publish_completions(context.world, &mut context.events);
+            if report.stale_targets() > 0 {
+                tracing::warn!(
+                    service = %diagnostic_name,
+                    stale_targets = report.stale_targets(),
+                    "discarded service completions for stale entities"
+                );
+            }
+            Ok(())
+        });
+        self.add_system(Stage::Shutdown, shutdown_system_name, move |_context| {
+            service.close();
+            Ok(())
+        });
     }
 
     /// Builds the configured application.

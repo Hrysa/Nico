@@ -2,10 +2,8 @@
 resolver = "3"
 members = [
     "crates/nico-assets",
-    "crates/nico-devtools",
     "crates/nico-ecs",
     "crates/nico-launch",
-    "crates/nico-physics",
     "crates/nico-presentation",
     "crates/nico-runtime",
     "games/minimal-game/client",

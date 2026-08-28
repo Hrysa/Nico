@@ -2,7 +2,7 @@
 
 Nico is an experimental game engine written in Rust. This repository currently
 contains a review-oriented architecture skeleton: a deterministic headless
-runtime, an optional presentation layer, and optional runtime devtools.
+runtime and a bounded no-device client presentation path.
 
 Entity/component storage is provided by `hecs` behind Nico's focused world crate.
 No native window, renderer, physics, audio, or UI library has been selected yet;
@@ -19,25 +19,25 @@ game server ──────────────────> runtime
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
   execution. Its typed event streams provide bounded broadcast communication
-  between systems and host integrations.
+  between systems and host integrations. Typed service channels bridge owned
+  requests and completions without selecting an async executor.
 - `nico-ecs` owns the authoritative world, typed resources, entity storage,
   queries, and deferred structural commands while exposing the real `hecs` query
   vocabulary.
 - `nico-launch` provides command-line and diagnostics bootstrap for native
   executables; non-CLI platforms supply their own launch integration.
-- `nico-presentation` contains window, input, rendering, audio, and UI contracts
-  and coordinates optional providers.
-- `nico-physics` defines an authoritative runtime capability usable by servers.
-- `nico-assets` owns shared asset identities and loading-state contracts.
-- `nico-devtools` demonstrates optional runtime observation through public APIs.
+- `nico-presentation` currently provides only the concrete no-device boundary
+  used by the client smoke path. Real provider contracts remain deferred.
+- `nico-assets` owns stable `AssetId` and typed `Handle<T>` identity. Loading and
+  import APIs remain deferred until their first implementation.
 
 Game structure and behavior are authored in Rust. Nico does not currently define
 a scene document, prefab format, or visual editor. Those are deliberate review
 decisions rather than missing implementations.
 
 See [docs/architecture.md](docs/architecture.md) for dependency and ownership
-rules, and [docs/roadmap.md](docs/roadmap.md) for the complete skeleton tree and
-implementation order.
+rules, and [docs/roadmap.md](docs/roadmap.md) for completed foundations, the
+current tree, and the next evidence-producing milestone.
 
 ## ECS usage
 
@@ -74,6 +74,21 @@ app.add_system(Stage::Update, "quests", move |context| {
 Each reader receives events independently. System writes become visible after
 that system succeeds and are discarded if it fails. Streams retain a bounded
 number of events per type; lagging readers can inspect `EventRead::missed()`.
+
+## Portable services
+
+Domain code creates a typed bounded channel with
+`nico_runtime::services::service_channel`. Runtime code submits owned requests;
+the host-selected backend receives them without access to `World` and returns
+owned results. `AppBuilder::add_service` publishes those results as
+`ServiceCompletion<T>` events at the next `Update` stage boundary and closes the
+channel during shutdown.
+
+The standard-library channel is the boundary, not an executor policy. A test can
+drive `ServiceBackend::try_next` manually, while a native adapter may move the
+same backend endpoint to a worker thread or async executor. Both request and
+completion queues are bounded, cancellation is explicit, and completions aimed
+at dead generational entities are discarded.
 
 ## Commands
 

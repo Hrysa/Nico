@@ -213,13 +213,6 @@ name = "nico-assets"
 version = "0.1.0"
 
 [[package]]
-name = "nico-devtools"
-version = "0.1.0"
-dependencies = [
- "nico-runtime",
-]
-
-[[package]]
 name = "nico-ecs"
 version = "0.1.0"
 dependencies = [
@@ -232,13 +225,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "nico-physics"
-version = "0.1.0"
-dependencies = [
- "nico-runtime",
 ]
 
 [[package]]

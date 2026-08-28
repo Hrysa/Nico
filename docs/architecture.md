@@ -60,6 +60,16 @@ events before a tick without receiving mutable access to the world.
 The host drives the runtime through `start`, `tick`, and `shutdown`; the runtime
 does not own a native event loop.
 
+`nico_runtime::services` is the portable asynchronous completion boundary.
+Each channel is typed by its domain request and completion values and uses
+bounded queues in both directions. Runtime code submits owned requests; a
+host-selected backend receives them without access to `World`. An ordinary
+runtime system drains completions in controlled order and publishes
+`ServiceCompletion<T>` events, so visibility follows the same deterministic
+system boundary as other events. Request cancellation, overload, backend errors,
+late shutdown results, and stale generational entity targets have explicit
+behavior. The boundary does not select Tokio or any other executor.
+
 Runtime systems can request orderly termination through `SystemContext`. Host
 policies implement `AppRunner`: the dedicated server uses a paced fixed-rate loop,
 while tests use bounded frames. A permanent client loop is deferred until the
@@ -74,16 +84,10 @@ diagnostics integration without changing runtime code.
 ### Presentation
 
 `nico-presentation` is optional and depends on the runtime. It coordinates
-client-facing capabilities represented by these modules:
-
-- `nico_presentation::window`
-- `nico_presentation::input`
-- `nico_presentation::render`
-- `nico_presentation::audio`
-- `nico_presentation::ui`
-
-These modules contain high-level contracts only. Event-loop, graphics, audio, and
-UI library choices remain open. Concrete adapters will be added after review.
+the current bounded client smoke path through a concrete no-device
+`Presentation`. It does not define provider-neutral window, input, renderer,
+audio, or UI traits. Those contracts will be extracted from the first real
+provider and consumer after event-loop ownership is understood.
 
 Runtime never depends on presentation. A dedicated server therefore has no
 window, renderer, local input, audio, or UI dependency.
@@ -94,22 +98,14 @@ them. Mandatory full-world extraction is not part of the architecture.
 
 ### Shared and authoritative capabilities
 
-`nico-assets` defines asset identity and loading-state vocabulary shared across
-runtime and presentation. It does not yet define an import pipeline or storage
-format.
+`nico-assets` currently defines only stable `AssetId` and typed `Handle<T>`
+identity shared across runtime and presentation. Paths, loading state, manifests,
+and service contracts will be introduced with the first runtime asset loader.
 
-`nico-physics` is on the authoritative side of the architecture because a server
-may need to execute the same collision rules as a client. No physics provider is
-selected.
-
-### Devtools
-
-`nico-devtools` is an optional runtime observer. It may eventually provide a
-world inspector, diagnostics, profiling, render debugging, and live value
-tweaking. It is not an authoring database and does not own game content.
-
-Devtools behavior is verified through crate tests until it provides enough
-independent functionality to justify a dedicated diagnostic application.
+Physics and devtools remain capability ideas, not workspace crates. Physics will
+be authoritative if implemented because a server may need the same collision
+rules as a client. Devtools should begin as a real in-process observer once
+runtime inspection has a concrete use case.
 
 ## Code-first game construction
 
@@ -183,7 +179,7 @@ tests and bounded smoke applications.
 
 ## Dependency rules
 
-1. Runtime cannot depend on presentation or devtools.
+1. Runtime cannot depend on presentation, provider adapters, or tooling.
 2. Presentation may query runtime state immutably but does not own authoritative
    gameplay state.
 3. Applications assemble capabilities and select concrete providers.
@@ -199,6 +195,8 @@ tests and bounded smoke applications.
     distinct from temporary generational ECS entity IDs.
 11. Runtime events are transient broadcast facts; persistent domain state still
     belongs in explicit resources, domain models, or external storage.
+12. Service contracts are domain-typed and executor-independent; no universal
+    I/O request enum or direct background access to `World` is allowed.
 
 ## Deliberately deferred
 

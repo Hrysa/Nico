@@ -1,111 +1,93 @@
-//! Optional client-side presentation coordinator.
+//! Concrete no-device presentation boundary for the bounded client smoke path.
 //!
-//! The runtime never depends on this crate. A game client may combine it
-//! with the runtime, while a dedicated server omits it entirely.
-
-pub mod audio;
-pub mod input;
-pub mod render;
-pub mod ui;
-pub mod window;
-
-pub use render::RenderFrame;
+//! Window, renderer, audio, input, and UI contracts are intentionally absent
+//! until the first real provider establishes their ownership and lifecycle.
 
 use std::{error::Error, fmt};
 
 use nico_runtime::ecs::World;
 
-use crate::{
-    audio::{AudioOutput, NullAudio},
-    render::{NullRenderer, Renderer},
-};
+/// Presentation values associated with a frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderFrame {
+    /// Zero-based presentation frame number.
+    pub frame_number: u64,
+    /// Fixed-step remainder used for visual interpolation.
+    pub interpolation: f64,
+}
 
-/// Failure produced while coordinating presentation services.
-#[derive(Debug, Eq, PartialEq)]
-pub struct PresentationError(pub String);
+/// Invalid lifecycle operation on the no-device presentation boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PresentationError {
+    /// Presentation was started more than once.
+    AlreadyRunning,
+    /// A frame or shutdown was requested before startup or after shutdown.
+    NotRunning,
+}
 
 impl fmt::Display for PresentationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self {
+            Self::AlreadyRunning => formatter.write_str("presentation is already running"),
+            Self::NotRunning => formatter.write_str("presentation is not running"),
+        }
     }
 }
 
 impl Error for PresentationError {}
 
-/// Coordinates optional renderer and audio providers for a client frame.
+/// No-device presentation used by the bounded client smoke application.
+#[derive(Default)]
 pub struct Presentation {
-    renderer: Box<dyn Renderer>,
-    audio: Box<dyn AudioOutput>,
     started: bool,
+    presented_frames: u64,
 }
 
 impl Presentation {
-    /// Creates a presentation layer from selected providers.
+    /// Creates the no-device presentation boundary.
     #[must_use]
-    pub fn new(renderer: impl Renderer + 'static, audio: impl AudioOutput + 'static) -> Self {
+    pub const fn null() -> Self {
         Self {
-            renderer: Box::new(renderer),
-            audio: Box::new(audio),
             started: false,
+            presented_frames: 0,
         }
     }
 
-    /// Creates the no-device presentation used by the first skeleton.
-    #[must_use]
-    pub fn null() -> Self {
-        Self::new(NullRenderer::default(), NullAudio)
-    }
-
-    /// Starts presentation providers.
+    /// Starts accepting frames.
     pub fn start(&mut self) -> Result<(), PresentationError> {
         if self.started {
-            return Err(PresentationError(
-                "presentation is already running".to_owned(),
-            ));
-        }
-        self.renderer
-            .start()
-            .map_err(|error| PresentationError(error.to_string()))?;
-        if let Err(error) = self.audio.start() {
-            let _ = self.renderer.shutdown();
-            return Err(PresentationError(error.to_string()));
+            return Err(PresentationError::AlreadyRunning);
         }
         self.started = true;
         Ok(())
     }
 
-    /// Presents one frame with immutable access to authoritative state.
-    ///
-    /// Null providers do not query the world. Concrete presentation systems may
-    /// query it directly or maintain selective caches when profiling justifies
-    /// that optimization.
-    pub fn present(&mut self, _world: &World, frame: RenderFrame) -> Result<(), PresentationError> {
+    /// Accepts one frame with immutable access to authoritative state.
+    pub fn present(
+        &mut self,
+        _world: &World,
+        _frame: RenderFrame,
+    ) -> Result<(), PresentationError> {
         if !self.started {
-            return Err(PresentationError("presentation is not running".to_owned()));
+            return Err(PresentationError::NotRunning);
         }
-        self.renderer
-            .render(frame)
-            .map_err(|error| PresentationError(error.to_string()))?;
-        self.audio
-            .update()
-            .map_err(|error| PresentationError(error.to_string()))
+        self.presented_frames = self.presented_frames.saturating_add(1);
+        Ok(())
     }
 
-    /// Stops presentation providers in reverse startup order.
+    /// Stops accepting frames.
     pub fn shutdown(&mut self) -> Result<(), PresentationError> {
         if !self.started {
-            return Err(PresentationError("presentation is not running".to_owned()));
+            return Err(PresentationError::NotRunning);
         }
-        let audio = self
-            .audio
-            .shutdown()
-            .map_err(|error| PresentationError(error.to_string()));
-        let renderer = self
-            .renderer
-            .shutdown()
-            .map_err(|error| PresentationError(error.to_string()));
         self.started = false;
-        audio.and(renderer)
+        Ok(())
+    }
+
+    /// Returns the number of frames accepted by this instance.
+    #[must_use]
+    pub const fn presented_frames(&self) -> u64 {
+        self.presented_frames
     }
 }
 
@@ -113,19 +95,25 @@ impl Presentation {
 mod tests {
     use nico_runtime::ecs::World;
 
-    use super::{Presentation, RenderFrame};
+    use super::{Presentation, PresentationError, RenderFrame};
 
     #[test]
-    fn null_presentation_completes_a_frame() -> Result<(), super::PresentationError> {
+    fn null_presentation_enforces_lifecycle_and_counts_frames() {
         let mut presentation = Presentation::null();
-        presentation.start()?;
-        presentation.present(
-            &World::new(),
-            RenderFrame {
-                frame_number: 0,
-                interpolation: 0.0,
-            },
-        )?;
-        presentation.shutdown()
+        let frame = RenderFrame {
+            frame_number: 0,
+            interpolation: 0.0,
+        };
+
+        assert_eq!(
+            presentation.present(&World::new(), frame),
+            Err(PresentationError::NotRunning)
+        );
+        presentation.start().unwrap();
+        assert_eq!(presentation.start(), Err(PresentationError::AlreadyRunning));
+        presentation.present(&World::new(), frame).unwrap();
+        presentation.shutdown().unwrap();
+
+        assert_eq!(presentation.presented_frames(), 1);
     }
 }

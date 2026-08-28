@@ -6,13 +6,12 @@ The skeleton should be reviewed before detailed subsystem work begins.
 
 - Runtime is headless and presentation-independent.
 - Native hosts drive runtime frames.
-- Presentation and devtools are optional.
-- Physics is authoritative rather than presentation-only.
-- Asset identity crosses the runtime/presentation boundary.
+- Presentation is optional and currently no-device only.
+- Stable asset identity is isolated from loader and importer policy.
 - Game setup and behavior are authored in Rust.
 - `hecs` provides focused entity/component storage through `nico-ecs`; it does not
   own Nico lifecycle or application architecture.
-- Presentation, physics, audio, and UI backend libraries remain unselected.
+- Window, rendering, physics, audio, and UI libraries remain unselected.
 
 ## Accepted decisions
 
@@ -26,12 +25,16 @@ The skeleton should be reviewed before detailed subsystem work begins.
    Extraction and caching remain optional presentation-side optimizations for
    cases where they provide a measured benefit.
 5. Asset identity remains a standalone shared crate.
-6. Window, input, rendering, audio, and UI contracts are compacted into the
-   presentation crate until concrete provider boundaries justify new crates.
-7. Devtools run in-process initially.
+6. Window, input, rendering, audio, and UI contracts remain absent until a real
+   provider and consumer establish their lifecycle requirements.
+7. Devtools and physics remain deferred capabilities rather than placeholder
+   crates.
 8. Runtime events use typed bounded broadcast streams with independent readers.
    Successful system writes are visible to the next scheduled system; failed
    writes are discarded.
+9. Portable services use domain-typed bounded channels. Backends receive owned
+   requests without `World` access; runtime systems publish controlled
+   completions as events and reject stale entity targets.
 
 ## Out of scope for this review
 

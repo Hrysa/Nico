@@ -1,12 +1,6 @@
-//! Asset identity and loading contracts shared by runtime and presentation.
+//! Stable asset identity shared by runtime and presentation.
 
-use std::{
-    any::TypeId,
-    error::Error,
-    fmt,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-};
+use std::marker::PhantomData;
 
 /// Stable, type-independent identity of an asset.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -58,54 +52,18 @@ impl<T> Clone for Handle<T> {
 
 impl<T> Copy for Handle<T> {}
 
-/// Logical path to a source or generated asset.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct AssetPath(PathBuf);
+#[cfg(test)]
+mod tests {
+    use super::{AssetId, Handle};
 
-impl AssetPath {
-    /// Creates a logical asset path.
-    #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self(path.into())
+    struct Texture;
+
+    #[test]
+    fn typed_handle_preserves_stable_identity() {
+        let id = AssetId::from_u128(42);
+        let handle = Handle::<Texture>::new(id);
+
+        assert_eq!(handle.id(), id);
+        assert_eq!(handle.id().to_u128(), 42);
     }
-
-    /// Returns the underlying path.
-    #[must_use]
-    pub fn as_path(&self) -> &Path {
-        &self.0
-    }
-}
-
-/// Observable loading state of an asset.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AssetState {
-    /// The asset is known but has not started loading.
-    Pending,
-    /// The provider is loading or importing the asset.
-    Loading,
-    /// The runtime representation is ready.
-    Ready,
-    /// Loading failed.
-    Failed,
-}
-
-/// Provider-independent asset failure.
-#[derive(Debug, Eq, PartialEq)]
-pub struct AssetError(pub String);
-
-impl fmt::Display for AssetError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl Error for AssetError {}
-
-/// Backend-neutral asset loading service.
-pub trait AssetService: Send {
-    /// Requests an asset of the supplied runtime type.
-    fn request(&mut self, path: &AssetPath, asset_type: TypeId) -> Result<AssetId, AssetError>;
-
-    /// Returns the current state of an asset.
-    fn state(&self, id: AssetId) -> Option<AssetState>;
 }
