@@ -29,6 +29,9 @@ The skeleton should be reviewed before detailed subsystem work begins.
 6. Window, input, rendering, audio, and UI contracts are compacted into the
    presentation crate until concrete provider boundaries justify new crates.
 7. Devtools run in-process initially.
+8. Runtime events use typed bounded broadcast streams with independent readers.
+   Successful system writes are visible to the next scheduled system; failed
+   writes are discarded.
 
 ## Out of scope for this review
 

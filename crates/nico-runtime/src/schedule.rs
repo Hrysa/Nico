@@ -1,6 +1,9 @@
 use nico_ecs::{CommandBuffer, World};
 
-use crate::{RuntimeError, RuntimeResult, SystemContext, Time};
+use crate::{
+    RuntimeError, RuntimeResult, SystemContext, Time,
+    events::{EventBus, PendingEvents, SystemEvents},
+};
 
 /// Ordered lifecycle stages supported by the minimal runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,17 +70,20 @@ impl Schedule {
         &mut self,
         stage: Stage,
         world: &mut World,
+        events: &mut EventBus,
         time: Time,
         exit_requested: &mut bool,
     ) -> RuntimeResult<()> {
-        let mut commands = CommandBuffer::new();
-        let mut context = SystemContext {
-            world,
-            commands: &mut commands,
-            time,
-            exit_requested,
-        };
         for system in &mut self.stages[stage.index()] {
+            let mut commands = CommandBuffer::new();
+            let mut pending_events = PendingEvents::default();
+            let mut context = SystemContext {
+                world,
+                commands: &mut commands,
+                events: SystemEvents::new(events, &mut pending_events),
+                time,
+                exit_requested,
+            };
             let span = tracing::trace_span!("runtime_system", system = %system.name);
             let _entered = span.enter();
             if let Err(error) = (system.run)(&mut context) {
@@ -88,6 +94,7 @@ impl Schedule {
                 });
             }
             context.commands.run_on(context.world.entities_mut());
+            pending_events.commit(events);
         }
         Ok(())
     }

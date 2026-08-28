@@ -18,7 +18,8 @@ game server ──────────────────> runtime
 ```
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
-  execution.
+  execution. Its typed event streams provide bounded broadcast communication
+  between systems and host integrations.
 - `nico-ecs` owns the authoritative world, typed resources, entity storage,
   queries, and deferred structural commands while exposing the real `hecs` query
   vocabulary.
@@ -35,7 +36,8 @@ a scene document, prefab format, or visual editor. Those are deliberate review
 decisions rather than missing implementations.
 
 See [docs/architecture.md](docs/architecture.md) for dependency and ownership
-rules.
+rules, and [docs/roadmap.md](docs/roadmap.md) for the complete skeleton tree and
+implementation order.
 
 ## ECS usage
 
@@ -54,6 +56,24 @@ duplicating them at the `nico_runtime` crate root. Systems query the authoritati
 world directly and record structural changes through `context.commands`.
 Successful commands are flushed before the next system runs; commands from a
 failed system are discarded.
+
+## Runtime events
+
+Game-owned event types are sent and read through `SystemContext`:
+
+```rust,ignore
+let mut reader = nico_runtime::events::EventReader::<EnemyDefeated>::new();
+app.add_system(Stage::Update, "quests", move |context| {
+    for event in context.events.read(&mut reader) {
+        // Update quest-domain state from this authoritative fact.
+    }
+    Ok(())
+});
+```
+
+Each reader receives events independently. System writes become visible after
+that system succeeds and are discarded if it fails. Streams retain a bounded
+number of events per type; lagging readers can inspect `EventRead::missed()`.
 
 ## Commands
 

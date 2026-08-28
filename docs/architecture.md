@@ -49,6 +49,14 @@ system are flushed before the next system runs, so ordering is deterministic and
 later systems observe structural changes. Commands produced by a failed system
 are discarded.
 
+`nico_runtime::events` provides typed, in-thread broadcast streams. Each
+consumer owns an `EventReader<T>` cursor, so one consumer cannot remove an event
+from another. A system's event writes are staged and become visible to the next
+scheduled system only after the producer succeeds; failed-system writes are
+discarded. Each event type has a bounded retained history, and lagging readers
+are told how many events were evicted. Hosts may inject input or completion
+events before a tick without receiving mutable access to the world.
+
 The host drives the runtime through `start`, `tick`, and `shutdown`; the runtime
 does not own a native event loop.
 
@@ -189,6 +197,8 @@ tests and bounded smoke applications.
    the diagnostics subscriber.
 10. Persistent business identifiers such as player, asset, and network IDs are
     distinct from temporary generational ECS entity IDs.
+11. Runtime events are transient broadcast facts; persistent domain state still
+    belongs in explicit resources, domain models, or external storage.
 
 ## Deliberately deferred
 

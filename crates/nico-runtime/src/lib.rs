@@ -4,6 +4,7 @@
 //! input. Clients, servers, tests, and tools all drive the same [`App`].
 
 mod error;
+pub mod events;
 mod host;
 mod schedule;
 mod time;
@@ -20,6 +21,7 @@ pub mod ecs {
 
 use std::time::Duration;
 
+use events::{DEFAULT_EVENT_CAPACITY, Event, EventBus, SystemEvents};
 use nico_ecs::{Resource, World};
 use schedule::Schedule;
 
@@ -43,6 +45,9 @@ pub struct SystemContext<'a> {
     pub world: &'a mut World,
     /// Deferred ECS structural changes, flushed after this system succeeds.
     pub commands: &'a mut nico_ecs::CommandBuffer,
+    /// Typed events committed by earlier systems and writes pending from this
+    /// system.
+    pub events: SystemEvents<'a>,
     /// Timing values for this invocation.
     pub time: Time,
     exit_requested: &'a mut bool,
@@ -73,6 +78,7 @@ pub struct AppBuilder {
     schedule: Schedule,
     plugins: Vec<Box<dyn Plugin>>,
     fixed_step: Duration,
+    event_capacity: usize,
 }
 
 impl Default for AppBuilder {
@@ -82,6 +88,7 @@ impl Default for AppBuilder {
             schedule: Schedule::new(),
             plugins: Vec::new(),
             fixed_step: Duration::from_nanos(16_666_667),
+            event_capacity: DEFAULT_EVENT_CAPACITY,
         }
     }
 }
@@ -107,6 +114,13 @@ impl AppBuilder {
         self
     }
 
+    /// Sets the retained capacity of each typed event stream.
+    #[must_use]
+    pub const fn with_event_capacity(mut self, event_capacity: usize) -> Self {
+        self.event_capacity = event_capacity;
+        self
+    }
+
     /// Inserts or replaces a typed world resource.
     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> Option<R> {
         self.world.insert_resource(resource)
@@ -125,6 +139,9 @@ impl AppBuilder {
         if self.fixed_step.is_zero() {
             return Err(RuntimeError::InvalidFixedStep);
         }
+        if self.event_capacity == 0 {
+            return Err(RuntimeError::InvalidEventCapacity);
+        }
 
         for plugin in std::mem::take(&mut self.plugins) {
             plugin.build(&mut self)?;
@@ -134,6 +151,7 @@ impl AppBuilder {
             state: AppState::Created,
             world: self.world,
             schedule: self.schedule,
+            events: EventBus::new(self.event_capacity),
             fixed_step: self.fixed_step,
             accumulator: Duration::ZERO,
             elapsed: Duration::ZERO,
@@ -150,6 +168,7 @@ pub struct App {
     state: AppState,
     world: World,
     schedule: Schedule,
+    events: EventBus,
     fixed_step: Duration,
     accumulator: Duration,
     elapsed: Duration,
@@ -175,6 +194,20 @@ impl App {
     /// Returns mutable access to the simulation world.
     pub const fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Returns the committed runtime event streams.
+    #[must_use]
+    pub const fn events(&self) -> &EventBus {
+        &self.events
+    }
+
+    /// Publishes an event from the application host.
+    ///
+    /// Host events are visible to the next system that runs. Runtime systems
+    /// should use [`SystemContext::events`] for transactional publication.
+    pub fn send_event<T: Event>(&mut self, event: T) {
+        self.events.send(event);
     }
 
     /// Requests an orderly stop from the host loop.
@@ -300,8 +333,13 @@ impl App {
             fixed_tick = time.fixed_tick()
         );
         let _entered = span.enter();
-        self.schedule
-            .run(stage, &mut self.world, time, &mut self.exit_requested)
+        self.schedule.run(
+            stage,
+            &mut self.world,
+            &mut self.events,
+            time,
+            &mut self.exit_requested,
+        )
     }
 }
 
@@ -309,7 +347,10 @@ impl App {
 mod tests {
     use std::time::Duration;
 
-    use super::{AppBuilder, AppState, Plugin, RuntimeResult, Stage, SystemContext};
+    use super::{
+        AppBuilder, AppState, Plugin, RuntimeError, RuntimeResult, Stage, SystemContext,
+        events::EventReader,
+    };
 
     #[derive(Default)]
     struct Trace {
@@ -527,6 +568,176 @@ mod tests {
         assert!(app.run_for_frames(1, Duration::from_millis(16)).is_err());
         assert_eq!(app.world().query::<&Spawned>().iter().count(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn successful_system_events_are_broadcast_to_independent_readers() -> RuntimeResult<()> {
+        #[derive(Clone, Copy)]
+        struct Published(u32);
+
+        #[derive(Default)]
+        struct Observed {
+            first: Vec<u32>,
+            second: Vec<u32>,
+        }
+
+        let mut first_reader = EventReader::<Published>::new();
+        let mut second_reader = EventReader::<Published>::new();
+        let mut builder = AppBuilder::new();
+        builder.insert_resource(Observed::default());
+        builder.add_system(Stage::Update, "publish", |context| {
+            context.events.send(Published(4));
+            context.events.send(Published(8));
+            Ok(())
+        });
+        builder.add_system(Stage::Update, "first reader", move |context| {
+            let values = context
+                .events
+                .read(&mut first_reader)
+                .map(|event| event.0)
+                .collect::<Vec<_>>();
+            context.world.resource_mut::<Observed>()?.first = values;
+            Ok(())
+        });
+        builder.add_system(Stage::Update, "second reader", move |context| {
+            let values = context
+                .events
+                .read(&mut second_reader)
+                .map(|event| event.0)
+                .collect::<Vec<_>>();
+            context.world.resource_mut::<Observed>()?.second = values;
+            Ok(())
+        });
+        let mut app = builder.build()?;
+
+        app.run_for_frames(1, Duration::from_millis(16))?;
+
+        let observed = app.world().resource::<Observed>()?;
+        assert_eq!(observed.first, [4, 8]);
+        assert_eq!(observed.second, [4, 8]);
+        Ok(())
+    }
+
+    #[test]
+    fn event_is_not_visible_until_its_system_succeeds() -> RuntimeResult<()> {
+        struct Published;
+
+        #[derive(Default)]
+        struct Observed {
+            during_publish: usize,
+            after_publish: usize,
+        }
+
+        let mut publishing_reader = EventReader::<Published>::new();
+        let mut following_reader = EventReader::<Published>::new();
+        let mut builder = AppBuilder::new();
+        builder.insert_resource(Observed::default());
+        builder.add_system(Stage::Update, "publish and inspect", move |context| {
+            context.events.send(Published);
+            let count = context.events.read(&mut publishing_reader).count();
+            context.world.resource_mut::<Observed>()?.during_publish = count;
+            Ok(())
+        });
+        builder.add_system(Stage::Update, "inspect after publish", move |context| {
+            let count = context.events.read(&mut following_reader).count();
+            context.world.resource_mut::<Observed>()?.after_publish = count;
+            Ok(())
+        });
+        let mut app = builder.build()?;
+
+        app.run_for_frames(1, Duration::from_millis(16))?;
+
+        let observed = app.world().resource::<Observed>()?;
+        assert_eq!(observed.during_publish, 0);
+        assert_eq!(observed.after_publish, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_system_events_are_discarded() -> RuntimeResult<()> {
+        struct Published;
+
+        let mut builder = AppBuilder::new();
+        builder.add_system(Stage::Update, "fail after publish", |context| {
+            context.events.send(Published);
+            Err(RuntimeError::MissingResource("intentional failure"))
+        });
+        let mut app = builder.build()?;
+
+        assert!(app.run_for_frames(1, Duration::from_millis(16)).is_err());
+        let mut reader = EventReader::<Published>::new();
+        assert_eq!(app.events().read(&mut reader).count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn event_stream_capacity_is_bounded_and_reports_overflow() -> RuntimeResult<()> {
+        #[derive(Clone, Copy)]
+        struct Published(u32);
+
+        #[derive(Default)]
+        struct Observed {
+            missed: u64,
+            values: Vec<u32>,
+        }
+
+        let mut reader = EventReader::<Published>::new();
+        let mut builder = AppBuilder::new().with_event_capacity(2);
+        builder.insert_resource(Observed::default());
+        builder.add_system(Stage::Update, "publish", |context| {
+            context.events.send(Published(1));
+            context.events.send(Published(2));
+            context.events.send(Published(3));
+            Ok(())
+        });
+        builder.add_system(Stage::Update, "observe", move |context| {
+            let read = context.events.read(&mut reader);
+            let missed = read.missed();
+            let values = read.map(|event| event.0).collect::<Vec<_>>();
+            let observed = context.world.resource_mut::<Observed>()?;
+            observed.missed = missed;
+            observed.values = values;
+            Ok(())
+        });
+        let mut app = builder.build()?;
+
+        app.run_for_frames(1, Duration::from_millis(16))?;
+
+        let observed = app.world().resource::<Observed>()?;
+        assert_eq!(observed.missed, 1);
+        assert_eq!(observed.values, [2, 3]);
+        Ok(())
+    }
+
+    #[test]
+    fn host_event_is_visible_to_the_next_system() -> RuntimeResult<()> {
+        struct HostEvent;
+
+        #[derive(Default)]
+        struct Observed(usize);
+
+        let mut reader = EventReader::<HostEvent>::new();
+        let mut builder = AppBuilder::new();
+        builder.insert_resource(Observed::default());
+        builder.add_system(Stage::Update, "observe host", move |context| {
+            context.world.resource_mut::<Observed>()?.0 = context.events.read(&mut reader).count();
+            Ok(())
+        });
+        let mut app = builder.build()?;
+        app.send_event(HostEvent);
+
+        app.run_for_frames(1, Duration::from_millis(16))?;
+
+        assert_eq!(app.world().resource::<Observed>()?.0, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_event_capacity_is_rejected() {
+        assert!(matches!(
+            AppBuilder::new().with_event_capacity(0).build(),
+            Err(RuntimeError::InvalidEventCapacity)
+        ));
     }
 
     #[test]

@@ -1,5 +1,20 @@
 # Nico TODO
 
+The complete subsystem tree and milestone order live in
+[`docs/roadmap.md`](docs/roadmap.md). This file tracks detailed work for the
+currently designed asynchronous I/O and asset-import areas.
+
+## Typed runtime events
+
+- [x] Provide typed broadcast streams under `nico_runtime::events`.
+- [x] Give each consumer an independent persistent reader cursor.
+- [x] Commit system writes after success and discard writes after failure.
+- [x] Make committed writes visible to the next scheduled system.
+- [x] Bound retained events per type and report missed events after overflow.
+- [x] Allow application hosts to inject events before running systems.
+- [x] Verify ordering, independent readers, overflow, host ingress, and failure.
+- [x] Demonstrate two gameplay consumers in `minimal-game`.
+
 ## Portable asynchronous I/O
 
 The runtime and game-facing APIs must not depend directly on Tokio or another

@@ -26,14 +26,16 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     presentation.start()?;
     app.start()?;
-    app.tick(Duration::from_nanos(16_666_667))?;
-    presentation.present(
-        app.world(),
-        RenderFrame {
-            frame_number: 0,
-            interpolation: 0.0,
-        },
-    )?;
+    for frame_number in 0..2 {
+        app.tick(Duration::from_nanos(16_666_667))?;
+        presentation.present(
+            app.world(),
+            RenderFrame {
+                frame_number,
+                interpolation: 0.0,
+            },
+        )?;
+    }
     app.shutdown()?;
     presentation.shutdown()?;
 
@@ -42,6 +44,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing::info!(
         fixed_updates = state.fixed_updates(),
         frame_updates = state.frame_updates(),
+        movement_quest_completed = state.movement_quest_completed(),
+        stamina = state.stamina(),
+        coins = state.coins(),
         simulated_entities,
         "minimal game client stopped"
     );

@@ -14,6 +14,8 @@ pub enum RuntimeError {
     },
     /// The fixed simulation step was zero.
     InvalidFixedStep,
+    /// The retained capacity of an event stream was zero.
+    InvalidEventCapacity,
     /// A requested typed resource was absent.
     MissingResource(&'static str),
     /// A system failed while executing.
@@ -45,6 +47,9 @@ impl fmt::Display for RuntimeError {
                 )
             }
             Self::InvalidFixedStep => formatter.write_str("fixed simulation step must be non-zero"),
+            Self::InvalidEventCapacity => {
+                formatter.write_str("event stream capacity must be non-zero")
+            }
             Self::MissingResource(resource) => {
                 write!(formatter, "resource `{resource}` was not found")
             }
