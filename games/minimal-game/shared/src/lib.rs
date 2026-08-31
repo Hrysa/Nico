@@ -6,6 +6,7 @@ use nico_runtime::{AppBuilder, Plugin, RuntimeResult, Stage, SystemContext, even
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Position {
     x: f32,
+    y: f32,
 }
 
 impl Position {
@@ -14,11 +15,74 @@ impl Position {
     pub const fn x(self) -> f32 {
         self.x
     }
+
+    /// Returns the vertical world position.
+    #[must_use]
+    pub const fn y(self) -> f32 {
+        self.y
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Velocity {
-    units_per_second: f32,
+    x: f32,
+    y: f32,
+}
+
+/// Provider-independent two-dimensional movement intent.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MovementVector {
+    x: f32,
+    y: f32,
+}
+
+impl MovementVector {
+    /// Creates a vector limited to unit length so diagonal input is not faster.
+    #[must_use]
+    pub fn normalized(x: f32, y: f32) -> Self {
+        let length_squared = x.mul_add(x, y * y);
+        if length_squared > 1.0 {
+            let inverse_length = length_squared.sqrt().recip();
+            Self {
+                x: x * inverse_length,
+                y: y * inverse_length,
+            }
+        } else {
+            Self { x, y }
+        }
+    }
+
+    /// Returns the horizontal component.
+    #[must_use]
+    pub const fn x(self) -> f32 {
+        self.x
+    }
+
+    /// Returns the vertical component.
+    #[must_use]
+    pub const fn y(self) -> f32 {
+        self.y
+    }
+}
+
+/// Game-owned semantic command produced by a client input mapping or network.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerCommand {
+    movement: MovementVector,
+}
+
+impl PlayerCommand {
+    /// Creates a command that sets authoritative movement intent.
+    #[must_use]
+    pub const fn move_in(movement: MovementVector) -> Self {
+        Self { movement }
+    }
+
+    /// Returns the requested movement vector.
+    #[must_use]
+    pub const fn movement(self) -> MovementVector {
+        self.movement
+    }
 }
 
 const INITIAL_STAMINA: u64 = 10;
@@ -144,6 +208,25 @@ impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut AppBuilder) -> RuntimeResult<()> {
         app.insert_resource(GameState::default());
         app.add_system(Stage::Startup, "minimal_game::setup", setup);
+        let mut command_reader = EventReader::<PlayerCommand>::new();
+        app.add_system(
+            Stage::FixedUpdate,
+            "minimal_game::apply_player_commands",
+            move |context| {
+                let movement = context
+                    .events
+                    .read(&mut command_reader)
+                    .last()
+                    .map(|command| command.movement());
+                if let Some(movement) = movement {
+                    for velocity in context.world.query::<&mut Velocity>().iter() {
+                        velocity.x = movement.x();
+                        velocity.y = movement.y();
+                    }
+                }
+                Ok(())
+            },
+        );
         app.add_system(Stage::FixedUpdate, "minimal_game::simulate", simulate);
         let mut quest_reader = EventReader::<MovementCompleted>::new();
         app.add_system(
@@ -214,12 +297,9 @@ impl Plugin for MinimalGamePlugin {
 
 fn setup(context: &mut SystemContext<'_>) -> RuntimeResult<()> {
     context.world.resource_mut::<GameState>()?.started = true;
-    context.commands.spawn((
-        Position::default(),
-        Velocity {
-            units_per_second: 1.0,
-        },
-    ));
+    context
+        .commands
+        .spawn((Position::default(), Velocity { x: 1.0, y: 0.0 }));
     Ok(())
 }
 
@@ -230,8 +310,11 @@ fn simulate(context: &mut SystemContext<'_>) -> RuntimeResult<()> {
     let delta = context.time.delta().as_secs_f32();
     let mut moved_entities = 0_u64;
     for (position, velocity) in context.world.query::<(&mut Position, &Velocity)>().iter() {
-        position.x += velocity.units_per_second * delta;
-        moved_entities = moved_entities.saturating_add(1);
+        position.x += velocity.x * delta;
+        position.y += velocity.y * delta;
+        if velocity.x != 0.0 || velocity.y != 0.0 {
+            moved_entities = moved_entities.saturating_add(1);
+        }
     }
     context.events.send(MovementCompleted {
         fixed_tick: context.time.fixed_tick(),
@@ -252,7 +335,7 @@ mod tests {
 
     use nico_runtime::{AppBuilder, RuntimeResult};
 
-    use super::{GameState, MinimalGamePlugin, Position};
+    use super::{GameState, MinimalGamePlugin, MovementVector, PlayerCommand, Position};
 
     #[test]
     fn shared_gameplay_runs_headlessly() -> RuntimeResult<()> {
@@ -287,6 +370,25 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(positions.len(), 1);
         assert!((positions[0] - 0.033_333_335).abs() < f32::EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn game_owned_movement_command_changes_authoritative_velocity() -> RuntimeResult<()> {
+        let mut app = AppBuilder::new().add_plugin(MinimalGamePlugin).build()?;
+        app.send_event(PlayerCommand::move_in(MovementVector::normalized(0.0, 1.0)));
+
+        app.run_for_frames(1, Duration::from_nanos(16_666_667))?;
+
+        let positions = app
+            .world()
+            .query::<&Position>()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].x(), 0.0);
+        assert!((positions[0].y() - 0.016_666_668).abs() < f32::EPSILON);
         Ok(())
     }
 }

@@ -5,13 +5,16 @@ The skeleton should be reviewed before detailed subsystem work begins.
 ## Decisions represented in code
 
 - Runtime is headless and presentation-independent.
+- Provider-neutral input is a separate headless engine capability.
 - Native hosts drive runtime frames.
 - Presentation is optional and currently no-device only.
+- `nico-winit` owns the first native desktop client loop as a concrete engine
+  provider.
 - Stable asset identity is isolated from loader and importer policy.
 - Game setup and behavior are authored in Rust.
 - `hecs` provides focused entity/component storage through `nico-ecs`; it does not
   own Nico lifecycle or application architecture.
-- Window, rendering, physics, audio, and UI libraries remain unselected.
+- Rendering, physics, audio, and UI libraries remain unselected.
 
 ## Accepted decisions
 
@@ -25,8 +28,8 @@ The skeleton should be reviewed before detailed subsystem work begins.
    Extraction and caching remain optional presentation-side optimizations for
    cases where they provide a measured benefit.
 5. Asset identity remains a standalone shared crate.
-6. Window, input, rendering, audio, and UI contracts remain absent until a real
-   provider and consumer establish their lifecycle requirements.
+6. Window, rendering, audio, and UI engine contracts remain absent until
+   concrete providers and consumers establish reusable requirements.
 7. Devtools and physics remain deferred capabilities rather than placeholder
    crates.
 8. Runtime events use typed bounded broadcast streams with independent readers.
@@ -35,6 +38,11 @@ The skeleton should be reviewed before detailed subsystem work begins.
 9. Portable services use domain-typed bounded channels. Backends receive owned
    requests without `World` access; runtime systems publish controlled
    completions as events and reject stale entity targets.
+10. `nico-winit` owns Winit 0.30 window lifecycle, scheduling, and native input
+    adaptation. No provider-neutral window trait exists before a second provider.
+11. `nico-input` owns provider-neutral multi-device state. The minimal-game
+    client owns only bindings and game-command mapping; provider-specific and
+    physical-input types stay out of shared gameplay and runtime.
 
 ## Out of scope for this review
 

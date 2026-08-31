@@ -7,9 +7,10 @@ license.workspace = true
 [dependencies]
 clap.workspace = true
 minimal-game-shared = { path = "../shared" }
+nico-input = { path = "../../../crates/nico-input" }
 nico-launch = { path = "../../../crates/nico-launch" }
-nico-presentation = { path = "../../../crates/nico-presentation" }
 nico-runtime = { path = "../../../crates/nico-runtime" }
+nico-winit = { path = "../../../crates/nico-winit" }
 tracing.workspace = true
 
 [lints]

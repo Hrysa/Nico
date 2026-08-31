@@ -1,7 +1,7 @@
-//! Concrete no-device presentation boundary for the bounded client smoke path.
+//! Concrete no-device presentation boundary for the minimal client.
 //!
-//! Window, renderer, audio, input, and UI contracts are intentionally absent
-//! until the first real provider establishes their ownership and lifecycle.
+//! Input, window, renderer, audio, and UI contracts are intentionally absent
+//! until concrete consumers establish their ownership and lifecycle.
 
 use std::{error::Error, fmt};
 

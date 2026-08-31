@@ -12,20 +12,14 @@ libraries or implementing engine subsystems in detail.
 ## Layers
 
 ```text
-                         applications
-                 ┌────────────┴────────────┐
-                 │                         │
-            game server               game client
-                 │                         │
-                 │                    presentation
-                 │                         │
-                 └────────────┬────────────┘
-                              ▼
-                           runtime
-                              │
-                              ▼
-                              ecs
+game server ────────────────────────────────────────────> runtime ──> ecs
+game client ──> nico-winit ──┬──> input
+                             ├──> presentation ─────────> runtime
+                             └──────────────────────────> runtime
 ```
+
+`input` is a headless leaf capability. `nico-winit` is a concrete provider crate,
+not a provider-neutral host abstraction.
 
 ### Runtime
 
@@ -72,8 +66,10 @@ behavior. The boundary does not select Tokio or any other executor.
 
 Runtime systems can request orderly termination through `SystemContext`. Host
 policies implement `AppRunner`: the dedicated server uses a paced fixed-rate loop,
-while tests use bounded frames. A permanent client loop is deferred until the
-native window/event-loop provider is selected.
+while tests use bounded frames. `nico-winit` implements the native client host
+with Winit's `ApplicationHandler`; callbacks drive runtime startup, ticks,
+redraws, suspension, and orderly shutdown without entering `nico-runtime`
+dependencies.
 
 Runtime and engine libraries emit structured diagnostics through `tracing` but
 do not select output, filtering, or formatting policy. Native executables use
@@ -81,13 +77,26 @@ do not select output, filtering, or formatting policy. Native executables use
 `tracing-subscriber`. Web and console hosts may provide different launch and
 diagnostics integration without changing runtime code.
 
+### Input
+
+`nico-input` is a headless engine capability that owns normalized device
+identity, connection lifecycle, buttons, axes, vectors, and frame-local motion.
+It depends on neither the runtime nor a platform provider. The concrete
+`nico-winit` adapter translates native events into this state, and game clients
+map the resulting `InputState` into game-owned semantic commands.
+
+Physical input is engine infrastructure but not authoritative gameplay state.
+Consequently, `nico-input` is not a dependency of shared game logic or the
+server, while game-owned commands remain available to both client and server.
+
 ### Presentation
 
 `nico-presentation` is optional and depends on the runtime. It coordinates
-the current bounded client smoke path through a concrete no-device
-`Presentation`. It does not define provider-neutral window, input, renderer,
-audio, or UI traits. Those contracts will be extracted from the first real
-provider and consumer after event-loop ownership is understood.
+the current native client path through a concrete no-device
+`Presentation`. It does not define provider-neutral window, renderer, audio, or
+UI traits. Input is a sibling engine capability rather than presentation state.
+The concrete `nico-winit` host coordinates the current `Presentation` lifecycle;
+that provider-specific coordination does not belong to an example game.
 
 Runtime never depends on presentation. A dedicated server therefore has no
 window, renderer, local input, audio, or UI dependency.
@@ -174,8 +183,9 @@ cargo run -p minimal-game-server
 ```
 
 The server command continues ticking at a fixed rate until exit is requested or
-the process is stopped. `run_for_frames` remains available for deterministic
-tests and bounded smoke applications.
+the process is stopped. The client runs until its window closes and accepts
+`--smoke-frames <N>` for bounded validation. `run_for_frames` remains available
+for deterministic headless tests.
 
 ## Dependency rules
 
@@ -197,6 +207,10 @@ tests and bounded smoke applications.
     belongs in explicit resources, domain models, or external storage.
 12. Service contracts are domain-typed and executor-independent; no universal
     I/O request enum or direct background access to `World` is allowed.
+13. `nico-input` owns provider-neutral physical device state; concrete provider
+    crates own adaptation, and game clients map state to semantic commands.
+14. `nico-winit` owns concrete Winit lifecycle and adaptation. Game clients own
+    only configuration, bindings, and semantic command mapping.
 
 ## Deliberately deferred
 

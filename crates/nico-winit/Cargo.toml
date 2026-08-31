@@ -1,0 +1,15 @@
+[package]
+name = "nico-winit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nico-input = { path = "../nico-input" }
+nico-presentation = { path = "../nico-presentation" }
+nico-runtime = { path = "../nico-runtime" }
+tracing.workspace = true
+winit.workspace = true
+
+[lints]
+workspace = true

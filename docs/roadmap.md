@@ -18,13 +18,15 @@ first provider and consumer exist.
 Nico/
 ├── crates/
 │   ├── nico-ecs/             authoritative world, resources, hecs vocabulary
+│   ├── nico-input/           provider-neutral physical device state
 │   ├── nico-runtime/         lifecycle, schedule, time, events, services
 │   ├── nico-launch/          native CLI and diagnostics policy
-│   ├── nico-presentation/    concrete no-device client smoke boundary
+│   ├── nico-presentation/    concrete no-device presentation boundary
+│   ├── nico-winit/           concrete native client host and input adapter
 │   └── nico-assets/          stable AssetId and typed Handle<T> only
 └── games/minimal-game/
     ├── shared/               authoritative gameplay used by client and server
-    ├── client/               bounded client smoke host
+    ├── client/               game composition, bindings, command mapping
     ├── server/               paced headless host
     └── assets/               logic and presentation ownership roots
 ```
@@ -65,20 +67,30 @@ provider, and behavioral test.
 
 ## Next milestone
 
-### 3. Real client host [ ]
+### 3. Real client host [ ] IN PROGRESS
 
 The first native window provider will determine the presentation contracts. Do
 not add provider-neutral traits before completing this investigation.
 
-- Select one window/event-loop library based on desktop lifecycle requirements.
-- Let the provider own the permanent client loop and drive `App::start`, `tick`,
-  and `shutdown`.
-- Normalize only the device input required by the minimal game.
-- Translate that input into a game-owned semantic command.
-- Handle close, resize, focus, suspend/resume, and redraw behavior actually
-  exposed by the selected provider.
-- Preserve headless tests and the no-device presentation smoke path.
-- Add an executable smoke test where platform automation permits it.
+- [x] Select stable Winit 0.30 from documented desktop lifecycle requirements.
+- [x] Let Winit own the permanent client loop and drive `App::start`, `tick`, and
+  `shutdown`.
+- [x] Create the window on resume, tick from monotonic time on redraw, pause on
+  suspend, and observe resize and focus.
+- [x] Preserve a bounded native-window smoke mode and non-GUI lifecycle tests.
+- [x] Extract the proven Winit lifecycle and device adapter into the concrete
+  `nico-winit` engine provider crate.
+- [x] Add the headless `nico-input` engine crate for buttons, axes, vectors,
+  motion, connection lifecycle, and focus-loss release.
+- [x] Feed Winit keyboard, pointer, and touch events into engine input state.
+- [x] Map aggregate input to game-owned `PlayerCommand` and `MovementVector`
+  values without leaking Winit types into shared gameplay.
+- [ ] Connect a native gamepad provider through `nico-input`.
+- [x] Run the bounded executable native-window smoke check on the initial Windows
+  development platform.
+- [x] Keep the example client free of event-loop and platform-host machinery.
+- [ ] Define a provider-neutral host contract only if a second provider reveals
+  reusable requirements.
 
 ## Following investigation
 

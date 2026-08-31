@@ -2,19 +2,22 @@
 
 Nico is an experimental game engine written in Rust. This repository currently
 contains a review-oriented architecture skeleton: a deterministic headless
-runtime and a bounded no-device client presentation path.
+runtime and a Winit-owned native client host with no-device presentation.
 
 Entity/component storage is provided by `hecs` behind Nico's focused world crate.
-No native window, renderer, physics, audio, or UI library has been selected yet;
-those choices remain under architectural review.
+Winit owns the first desktop window and event loop. No renderer, physics, audio,
+or UI library has been selected yet; those choices remain under architectural
+review.
 
 ## Architecture
 
-The runtime never depends on presentation:
+The runtime never depends on its native provider:
 
 ```text
-game client ──> presentation ──> runtime
-game server ──────────────────> runtime
+game client ──> nico-winit ──┬──> input
+                             ├──> presentation ──> runtime
+                             └──> runtime
+game server ─────────────────────────────────────> runtime
 ```
 
 - `nico-runtime` owns lifecycle, schedules, fixed-step time, plugins, and world
@@ -24,10 +27,14 @@ game server ──────────────────> runtime
 - `nico-ecs` owns the authoritative world, typed resources, entity storage,
   queries, and deferred structural commands while exposing the real `hecs` query
   vocabulary.
+- `nico-input` owns provider-neutral device identity, normalized events, and
+  aggregate button, axis, vector, and motion state.
+- `nico-winit` is the concrete native provider for window lifecycle, frame
+  scheduling, input adaptation, and client-session coordination.
 - `nico-launch` provides command-line and diagnostics bootstrap for native
   executables; non-CLI platforms supply their own launch integration.
-- `nico-presentation` currently provides only the concrete no-device boundary
-  used by the client smoke path. Real provider contracts remain deferred.
+- `nico-presentation` provides only the concrete no-device boundary used by the
+  native client. Renderer-facing contracts remain deferred.
 - `nico-assets` owns stable `AssetId` and typed `Handle<T>` identity. Loading and
   import APIs remain deferred until their first implementation.
 
@@ -36,8 +43,9 @@ a scene document, prefab format, or visual editor. Those are deliberate review
 decisions rather than missing implementations.
 
 See [docs/architecture.md](docs/architecture.md) for dependency and ownership
-rules, and [docs/roadmap.md](docs/roadmap.md) for completed foundations, the
-current tree, and the next evidence-producing milestone.
+rules, [ADR 0001](docs/decisions/0001-native-client-event-loop.md) for native
+event-loop ownership, and [docs/roadmap.md](docs/roadmap.md) for completed
+foundations and the current milestone.
 
 ## ECS usage
 
@@ -90,18 +98,32 @@ same backend endpoint to a worker thread or async executor. Both request and
 completion queues are bounded, cancellation is explicit, and completions aimed
 at dead generational entities are discarded.
 
+## Input
+
+`nico-input::InputManager` is the engine-owned, provider-neutral input boundary.
+It tracks connected keyboards, pointers, gamepads, and touch devices, including
+held and transitional buttons, scalar axes, persistent vectors, and frame-local
+motion. It has no dependency on Winit, presentation, runtime, or a game.
+
+`nico-winit` feeds keyboard, pointer, wheel, raw motion, and touch events into
+that state. The minimal client supplies only a game mapper that emits
+`minimal_game_shared::PlayerCommand` with a normalized `MovementVector`, so
+native provider types and device state never enter runtime or shared gameplay.
+A future gamepad provider can feed the same engine input boundary.
+
 ## Commands
 
 ```text
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p minimal-game-client
+cargo run -p minimal-game-client -- --smoke-frames 3
 cargo run -p minimal-game-server
 ```
 
 The minimal-game server runs continuously at 60 ticks per second until the
-process is stopped. The client remains a bounded smoke application until a native
-window/event-loop provider is selected.
+process is stopped. The client opens a native window and runs until it is closed;
+`--smoke-frames` provides bounded executable validation.
 
 Native client and server executables accept `--log-level
 <off|error|warn|info|debug|trace>` and otherwise use `RUST_LOG`, defaulting to
