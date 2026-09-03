@@ -1,11 +1,21 @@
 //! Winit-owned native client host for Nico applications.
 
-use std::{collections::HashMap, error::Error, io, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use nico_input::{
     InputControlId, InputDeviceId, InputDeviceKind, InputEvent, InputManager, InputState,
 };
 use nico_presentation::{Presentation, RenderFrame};
+use nico_render::BootstrapRenderPipeline;
+use nico_rhi::{Extent3d, RhiSurface};
+use nico_rhi_wgpu::{WgpuBackend, WgpuDevice};
 use nico_runtime::{App, events::Event};
 use winit::{
     application::ApplicationHandler,
@@ -24,7 +34,6 @@ const FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 const POINTER_MOTION: InputControlId = InputControlId::new(1);
 const POINTER_SCROLL: InputControlId = InputControlId::new(2);
 const POINTER_POSITION: InputControlId = InputControlId::new(3);
-
 /// Keyboard controls currently normalized by the Winit adapter.
 pub mod keyboard {
     use nico_input::InputControlId;
@@ -43,15 +52,17 @@ pub mod keyboard {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeClientConfig {
     title: String,
+    bootstrap_shader_path: PathBuf,
     smoke_frames: Option<u64>,
 }
 
 impl NativeClientConfig {
     /// Creates native client configuration with an unbounded event loop.
     #[must_use]
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<String>, bootstrap_shader_path: impl Into<PathBuf>) -> Self {
         Self {
             title: title.into(),
+            bootstrap_shader_path: bootstrap_shader_path.into(),
             smoke_frames: None,
         }
     }
@@ -149,7 +160,9 @@ impl ClientSession {
 
 struct NativeClientHost {
     session: ClientSession,
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
+    graphics: Option<WgpuBackend<Window>>,
+    renderer: Option<BootstrapRenderPipeline<WgpuDevice>>,
     active: bool,
     focused: bool,
     size: PhysicalSize<u32>,
@@ -161,6 +174,7 @@ struct NativeClientHost {
     input_devices: HashMap<(InputDeviceKind, winit::event::DeviceId), InputDeviceId>,
     next_input_device: u64,
     title: String,
+    bootstrap_shader_path: PathBuf,
     dispatch_input: Box<InputDispatcher>,
 }
 
@@ -169,6 +183,8 @@ impl NativeClientHost {
         Self {
             session: ClientSession::new(app),
             window: None,
+            graphics: None,
+            renderer: None,
             active: false,
             focused: false,
             size: PhysicalSize::new(0, 0),
@@ -180,6 +196,7 @@ impl NativeClientHost {
             input_devices: HashMap::new(),
             next_input_device: 1,
             title: config.title,
+            bootstrap_shader_path: resolve_asset_path(&config.bootstrap_shader_path),
             dispatch_input,
         }
     }
@@ -286,6 +303,26 @@ impl NativeClientHost {
     }
 }
 
+fn resolve_asset_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_owned();
+    }
+    if path.is_file() {
+        return path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        for ancestor in directory.ancestors() {
+            let candidate = ancestor.join(path);
+            if candidate.is_file() {
+                return candidate.canonicalize().unwrap_or(candidate);
+            }
+        }
+    }
+    path.to_owned()
+}
+
 fn keyboard_control(key: PhysicalKey) -> Option<InputControlId> {
     match key {
         PhysicalKey::Code(KeyCode::KeyW) => Some(keyboard::W),
@@ -326,7 +363,57 @@ impl ApplicationHandler for NativeClientHost {
             match event_loop.create_window(attributes) {
                 Ok(window) => {
                     self.size = window.inner_size();
-                    self.window = Some(window);
+                    self.window = Some(Arc::new(window));
+                }
+                Err(error) => {
+                    self.fail(event_loop, error);
+                    return;
+                }
+            }
+        }
+
+        if self.graphics.is_none() {
+            let window = self
+                .window
+                .as_ref()
+                .expect("window exists after successful resume")
+                .clone();
+            let extent = Extent3d::surface(self.size.width, self.size.height);
+            let shader_bytes = match fs::read(&self.bootstrap_shader_path) {
+                Ok(shader_bytes) => shader_bytes,
+                Err(error) => {
+                    let path = self.bootstrap_shader_path.display();
+                    self.fail(
+                        event_loop,
+                        io::Error::new(
+                            error.kind(),
+                            format!("failed to read bootstrap shader {path}: {error}"),
+                        ),
+                    );
+                    return;
+                }
+            };
+            match pollster::block_on(WgpuBackend::new(
+                window,
+                event_loop.owned_display_handle(),
+                extent,
+            )) {
+                Ok(graphics) => {
+                    let artifact = nico_rhi::builtin_shaders::bootstrap_wgsl(&shader_bytes);
+                    match BootstrapRenderPipeline::new(
+                        graphics.device(),
+                        graphics.surface().format(),
+                        artifact,
+                    ) {
+                        Ok(renderer) => {
+                            self.graphics = Some(graphics);
+                            self.renderer = Some(renderer);
+                        }
+                        Err(error) => {
+                            self.fail(event_loop, error);
+                            return;
+                        }
+                    }
                 }
                 Err(error) => {
                     self.fail(event_loop, error);
@@ -377,6 +464,9 @@ impl ApplicationHandler for NativeClientHost {
             WindowEvent::CloseRequested => self.stop(event_loop),
             WindowEvent::Resized(size) => {
                 self.size = size;
+                if let Some(graphics) = &mut self.graphics {
+                    graphics.resize(Extent3d::surface(size.width, size.height));
+                }
                 tracing::debug!(width = size.width, height = size.height, "client resized");
             }
             WindowEvent::Focused(focused) => {
@@ -451,6 +541,13 @@ impl ApplicationHandler for NativeClientHost {
                     self.record_failure(error);
                     self.stop(event_loop);
                     return;
+                }
+                if let (Some(graphics), Some(renderer)) = (&mut self.graphics, &mut self.renderer) {
+                    let (device, queue, surface) = graphics.parts();
+                    if let Err(error) = renderer.render(device, queue, surface) {
+                        self.fail(event_loop, error);
+                        return;
+                    }
                 }
                 self.next_frame = now.checked_add(FRAME_INTERVAL);
 
@@ -543,7 +640,7 @@ pub fn run_native_client<C: Event>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
     use nico_runtime::{AppBuilder, AppState};
     use winit::keyboard::{KeyCode, PhysicalKey};
@@ -584,9 +681,14 @@ mod tests {
 
     #[test]
     fn native_client_configuration_keeps_game_owned_title_and_smoke_policy() {
-        let config = NativeClientConfig::new("Example").with_smoke_frames(Some(3));
+        let config =
+            NativeClientConfig::new("Example", "bootstrap.wgsl").with_smoke_frames(Some(3));
 
         assert_eq!(config.title, "Example");
+        assert_eq!(
+            config.bootstrap_shader_path,
+            PathBuf::from("bootstrap.wgsl")
+        );
         assert_eq!(config.smoke_frames, Some(3));
     }
 }

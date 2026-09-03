@@ -1,11 +1,15 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/nico-shaderc",
     "crates/nico-assets",
     "crates/nico-ecs",
     "crates/nico-input",
     "crates/nico-launch",
     "crates/nico-presentation",
+    "crates/nico-render",
+    "crates/nico-rhi",
+    "crates/nico-rhi-wgpu",
     "crates/nico-runtime",
     "crates/nico-winit",
     "games/minimal-game/client",
@@ -21,9 +25,12 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
 hecs = "0.11"
+pollster = "0.4"
+raw-window-handle = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 winit = "0.30.13"
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "dx12", "metal", "vulkan", "wgsl", "webgpu"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

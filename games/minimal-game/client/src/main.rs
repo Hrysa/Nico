@@ -32,7 +32,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "minimal game client starting"
     );
     let app = AppBuilder::new().add_plugin(MinimalGamePlugin).build()?;
-    let config = NativeClientConfig::new("Nico minimal game").with_smoke_frames(args.smoke_frames);
+    let config = NativeClientConfig::new(
+        "Nico minimal game",
+        "assets/presentation/shaders/generated/wgpu/bootstrap.wgsl",
+    )
+    .with_smoke_frames(args.smoke_frames);
     let app = run_native_client(app, config, map_player_input)?;
 
     let state = app.world().resource::<GameState>()?;

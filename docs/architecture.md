@@ -15,6 +15,7 @@ libraries or implementing engine subsystems in detail.
 game server ────────────────────────────────────────────> runtime ──> ecs
 game client ──> nico-winit ──┬──> input
                              ├──> presentation ─────────> runtime
+                             ├──> render ──> rhi ──> wgpu backend
                              └──────────────────────────> runtime
 ```
 
@@ -91,12 +92,31 @@ server, while game-owned commands remain available to both client and server.
 
 ### Presentation
 
-`nico-presentation` is optional and depends on the runtime. It coordinates
-the current native client path through a concrete no-device
-`Presentation`. It does not define provider-neutral window, renderer, audio, or
-UI traits. Input is a sibling engine capability rather than presentation state.
+`nico-presentation` is optional and depends on the runtime. It coordinates the
+current native client path through `Presentation`. It does not define
+provider-neutral window, audio, or UI traits. Input is a sibling engine
+capability rather than presentation state.
 The concrete `nico-winit` host coordinates the current `Presentation` lifecycle;
 that provider-specific coordination does not belong to an example game.
+
+`nico-rhi` is the rendering hardware boundary established by the first GPU
+provider. It defines adapter capabilities, resources, bindings, graphics and
+compute pipelines, queue uploads, transfer commands, render/compute passes, and
+surface lifecycle through associated provider types. `nico-rhi-wgpu` implements
+it without exposing wgpu types to presentation or games.
+
+`nico-render` owns backend-neutral rendering policy above the RHI. Its bootstrap
+pipeline creates the shader module and graphics pipeline, handles non-fatal
+surface outcomes, records the clear and triangle pass, submits commands, and
+presents the frame. The concrete Winit host creates the native RHI provider and
+the render pipeline, then drives both without defining render commands. The standalone
+`nico-shaderc` executable compiles source under `assets/presentation/shaders/`
+into offline backend artifacts without participating in the Rust build graph.
+`nico-rhi` owns shader artifact and entry-point contracts, while
+`nico-rhi-wgpu` only translates the runtime-loaded WGSL artifact into a backend
+shader module. Shader reflection, a render graph, and higher-level
+renderer/material policy remain deferred. See
+[`ADR 0002`](decisions/0002-nico-rhi-wgpu-backend.md).
 
 Runtime never depends on presentation. A dedicated server therefore has no
 window, renderer, local input, audio, or UI dependency.
@@ -211,13 +231,17 @@ for deterministic headless tests.
     crates own adaptation, and game clients map state to semantic commands.
 14. `nico-winit` owns concrete Winit lifecycle and adaptation. Game clients own
     only configuration, bindings, and semantic command mapping.
+15. `nico-rhi` owns backend-neutral rendering contracts. Concrete RHI providers
+    own native graphics resources and recovery without leaking backend types.
+16. `nico-render` owns frame and pipeline policy above the RHI. Native hosts
+    compose it with a provider but do not define rendering commands.
 
 ## Deliberately deferred
 
 - Parallel scheduling, change detection, and higher-level ECS relationships.
 - Math library and public math representation.
 - Window/event-loop provider.
-- Graphics API and rendering provider.
+- Production render passes, materials, render-world extraction, and render graph.
 - Physics and audio providers.
 - Asset import and caching pipeline.
 - UI strategy.

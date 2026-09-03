@@ -2,12 +2,12 @@
 
 Nico is an experimental game engine written in Rust. This repository currently
 contains a review-oriented architecture skeleton: a deterministic headless
-runtime and a Winit-owned native client host with no-device presentation.
+runtime and a Winit-owned native client host with minimal GPU presentation.
 
 Entity/component storage is provided by `hecs` behind Nico's focused world crate.
-Winit owns the first desktop window and event loop. No renderer, physics, audio,
-or UI library has been selected yet; those choices remain under architectural
-review.
+Winit owns the first desktop window and event loop. Nico owns a small rendering
+hardware interface whose first backend uses `wgpu`; physics, audio, and UI
+providers remain under architectural review.
 
 ## Architecture
 
@@ -16,6 +16,7 @@ The runtime never depends on its native provider:
 ```text
 game client ──> nico-winit ──┬──> input
                              ├──> presentation ──> runtime
+                             ├──> render ──> RHI ──> wgpu backend
                              └──> runtime
 game server ─────────────────────────────────────> runtime
 ```
@@ -31,10 +32,16 @@ game server ──────────────────────�
   aggregate button, axis, vector, and motion state.
 - `nico-winit` is the concrete native provider for window lifecycle, frame
   scheduling, input adaptation, and client-session coordination.
+- `nico-rhi` defines backend-neutral capabilities, resources, bindings,
+  pipelines, commands, queue operations, and surface lifecycle through
+  associated provider types. `nico-rhi-wgpu` implements that contract.
+- `nico-render` owns backend-neutral frame policy. Its first bootstrap pipeline
+  creates the shader and graphics pipeline, records the triangle pass, submits,
+  and presents through `nico-rhi`.
 - `nico-launch` provides command-line and diagnostics bootstrap for native
   executables; non-CLI platforms supply their own launch integration.
-- `nico-presentation` provides only the concrete no-device boundary used by the
-  native client. Renderer-facing contracts remain deferred.
+- `nico-presentation` coordinates immutable world presentation. Render-world
+  extraction and synchronization remain deferred.
 - `nico-assets` owns stable `AssetId` and typed `Handle<T>` identity. Loading and
   import APIs remain deferred until their first implementation.
 
@@ -44,7 +51,9 @@ decisions rather than missing implementations.
 
 See [docs/architecture.md](docs/architecture.md) for dependency and ownership
 rules, [ADR 0001](docs/decisions/0001-native-client-event-loop.md) for native
-event-loop ownership, and [docs/roadmap.md](docs/roadmap.md) for completed
+event-loop ownership, [ADR 0002](docs/decisions/0002-nico-rhi-wgpu-backend.md)
+for the first GPU boundary, [ADR 0003](docs/decisions/0003-render-pipeline-layer.md)
+for renderer ownership, and [docs/roadmap.md](docs/roadmap.md) for completed
 foundations and the current milestone.
 
 ## ECS usage
@@ -116,10 +125,32 @@ A future gamepad provider can feed the same engine input boundary.
 ```text
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p nico-shaderc
+cargo run -p nico-shaderc -- --check
 cargo run -p minimal-game-client
 cargo run -p minimal-game-client -- --smoke-frames 3
 cargo run -p minimal-game-server
 ```
+
+The bootstrap graphics shader is authored in
+`assets/presentation/shaders/bootstrap.slang`.
+`nico-shaderc` is a standalone development executable that invokes `slangc`
+from `PATH`, `NICO_SLANGC`, or its `--slangc` argument and writes the runtime
+WGSL artifact. Rust builds do not watch or compile shader files. Refresh or
+verify generated shaders with:
+
+```text
+cargo run -p nico-shaderc
+cargo run -p nico-shaderc -- --check
+```
+
+The tool searches upward from its working directory for the shader root. A
+standalone installed executable can instead receive the project explicitly with
+`nico-shaderc --root <PROJECT>`.
+
+The native client loads
+`assets/presentation/shaders/generated/wgpu/bootstrap.wgsl` at runtime, so
+regenerating the shader does not recompile or relink Rust crates.
 
 The minimal-game server runs continuously at 60 ticks per second until the
 process is stopped. The client opens a native window and runs until it is closed;

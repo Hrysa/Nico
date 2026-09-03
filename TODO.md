@@ -47,6 +47,27 @@ and provisional later directions are summarized in
 - [ ] Define a provider-neutral host contract only if another provider proves it
       necessary.
 
+### First GPU surface
+
+- [x] Add a backend-neutral `nico-rhi` surface lifecycle contract.
+- [x] Add the first concrete `nico-rhi-wgpu` provider.
+- [x] Configure non-zero surfaces and clear every acquired frame.
+- [x] Reconfigure on resize and recover outdated, suboptimal, and lost surfaces.
+- [x] Preserve zero-size, timeout, and occlusion as non-fatal frame outcomes.
+- [x] Add adapter capabilities, resources, bindings, graphics and compute
+      pipelines, queue uploads, transfer commands, and render/compute passes.
+- [x] Add `nico-render` and move bootstrap pipeline creation, frame recording,
+      triangle drawing, submission, and presentation out of the wgpu backend.
+- [x] Express the native clear through frame acquisition, a render pass, command
+      submission, and explicit presentation rather than a special RHI call.
+- [x] Run a bounded native GPU smoke check on Windows.
+- [ ] Validate interactive resize and minimize/restore on Windows and macOS.
+- [x] Draw a bootstrap triangle through an RHI-created shader and graphics pipeline.
+- [x] Author the bootstrap shader in Slang and compile its WGSL artifact offline.
+- [x] Compile shaders with a standalone `nico-shaderc` executable and load the
+      bootstrap artifact without rebuilding Rust crates.
+- [ ] Add Slang reflection and asset-backed shaders for the first real primitive.
+
 ## Decision gates after the client host
 
 - [ ] Choose the first asset required for a visible frame.

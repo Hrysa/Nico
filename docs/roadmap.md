@@ -21,7 +21,10 @@ Nico/
 │   ├── nico-input/           provider-neutral physical device state
 │   ├── nico-runtime/         lifecycle, schedule, time, events, services
 │   ├── nico-launch/          native CLI and diagnostics policy
-│   ├── nico-presentation/    concrete no-device presentation boundary
+│   ├── nico-presentation/    immutable world presentation boundary
+│   ├── nico-render/          backend-neutral frame and pipeline policy
+│   ├── nico-rhi/             backend-neutral GPU contracts
+│   ├── nico-rhi-wgpu/        first concrete RHI backend
 │   ├── nico-winit/           concrete native client host and input adapter
 │   └── nico-assets/          stable AssetId and typed Handle<T> only
 └── games/minimal-game/
@@ -31,9 +34,10 @@ Nico/
     └── assets/               logic and presentation ownership roots
 ```
 
-There are no placeholder physics, devtools, window, input, renderer, audio, UI,
-or asset-loading contracts. A new contract or crate requires a real consumer,
-provider, and behavioral test.
+There are no placeholder physics, devtools, audio, UI, or asset-loading
+contracts. Rendering currently covers the surface lifecycle and one concrete
+bootstrap pipeline required by the native host. A new contract or crate requires
+a real consumer, provider, and behavioral test.
 
 ## Completed foundations
 
@@ -69,8 +73,8 @@ provider, and behavioral test.
 
 ### 3. Real client host [ ] IN PROGRESS
 
-The first native window provider will determine the presentation contracts. Do
-not add provider-neutral traits before completing this investigation.
+The native window and GPU providers establish presentation requirements. Keep
+host lifecycle concrete; extend the RHI only with implemented backend behavior.
 
 - [x] Select stable Winit 0.30 from documented desktop lifecycle requirements.
 - [x] Let Winit own the permanent client loop and drive `App::start`, `tick`, and
@@ -89,6 +93,14 @@ not add provider-neutral traits before completing this investigation.
 - [x] Run the bounded executable native-window smoke check on the initial Windows
   development platform.
 - [x] Keep the example client free of event-loop and platform-host machinery.
+- [x] Add a Nico-owned RHI and a wgpu backend that clears, resizes, and presents
+  the native surface.
+- [x] Recover outdated, suboptimal, and lost surfaces while treating zero-size,
+  timeout, and occlusion as non-fatal frame outcomes.
+- [x] Implement core RHI resources, bindings, graphics and compute pipelines,
+  queue uploads, transfer commands, and render/compute passes through associated
+  provider types.
+- [ ] Validate interactive GPU resize and minimize/restore on Windows and macOS.
 - [ ] Define a provider-neutral host contract only if a second provider reveals
   reusable requirements.
 

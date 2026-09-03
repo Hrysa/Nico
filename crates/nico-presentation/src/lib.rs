@@ -1,7 +1,8 @@
-//! Concrete no-device presentation boundary for the minimal client.
+//! World-facing presentation boundary for the minimal client.
 //!
-//! Input, window, renderer, audio, and UI contracts are intentionally absent
-//! until concrete consumers establish their ownership and lifecycle.
+//! The native host currently coordinates `nico-render` over `nico-rhi`
+//! alongside this immutable world-facing lifecycle. Rendering resources do not
+//! enter the authoritative runtime boundary.
 
 use std::{error::Error, fmt};
 

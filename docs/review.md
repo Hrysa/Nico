@@ -7,14 +7,16 @@ The skeleton should be reviewed before detailed subsystem work begins.
 - Runtime is headless and presentation-independent.
 - Provider-neutral input is a separate headless engine capability.
 - Native hosts drive runtime frames.
-- Presentation is optional and currently no-device only.
+- Presentation is optional and uses Nico's minimal RHI for native surface output.
+- Nico owns the backend-neutral RHI; its first concrete provider uses `wgpu`
+  without leaking backend types into engine-facing APIs.
 - `nico-winit` owns the first native desktop client loop as a concrete engine
   provider.
 - Stable asset identity is isolated from loader and importer policy.
 - Game setup and behavior are authored in Rust.
 - `hecs` provides focused entity/component storage through `nico-ecs`; it does not
   own Nico lifecycle or application architecture.
-- Rendering, physics, audio, and UI libraries remain unselected.
+- Production rendering, physics, audio, and UI providers remain unselected.
 
 ## Accepted decisions
 
@@ -28,8 +30,9 @@ The skeleton should be reviewed before detailed subsystem work begins.
    Extraction and caching remain optional presentation-side optimizations for
    cases where they provide a measured benefit.
 5. Asset identity remains a standalone shared crate.
-6. Window, rendering, audio, and UI engine contracts remain absent until
-   concrete providers and consumers establish reusable requirements.
+6. `nico-render` owns the first proven rendering policy: bootstrap pipeline
+   creation and frame recording. Materials, render-world extraction, and a
+   render graph remain absent until concrete consumers establish requirements.
 7. Devtools and physics remain deferred capabilities rather than placeholder
    crates.
 8. Runtime events use typed bounded broadcast streams with independent readers.
@@ -43,6 +46,11 @@ The skeleton should be reviewed before detailed subsystem work begins.
 11. `nico-input` owns provider-neutral multi-device state. The minimal-game
     client owns only bindings and game-command mapping; provider-specific and
     physical-input types stay out of shared gameplay and runtime.
+12. `nico-rhi` owns backend-neutral capabilities, resources, pipelines, commands,
+    queue operations, and surface acquisition values;
+    `nico-rhi-wgpu` owns all wgpu resources and recovery policy.
+13. `nico-render` owns shader/pipeline selection, pass recording, submission, and
+    presentation policy; concrete RHI providers do not contain scene draw code.
 
 ## Out of scope for this review
 
