@@ -1,10 +1,31 @@
 # Nico TODO
 
-Detailed tasks are kept only for the current milestone. Completed foundations
-and provisional later directions are summarized in
+Current tasks and the client host completion record are kept here. Completed
+foundations and provisional later directions are summarized in
 [`docs/roadmap.md`](docs/roadmap.md).
 
-## Real client host
+## Measurement and AI operations — next milestone
+
+- [ ] Define common span names, timing units, counters, and correlation fields
+      across libraries using the existing diagnostics foundation where suitable.
+- [ ] Add host-controlled profile capture and machine-readable export with
+      bounded retention and controllable collection overhead.
+- [ ] Break down startup into window creation, shader read, graphics instance,
+      adapter/device creation, surface configuration, shader module/pipeline
+      creation, and first successful presentation; measure the reported delay.
+- [ ] Instrument runtime stages and systems, service queue behavior, rendering,
+      client frames, and server ticks; distinguish CPU and GPU measurements.
+- [ ] Define structured client/server operations for capabilities, readiness,
+      diagnostics, profile capture, and orderly shutdown.
+- [ ] Implement an MCP adapter that launches local development client/server
+      processes and exercises those operations with explicit results and timeouts.
+- [ ] Verify failure, timeout, shutdown, bounded collection, and unchanged
+      authoritative behavior with tooling enabled and disabled.
+
+## Real client host — core implementation complete
+
+Interactive Windows/macOS resize and minimize/restore validation remains open.
+Gamepad integration and reflection/asset-backed shaders are deferred below.
 
 ### Lifecycle and provider
 
@@ -34,7 +55,6 @@ and provisional later directions are summarized in
       normalized `MovementVector` types.
 - [x] Keep Winit key and device types out of runtime and shared gameplay APIs.
 - [x] Release held and continuous controls on focus loss or device disconnect.
-- [ ] Select and connect the first native gamepad provider to `nico-input`.
 
 ### Verification and extraction gate
 
@@ -66,6 +86,10 @@ and provisional later directions are summarized in
 - [x] Author the bootstrap shader in Slang and compile its WGSL artifact offline.
 - [x] Compile shaders with a standalone `nico-shaderc` executable and load the
       bootstrap artifact without rebuilding Rust crates.
+
+## Deferred host and shader follow-ups
+
+- [ ] Select and connect the first native gamepad provider to `nico-input`.
 - [ ] Add Slang reflection and asset-backed shaders for the first real primitive.
 
 ## Decision gates after the client host
@@ -81,4 +105,4 @@ and provisional later directions are summarized in
 - Native async executor or worker implementation.
 - Graphics, physics, audio, UI, networking, and persistence providers.
 - Asset importer, cache, serialization, and bundle formats.
-- Devtools structure and any standalone tool applications.
+- Broader devtools structure beyond the measurement and AI operation baseline.

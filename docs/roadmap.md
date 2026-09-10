@@ -69,9 +69,13 @@ a real consumer, provider, and behavioral test.
 - Registered services close during application shutdown and reject late work.
 - No Tokio or other executor dependency in runtime-facing contracts.
 
-## Next milestone
+## Client host baseline
 
-### 3. Real client host [ ] IN PROGRESS
+### 3. Real client host — core implementation complete
+
+The implemented baseline has automated and bounded Windows smoke coverage.
+Interactive platform validation remains outstanding; gamepad integration and
+reflection/asset-backed shaders are deferred follow-ups.
 
 The native window and GPU providers establish presentation requirements. Keep
 host lifecycle concrete; extend the RHI only with implemented backend behavior.
@@ -89,7 +93,7 @@ host lifecycle concrete; extend the RHI only with implemented backend behavior.
 - [x] Feed Winit keyboard, pointer, and touch events into engine input state.
 - [x] Map aggregate input to game-owned `PlayerCommand` and `MovementVector`
   values without leaking Winit types into shared gameplay.
-- [ ] Connect a native gamepad provider through `nico-input`.
+- [?] Deferred: connect a native gamepad provider through `nico-input`.
 - [x] Run the bounded executable native-window smoke check on the initial Windows
   development platform.
 - [x] Keep the example client free of event-loop and platform-host machinery.
@@ -101,12 +105,32 @@ host lifecycle concrete; extend the RHI only with implemented backend behavior.
   queue uploads, transfer commands, and render/compute passes through associated
   provider types.
 - [ ] Validate interactive GPU resize and minimize/restore on Windows and macOS.
-- [ ] Define a provider-neutral host contract only if a second provider reveals
+- [?] Define a provider-neutral host contract only if a second provider reveals
   reusable requirements.
+
+## Next milestone
+
+### 4. Measurement and AI operations [ ]
+
+These are ongoing requirements across libraries and both executable hosts, with
+the startup delay providing the first concrete profiling consumer.
+
+- Establish shared structured measurement conventions and host-owned capture
+  and export with controllable overhead and bounded retention.
+- Measure client startup through first successful presentation before choosing
+  an optimization; report individual GPU initialization and pipeline costs.
+- Cover meaningful library work, including runtime stages/systems, service
+  queues, rendering, client frames, and server ticks.
+- Establish discoverable client/server operations with machine-readable status,
+  diagnostics, profile captures, and explicit completion/error results.
+- Prove an MCP adapter with local launch, readiness, profile capture, and orderly
+  stop for both the client and server, preserving runtime ownership boundaries.
+- Test failure, timeout, shutdown, and unchanged simulation behavior when
+  measurement and operation tooling are enabled.
 
 ## Following investigation
 
-### 4. First runtime asset load [?]
+### 5. First runtime asset load [?]
 
 The existing `AssetId` and `Handle<T>` establish identity only. The first loader
 should prove the smallest end-to-end path before an import/cache architecture is
@@ -130,7 +154,7 @@ promises:
 - Networking, replication, and dedicated-server hardening.
 - Game-domain persistence and external services.
 - Rendering, audio, UI, localization, and accessibility.
-- In-process diagnostics and runtime inspection.
+- Richer in-process inspection beyond the measurement and operation baseline.
 - Import tooling, content caching, packaging, and distribution.
 - Replay, soak testing, performance, security, and platform hardening.
 
@@ -142,7 +166,8 @@ real provider or consumer is known.
 ```text
 completed runtime events
     -> completed portable service bridge
-        -> real client host
-            -> first runtime asset load
-                -> first visible imported asset
+        -> completed core client host (interactive validation outstanding)
+            -> measurement and AI operations
+                -> first runtime asset load
+                    -> first visible imported asset
 ```

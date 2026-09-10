@@ -136,6 +136,39 @@ be authoritative if implemented because a server may need the same collision
 rules as a client. Devtools should begin as a real in-process observer once
 runtime inspection has a concrete use case.
 
+## Measurement and AI operations
+
+Measurement and profiling are requirements for every library. Instrument
+meaningful operations with structured spans, durations, and counters, using the
+existing tracing foundation where suitable. Hosts select collection, filtering,
+and export policy. Instrumentation must have controllable overhead, bounded
+retention, and no effect on authoritative simulation behavior. Keep wall-clock
+measurements separate from fixed simulation time and distinguish CPU submission
+time from GPU execution time.
+
+The first consumer is diagnosis of the reported client startup delay. Measure
+window creation, shader file loading, graphics instance/adapter/device creation,
+surface configuration, shader module and pipeline creation, and time to first
+successful presentation. Extend this to runtime stages and systems, service
+queues, client frames, and server ticks as part of the same measurement path.
+
+Client and server operations must support AI tooling through discoverable,
+structured interfaces. An MCP adapter is a planned consumer of a transport-neutral
+operation boundary. Initial operations should cover launching and stopping local
+development processes, querying readiness and capabilities, reading diagnostics,
+and capturing profiles. Expose typed arguments, request identities, explicit
+completion and error results, timeouts, and supported capabilities so automation
+does not depend on parsing human log text or assuming every host supports every
+operation.
+
+Process supervision and protocol adapters belong outside the headless runtime.
+Hosts own window and device operations; simulation commands are applied at
+runtime-owned boundaries. Tooling reads owned snapshots and never receives
+background mutable access to the world. Operational access is explicitly enabled
+by the host and scoped to the intended development processes. The concrete
+transport, profiler exporter, and package boundaries remain implementation
+decisions to prove with the first client and server consumers.
+
 ## Code-first game construction
 
 A game is a workspace package under `games/`:

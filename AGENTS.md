@@ -34,6 +34,21 @@ tests with `snake_case`; types and traits with `UpperCamelCase`; constants with
 `all` lint group. Keep public contracts small, document lifecycle and ownership,
 and prevent backend-specific types from leaking into engine-facing APIs.
 
+## Measurement and AI operation requirements
+
+Every library must support measurement and profiling of its meaningful work.
+Use structured spans, timings, and counters where appropriate; keep collection
+and export policy in the host. Measure suspected bottlenecks before optimizing,
+and keep instrumentation overhead controllable without changing behavior.
+
+Client and server operations must be accessible to AI tooling through structured,
+discoverable interfaces, with an MCP adapter as a planned integration. Provide
+machine-readable status, diagnostics, profiling results, and explicit operation
+results. Keep transport and process control outside the headless runtime;
+apply simulation commands at runtime-owned boundaries rather than mutating the
+world from a tooling thread. New operational features should include an
+automation path alongside any human-facing interface.
+
 ## Testing Guidelines
 
 Tests currently use Rust's built-in test framework in colocated `#[cfg(test)]`
