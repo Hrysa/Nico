@@ -1,108 +1,69 @@
-# Nico TODO
+# Nico tasks
 
-Current tasks and the client host completion record are kept here. Completed
-foundations and provisional later directions are summarized in
-[`docs/roadmap.md`](docs/roadmap.md).
+This file tracks actionable work. [The roadmap](docs/roadmap.md) records
+completed milestones and deferred directions; [the architecture](docs/architecture.md)
+defines ownership and requirements.
 
-## Measurement and AI operations — next milestone
+## Measurement and AI operations
 
-- [ ] Define common span names, timing units, counters, and correlation fields
-      across libraries using the existing diagnostics foundation where suitable.
-- [ ] Add host-controlled profile capture and machine-readable export with
-      bounded retention and controllable collection overhead.
-- [ ] Break down startup into window creation, shader read, graphics instance,
-      adapter/device creation, surface configuration, shader module/pipeline
-      creation, and first successful presentation; measure the reported delay.
-- [ ] Instrument runtime stages and systems, service queue behavior, rendering,
-      client frames, and server ticks; distinguish CPU and GPU measurements.
-- [ ] Define structured client/server operations for capabilities, readiness,
+This is the next implementation milestone. Existing tracing spans and logs are
+the foundation; shared profile capture/export and an MCP adapter are still planned.
+
+### Measurement and profiling
+
+- [ ] Define shared span names, timing units, counters, and correlation fields
+      for meaningful work across every library, using existing tracing where suitable.
+- [ ] Add host-controlled capture and machine-readable export with bounded
+      retention, explicit overflow reporting, and controllable collection overhead.
+- [ ] Measure startup phases: window creation, shader read, graphics instance,
+      adapter/device creation, surface configuration, shader module creation,
+      pipeline creation, and first successful GPU presentation.
+- [ ] Record a repeatable baseline for the reported startup delay, including
+      build profile, backend, adapter, and repeated launches before optimizing.
+- [ ] Extend coverage to runtime stages/systems, service queues, ECS/input/asset
+      operations, rendering, client frames, and server ticks as applicable.
+- [ ] Distinguish wall-clock profiling from simulation time and CPU submission
+      timings from GPU execution timings; report unavailable GPU timing explicitly.
+- [ ] Verify bounded collection, export on orderly shutdown, overhead, and
+      unchanged authoritative results for identical input and tick sequences.
+
+### AI-accessible client and server operations
+
+- [ ] Define discoverable capabilities and typed requests/results for readiness,
       diagnostics, profile capture, and orderly shutdown.
-- [ ] Implement an MCP adapter that launches local development client/server
-      processes and exercises those operations with explicit results and timeouts.
-- [ ] Verify failure, timeout, shutdown, bounded collection, and unchanged
-      authoritative behavior with tooling enabled and disabled.
+- [ ] Keep host/process operations outside runtime and apply simulation commands
+      at runtime-owned boundaries; expose owned snapshots for inspection.
+- [ ] Add an MCP adapter for local development process launch and the shared
+      operation boundary, with request correlation, timeouts, and explicit failures.
+- [ ] Prove launch -> readiness -> profile capture -> result retrieval -> orderly
+      stop for both client and headless server.
+- [ ] Test malformed/unsupported requests, failed startup, timeout, overload,
+      disconnect, and shutdown with work pending.
+- [ ] Document implemented operations and invocation examples when available.
 
-## Real client host — core implementation complete
+## Outstanding host validation
 
-Interactive Windows/macOS resize and minimize/restore validation remains open.
-Gamepad integration and reflection/asset-backed shaders are deferred below.
+The core Real client host implementation is complete. Automated lifecycle tests
+and a bounded Windows GPU smoke run are recorded in the roadmap. Interactive
+checks below remain unverified.
 
-### Lifecycle and provider
+- [ ] Windows: resize repeatedly, maximize/restore, minimize/restore, and close
+      after transitions; record OS, backend, adapter, and results.
+- [ ] macOS: repeat the same checks and record the environment and results.
+- [ ] Check rendering recovery, GPU validation errors, frame timing after
+      restore, focus-loss input release, and clean shutdown; fix observed failures.
 
-- [x] Record desktop lifecycle requirements and supported development platforms.
-- [x] Compare a concrete event-loop provider against those requirements.
-- [x] Record event-loop ownership before defining presentation traits.
-- [x] Make Winit's `ApplicationHandler` own the permanent native client loop.
-- [x] Create the window on `resumed` and tolerate redundant resume/suspend events.
-- [x] Drive simulation from monotonic host time and presentation from
-      `RedrawRequested`.
-- [x] Handle close exactly once and shut down after callback or loop failures.
-- [x] Observe resize and focus without committing to renderer-facing contracts.
-- [x] Keep a bounded `--smoke-frames` mode for executable validation.
-- [x] Extract the proven concrete host and Winit adapter into `nico-winit`.
-- [x] Keep the example client limited to game construction, bindings, and
-      semantic command mapping.
+The current smoke limit counts client-session frames, including frames for which
+GPU presentation may be skipped. Successful presentation must be observed
+separately. Winit suspension and desktop minimization are separate lifecycle
+cases; minimize/restore behavior requires the interactive checks above.
 
-### Multi-device input and semantic mapping
+## Deferred follow-ups
 
-- [x] Add an engine-owned, provider-neutral `nico-input` crate for multiple
-      keyboards, pointers, gamepads, and touch devices.
-- [x] Track held and transitional buttons, scalar axes, persistent vectors, and
-      frame-local motion.
-- [x] Normalize Winit keyboard, pointer button, cursor, wheel, raw motion, and
-      touch events into the manager.
-- [x] Convert aggregate device state into the game-owned `PlayerCommand` and
-      normalized `MovementVector` types.
-- [x] Keep Winit key and device types out of runtime and shared gameplay APIs.
-- [x] Release held and continuous controls on focus loss or device disconnect.
+- Native gamepad provider connected through `nico-input`.
+- Slang reflection and asset-backed shaders for the first real primitive.
+- First service-backed runtime asset load and visible imported content.
+- A provider-neutral host contract only if a second provider establishes shared
+  requirements.
 
-### Verification and extraction gate
-
-- [x] Preserve deterministic server and headless runtime tests.
-- [x] Test client session startup, ticks, and idempotent shutdown without a GUI.
-- [x] Run an executable native-window smoke check where platform automation
-      permits it.
-- [x] Extract the concrete Winit provider without inventing a provider-neutral
-      host trait.
-- [ ] Define a provider-neutral host contract only if another provider proves it
-      necessary.
-
-### First GPU surface
-
-- [x] Add a backend-neutral `nico-rhi` surface lifecycle contract.
-- [x] Add the first concrete `nico-rhi-wgpu` provider.
-- [x] Configure non-zero surfaces and clear every acquired frame.
-- [x] Reconfigure on resize and recover outdated, suboptimal, and lost surfaces.
-- [x] Preserve zero-size, timeout, and occlusion as non-fatal frame outcomes.
-- [x] Add adapter capabilities, resources, bindings, graphics and compute
-      pipelines, queue uploads, transfer commands, and render/compute passes.
-- [x] Add `nico-render` and move bootstrap pipeline creation, frame recording,
-      triangle drawing, submission, and presentation out of the wgpu backend.
-- [x] Express the native clear through frame acquisition, a render pass, command
-      submission, and explicit presentation rather than a special RHI call.
-- [x] Run a bounded native GPU smoke check on Windows.
-- [ ] Validate interactive resize and minimize/restore on Windows and macOS.
-- [x] Draw a bootstrap triangle through an RHI-created shader and graphics pipeline.
-- [x] Author the bootstrap shader in Slang and compile its WGSL artifact offline.
-- [x] Compile shaders with a standalone `nico-shaderc` executable and load the
-      bootstrap artifact without rebuilding Rust crates.
-
-## Deferred host and shader follow-ups
-
-- [ ] Select and connect the first native gamepad provider to `nico-input`.
-- [ ] Add Slang reflection and asset-backed shaders for the first real primitive.
-
-## Decision gates after the client host
-
-- [ ] Choose the first asset required for a visible frame.
-- [ ] Use the typed service bridge for its runtime byte-loading path.
-- [ ] Introduce only the manifest and artifact vocabulary required by that path.
-- [ ] Reassess whether presentation provider boundaries justify additional
-      modules or crates after one provider is working.
-
-## Deferred decisions
-
-- Native async executor or worker implementation.
-- Graphics, physics, audio, UI, networking, and persistence providers.
-- Asset importer, cache, serialization, and bundle formats.
-- Broader devtools structure beyond the measurement and AI operation baseline.
+These additions do not block the completed core client-host implementation.

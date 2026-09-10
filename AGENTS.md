@@ -3,18 +3,21 @@
 ## Project Structure & Module Organization
 
 Nico is a Rust 2024 workspace. Engine crates live under `crates/`: `nico-runtime`
-is the headless application kernel and depends on the `hecs`-backed `nico-ecs`
-world crate. `nico-presentation`, `nico-assets`, `nico-physics`, and
-`nico-devtools` provide optional capabilities; `nico-launch` owns native CLI and
-diagnostics startup. Keep the dependency direction headless: runtime must not
-depend on presentation or launch policy, and `nico-ecs` must not depend on
-runtime.
+is the headless application kernel and depends on the hecs-backed `nico-ecs`
+world crate. `nico-input` owns device state, `nico-presentation` owns the
+immutable presentation boundary, and `nico-render` uses `nico-rhi` contracts.
+`nico-rhi-wgpu` implements those contracts; `nico-winit` composes the native
+client. `nico-assets` owns asset identity and `nico-launch` owns native CLI and
+diagnostics startup. Physics and broader devtools have no placeholder crates.
+Runtime must not depend on presentation, providers, or launch policy, and
+`nico-ecs` must not depend on runtime.
 
 Executable development tools belong in `apps/` when a concrete tool justifies a
 standalone package. Games live in `games/<game>/` with `shared`, `client`, and
 `server` packages. Put authoritative assets in `assets/logic` and client-only
-content in `assets/presentation`. Architecture decisions and reviews belong in
-`docs/`.
+content in `assets/presentation` within each game. Engine bootstrap shaders use
+the repository-level `assets/presentation/shaders` root. Architecture decisions
+and reviews belong in `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -22,7 +25,10 @@ content in `assets/presentation`. Architecture decisions and reviews belong in
 - `cargo test --workspace`: run all unit and integration tests.
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: enforce lint-clean code.
-- `cargo run -p minimal-game-client`: run the bounded client smoke example.
+- `cargo run -p minimal-game-client`: run the native client until its window closes.
+- `cargo run -p minimal-game-client -- --smoke-frames 3`: run bounded client-session
+  frames; this counter does not guarantee three successful GPU presentations.
+- `cargo run -p nico-shaderc -- --check`: verify generated shaders; requires `slangc`.
 - `cargo run -p minimal-game-server`: run the continuous 60 Hz headless server;
   stop it with Ctrl+C.
 
@@ -61,10 +67,18 @@ regression coverage.
 
 ## Commit & Pull Request Guidelines
 
-History is currently minimal, with `chore: establish Nico architecture skeleton`
-as the available convention. Continue concise imperative subjects with a scoped
-prefix such as `feat:`, `fix:`, `docs:`, `test:`, or `chore:`. Keep commits
-focused. Pull requests should explain motivation, architectural impact, and
-validation commands; link relevant issues and include screenshots only for
-visible presentation changes. Do not mix unrelated formatting or generated-file
-changes into a feature PR.
+Use concise imperative subjects with a prefix such as `feat:`, `fix:`,
+`docs:`, `test:`, or `chore:`. Keep commits focused. Pull requests should explain
+motivation, architectural impact, and validation commands; link relevant issues
+and include screenshots only for visible presentation changes. Do not mix
+unrelated formatting or generated-file changes into a feature PR.
+
+## Documentation ownership
+
+Keep [README](README.md) focused on current capabilities and commands,
+[architecture](docs/architecture.md) on ownership and contracts,
+[roadmap](docs/roadmap.md) on milestone status, and [TODO](TODO.md) on actionable
+work. Use [the review guide](docs/review.md) for change assessment. Preserve ADR
+decision history and label implementation updates. Distinguish implemented,
+unverified, and deferred work; planned profiling or MCP interfaces must not be
+documented as available.

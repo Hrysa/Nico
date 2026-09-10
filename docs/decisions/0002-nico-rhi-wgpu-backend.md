@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-03
+- Updated: 2026-09-10
 
 ## Context
 
@@ -51,10 +52,10 @@ independent `assets/presentation/shaders/` root. The standalone `nico-shaderc`
 executable compiles them outside Cargo's crate build graph. `nico-rhi` owns
 artifact and entry-point contracts, `nico-render` selects and uses them, and
 `nico-rhi-wgpu` translates runtime-loaded WGSL bytes. Shader edits therefore do
-not rebuild or relink Rust crates. Future
-native providers may consume SPIR-V, DXIL, or Metal libraries. Reflection and
-asset-backed shader packaging remain deferred. Do not add a render graph or
-higher-level material API until visible consumers establish their requirements.
+not rebuild or relink Rust crates. Future native providers may consume SPIR-V,
+DXIL, or Metal libraries. Reflection and asset-backed shader packaging remain
+deferred. Do not add a render graph or higher-level material API until visible
+consumers establish their requirements.
 
 ## Consequences
 
@@ -64,7 +65,23 @@ headless. The additional RHI boundary lets Nico measure or replace wgpu without
 changing game-facing presentation contracts, but it does not remove wgpu's own
 validation, state-tracking, or shader-translation costs.
 
-The provider currently blocks on asynchronous device initialization during the
-Winit resume callback. This keeps executor policy out of the RHI and is adequate
-for the first native host; asynchronous startup UX should be revisited when a
-real loading presentation exists.
+The Winit host currently waits on asynchronous device initialization using
+`pollster::block_on` during its resume callback. It also reads the shader and
+creates the bootstrap pipeline before requesting the first redraw. The RHI
+does not select an async executor.
+
+## Implementation status (2026-09-10)
+
+Offline Slang compilation produces WGSL, while backend shader/pipeline
+preparation still occurs at runtime. The reported startup delay has not been
+profiled; the next milestone measures instance, adapter/device, surface, shader,
+pipeline, and first-presentation costs before choosing an optimization.
+
+The runtime file read is a bootstrap path, not the planned service-backed asset
+loader. Reflection and asset-backed shader packaging remain deferred. CPU call
+durations must be distinguished from GPU execution measurements. See
+[the measurement requirements](../architecture.md#measurement-and-profiling-requirements).
+
+Surface behavior has automated coverage and a recorded bounded Windows GPU
+smoke run. Interactive Windows/macOS validation remains in
+[TODO](../../TODO.md#outstanding-host-validation).

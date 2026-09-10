@@ -1,62 +1,71 @@
 # Architecture review guide
 
-The skeleton should be reviewed before detailed subsystem work begins.
+Use this guide when reviewing changes to Nico. [Architecture](architecture.md)
+defines ownership; [the roadmap](roadmap.md) records milestone status;
+[TODO](../TODO.md) tracks current work. Accepted provider decisions are recorded
+in [ADR 0001](decisions/0001-native-client-event-loop.md),
+[ADR 0002](decisions/0002-nico-rhi-wgpu-backend.md), and
+[ADR 0003](decisions/0003-render-pipeline-layer.md).
 
-## Decisions represented in code
+## Ownership and contracts
 
-- Runtime is headless and presentation-independent.
-- Provider-neutral input is a separate headless engine capability.
-- Native hosts drive runtime frames.
-- Presentation is optional and uses Nico's minimal RHI for native surface output.
-- Nico owns the backend-neutral RHI; its first concrete provider uses `wgpu`
-  without leaking backend types into engine-facing APIs.
-- `nico-winit` owns the first native desktop client loop as a concrete engine
-  provider.
-- Stable asset identity is isolated from loader and importer policy.
-- Game setup and behavior are authored in Rust.
-- `hecs` provides focused entity/component storage through `nico-ecs`; it does not
-  own Nico lifecycle or application architecture.
-- Production rendering, physics, audio, and UI providers remain unselected.
+- Runtime remains headless, and `nico-ecs` does not depend on runtime.
+- Game clients own composition/bindings; shared gameplay consumes semantic commands.
+- Provider types stay inside their integration boundaries.
+- Presentation reads gameplay immutably; GPU resources stay outside authoritative state.
+- `nico-render` owns draw policy; the RHI provider owns native resources and recovery.
+- New contracts have concrete consumers, providers, lifecycle rules, and tests.
+- New crates establish real ownership or dependency boundaries.
 
-## Accepted decisions
+## Runtime behavior
 
-1. `nico-ecs` owns the world/resource boundary. Engine-facing code uses the
-   canonical `nico_runtime::ecs` namespace, which exposes `hecs` query and command
-   types rather than recreating a provider-independent ECS API.
-2. `Plugin::build(&self, &mut AppBuilder)` remains the composition boundary.
-3. `Startup`, `FixedUpdate`, `Update`, and `Shutdown` are sufficient initial
-   stages.
-4. Presentation may query the runtime world directly through immutable access.
-   Extraction and caching remain optional presentation-side optimizations for
-   cases where they provide a measured benefit.
-5. Asset identity remains a standalone shared crate.
-6. `nico-render` owns the first proven rendering policy: bootstrap pipeline
-   creation and frame recording. Materials, render-world extraction, and a
-   render graph remain absent until concrete consumers establish requirements.
-7. Devtools and physics remain deferred capabilities rather than placeholder
-   crates.
-8. Runtime events use typed bounded broadcast streams with independent readers.
-   Successful system writes are visible to the next scheduled system; failed
-   writes are discarded.
-9. Portable services use domain-typed bounded channels. Backends receive owned
-   requests without `World` access; runtime systems publish controlled
-   completions as events and reject stale entity targets.
-10. `nico-winit` owns Winit 0.30 window lifecycle, scheduling, and native input
-    adaptation. No provider-neutral window trait exists before a second provider.
-11. `nico-input` owns provider-neutral multi-device state. The minimal-game
-    client owns only bindings and game-command mapping; provider-specific and
-    physical-input types stay out of shared gameplay and runtime.
-12. `nico-rhi` owns backend-neutral capabilities, resources, pipelines, commands,
-    queue operations, and surface acquisition values;
-    `nico-rhi-wgpu` owns all wgpu resources and recovery policy.
-13. `nico-render` owns shader/pipeline selection, pass recording, submission, and
-    presentation policy; concrete RHI providers do not contain scene draw code.
+- Stage ordering and fixed-time behavior remain deterministic for identical inputs.
+- Successful structural command and event writes are visible to later systems.
+- Failed-system structural commands/events are discarded; direct world mutations
+  must not be described as transactional.
+- Events have independent readers and bounded retention with explicit missed counts.
+- Services use owned typed values, bounded queues, and runtime-thread publication.
+- Cancellation, stale entity targets, overload, failure, and shutdown are covered.
+- Background tasks and tooling never mutate the authoritative world directly.
 
-## Out of scope for this review
+## Measurement and profiling
 
-- Performance optimization.
-- Parallel scheduling.
-- Visual authoring.
-- Scene and prefab formats.
-- Production renderer design.
-- Backend-specific resource APIs.
+These are requirements for every library, not claims of complete current coverage.
+
+- Meaningful work exposes consistent spans, timing units, counters, and correlation.
+- Hosts control collection/export with bounded retention and visible overflow.
+- Wall-clock profiling is separate from simulation time; CPU and GPU durations
+  are labeled accurately.
+- Capture overhead is measured and controllable.
+- Performance fixes include evidence identifying the bottleneck and a repeatable
+  before/after comparison.
+- Identical input/tick sequences produce the same authoritative results with
+  instrumentation enabled or disabled.
+
+## AI-accessible operations
+
+The shared operation boundary and MCP adapter are planned work.
+
+- Client/server capabilities, arguments, results, and errors are machine-readable.
+- Asynchronous operations have request correlation and explicit completion/timeout.
+- Process and native-window operations remain host/tooling responsibilities.
+- Simulation commands execute at controlled runtime boundaries.
+- Inspection returns owned snapshots, and collection/queues remain bounded.
+- Tests cover both hosts, unsupported/malformed requests, overload, disconnect,
+  failed startup, and shutdown with pending work.
+- Document only implemented tools and flags as available operations.
+
+## Validation and documentation
+
+Use the relevant checks from [the repository guidelines](../AGENTS.md).
+For graphics changes, combine automated tests with bounded executable coverage
+and appropriate interactive checks. Record which platform/backend was exercised.
+
+The current smoke counter measures client-session frames rather than confirmed
+GPU presentations. Windows/macOS interactive resize and minimize/restore remain
+open checks. Do not infer minimized-window behavior from suspension tests alone.
+
+Keep README focused on current usage, architecture on contracts, roadmap on
+milestones, and TODO on actionable work. Preserve historical ADR rationale and
+label later implementation updates. Keep completed, unverified, and deferred work
+distinct.

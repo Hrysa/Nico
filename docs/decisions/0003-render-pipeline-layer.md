@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-03
+- Updated: 2026-09-10
 
 ## Context
 
@@ -22,9 +23,10 @@ format.
 `nico-rhi` continues to define GPU resource and command contracts.
 `nico-rhi-wgpu` implements those contracts and owns native device, queue, and
 surface recovery only. It does not select shaders, create scene pipelines, or
-issue scene draw calls. `nico-winit` remains the composition root because the
-native event loop creates the window and surface; it instantiates both layers
-and forwards resize and redraw events.
+issue scene draw calls. The game client selects the native host;
+`nico-winit` composes graphics because its event loop creates the window and
+surface. It instantiates the provider and renderer and forwards resize and redraw
+events.
 
 The bootstrap pipeline is concrete evidence for the boundary, not a complete
 production renderer. Materials, visibility, render-world extraction, and a
@@ -35,3 +37,16 @@ render graph will be introduced only with real consumers.
 Renderer behavior can be reused by another RHI provider without copying it into
 that backend. A backend can also initialize without the bootstrap shader. The
 render layer remains independent of Winit, wgpu, and authoritative runtime code.
+
+## Implementation status (2026-09-10)
+
+The bootstrap triangle does not consume authoritative entity positions.
+`nico-presentation` currently provides a null world-facing lifecycle alongside
+the host-driven GPU path. Connecting visible geometry to game state is future
+work, not a capability of the bootstrap pipeline.
+
+The [measurement requirements](../architecture.md#measurement-and-profiling-requirements)
+apply separately to renderer policy and provider work. Capture shader/pipeline
+creation and frame recording/submission costs without labeling CPU timings as
+GPU execution time. Planned AI operations expose rendering diagnostics through
+host/tooling boundaries; the renderer does not own an MCP transport.

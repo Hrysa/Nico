@@ -1,173 +1,114 @@
 # Nico roadmap
 
-This roadmap records verified architecture and the next evidence-producing
-steps. It deliberately avoids designing distant subsystem APIs before their
-first provider and consumer exist.
-
-## Legend
-
-```text
-[x] implemented and tested
-[ ] next concrete work
-[?] provisional direction; requirements and provider not yet established
-```
-
-## Current repository
-
-```text
-Nico/
-├── crates/
-│   ├── nico-ecs/             authoritative world, resources, hecs vocabulary
-│   ├── nico-input/           provider-neutral physical device state
-│   ├── nico-runtime/         lifecycle, schedule, time, events, services
-│   ├── nico-launch/          native CLI and diagnostics policy
-│   ├── nico-presentation/    immutable world presentation boundary
-│   ├── nico-render/          backend-neutral frame and pipeline policy
-│   ├── nico-rhi/             backend-neutral GPU contracts
-│   ├── nico-rhi-wgpu/        first concrete RHI backend
-│   ├── nico-winit/           concrete native client host and input adapter
-│   └── nico-assets/          stable AssetId and typed Handle<T> only
-└── games/minimal-game/
-    ├── shared/               authoritative gameplay used by client and server
-    ├── client/               game composition, bindings, command mapping
-    ├── server/               paced headless host
-    └── assets/               logic and presentation ownership roots
-```
-
-There are no placeholder physics, devtools, audio, UI, or asset-loading
-contracts. Rendering currently covers the surface lifecycle and one concrete
-bootstrap pipeline required by the native host. A new contract or crate requires
-a real consumer, provider, and behavioral test.
+This roadmap separates implemented foundations, outstanding validation, and
+planned work. Detailed current tasks live in [TODO](../TODO.md). Requirements and
+dependency rules live in [the architecture](architecture.md).
 
 ## Completed foundations
 
-### 0. Architecture baseline [x]
+### 0. Runtime and ECS
 
-- Headless runtime with host-owned loops.
-- Presentation separated from authoritative runtime.
-- Canonical `nico_runtime::ecs` namespace over `hecs`.
-- Shared client/server game code and native launch policy.
-- Deterministic lifecycle stages, fixed time, diagnostics, and shutdown.
+- Headless, host-driven application lifecycle with deterministic stage ordering
+  and fixed-step simulation.
+- A hecs-backed world/resource boundary in `nico-ecs`, exposed to engine-facing
+  code through `nico_runtime::ecs`.
+- Rust plugins and shared client/server gameplay.
+- Native CLI and tracing diagnostics through `nico-launch`.
+- Behavioral tests for lifecycle, scheduling, timing, failure, and shutdown.
 
-### 1. Runtime communication [x]
+### 1. Runtime communication
 
 - Typed bounded broadcast events with independent readers.
-- System writes commit only after success and are then visible to the next
-  scheduled system.
-- Overflow reports missed events; failed-system writes are discarded.
-- The minimal game demonstrates multiple consumers and same-frame event chaining.
+- Successful system writes become visible to the next scheduled system;
+  failed-system event and structural command writes are discarded.
+- Explicit missed-event reporting for lagging readers.
+- Multiple consumers and same-frame event chaining demonstrated by the game.
 
-### 2. Portable service completion [x]
+### 2. Portable services
 
-- Domain-typed owned request and completion values; no universal I/O enum.
-- Bounded request and completion queues with explicit overload errors.
-- Channel-local request identity, cancellation, and backend failure values.
-- Host-selected backend endpoint with no access to `World`.
-- Runtime-thread completion publication through typed events.
-- Generational entity validation for targeted late completions.
-- Deterministic manually controlled backend tests.
-- Registered services close during application shutdown and reject late work.
-- No Tokio or other executor dependency in runtime-facing contracts.
+- Domain-typed owned requests and completions over bounded channels.
+- Request identity, cancellation, overload, and backend failure results.
+- Backends operate without access to the authoritative world.
+- Runtime-thread completion events and stale generational entity rejection.
+- Shutdown closes registered services and rejects late work.
+- Deterministic manually driven backend tests without selecting an async executor.
 
-## Client host baseline
+### 3. Real client host: core implementation complete
 
-### 3. Real client host — core implementation complete
+- Winit 0.30 native window lifecycle and permanent event loop in `nico-winit`.
+- Monotonic redraw-driven ticks, suspension handling, and orderly session shutdown.
+- Provider-neutral `nico-input` with keyboard, pointer, wheel, motion, and touch
+  adaptation; focus-loss release and game-owned movement commands.
+- A backend-neutral RHI with a wgpu provider for resources, bindings, graphics
+  and compute pipelines, uploads, transfers, render/compute passes, and surfaces.
+- Non-fatal zero-size, timeout, and occlusion outcomes, plus surface recovery.
+- A bootstrap triangle pipeline in `nico-render`.
+- Offline Slang-to-WGSL compilation through `nico-shaderc` and direct runtime
+  loading of the generated file without rebuilding Rust.
+- Automated non-GUI lifecycle tests and a recorded bounded Windows GPU smoke run.
 
-The implemented baseline has automated and bounded Windows smoke coverage.
-Interactive platform validation remains outstanding; gamepad integration and
-reflection/asset-backed shaders are deferred follow-ups.
-
-The native window and GPU providers establish presentation requirements. Keep
-host lifecycle concrete; extend the RHI only with implemented backend behavior.
-
-- [x] Select stable Winit 0.30 from documented desktop lifecycle requirements.
-- [x] Let Winit own the permanent client loop and drive `App::start`, `tick`, and
-  `shutdown`.
-- [x] Create the window on resume, tick from monotonic time on redraw, pause on
-  suspend, and observe resize and focus.
-- [x] Preserve a bounded native-window smoke mode and non-GUI lifecycle tests.
-- [x] Extract the proven Winit lifecycle and device adapter into the concrete
-  `nico-winit` engine provider crate.
-- [x] Add the headless `nico-input` engine crate for buttons, axes, vectors,
-  motion, connection lifecycle, and focus-loss release.
-- [x] Feed Winit keyboard, pointer, and touch events into engine input state.
-- [x] Map aggregate input to game-owned `PlayerCommand` and `MovementVector`
-  values without leaking Winit types into shared gameplay.
-- [?] Deferred: connect a native gamepad provider through `nico-input`.
-- [x] Run the bounded executable native-window smoke check on the initial Windows
-  development platform.
-- [x] Keep the example client free of event-loop and platform-host machinery.
-- [x] Add a Nico-owned RHI and a wgpu backend that clears, resizes, and presents
-  the native surface.
-- [x] Recover outdated, suboptimal, and lost surfaces while treating zero-size,
-  timeout, and occlusion as non-fatal frame outcomes.
-- [x] Implement core RHI resources, bindings, graphics and compute pipelines,
-  queue uploads, transfer commands, and render/compute passes through associated
-  provider types.
-- [ ] Validate interactive GPU resize and minimize/restore on Windows and macOS.
-- [?] Define a provider-neutral host contract only if a second provider reveals
-  reusable requirements.
+Interactive Windows/macOS resize and minimize/restore validation remains open;
+see [the checklist](../TODO.md#outstanding-host-validation). Gamepad integration
+and reflection/asset-backed shaders are deferred. The bootstrap triangle does
+not yet visualize shared gameplay state. The smoke limit counts session frames,
+not confirmed GPU presentations.
 
 ## Next milestone
 
-### 4. Measurement and AI operations [ ]
+### 4. Measurement and AI operations
 
-These are ongoing requirements across libraries and both executable hosts, with
-the startup delay providing the first concrete profiling consumer.
+Measurement/profiling across all libraries and AI-accessible client/server
+operations are ongoing architecture requirements. Current diagnostics include
+tracing logs and runtime stage/system spans. Shared profile capture/export and
+the MCP adapter are not implemented.
 
-- Establish shared structured measurement conventions and host-owned capture
-  and export with controllable overhead and bounded retention.
-- Measure client startup through first successful presentation before choosing
-  an optimization; report individual GPU initialization and pipeline costs.
-- Cover meaningful library work, including runtime stages/systems, service
-  queues, rendering, client frames, and server ticks.
-- Establish discoverable client/server operations with machine-readable status,
-  diagnostics, profile captures, and explicit completion/error results.
-- Prove an MCP adapter with local launch, readiness, profile capture, and orderly
-  stop for both the client and server, preserving runtime ownership boundaries.
-- Test failure, timeout, shutdown, and unchanged simulation behavior when
-  measurement and operation tooling are enabled.
+The first delivery should explain the reported client startup delay with a
+measured breakdown through first successful presentation. Build common naming,
+correlation, bounded capture, and machine-readable export around this consumer,
+then cover meaningful work throughout the libraries and both hosts.
+
+The operation boundary should expose capabilities, readiness, diagnostics,
+profile capture, and orderly shutdown with explicit results and errors. Prove
+local client and server launch/control through an MCP adapter while preserving
+host and runtime ownership. Validate failure, timeout, overload, shutdown, and
+unchanged simulation results for identical input/tick sequences.
 
 ## Following investigation
 
-### 5. First runtime asset load [?]
+### 5. First runtime asset load
 
-The existing `AssetId` and `Handle<T>` establish identity only. The first loader
-should prove the smallest end-to-end path before an import/cache architecture is
-accepted.
+`AssetId` and `Handle<T>` currently establish identity only. The direct bootstrap
+shader read does not implement the planned service-backed asset path.
 
-- Choose one concrete asset needed for the first visible frame.
-- Define a minimal resolved runtime descriptor for that asset.
-- Load owned bytes through a domain-typed service channel.
-- Publish success or failure on the runtime thread.
-- Keep source files and authoring metadata outside the shipping runtime contract.
-- Extract broader manifest, artifact, dependency, and import contracts only when
-  this path reveals their requirements.
+Choose one concrete asset needed to render game content, define its smallest
+resolved runtime descriptor, load owned bytes through a typed service, and
+publish success/failure on the runtime thread. Introduce manifest, dependency,
+artifact, and import vocabulary only as that path requires it. Source files and
+authoring metadata remain outside the shipping runtime contract.
 
-## Provisional directions
+## Deferred directions
 
-These are capability goals, not approved APIs, crate boundaries, or delivery
-promises:
+- Native gamepad integration.
+- Slang reflection and asset-backed shader packaging.
+- Visible game entities, spatial representation, and imported content.
+- Authoritative physics, networking, replication, and persistence.
+- Production rendering, audio, UI, localization, and accessibility.
+- Richer runtime inspection and development tools.
+- Import caching, packaging, distribution, replay, and platform hardening.
+- A provider-neutral host contract only when a second provider proves its need.
 
-- First visible frame and spatial representation.
-- Authoritative physics shared by server and client.
-- Networking, replication, and dedicated-server hardening.
-- Game-domain persistence and external services.
-- Rendering, audio, UI, localization, and accessibility.
-- Richer in-process inspection beyond the measurement and operation baseline.
-- Import tooling, content caching, packaging, and distribution.
-- Replay, soak testing, performance, security, and platform hardening.
+These directions do not imply approved subsystem APIs, crate boundaries, or
+delivery dates. Define each milestone around real providers and consumers when
+it becomes next.
 
-Each direction gets a detailed milestone only when it becomes next and its first
-real provider or consumer is known.
-
-## Immediate path
+## Delivery order
 
 ```text
-completed runtime events
-    -> completed portable service bridge
-        -> completed core client host (interactive validation outstanding)
-            -> measurement and AI operations
-                -> first runtime asset load
-                    -> first visible imported asset
+completed runtime, events, and services
+    -> completed core client host
+        -> measurement and AI operations
+            -> first service-backed asset load
+                -> first visible imported asset
 ```
+
+Interactive host validation remains tracked alongside this work.

@@ -1,7 +1,12 @@
 # Logic assets
 
-This root is reserved for authoritative data such as game rules, balance values,
-level simulation data, collision shapes, and navigation data.
+This root is reserved for authoritative game rules, balance values, simulation
+data, collision shapes, and navigation data shared by client and server.
+No runtime content loader is implemented here.
 
-Both the client and server may load these assets. Logic assets must not reference
-presentation assets or presentation-specific types.
+Logic assets must not depend on presentation assets or presentation-specific
+types. Authoring/import metadata belongs outside the shipping runtime contract.
+Future load operations must expose measurements and structured status/failure
+results under the [engine architecture](../../../../docs/architecture.md).
+
+See [game asset ownership](../README.md) for the complete split.

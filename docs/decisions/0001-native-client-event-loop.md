@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-28
-- Updated: 2026-08-31
+- Updated: 2026-09-10
 
 ## Context
 
@@ -11,11 +11,11 @@ a window, a permanent event loop, monotonic frame timing, redraw scheduling,
 focus and resize observation, suspension handling, and orderly shutdown. It must
 not push native window or key types into `nico-runtime` or shared gameplay.
 
-The supported development targets for this milestone are Windows 10 or newer,
-current macOS, and Linux through Wayland or X11. Windows is the initial smoke
-platform. Web, mobile, and consoles remain later host investigations, but the
-desktop design should not rely on polling APIs that are known to conflict with
-their lifecycle models.
+The intended desktop targets at the time of this decision were Windows 10 or
+newer, macOS, and Linux through Wayland or X11. Windows is the initial smoke
+platform; this target list is not a record of validation on every platform.
+Web, mobile, and consoles remain later host investigations, but the desktop
+design should preserve their resume/suspend lifecycle requirements.
 
 Lifecycle requirements:
 
@@ -28,8 +28,8 @@ Lifecycle requirements:
 6. Presentation work occurs only for the owned window's redraw notification.
 7. Close requests, runtime failures, callback failures, and loop exit converge
    on exactly one orderly runtime and presentation shutdown.
-8. Resize and focus are observed now; renderer surfaces and semantic focus-loss
-   input policy are introduced with their first consumers.
+8. Resize and focus are observed by the host and forwarded to graphics and input
+   consumers as those capabilities are introduced.
 9. A bounded smoke mode can exercise startup, redraw, simulation, and shutdown
    without changing the permanent-loop default.
 10. Headless tests and the dedicated server remain free of window dependencies.
@@ -45,8 +45,8 @@ owns dispatch on the calling thread, matching Nico's existing host-owned runtime
 Winit deliberately does not provide rendering, so selecting it does not select a
 graphics API.
 
-The Winit repository currently advertises a 0.31 beta. Nico selects stable
-0.30.13 rather than adopting a prerelease event-loop API.
+Nico selected Winit 0.30.13 for the initial implementation. This decision does
+not track newer upstream releases.
 
 ### SDL3 Rust bindings
 
@@ -66,15 +66,18 @@ establishes shared requirements.
 
 `nico-winit` owns Winit types, native lifecycle, frame scheduling, normalized
 input adaptation, and runtime/presentation session coordination. A game client
-supplies its title, smoke policy, and `InputState` to semantic-command mapper.
+supplies its title, bootstrap shader path, smoke policy, and a mapper from
+`InputState` to semantic commands.
 
 Use `ApplicationHandler` as follows:
 
-- `resumed`: create the window if absent, start the Nico session once, reset the
-  frame clock, and request a redraw;
+- `resumed`: create the window and graphics resources if absent, start the Nico
+  session once, reset the frame clock, and request a redraw;
 - `about_to_wait`: wait until the next frame deadline, then request redraw;
-- `RedrawRequested`: tick from monotonic time and present the no-device frame;
-- `Resized` and `Focused`: record observable lifecycle state;
+- `RedrawRequested`: map input, tick from monotonic time, advance the presentation
+  lifecycle, and drive the renderer;
+- `Resized`: update the native surface extent;
+- `Focused`: record focus and release input controls on focus loss;
 - `suspended`: pause ticks and reset timing without shutting down the game;
 - `CloseRequested` and `exiting`: converge on idempotent orderly shutdown.
 
@@ -83,12 +86,25 @@ Use `ApplicationHandler` as follows:
 The game client gains a real platform-owned loop without containing platform
 host machinery or changing runtime dependency direction. Winit is a dependency
 only of `nico-winit`, so its types do not leak into the game, runtime, input, or
-presentation APIs. The first window may show undefined client-area contents
-because no graphics provider is selected; drawing is the next presentation
-concern, not part of this event-loop decision.
+presentation APIs. Graphics ownership is a separate decision, now implemented
+through [ADR 0002](0002-nico-rhi-wgpu-backend.md) and
+[ADR 0003](0003-render-pipeline-layer.md).
 
 Revisit this decision after one working native host if mobile, web, embedding,
 or multiple-window requirements contradict it.
+
+## Implementation status (2026-09-10)
+
+The core host is implemented with automated lifecycle tests and a recorded
+bounded Windows GPU smoke run. Interactive Windows/macOS resize and
+minimize/restore validation remains open. Suspension and minimization are
+different lifecycle cases and require separate evidence.
+
+The smoke limit counts client-session frames, including frames for which GPU
+presentation may be skipped. Native gamepad integration is deferred. Shared
+profiling capture and AI-accessible host operations are the next milestone;
+neither introduces protocol dependencies into runtime. See
+[the roadmap](../roadmap.md) and [current tasks](../../TODO.md).
 
 ## Primary references
 
