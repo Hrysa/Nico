@@ -8,7 +8,10 @@ world crate. `nico-input` owns device state, `nico-presentation` owns the
 immutable presentation boundary, and `nico-render` uses `nico-rhi` contracts.
 `nico-rhi-wgpu` implements those contracts; `nico-winit` composes the native
 client. `nico-assets` owns asset identity and `nico-launch` owns native CLI and
-diagnostics startup. Physics and broader devtools have no placeholder crates.
+diagnostics startup; its `server` feature owns the headless host and MCP lifecycle.
+`nico-ops` provides host status/stop control and an optional
+`mcp` feature for a stdio adapter; its default build has no external dependencies.
+Physics and broader devtools have no placeholder crates.
 Runtime must not depend on presentation, providers, or launch policy, and
 `nico-ecs` must not depend on runtime.
 
@@ -31,6 +34,8 @@ and reviews belong in `docs/`.
 - `cargo run -p nico-shaderc -- --check`: verify generated shaders; requires `slangc`.
 - `cargo run -p minimal-game-server`: run the continuous 60 Hz headless server;
   stop it with Ctrl+C.
+- `cargo run -p minimal-game-server --example controlled`: demonstrate in-process
+  readiness observation and orderly stop with the real server runner.
 
 ## Coding Style & Naming Conventions
 
@@ -42,18 +47,32 @@ and prevent backend-specific types from leaking into engine-facing APIs.
 
 ## Measurement and AI operation requirements
 
-Every library must support measurement and profiling of its meaningful work.
-Use structured spans, timings, and counters where appropriate; keep collection
-and export policy in the host. Measure suspected bottlenecks before optimizing,
-and keep instrumentation overhead controllable without changing behavior.
+Measurement and profiling remain requirements across all libraries. Future deep
+profiling will use experimental Rust/LLVM XRay, aiming for automatic function
+capture, a nested call tree, inclusive/self time, and invocation counts without
+per-method annotations. Profiling implementation and compatibility investigation
+are deferred: do not add profiler code, per-method instrumentation, custom
+collectors/viewers, or toolchain configuration for this work now. XRay has not
+been integrated or validated for Nico.
+
+Existing tracing remains for diagnostics and semantic context. Measure suspected
+bottlenecks before optimizing, distinguish elapsed scope time from actual CPU
+execution time, and preserve authoritative behavior. Profiling work does not
+block AI-accessible client/server operations.
 
 Client and server operations must be accessible to AI tooling through structured,
-discoverable interfaces, with an MCP adapter as a planned integration. Provide
-machine-readable status, diagnostics, profiling results, and explicit operation
-results. Keep transport and process control outside the headless runtime;
+discoverable interfaces. The server exposes MCP `status`/`stop`; client integration
+and broader process operations remain planned. Provide
+machine-readable status, diagnostics, and explicit operation results. Expose
+profiling results later when that capability is available. Keep transport and
+process control outside the headless runtime;
 apply simulation commands at runtime-owned boundaries rather than mutating the
 world from a tooling thread. New operational features should include an
 automation path alongside any human-facing interface.
+
+MCP service and host lifecycle implementations belong under engine crates' `src/`,
+not `games/`. Games compose the engine host and may register additional tools;
+they must not own transport, service threads, or replace built-in lifecycle tools.
 
 ## Testing Guidelines
 

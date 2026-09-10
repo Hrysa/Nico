@@ -6,6 +6,9 @@
 
 use std::error::Error;
 
+#[cfg(feature = "server")]
+pub mod server;
+
 use clap::{Args, ValueEnum};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt::format::FmtSpan};
 
@@ -47,7 +50,7 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-/// Installs line-oriented diagnostics for a native executable.
+/// Installs line-oriented diagnostics on stderr for a native executable.
 ///
 /// An explicit command-line level takes precedence over `RUST_LOG`. When neither
 /// is present, diagnostics default to `info`.
@@ -62,6 +65,7 @@ pub fn init_logging(log_level: Option<LogLevel>) -> Result<(), Box<dyn Error + S
     };
 
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .try_init()?;

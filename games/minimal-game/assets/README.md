@@ -16,5 +16,5 @@ See [the shader workflow](../../../README.md#shader-workflow).
 
 Future loading must preserve the logic/presentation split and follow the
 [measurement and AI-operation requirements](../../../docs/architecture.md).
-The first service-backed asset load follows the measurement/operations milestone
+The first service-backed asset load follows the AI-operations milestone
 in [the roadmap](../../../docs/roadmap.md).

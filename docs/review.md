@@ -30,21 +30,29 @@ in [ADR 0001](decisions/0001-native-client-event-loop.md),
 
 ## Measurement and profiling
 
-These are requirements for every library, not claims of complete current coverage.
+Profiling remains a cross-library requirement, with experimental Rust/LLVM XRay
+chosen for future automatic function capture. Implementation, toolchain changes,
+and compatibility investigation are deferred; the current operation milestone
+must not acquire a profiling dependency.
 
-- Meaningful work exposes consistent spans, timing units, counters, and correlation.
-- Hosts control collection/export with bounded retention and visible overflow.
-- Wall-clock profiling is separate from simulation time; CPU and GPU durations
-  are labeled accurately.
-- Capture overhead is measured and controllable.
-- Performance fixes include evidence identifying the bottleneck and a repeatable
-  before/after comparison.
-- Identical input/tick sequences produce the same authoritative results with
-  instrumentation enabled or disabled.
+When profiling work resumes, review automatic capture coverage, call hierarchy,
+inclusive/self timings, invocation counts, frame/thread context, overhead, and
+capture completeness. Distinguish async polls from calls, elapsed time from
+actual on-CPU time, and CPU timings from GPU timings. Preserve authoritative
+results for identical input/tick sequences.
+
+Existing tracing supports diagnostics. Do not describe XRay integration or
+validation as complete. Performance fixes still require measurements identifying
+the bottleneck and a repeatable before/after comparison.
 
 ## AI-accessible operations
 
-The shared operation boundary and MCP adapter are planned work.
+The minimal in-process status/stop core and headless server integration exist.
+The headless server also exposes MCP `status` and `stop` through `--mcp-stdio`.
+The engine owns the service and host lifecycle; games can register additional tools.
+Native client integration, process supervision, and diagnostics forwarding remain planned.
+Readiness, diagnostics, and orderly shutdown form the initial baseline; profiling
+operations are deferred until that capability is available.
 
 - Client/server capabilities, arguments, results, and errors are machine-readable.
 - Asynchronous operations have request correlation and explicit completion/timeout.

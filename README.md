@@ -8,10 +8,18 @@ The core **Real client host** implementation is complete. Interactive Windows
 and macOS resize/minimize/restore validation remains outstanding. Native gamepad
 integration and Slang reflection/asset-backed shaders are deferred.
 
-The next milestone is **measurement and AI operations**: profiling across
-libraries and structured client/server control through tooling such as MCP.
-Existing tracing diagnostics are the starting point; profile capture/export and
-an MCP adapter are not implemented yet.
+The next milestone is **AI-accessible client/server operations**: structured
+launch, readiness, diagnostics, and orderly shutdown through an MCP adapter.
+The minimal core and server MCP endpoint are implemented: `nico-ops` provides
+status and orderly stop, exposed by `minimal-game-server --mcp-stdio`.
+Native client control, process supervision, and structured diagnostics forwarding
+remain planned.
+
+Profiling remains a cross-library requirement, with experimental Rust/LLVM XRay
+chosen as the future direction for automatic function capture and a Unity-style
+call hierarchy, timings, and invocation counts. Profiling implementation,
+compatibility investigation, and toolchain changes are deferred. XRay is not
+integrated or validated for Nico, and no custom profiler is planned now.
 
 ## Run and validate
 
@@ -25,8 +33,7 @@ cargo run -p minimal-game-server
 
 The client runs until the window closes. The server runs at a configured 60 Hz
 by default; Ctrl+C terminates the process. The server runner supports orderly
-shutdown when runtime code requests exit, but external graceful-stop control
-is not implemented yet.
+shutdown when runtime code requests exit or the optional MCP endpoint receives stop.
 
 The client maps WASD and arrow keys to shared gameplay movement commands. The
 triangle is fixed bootstrap geometry and does not yet visualize entity positions.
@@ -44,7 +51,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Both executables accept `--log-level <off|error|warn|info|debug|trace>`.
-An explicit level overrides `RUST_LOG`; the default is `info`. The server also
+Diagnostics go to stderr. An explicit level overrides `RUST_LOG`; the default is `info`. The server also
 accepts `--tick-rate <TICKS_PER_SECOND>`:
 
 ```text
@@ -59,6 +66,88 @@ $env:RUST_LOG = "nico_runtime=trace"
 cargo run -p minimal-game-client
 Remove-Item Env:RUST_LOG
 ```
+
+## Minimal host control
+
+The engine's `nico_launch::server::FixedRateServerRunner` accepts an optional
+`nico_ops::HostEndpoint`. Another thread
+can retain its `HostControl` to read status or request stop:
+
+```rust,ignore
+let (control, operations) = nico_ops::control_channel();
+let runner = FixedRateServerRunner::new(step).with_operations(operations);
+// Move `runner` to the host and retain `control` in an adapter.
+let snapshot = control.status();
+control.request_stop()?;
+```
+
+Run the complete [controlled server example](games/minimal-game/server/examples/controlled.rs):
+
+```text
+cargo run -p minimal-game-server --example controlled
+```
+
+It starts the real server, observes readiness after one successful host tick,
+requests stop from another thread, and prints the final status. Repeated stop
+requests coalesce. Stop and last-controller disconnect wake the server's paced
+wait; shutdown still runs on the host thread. Final success/failure remains
+readable after the host endpoint closes.
+
+Snapshots are cached host reports; stop acceptance is distinct from completion,
+and host completion does not imply operating-system process exit.
+
+## Agent access through MCP
+
+Build the server, then configure your MCP client to launch the executable with
+`--mcp-stdio`:
+
+```text
+cargo build -p minimal-game-server
+```
+
+For clients using an `mcpServers` configuration, an example on Windows is:
+
+```json
+{
+  "mcpServers": {
+    "nico-server": {
+      "command": "E:/repos/Nico/target/debug/minimal-game-server.exe",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
+Adjust the absolute executable path to your checkout/build output. Each connection
+launches one server. The agent discovers two tools, both taking `{}`:
+
+| Tool | Result |
+| --- | --- |
+| `status` | Cached `state`, `completed_steps`, `ready`, `finished`, and nullable `failure` |
+| `stop` | `accepted` plus the current `status`; a failed host produces a tool error |
+
+Both return structured JSON and matching text. Poll `status` until `ready: true`,
+call `stop`, then poll until `finished: true`. Check `state` and `failure` to
+distinguish successful shutdown from failure. `stop` is idempotent; acceptance
+does not mean shutdown has completed. MCP remains available after host shutdown
+so the agent can inspect the result. Close the connection's stdin to exit the
+process. Disconnect while running also requests orderly host shutdown.
+
+The optional `nico-ops/mcp` feature implements the service with the official Rust
+MCP SDK. `nico-launch/server` owns the server arguments, fixed-rate runner,
+control channel, MCP thread, and shutdown join. The game builds its App and calls
+`ServerHost::new(args.server).run(&mut app)`.
+Stdout carries only MCP; logs use stderr. This endpoint controls its own
+headless host; client control, diagnostic retrieval, and multi-process supervision
+are follow-ups. Build/argument failures before host startup appear as process
+errors rather than tool status. A blocked game system still delays orderly stop.
+
+Games can extend the engine service using `nico_ops::mcp::ToolExtensions`:
+register a `Tool` schema and a handler, then pass the registry to
+`ServerHost::with_mcp_tools`. The engine advertises and dispatches these tools
+alongside `status` and `stop`. Reserved or duplicate names are rejected.
+Handlers validate their arguments and return promptly on the MCP thread, reading
+owned data or sending host requests. They do not receive mutable App access.
 
 ## Shader workflow
 
@@ -98,7 +187,8 @@ startup delay has not been profiled; its cause remains unconfirmed.
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
 | `crates/nico-winit` | Native event loop, input adaptation, and client coordination |
 | `crates/nico-assets` | Stable `AssetId` and typed `Handle<T>` identity |
-| `crates/nico-launch` | Native CLI and diagnostic initialization |
+| `crates/nico-launch` | Native CLI, diagnostics, and optional server host/MCP lifecycle |
+| `crates/nico-ops` | In-process host status and orderly-stop control |
 | `apps/nico-shaderc` | Standalone offline shader compiler tool |
 | `assets/presentation/shaders` | Engine bootstrap shader source and generated artifact |
 | `games/minimal-game` | Shared gameplay, client/server executables, and game asset roots |

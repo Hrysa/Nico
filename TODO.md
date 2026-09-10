@@ -4,42 +4,59 @@ This file tracks actionable work. [The roadmap](docs/roadmap.md) records
 completed milestones and deferred directions; [the architecture](docs/architecture.md)
 defines ownership and requirements.
 
-## Measurement and AI operations
+## AI-accessible client and server operations
 
-This is the next implementation milestone. Existing tracing spans and logs are
-the foundation; shared profile capture/export and an MCP adapter are still planned.
+This is the next implementation milestone. Existing tracing supplies diagnostic
+context. Profiling is deferred and does not block this work.
 
-### Measurement and profiling
+See the [implementation plan](docs/plans/2026-09-10-ai-client-server-operations.md)
+for proposed boundaries, tools, delivery sequence, and acceptance checks.
 
-- [ ] Define shared span names, timing units, counters, and correlation fields
-      for meaningful work across every library, using existing tracing where suitable.
-- [ ] Add host-controlled capture and machine-readable export with bounded
-      retention, explicit overflow reporting, and controllable collection overhead.
-- [ ] Measure startup phases: window creation, shader read, graphics instance,
-      adapter/device creation, surface configuration, shader module creation,
-      pipeline creation, and first successful GPU presentation.
-- [ ] Record a repeatable baseline for the reported startup delay, including
-      build profile, backend, adapter, and repeated launches before optimizing.
-- [ ] Extend coverage to runtime stages/systems, service queues, ECS/input/asset
-      operations, rendering, client frames, and server ticks as applicable.
-- [ ] Distinguish wall-clock profiling from simulation time and CPU submission
-      timings from GPU execution timings; report unavailable GPU timing explicitly.
-- [ ] Verify bounded collection, export on orderly shutdown, overhead, and
-      unchanged authoritative results for identical input and tick sequences.
+### Implemented minimal core
 
-### AI-accessible client and server operations
+- [x] Add dependency-free `nico-ops` with owned status snapshots and a one-slot,
+      idempotent stop signal between a controller and host.
+- [x] Integrate optional control into the headless server at tick boundaries,
+      with readiness after a successful tick and a stop-interruptible paced wait.
+- [x] Preserve final success/failure and report unexpected endpoint disconnect;
+      dropping the last controller requests orderly host stop.
+- [x] Test lifecycle, failure, repeated stop, controller disconnect, isolation,
+      unchanged simulation order, and stopping without waiting for another tick.
+- [x] Run the controlled-server example through readiness and graceful shutdown.
+- [x] Expose `status` and `stop` through the optional `nico-ops/mcp` adapter and
+      `minimal-game-server --mcp-stdio`, with schemas and structured results.
+- [x] Verify real stdio discovery, readiness, repeated stop, invalid tool calls,
+      retained final status, and disconnect before/after initialization.
+- [x] Document the server MCP invocation and connection lifecycle.
+- [x] Move the fixed-rate runner and MCP startup/join into `nico-launch/src/server/`;
+      games compose the engine host and may register tools through `ToolExtensions`.
+
+### Remaining milestone work
 
 - [ ] Define discoverable capabilities and typed requests/results for readiness,
-      diagnostics, profile capture, and orderly shutdown.
-- [ ] Keep host/process operations outside runtime and apply simulation commands
-      at runtime-owned boundaries; expose owned snapshots for inspection.
-- [ ] Add an MCP adapter for local development process launch and the shared
+      diagnostics, and orderly shutdown.
+- [ ] Connect native client control and the child-process transport to the core;
+      keep dispatch on host-owned boundaries and add structured diagnostics.
+- [ ] Extend beyond the two-tool server MCP endpoint to local process launch and the shared
       operation boundary, with request correlation, timeouts, and explicit failures.
-- [ ] Prove launch -> readiness -> profile capture -> result retrieval -> orderly
-      stop for both client and headless server.
+- [ ] Prove launch -> readiness -> diagnostics retrieval -> orderly stop for both
+      client and headless server.
 - [ ] Test malformed/unsupported requests, failed startup, timeout, overload,
       disconnect, and shutdown with work pending.
-- [ ] Document implemented operations and invocation examples when available.
+- [ ] Document additional operations as they become available.
+
+## Profiling: deferred
+
+Use experimental Rust/LLVM XRay for future automatic function profiling. Preserve
+the goal of a Unity-style call hierarchy, inclusive/self timings, invocation
+counts, and frame/thread context without hand-written per-method instrumentation.
+
+No profiler code, prototype, custom collector/viewer, profiling toolchain changes,
+or compatibility investigation is required now. XRay is not integrated or
+validated for Nico. Revisit its setup and coverage when profiling work resumes.
+
+The reported startup delay remains unmeasured. Profile capture/export and MCP
+access to profiling data are later work; they do not block the operation baseline.
 
 ## Outstanding host validation
 

@@ -74,8 +74,9 @@ does not select an async executor.
 
 Offline Slang compilation produces WGSL, while backend shader/pipeline
 preparation still occurs at runtime. The reported startup delay has not been
-profiled; the next milestone measures instance, adapter/device, surface, shader,
-pipeline, and first-presentation costs before choosing an optimization.
+profiled. Profiling is deferred to future experimental XRay integration; instance,
+adapter/device, surface, shader, pipeline, and first-presentation costs remain
+candidates to measure before choosing an optimization.
 
 The runtime file read is a bootstrap path, not the planned service-backed asset
 loader. Reflection and asset-backed shader packaging remain deferred. CPU call

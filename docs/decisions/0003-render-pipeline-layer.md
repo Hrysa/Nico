@@ -46,7 +46,8 @@ the host-driven GPU path. Connecting visible geometry to game state is future
 work, not a capability of the bootstrap pipeline.
 
 The [measurement requirements](../architecture.md#measurement-and-profiling-requirements)
-apply separately to renderer policy and provider work. Capture shader/pipeline
-creation and frame recording/submission costs without labeling CPU timings as
-GPU execution time. Planned AI operations expose rendering diagnostics through
-host/tooling boundaries; the renderer does not own an MCP transport.
+apply separately to renderer policy and provider work. Profiling implementation
+is deferred to future experimental XRay integration. When measured, shader/pipeline
+creation and frame recording/submission costs must not be labeled as GPU execution
+time. Planned AI operations expose rendering diagnostics through host/tooling
+boundaries; the renderer does not own an MCP transport.

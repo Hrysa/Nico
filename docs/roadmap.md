@@ -55,23 +55,37 @@ not confirmed GPU presentations.
 
 ## Next milestone
 
-### 4. Measurement and AI operations
+### 4. AI-accessible client and server operations
 
-Measurement/profiling across all libraries and AI-accessible client/server
-operations are ongoing architecture requirements. Current diagnostics include
-tracing logs and runtime stage/system spans. Shared profile capture/export and
-the MCP adapter are not implemented.
+The [implementation plan](plans/2026-09-10-ai-client-server-operations.md) records
+the proposed local process/MCP boundary and staged delivery.
 
-The first delivery should explain the reported client startup delay with a
-measured breakdown through first successful presentation. Build common naming,
-correlation, bounded capture, and machine-readable export around this consumer,
-then cover meaningful work throughout the libraries and both hosts.
+Expose capabilities, readiness, diagnostics, and orderly shutdown with structured
+requests and explicit results/errors. Prove local client and server launch/control
+through an MCP adapter while preserving host and runtime ownership. Validate
+failure, timeout, overload, shutdown, and unchanged simulation results for
+identical input/tick sequences.
 
-The operation boundary should expose capabilities, readiness, diagnostics,
-profile capture, and orderly shutdown with explicit results and errors. Prove
-local client and server launch/control through an MCP adapter while preserving
-host and runtime ownership. Validate failure, timeout, overload, shutdown, and
-unchanged simulation results for identical input/tick sequences.
+The minimal in-process core is implemented in `nico-ops`: owned status snapshots,
+idempotent stop, controller-disconnect stop, and explicit final success/failure.
+The headless server accepts an optional endpoint and wakes its paced wait on
+stop. Focused tests and a runnable controlled-server example verify that path.
+The optional `nico-ops/mcp` adapter now exposes `status` and `stop` directly from
+`minimal-game-server --mcp-stdio`. Real-process tests cover discovery, readiness,
+invalid calls, repeated stop, final-status reads, and disconnect cleanup.
+The engine's `nico-launch/src/server/` owns the runner and MCP lifecycle. Games
+compose `ServerHost` and can register extra tools without overriding engine tools.
+Client integration, process supervision, and diagnostics forwarding remain pending.
+
+Profiling remains a cross-library requirement but is deferred. Experimental
+Rust/LLVM XRay is the chosen future direction for automatic function capture,
+call hierarchy, inclusive/self timings, and invocation counts without per-method
+annotations. It is not integrated or validated for Nico. No profiler code,
+prototype, custom collector/viewer, toolchain configuration, or compatibility
+investigation is required now.
+
+The startup delay remains unmeasured. Future profiling integration and access to
+its results through MCP do not block the client/server operation baseline.
 
 ## Following investigation
 
@@ -88,6 +102,8 @@ authoring metadata remain outside the shipping runtime contract.
 
 ## Deferred directions
 
+- Experimental XRay profiling integration, platform validation, and profiling data
+  access through AI tooling.
 - Native gamepad integration.
 - Slang reflection and asset-backed shader packaging.
 - Visible game entities, spatial representation, and imported content.
@@ -106,7 +122,7 @@ it becomes next.
 ```text
 completed runtime, events, and services
     -> completed core client host
-        -> measurement and AI operations
+        -> AI-accessible client/server operations
             -> first service-backed asset load
                 -> first visible imported asset
 ```

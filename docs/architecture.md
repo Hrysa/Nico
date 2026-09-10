@@ -36,7 +36,8 @@ depend on runtime.
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
 | `nico-winit` | Native window lifecycle, input adaptation, and client-session coordination |
 | `nico-assets` | Stable asset and typed handle identity |
-| `nico-launch` | Native CLI parsing and diagnostics initialization |
+| `nico-launch` | Native CLI, diagnostics, and optional server host/MCP lifecycle |
+| `nico-ops` | Dependency-free host control core; optional MCP stdio adapter |
 | `apps/nico-shaderc` | Offline shader compilation outside the Rust build graph |
 
 ## Runtime and ECS
@@ -151,34 +152,40 @@ contract. Introduce new data formats when concrete consumers require them.
 
 ## Measurement and profiling requirements
 
-Every library must support measurement of its meaningful work. Use structured
-spans, durations, and counters, extending the existing tracing foundation where
-suitable. Hosts select collection, filtering, and export policy. Retention must
-be bounded, overflow visible, and overhead controllable.
+Measurement and profiling remain requirements across all libraries. Experimental
+Rust/LLVM XRay is the selected future direction for automatic function profiling
+without hand-written spans or per-method attributes. The desired experience is
+a Unity-style call hierarchy and timeline with inclusive time, self time,
+invocation counts, and frame/thread context.
 
-Measurements use wall-clock time independently of fixed simulation time.
-Instrumentation must preserve authoritative results for identical input and
-tick sequences. CPU submission durations and GPU execution durations must be
-identified separately; unsupported GPU measurements must be reported as such.
+Profiling implementation is deferred. Do not add profiler code, a prototype,
+custom collectors/viewers, per-method instrumentation, or profiling toolchain
+configuration for the current work. XRay is not integrated or validated for Nico;
+platform compatibility, runtime setup, and coverage investigation can wait until
+profiling work resumes. See the
+[Rust XRay compiler documentation](https://doc.rust-lang.org/unstable-book/compiler-flags/instrument-xray.html)
+for the future integration point.
 
-The first profiling consumer is the reported client startup delay. Capture window
-creation, shader read, graphics instance/adapter/device initialization, surface
-configuration, shader/pipeline creation, and time to first successful
-presentation. Record build profile, backend, and adapter and compare repeated
-launches before choosing an optimization.
+Existing tracing remains for diagnostics and semantic context. It is not
+automatic function capture. Future integration must distinguish recorded
+invocations from samples or async polls, execution nesting from async causality,
+elapsed scope durations from actual on-CPU time, and CPU submission time from GPU
+execution. Report coverage limits and incomplete captures explicitly.
 
-Existing runtime stage/system spans and diagnostics do not yet provide complete
-cross-library profiling or shared capture/export. The next milestone establishes
-that path and extends it across runtime, services, ECS, input, assets, rendering,
-and client/server hosts as applicable.
+The reported client startup delay remains unmeasured. It is a future profiling
+case, not a prerequisite for the next milestone. Profiling must preserve
+authoritative results for identical input/tick sequences, with controllable
+overhead and bounded collection. Profile capture/export and access through MCP
+are deferred alongside integration.
 
 ## AI operation requirements
 
 Client and server operations must support AI tooling through discoverable,
-structured interfaces. The planned MCP adapter consumes an operation boundary
+structured interfaces. MCP adapters consume an operation boundary
 with typed arguments, capability discovery, request correlation, explicit
 completion/error results, and timeouts. Initial operations cover local process
-launch/stop, readiness, diagnostics, and profile capture/retrieval.
+launch/stop, readiness, and diagnostics. Profile capture/retrieval follows future
+XRay integration and is not required for the initial operation baseline.
 
 Process supervision and protocol adapters belong outside the headless runtime.
 Hosts own window and device operations. Simulation commands execute at
@@ -186,8 +193,33 @@ runtime-owned boundaries; tooling reads owned snapshots and does not receive
 background mutable world access. Operational access is enabled by the host and
 scoped to intended development processes.
 
-No MCP adapter or shared operation API is implemented yet. Choose transport,
-exporter, and package boundaries with the first client and server consumers.
+The minimal `nico-ops` core is implemented without runtime or provider dependencies.
+`control_channel` pairs a cloneable `HostControl` with a single `HostEndpoint`.
+Controllers read owned status snapshots and enqueue an idempotent stop signal;
+one snapshot and one pending stop are retained. The host publishes lifecycle,
+completed-step count, and a final success/failure result. Unexpected endpoint
+drop reports failure, while losing all controllers requests orderly stop.
+
+`nico_launch::server::FixedRateServerRunner::with_operations` is the first consumer. It reports
+readiness after its first successful host tick, checks stop between ticks, and
+uses the stop channel to interrupt its paced wait. The host alone calls App
+lifecycle methods. Status may lag a busy host, and terminal host status is not
+proof that its process has exited.
+
+The optional `nico-ops/mcp` feature exposes `status` and `stop` using the official
+Rust MCP SDK. `nico-launch/src/server/` owns the runner, MCP arguments, control
+channel, dedicated service thread, and final join. `minimal-game-server` delegates
+to `ServerHost`, keeping the App on its existing host thread. Games build their
+App and may supply `ToolExtensions` through `ServerHost::with_mcp_tools`; they do
+not own MCP transport or lifecycle. Extensions cannot replace `status`/`stop` or
+duplicate another tool name. Handlers validate arguments and return promptly,
+reading owned data or queueing host requests without mutable App access. The default
+`nico-ops` build has no external dependencies. Stdout is reserved for MCP and
+native launch diagnostics use stderr. Host completion leaves MCP available for
+final-status reads; stdin EOF requests host stop and ends the connection. The
+engine host joins the adapter before exiting. Stop results acknowledge delivery,
+not process exit. Native client integration, process supervision, and structured
+diagnostic forwarding remain planned.
 New operational features should expose an automation path alongside human
 interfaces.
 
@@ -203,5 +235,5 @@ interfaces.
 
 Parallel scheduling, public math representation, physics, audio, UI, production
 materials/render graphs, scene/prefab formats, and import caching remain deferred.
-Measurement and AI operations are required next work; broader visual development
-tools remain future capabilities.
+AI-accessible client/server operations are next. Profiling implementation and
+broader visual development tools are deferred.

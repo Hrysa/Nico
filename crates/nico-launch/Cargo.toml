@@ -4,8 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+server = ["dep:nico-ops", "dep:nico-runtime"]
+
 [dependencies]
 clap.workspace = true
+nico-ops = { path = "../nico-ops", features = ["mcp"], optional = true }
+nico-runtime = { path = "../nico-runtime", optional = true }
 tracing-subscriber.workspace = true
 
 [lints]

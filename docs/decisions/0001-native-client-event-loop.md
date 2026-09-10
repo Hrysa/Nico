@@ -102,8 +102,8 @@ different lifecycle cases and require separate evidence.
 
 The smoke limit counts client-session frames, including frames for which GPU
 presentation may be skipped. Native gamepad integration is deferred. Shared
-profiling capture and AI-accessible host operations are the next milestone;
-neither introduces protocol dependencies into runtime. See
+profiling capture is deferred to future experimental XRay integration.
+AI-accessible host operations are next and keep protocol dependencies out of runtime. See
 [the roadmap](../roadmap.md) and [current tasks](../../TODO.md).
 
 ## Primary references

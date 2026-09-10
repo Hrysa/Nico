@@ -6,6 +6,7 @@ members = [
     "crates/nico-ecs",
     "crates/nico-input",
     "crates/nico-launch",
+    "crates/nico-ops",
     "crates/nico-presentation",
     "crates/nico-render",
     "crates/nico-rhi",
