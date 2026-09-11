@@ -1,5 +1,8 @@
 //! Authoritative gameplay shared by the minimal game's client and server.
 
+#[cfg(feature = "tools")]
+pub mod tools;
+
 use nico_runtime::{AppBuilder, Plugin, RuntimeResult, Stage, SystemContext, events::EventReader};
 
 /// Position of an active simulated entity in minimal-game world units.

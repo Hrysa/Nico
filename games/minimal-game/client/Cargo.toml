@@ -6,12 +6,15 @@ license.workspace = true
 
 [dependencies]
 clap.workspace = true
-minimal-game-shared = { path = "../shared" }
+minimal-game-shared = { path = "../shared", features = ["tools"] }
 nico-input = { path = "../../../crates/nico-input" }
-nico-launch = { path = "../../../crates/nico-launch" }
+nico-launch = { path = "../../../crates/nico-launch", features = ["client"] }
 nico-runtime = { path = "../../../crates/nico-runtime" }
 nico-winit = { path = "../../../crates/nico-winit" }
 tracing.workspace = true
+
+[dev-dependencies]
+nico-ops = { path = "../../../crates/nico-ops" }
 
 [lints]
 workspace = true

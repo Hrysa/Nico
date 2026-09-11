@@ -1,21 +1,17 @@
-//! Optional MCP stdio adapter for one host. Protocol I/O never accesses the App.
+//! Host tool catalogs uploaded through bridge connections. Handlers never access the App.
 
-use std::{collections::BTreeMap, error::Error, io};
+use std::{collections::BTreeMap, io};
 
 // Protocol types are confined to this optional adapter API.
 pub use rmcp::model::{CallToolResult, Tool};
 pub use serde_json::{Map, Value};
 
-use rmcp::{
-    ErrorData, RoleServer, ServerHandler, ServiceExt,
-    model::{
-        CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo, ToolAnnotations,
-    },
-    service::RequestContext,
-};
+#[cfg(any(feature = "bridge", test))]
+use rmcp::model::{CallToolRequestParams, ToolAnnotations};
+#[cfg(any(feature = "bridge", test))]
 use serde_json::json;
 
+#[cfg(any(feature = "bridge", test))]
 use crate::{HostControl, HostState, HostStatus};
 
 type ToolHandler = Box<dyn Fn(Map<String, Value>) -> CallToolResult + Send + Sync>;
@@ -50,90 +46,43 @@ impl ToolExtensions {
     }
 }
 
-/// Serves `status` and `stop` over this process's stdin/stdout.
-///
-/// Call once, on a dedicated thread; this blocks until MCP disconnects or fails.
-/// Reserve stdout for MCP and send application logs to stderr. Host shutdown does
-/// not close MCP: callers may inspect the final status, then close stdin to exit.
-/// Disconnect (including failed initialization) requests orderly host stop.
-pub fn serve_stdio(control: HostControl) -> Result<(), Box<dyn Error + Send + Sync>> {
-    serve_stdio_with_tools(control, ToolExtensions::default())
-}
-
-/// Serves the engine lifecycle tools plus registered game tools.
-/// Has the same thread and connection lifecycle as [`serve_stdio`].
-pub fn serve_stdio_with_tools(
-    control: HostControl,
-    tools: ToolExtensions,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let adapter = Adapter(control, tools);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let result = runtime.block_on(async move {
-        let service = adapter.serve(rmcp::transport::stdio()).await?;
-        service.waiting().await?;
-        Ok(())
-    });
-    // Tokio's stdin read is blocking and cannot be cancelled. On protocol failure,
-    // do not wait for a still-connected client to supply another line or EOF.
-    runtime.shutdown_background();
-    result
-}
-
-struct Adapter(HostControl, ToolExtensions);
-
-impl Drop for Adapter {
-    fn drop(&mut self) {
-        // Explicitly stop even if another observer retains a control clone.
-        let _ = self.0.request_stop();
+#[cfg(any(feature = "bridge", test))]
+pub(crate) fn invoke_host_tool(
+    control: &HostControl,
+    extensions: &ToolExtensions,
+    request: CallToolRequestParams,
+) -> CallToolResult {
+    if matches!(request.name.as_ref(), "status" | "stop")
+        && request
+            .arguments
+            .as_ref()
+            .is_some_and(|args| !args.is_empty())
+    {
+        return CallToolResult::structured_error(json!({"error": "Tools accept no arguments"}));
     }
-}
-
-impl Adapter {
-    fn invoke(&self, request: CallToolRequestParams) -> CallToolResult {
-        if matches!(request.name.as_ref(), "status" | "stop")
-            && request
-                .arguments
-                .as_ref()
-                .is_some_and(|args| !args.is_empty())
-        {
-            return CallToolResult::structured_error(json!({"error": "Tools accept no arguments"}));
-        }
-        match request.name.as_ref() {
-            "status" => CallToolResult::structured(snapshot(self.0.status())),
-            "stop" => {
-                let accepted = self.0.request_stop().is_ok();
-                let result = json!({"accepted": accepted, "status": snapshot(self.0.status())});
-                if accepted {
-                    CallToolResult::structured(result)
-                } else {
-                    CallToolResult::structured_error(result)
-                }
+    match request.name.as_ref() {
+        "status" => CallToolResult::structured(snapshot(control.status())),
+        "stop" => {
+            let accepted = control.request_stop().is_ok();
+            let result = json!({"accepted": accepted, "status": snapshot(control.status())});
+            if accepted {
+                CallToolResult::structured(result)
+            } else {
+                CallToolResult::structured_error(result)
             }
-            name => match self.1.0.get(name) {
-                Some((_, handler)) => handler(request.arguments.unwrap_or_default()),
-                None => CallToolResult::structured_error(json!({"error": "Unknown tool"})),
-            },
         }
+        name => match extensions.0.get(name) {
+            Some((_, handler)) => handler(request.arguments.unwrap_or_default()),
+            None => CallToolResult::structured_error(json!({"error": "Unknown tool"})),
+        },
     }
 }
 
-impl ServerHandler for Adapter {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("nico-ops", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Controls this host only. Poll status for readiness or completion. stop acknowledges a request; close stdin after inspecting the final status to exit.")
-    }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        let mut tools: Vec<Tool> = [
+#[cfg(any(feature = "bridge", test))]
+pub(crate) fn host_tool_catalog(extensions: &ToolExtensions) -> Vec<Tool> {
+    let mut tools: Vec<Tool> = [
             ("status", "Read the latest cached host status. ready means a successful first step; finished means a terminal host result, not process exit.", true),
-            ("stop", "Request orderly host stop. accepted confirms delivery, not completion. Poll status until finished, then close the MCP connection.", false),
+            ("stop", "Request orderly host stop. accepted confirms delivery, not completion. Poll bridge instance status for completion.", false),
         ].into_iter().map(|(name, description, read_only)| {
             let mut annotations = ToolAnnotations::default();
             annotations.read_only_hint = Some(read_only);
@@ -144,26 +93,22 @@ impl ServerHandler for Adapter {
                 .with_annotations(annotations)
                 .with_raw_output_schema(output_schema(name).as_object().unwrap().clone().into())
         }).collect();
-        tools.extend(self.1.0.values().map(|(tool, _)| tool.clone()));
-        Ok(ListToolsResult::with_all_items(tools))
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResponse, ErrorData> {
-        Ok(self.invoke(request).into())
-    }
+    tools.extend(extensions.0.values().map(|(tool, _)| tool.clone()));
+    tools
 }
 
+#[cfg(any(feature = "bridge", test))]
 fn output_schema(name: &str) -> Value {
     let status = json!({
         "type": "object", "additionalProperties": false,
-        "required": ["state", "completed_steps", "ready", "finished", "failure"],
+        "required": ["state", "completed_steps", "ready", "finished", "failure", "graphics"],
         "properties": {
             "state": {"type": "string", "enum": ["starting", "running", "stopping", "stopped", "failed"]},
             "completed_steps": {"type": "integer", "minimum": 0},
+            "graphics": {"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,
+                "required":["presented_frames","last_outcome"],"properties":{
+                    "presented_frames":{"type":"integer","minimum":0},
+                    "last_outcome":{"type":"string","enum":["not_attempted","presented","zero_sized","timeout","occluded","initialization_failed","render_failed"]}}}]},
             "ready": {"type": "boolean"}, "finished": {"type": "boolean"},
             "failure": {"type": ["string", "null"]}
         }
@@ -179,6 +124,7 @@ fn output_schema(name: &str) -> Value {
     }
 }
 
+#[cfg(any(feature = "bridge", test))]
 fn snapshot(status: HostStatus) -> Value {
     let state = match status.state {
         HostState::Starting => "starting",
@@ -190,6 +136,7 @@ fn snapshot(status: HostStatus) -> Value {
     json!({
         "state": state,
         "completed_steps": status.completed_steps,
+        "graphics": status.graphics.map(|g| json!({"presented_frames":g.presented_frames,"last_outcome":g.last_outcome.as_str()})),
         "ready": status.is_ready(),
         "finished": status.is_finished(),
         "failure": status.failure,
@@ -202,28 +149,52 @@ mod tests {
     use crate::control_channel;
 
     #[test]
+    fn routed_status_reports_optional_graphics_with_stable_outcomes() {
+        let (control, mut host) = control_channel();
+        let tools = ToolExtensions::default();
+        assert!(snapshot(control.status())["graphics"].is_null());
+        host.graphics(crate::GraphicsOutcome::Presented);
+        let result = invoke_host_tool(&control, &tools, CallToolRequestParams::new("status"));
+        assert_eq!(
+            result.structured_content.unwrap()["graphics"],
+            json!({"presented_frames":1,"last_outcome":"presented"})
+        );
+        host.finish(Ok(()));
+    }
+
+    #[test]
+    fn connection_catalog_includes_host_and_game_tools() {
+        let mut tools = ToolExtensions::default();
+        tools
+            .register(Tool::new("game_query", "Query", Map::new()), |_| {
+                CallToolResult::structured(json!({}))
+            })
+            .unwrap();
+        let catalog = host_tool_catalog(&tools);
+        assert_eq!(
+            catalog
+                .iter()
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>(),
+            ["status", "stop", "game_query"]
+        );
+    }
+
+    #[test]
     fn failed_host_is_readable_but_stop_is_a_tool_error() {
         let (control, endpoint) = control_channel();
         endpoint.finish(Err("startup failed".into()));
-        let adapter = Adapter(control, ToolExtensions::default());
-        let status = adapter.invoke(CallToolRequestParams::new("status"));
+        let tools = ToolExtensions::default();
+        let invoke = |request| invoke_host_tool(&control, &tools, request);
+        let status = invoke(CallToolRequestParams::new("status"));
         assert_eq!(status.is_error, Some(false));
         let status = status.structured_content.unwrap();
         assert_eq!(status["state"], "failed");
         assert_eq!(status["failure"], "startup failed");
         assert_eq!(status["finished"], true);
-        let stop = adapter.invoke(CallToolRequestParams::new("stop"));
+        let stop = invoke(CallToolRequestParams::new("stop"));
         assert_eq!(stop.is_error, Some(true));
         assert_eq!(stop.structured_content.unwrap()["accepted"], false);
-    }
-
-    #[test]
-    fn adapter_disconnect_requests_stop_with_another_observer_alive() {
-        let (control, mut endpoint) = control_channel();
-        drop(Adapter(control.clone(), ToolExtensions::default()));
-        assert!(endpoint.stop_requested());
-        endpoint.finish(Ok(()));
-        assert!(control.status().is_finished());
     }
 
     #[test]
@@ -251,29 +222,25 @@ mod tests {
                 .is_err()
         );
         let (control, mut endpoint) = control_channel();
-        let adapter = Adapter(control, tools);
+        let invoke = |request| invoke_host_tool(&control, &tools, request);
         let mut request = CallToolRequestParams::new("game_echo");
         request.arguments = Some(json!({"message": "hello"}).as_object().unwrap().clone());
         assert_eq!(
-            adapter.invoke(request).structured_content.unwrap()["message"],
+            invoke(request).structured_content.unwrap()["message"],
             "hello"
         );
         assert_eq!(
-            adapter
-                .invoke(CallToolRequestParams::new("game_echo"))
-                .is_error,
+            invoke(CallToolRequestParams::new("game_echo")).is_error,
             Some(true)
         );
         assert_eq!(
-            adapter
-                .invoke(CallToolRequestParams::new("status"))
+            invoke(CallToolRequestParams::new("status"))
                 .structured_content
                 .unwrap()["state"],
             "starting"
         );
         assert_eq!(
-            adapter
-                .invoke(CallToolRequestParams::new("stop"))
+            invoke(CallToolRequestParams::new("stop"))
                 .structured_content
                 .unwrap()["accepted"],
             true

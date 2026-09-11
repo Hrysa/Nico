@@ -971,6 +971,7 @@ dependencies = [
  "minimal-game-shared",
  "nico-input",
  "nico-launch",
+ "nico-ops",
  "nico-runtime",
  "nico-winit",
  "tracing",
@@ -985,7 +986,6 @@ dependencies = [
  "nico-launch",
  "nico-ops",
  "nico-runtime",
- "serde_json",
  "tracing",
 ]
 
@@ -993,7 +993,20 @@ dependencies = [
 name = "minimal-game-shared"
 version = "0.1.0"
 dependencies = [
+ "nico-ops",
  "nico-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "mio"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
+dependencies = [
+ "libc",
+ "wasi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1069,6 +1082,15 @@ name = "nico-assets"
 version = "0.1.0"
 
 [[package]]
+name = "nico-bridge"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "nico-ops",
+ "serde_json",
+]
+
+[[package]]
 name = "nico-ecs"
 version = "0.1.0"
 dependencies = [
@@ -1084,8 +1106,12 @@ name = "nico-launch"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "nico-input",
  "nico-ops",
  "nico-runtime",
+ "nico-winit",
+ "serde_json",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -1094,6 +1120,7 @@ name = "nico-ops"
 version = "0.1.0"
 dependencies = [
  "rmcp",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1146,6 +1173,7 @@ name = "nico-winit"
 version = "0.1.0"
 dependencies = [
  "nico-input",
+ "nico-ops",
  "nico-presentation",
  "nico-render",
  "nico-rhi",
@@ -2048,6 +2076,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "socket2"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "spin"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2192,8 +2230,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "bytes",
+ "libc",
+ "mio",
  "pin-project-lite",
+ "socket2",
  "tokio-macros",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2374,6 +2416,12 @@ dependencies = [
  "same-file",
  "winapi-util",
 ]
+
+[[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"

@@ -1,0 +1,15 @@
+[package]
+name = "nico-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+nico-ops = { path = "../../crates/nico-ops", features = ["bridge"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

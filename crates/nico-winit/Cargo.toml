@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nico-input = { path = "../nico-input" }
+nico-ops = { path = "../nico-ops" }
 nico-presentation = { path = "../nico-presentation" }
 nico-render = { path = "../nico-render" }
 nico-rhi = { path = "../nico-rhi" }

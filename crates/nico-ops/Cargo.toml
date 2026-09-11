@@ -6,11 +6,13 @@ license.workspace = true
 
 [features]
 default = []
-mcp = ["dep:rmcp", "dep:serde_json", "dep:tokio"]
+mcp = ["dep:rmcp", "dep:serde_json"]
+bridge = ["mcp", "dep:tokio", "rmcp/transport-io", "dep:serde", "tokio/net", "tokio/sync", "tokio/io-util", "tokio/macros"]
 
 [dependencies]
-rmcp = { version = "3.2", default-features = false, features = ["server", "transport-io"], optional = true }
+rmcp = { version = "3.2", default-features = false, features = ["server"], optional = true }
 serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 tokio = { version = "1", features = ["rt", "time"], optional = true }
 
 [lints]

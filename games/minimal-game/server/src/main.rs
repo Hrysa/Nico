@@ -29,11 +29,21 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "minimal game server starting"
     );
 
-    let mut app = AppBuilder::new()
+    let builder = AppBuilder::new()
         .with_fixed_step(tick_interval)
-        .add_plugin(MinimalGamePlugin)
-        .build()?;
-    ServerHost::new(args.server).run(&mut app)?;
+        .add_plugin(MinimalGamePlugin);
+    let (builder, tools) = if args.server.bridge_address().is_some() {
+        let (builder, tools) = minimal_game_shared::tools::register(builder)?;
+        (builder, Some(tools))
+    } else {
+        (builder, None)
+    };
+    let mut app = builder.build()?;
+    let mut host = ServerHost::new(args.server).with_game_identity("minimal_game", "1");
+    if let Some(tools) = tools {
+        host = host.with_mcp_tools(tools);
+    }
+    host.run(&mut app)?;
     tracing::info!("minimal game server stopped");
     Ok(())
 }

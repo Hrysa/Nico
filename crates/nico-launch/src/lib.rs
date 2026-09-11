@@ -6,8 +6,14 @@
 
 use std::error::Error;
 
+#[cfg(any(feature = "client", feature = "server"))]
+mod diagnostics;
+
 #[cfg(feature = "server")]
 pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
 
 use clap::{Args, ValueEnum};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt::format::FmtSpan};
@@ -64,11 +70,15 @@ pub fn init_logging(log_level: Option<LogLevel>) -> Result<(), Box<dyn Error + S
             .from_env_lossy(),
     };
 
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(filter)
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
-        .try_init()?;
+    use tracing_subscriber::prelude::*;
+    let subscriber = tracing_subscriber::registry().with(filter).with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE),
+    );
+    #[cfg(any(feature = "client", feature = "server"))]
+    let subscriber = subscriber.with(diagnostics::capture_layer());
+    subscriber.try_init()?;
     Ok(())
 }
 

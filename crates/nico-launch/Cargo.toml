@@ -6,13 +6,18 @@ license.workspace = true
 
 [features]
 default = []
-server = ["dep:nico-ops", "dep:nico-runtime"]
+server = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime"]
+client = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
 
 [dependencies]
 clap.workspace = true
-nico-ops = { path = "../nico-ops", features = ["mcp"], optional = true }
+nico-ops = { path = "../nico-ops", features = ["bridge"], optional = true }
 nico-runtime = { path = "../nico-runtime", optional = true }
+nico-winit = { path = "../nico-winit", optional = true }
+nico-input = { path = "../nico-input", optional = true }
 tracing-subscriber.workspace = true
+tracing.workspace = true
+serde_json = { version = "1", optional = true }
 
 [lints]
 workspace = true

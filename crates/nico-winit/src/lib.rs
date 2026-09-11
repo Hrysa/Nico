@@ -12,8 +12,9 @@ use std::{
 use nico_input::{
     InputControlId, InputDeviceId, InputDeviceKind, InputEvent, InputManager, InputState,
 };
+use nico_ops::{GraphicsOutcome, HostEndpoint};
 use nico_presentation::{Presentation, RenderFrame};
-use nico_render::BootstrapRenderPipeline;
+use nico_render::{BootstrapRenderPipeline, RenderStatus};
 use nico_rhi::{Extent3d, RhiSurface};
 use nico_rhi_wgpu::{WgpuBackend, WgpuDevice};
 use nico_runtime::{App, events::Event};
@@ -67,7 +68,7 @@ impl NativeClientConfig {
         }
     }
 
-    /// Sets an optional presented-frame limit for executable smoke checks.
+    /// Sets an optional session-frame limit, including skipped GPU presentations.
     #[must_use]
     pub const fn with_smoke_frames(mut self, smoke_frames: Option<u64>) -> Self {
         self.smoke_frames = smoke_frames;
@@ -176,6 +177,7 @@ struct NativeClientHost {
     title: String,
     bootstrap_shader_path: PathBuf,
     dispatch_input: Box<InputDispatcher>,
+    operations: Option<HostEndpoint>,
 }
 
 impl NativeClientHost {
@@ -198,6 +200,7 @@ impl NativeClientHost {
             title: config.title,
             bootstrap_shader_path: resolve_asset_path(&config.bootstrap_shader_path),
             dispatch_input,
+            operations: None,
         }
     }
 
@@ -208,11 +211,62 @@ impl NativeClientHost {
     }
 
     fn stop(&mut self, event_loop: &ActiveEventLoop) {
+        self.shutdown();
+        event_loop.exit();
+    }
+
+    fn shutdown(&mut self) {
         self.active = false;
+        if let Some(operations) = &mut self.operations {
+            operations.stopping();
+        }
         if let Err(error) = self.session.shutdown() {
             self.record_failure(error);
         }
-        event_loop.exit();
+    }
+
+    // Called on the host thread, independently of redraws and simulation ticks.
+    fn poll_operations(&mut self) -> bool {
+        if self.session.state == SessionState::Stopped {
+            return true;
+        }
+        if self
+            .operations
+            .as_mut()
+            .is_some_and(HostEndpoint::stop_requested)
+        {
+            self.shutdown();
+            return true;
+        }
+        false
+    }
+
+    fn report_render(&mut self, status: RenderStatus) {
+        if let Some(operations) = &mut self.operations {
+            operations.graphics(match status {
+                RenderStatus::Presented => GraphicsOutcome::Presented,
+                RenderStatus::ZeroSized => GraphicsOutcome::ZeroSized,
+                RenderStatus::Timeout => GraphicsOutcome::Timeout,
+                RenderStatus::Occluded => GraphicsOutcome::Occluded,
+            });
+            if status == RenderStatus::Presented {
+                operations.running(self.session.presented_frames);
+            }
+        }
+    }
+
+    fn report_graphics_failure(&mut self, outcome: GraphicsOutcome) {
+        if let Some(operations) = &mut self.operations {
+            operations.graphics(outcome);
+        }
+    }
+
+    fn present(&mut self, delta: Duration) -> NativeClientResult<()> {
+        self.session.present(delta)?;
+        if let Some(operations) = &mut self.operations {
+            operations.progress(self.session.presented_frames);
+        }
+        Ok(())
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl Error + Send + Sync + 'static) {
@@ -229,8 +283,13 @@ impl NativeClientHost {
     }
 
     fn finish(mut self) -> NativeClientResult<App> {
-        if let Err(error) = self.session.shutdown() {
-            self.record_failure(error);
+        self.shutdown();
+        if let Some(operations) = self.operations.take() {
+            operations.finish(
+                self.failure
+                    .as_ref()
+                    .map_or(Ok(()), |error| Err(error.to_string())),
+            );
         }
         if let Some(error) = self.failure {
             Err(error)
@@ -349,8 +408,23 @@ fn pointer_button_control(button: MouseButton) -> InputControlId {
     InputControlId::new(value)
 }
 
-impl ApplicationHandler for NativeClientHost {
+#[derive(Debug)]
+enum HostEvent {
+    Control,
+}
+
+impl ApplicationHandler<HostEvent> for NativeClientHost {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: HostEvent) {
+        if self.poll_operations() {
+            event_loop.exit();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.poll_operations() {
+            event_loop.exit();
+            return;
+        }
         if self.failure.is_some() {
             event_loop.exit();
             return;
@@ -382,6 +456,7 @@ impl ApplicationHandler for NativeClientHost {
             let shader_bytes = match fs::read(&self.bootstrap_shader_path) {
                 Ok(shader_bytes) => shader_bytes,
                 Err(error) => {
+                    self.report_graphics_failure(GraphicsOutcome::InitializationFailed);
                     let path = self.bootstrap_shader_path.display();
                     self.fail(
                         event_loop,
@@ -410,18 +485,24 @@ impl ApplicationHandler for NativeClientHost {
                             self.renderer = Some(renderer);
                         }
                         Err(error) => {
+                            self.report_graphics_failure(GraphicsOutcome::InitializationFailed);
                             self.fail(event_loop, error);
                             return;
                         }
                     }
                 }
                 Err(error) => {
+                    self.report_graphics_failure(GraphicsOutcome::InitializationFailed);
                     self.fail(event_loop, error);
                     return;
                 }
             }
         }
 
+        if self.poll_operations() {
+            event_loop.exit();
+            return;
+        }
         if let Err(error) = self.session.start() {
             self.record_failure(error);
             self.stop(event_loop);
@@ -430,6 +511,9 @@ impl ApplicationHandler for NativeClientHost {
 
         let now = std::time::Instant::now();
         self.active = true;
+        if let Some(operations) = &mut self.operations {
+            operations.activity(true);
+        }
         self.last_frame = Some(now);
         self.next_frame = Some(now);
         if let Some(window) = &self.window {
@@ -443,8 +527,15 @@ impl ApplicationHandler for NativeClientHost {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        if self.poll_operations() {
+            event_loop.exit();
+            return;
+        }
         self.active = false;
         self.last_frame = None;
+        if let Some(operations) = &mut self.operations {
+            operations.activity(false);
+        }
         self.next_frame = None;
         event_loop.set_control_flow(ControlFlow::Wait);
         tracing::info!("client suspended");
@@ -456,6 +547,10 @@ impl ApplicationHandler for NativeClientHost {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if self.poll_operations() {
+            event_loop.exit();
+            return;
+        }
         if !self.owns_window(window_id) {
             return;
         }
@@ -537,16 +632,20 @@ impl ApplicationHandler for NativeClientHost {
                     .map_or(Duration::ZERO, |last_frame| {
                         now.saturating_duration_since(last_frame)
                     });
-                if let Err(error) = self.session.present(delta) {
+                if let Err(error) = self.present(delta) {
                     self.record_failure(error);
                     self.stop(event_loop);
                     return;
                 }
                 if let (Some(graphics), Some(renderer)) = (&mut self.graphics, &mut self.renderer) {
                     let (device, queue, surface) = graphics.parts();
-                    if let Err(error) = renderer.render(device, queue, surface) {
-                        self.fail(event_loop, error);
-                        return;
+                    match renderer.render(device, queue, surface) {
+                        Ok(status) => self.report_render(status),
+                        Err(error) => {
+                            self.report_graphics_failure(GraphicsOutcome::RenderFailed);
+                            self.fail(event_loop, error);
+                            return;
+                        }
                     }
                 }
                 self.next_frame = now.checked_add(FRAME_INTERVAL);
@@ -584,6 +683,10 @@ impl ApplicationHandler for NativeClientHost {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.poll_operations() {
+            event_loop.exit();
+            return;
+        }
         if !self.active {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
@@ -604,10 +707,7 @@ impl ApplicationHandler for NativeClientHost {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        self.active = false;
-        if let Err(error) = self.session.shutdown() {
-            self.record_failure(error);
-        }
+        self.shutdown();
     }
 }
 
@@ -618,7 +718,34 @@ impl ApplicationHandler for NativeClientHost {
 pub fn run_native_client<C: Event>(
     app: App,
     config: NativeClientConfig,
+    map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
+) -> NativeClientResult<App> {
+    run_client(app, config, map_input, None)
+}
+
+/// Runs a native client with in-process status and orderly-stop control.
+///
+/// Readiness requires App startup and the first `RenderStatus::Presented` result.
+/// `completed_steps` counts session frames, including skipped GPU presentations;
+/// it can advance before readiness. Readiness remains latched while suspended,
+/// until shutdown begins; `active` is false while the host is suspended.
+/// Stop and last-controller disconnect wake the event loop even without redraws.
+/// Shutdown executes on the host thread and cannot interrupt a blocked callback.
+/// Final status remains readable after return and does not imply process exit.
+pub fn run_native_client_with_operations<C: Event>(
+    app: App,
+    config: NativeClientConfig,
+    map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
+    operations: HostEndpoint,
+) -> NativeClientResult<App> {
+    run_client(app, config, map_input, Some(operations))
+}
+
+fn run_client<C: Event>(
+    app: App,
+    config: NativeClientConfig,
     mut map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
+    operations: Option<HostEndpoint>,
 ) -> NativeClientResult<App> {
     let mut commands = Vec::new();
     let dispatch_input = move |input: &InputState, app: &mut App| {
@@ -628,9 +755,26 @@ pub fn run_native_client<C: Event>(
             app.send_event(command);
         }
     };
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
     let mut host = NativeClientHost::new(app, config, Box::new(dispatch_input));
+    host.operations = operations;
+    if let Some(operations) = &mut host.operations {
+        operations.graphics(GraphicsOutcome::NotAttempted);
+    }
+    let event_loop = match EventLoop::<HostEvent>::with_user_event().build() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            host.record_failure(Box::new(error));
+            return host.finish();
+        }
+    };
+    event_loop.set_control_flow(ControlFlow::Wait);
+    if let Some(operations) = &mut host.operations {
+        let proxy = event_loop.create_proxy();
+        operations.set_wakeup(move || {
+            // Closure racing with loop exit is harmless: the stop stays latched.
+            let _ = proxy.send_event(HostEvent::Control);
+        });
+    }
     let event_loop_result = event_loop.run_app(&mut host);
     if let Err(error) = event_loop_result {
         host.record_failure(Box::new(error));
@@ -640,12 +784,230 @@ pub fn run_native_client<C: Event>(
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
 
-    use nico_runtime::{AppBuilder, AppState};
+    use nico_ops::GraphicsOutcome;
+    use nico_ops::{HostState, control_channel};
+    use nico_render::RenderStatus;
+    use nico_runtime::{App, AppBuilder, AppState, RuntimeError, Stage};
     use winit::keyboard::{KeyCode, PhysicalKey};
 
-    use super::{ClientSession, NativeClientConfig, SessionState, keyboard, keyboard_control};
+    use super::{
+        ClientSession, NativeClientConfig, NativeClientHost, NativeClientResult, SessionState,
+        keyboard, keyboard_control,
+    };
+
+    fn test_host(app: App) -> NativeClientHost {
+        NativeClientHost::new(
+            app,
+            NativeClientConfig::new("test", "unused.wgsl"),
+            Box::new(|_, _| {}),
+        )
+    }
+
+    #[test]
+    fn graphics_failure_does_not_count_a_presentation_or_claim_readiness() -> NativeClientResult<()>
+    {
+        for outcome in [
+            GraphicsOutcome::InitializationFailed,
+            GraphicsOutcome::RenderFailed,
+        ] {
+            let (control, operations) = control_channel();
+            let mut host = test_host(AppBuilder::new().build()?);
+            host.operations = Some(operations);
+            host.report_graphics_failure(outcome);
+            host.record_failure(Box::new(std::io::Error::other("graphics failed")));
+            assert!(host.finish().is_err());
+            let status = control.status();
+            assert_eq!(status.graphics.unwrap().presented_frames, 0);
+            assert_eq!(status.graphics.unwrap().last_outcome, outcome);
+            assert_eq!(status.state, HostState::Failed);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn client_readiness_requires_gpu_presentation_and_counts_skipped_session_frames()
+    -> NativeClientResult<()> {
+        let (control, operations) = control_channel();
+        let mut host = test_host(AppBuilder::new().build()?);
+        host.operations = Some(operations);
+        host.session.start()?;
+        for status in [
+            RenderStatus::ZeroSized,
+            RenderStatus::Timeout,
+            RenderStatus::Occluded,
+        ] {
+            host.present(Duration::from_millis(17))?;
+            host.report_render(status);
+            assert_eq!(control.status().state, HostState::Starting);
+        }
+        assert_eq!(control.status().completed_steps, 3);
+        assert_eq!(control.status().graphics.unwrap().presented_frames, 0);
+        host.present(Duration::from_millis(17))?;
+        host.report_render(RenderStatus::Presented);
+        assert!(control.status().is_ready());
+        host.present(Duration::from_millis(17))?;
+        host.report_render(RenderStatus::Timeout);
+        assert!(control.status().is_ready());
+        assert_eq!(control.status().completed_steps, 5);
+        let graphics = control.status().graphics.unwrap();
+        assert_eq!(graphics.presented_frames, 1);
+        assert_eq!(graphics.last_outcome, GraphicsOutcome::Timeout);
+        host.finish()?;
+        assert_eq!(control.status().graphics, Some(graphics));
+        assert_eq!(control.status().state, HostState::Stopped);
+        Ok(())
+    }
+
+    #[test]
+    fn suspended_client_stops_on_wakeup_without_another_tick() -> NativeClientResult<()> {
+        for disconnected in [false, true] {
+            let (control, mut operations) = control_channel();
+            let (sender, wakes) = mpsc::channel();
+            operations.set_wakeup(move || {
+                let _ = sender.send(());
+            });
+            wakes.recv_timeout(Duration::from_secs(3))?;
+            let mut builder = AppBuilder::new();
+            builder.insert_resource(0_u32);
+            builder.add_system(Stage::Update, "must not tick", |_| {
+                panic!("control must not tick")
+            });
+            builder.add_system(Stage::Shutdown, "count shutdown", |context| {
+                *context.world.resource_mut::<u32>()? += 1;
+                Ok(())
+            });
+            let mut host = test_host(builder.build()?);
+            host.operations = Some(operations);
+            host.session.start()?;
+            host.active = false;
+            let worker = thread::spawn(move || {
+                if !disconnected {
+                    control.request_stop().unwrap();
+                    control.request_stop().unwrap();
+                    Some(control)
+                } else {
+                    drop(control);
+                    None
+                }
+            });
+            wakes.recv_timeout(Duration::from_secs(3))?;
+            assert!(host.poll_operations());
+            host.shutdown(); // Window-close/exit can race with control.
+            assert!(host.poll_operations());
+            assert_eq!(host.session.presented_frames, 0);
+            let control = worker.join().unwrap();
+            let app = host.finish()?;
+            assert_eq!(*app.world().resource::<u32>()?, 1);
+            if let Some(control) = control {
+                assert_eq!(control.status().state, HostState::Stopped);
+                control.request_stop()?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stop_before_client_start_skips_game_startup() -> NativeClientResult<()> {
+        let (control, operations) = control_channel();
+        control.request_stop()?;
+        let mut builder = AppBuilder::new();
+        builder.add_system(Stage::Startup, "must not start", |_| {
+            panic!("stop precedes startup")
+        });
+        let mut host = test_host(builder.build()?);
+        host.operations = Some(operations);
+        assert!(host.poll_operations());
+        host.finish()?;
+        assert_eq!(control.status().state, HostState::Stopped);
+        assert_eq!(control.status().completed_steps, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn client_startup_tick_and_shutdown_failures_publish_failure() -> NativeClientResult<()> {
+        for stage in [Stage::Startup, Stage::Update, Stage::Shutdown] {
+            let (control, operations) = control_channel();
+            let mut builder = AppBuilder::new();
+            builder.add_system(stage, "intentional failure", |_| {
+                Err(RuntimeError::MissingResource("test failure"))
+            });
+            let mut host = test_host(builder.build()?);
+            host.operations = Some(operations);
+            match host.session.start() {
+                Err(error) => host.record_failure(error),
+                Ok(()) => {
+                    if let Err(error) = host.present(Duration::from_millis(17)) {
+                        host.record_failure(error);
+                    } else {
+                        host.report_render(RenderStatus::Presented);
+                    }
+                }
+            }
+            assert!(host.finish().is_err());
+            assert_eq!(control.status().state, HostState::Failed);
+            assert!(control.status().failure.unwrap().contains("test failure"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn graphics_or_event_loop_failure_is_retained_after_shutdown() -> NativeClientResult<()> {
+        let (control, operations) = control_channel();
+        let mut host = test_host(AppBuilder::new().build()?);
+        host.operations = Some(operations);
+        host.record_failure(std::io::Error::other("graphics startup failed").into());
+        host.shutdown();
+        host.shutdown();
+        assert!(host.finish().is_err());
+        assert_eq!(
+            control.status().failure.as_deref(),
+            Some("graphics startup failed")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn client_control_preserves_gameplay_for_identical_tick_sequences() -> NativeClientResult<()> {
+        for controlled in [false, true] {
+            let (control, operations) = control_channel();
+            let mut builder = AppBuilder::new().with_fixed_step(Duration::from_millis(10));
+            builder.insert_resource(Vec::<&'static str>::new());
+            for (stage, name) in [
+                (Stage::FixedUpdate, "fixed"),
+                (Stage::Update, "update"),
+                (Stage::Shutdown, "shutdown"),
+            ] {
+                builder.add_system(stage, name, move |context| {
+                    context.world.resource_mut::<Vec<&str>>()?.push(name);
+                    Ok(())
+                });
+            }
+            let mut host = test_host(builder.build()?);
+            if controlled {
+                host.operations = Some(operations);
+            }
+            host.session.start()?;
+            for _ in 0..3 {
+                assert!(!host.poll_operations());
+                host.present(Duration::from_millis(10))?;
+                host.report_render(RenderStatus::Presented);
+            }
+            let app = host.finish()?;
+            assert_eq!(
+                app.world().resource::<Vec<&str>>()?,
+                &[
+                    "fixed", "update", "fixed", "update", "fixed", "update", "shutdown"
+                ]
+            );
+            if controlled {
+                assert_eq!(control.status().completed_steps, 3);
+                assert_eq!(control.status().graphics.unwrap().presented_frames, 3);
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn client_session_starts_ticks_and_shuts_down_once()
