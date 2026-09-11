@@ -16,5 +16,6 @@ See [the shader workflow](../../../README.md#shader-workflow).
 
 Future loading must preserve the logic/presentation split and follow the
 [measurement and AI-operation requirements](../../../docs/architecture.md).
-The first service-backed asset load follows the AI-operations milestone
-in [the roadmap](../../../docs/roadmap.md).
+The first service-backed asset load is scoped by
+[roadmap phase 3](../../../docs/roadmap.md#3-load-game-assets); concrete next actions
+belong in [TODO](../../../TODO.md#next-asset-loading).

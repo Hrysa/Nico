@@ -1,7 +1,15 @@
-# AI-accessible client and server operations
+# AI-accessible client and server operations (historical plan)
 
-- Status: minimal host control and server MCP `status`/`stop` implemented;
-  client integration, process supervision, and diagnostics forwarding remain planned.
+Implementation update (2026-09-11): the supervisor/process-launch proposal below
+is superseded by [the independent-game bridge plan](2026-09-11-mcp-bridge.md).
+The in-process control remains implemented; the direct server MCP adapter and
+`--mcp-stdio` flag were subsequently removed. The bridge never launches games, and
+bridge disconnect does not stop them. All status and proposed capabilities below
+are historical, not the current delivery contract.
+
+- Historical status: minimal host control, server MCP `status`/`stop`, and optional in-process
+  native client control implemented; client transport, process supervision, and
+  diagnostics forwarding remain planned.
 - Date: 2026-09-10
 - Scope: local development processes launched by Nico tooling.
 - Profiling: deferred to future experimental XRay use. This plan adds no
@@ -24,6 +32,13 @@ closes stdin to exit. Stop acknowledges acceptance; it does not await shutdown.
 EOF also requests host stop. Stdout contains MCP only; diagnostics use stderr.
 Real-process tests cover this flow, invalid calls, repeated stop, and disconnect
 before/after initialization. The in-process controlled example remains available.
+
+Implementation update (2026-09-11): `run_native_client_with_operations` connects
+the existing endpoint to Winit user-event wakeups and host-thread shutdown.
+Readiness requires actual GPU presentation; session progress can advance before
+readiness. The minimal snapshot latches readiness across suspension and does not
+yet expose activity or a GPU frame counter. The `controlled_client` example and
+focused tests validate this slice; see the roadmap for the recorded native run.
 
 Everything below describes the larger **future supervisor milestone**, including
 its proposed seven tools and private child protocol. Those are not requirements
@@ -83,7 +98,7 @@ Proposed ownership:
 | Game entry points | Build the App, delegate to engine hosts, optionally register game tools |
 | `apps/nico-mcp` (new) | MCP SDK integration, target registry, process ownership, deadlines, and retained diagnostics |
 
-`nico-ops` currently has the server as its first consumer; the client and
+`nico-ops` now has server and native client consumers; client transport and the
 supervisor will follow. Keep its
 protocol and native I/O in separate modules; do not invent a universal engine
 command interface. The existing runtime service bridge remains for domain-owned

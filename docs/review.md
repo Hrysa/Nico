@@ -1,11 +1,11 @@
 # Architecture review guide
 
-Use this guide when reviewing changes to Nico. [Architecture](architecture.md)
-defines ownership; [the roadmap](roadmap.md) records milestone status;
-[TODO](../TODO.md) tracks current work. Accepted provider decisions are recorded
-in [ADR 0001](decisions/0001-native-client-event-loop.md),
-[ADR 0002](decisions/0002-nico-rhi-wgpu-backend.md), and
-[ADR 0003](decisions/0003-render-pipeline-layer.md).
+Use this guide when reviewing changes to Nico. [Architecture](architecture.md) defines
+ownership; [the roadmap](roadmap.md) records phase status and evidence;
+[TODO](../TODO.md) tracks current work. Accepted provider decisions are recorded in [ADR
+0001](decisions/0001-native-client-event-loop.md), [ADR
+0002](decisions/0002-nico-rhi-wgpu-backend.md), and [ADR
+0003](decisions/0003-render-pipeline-layer.md).
 
 ## Ownership and contracts
 
@@ -30,30 +30,32 @@ in [ADR 0001](decisions/0001-native-client-event-loop.md),
 
 ## Measurement and profiling
 
-Profiling remains a cross-library requirement, with experimental Rust/LLVM XRay
-chosen for future automatic function capture. Implementation, toolchain changes,
-and compatibility investigation are deferred; the current operation milestone
-must not acquire a profiling dependency.
+Profiling remains a cross-library requirement, with experimental Rust/LLVM XRay chosen
+for future automatic function capture. Implementation, toolchain changes, and
+compatibility investigation are deferred; client/server operation work must not acquire
+a profiling dependency.
 
 When profiling work resumes, review automatic capture coverage, call hierarchy,
-inclusive/self timings, invocation counts, frame/thread context, overhead, and
-capture completeness. Distinguish async polls from calls, elapsed time from
-actual on-CPU time, and CPU timings from GPU timings. Preserve authoritative
-results for identical input/tick sequences.
+inclusive/self timings, invocation counts, frame/thread context, overhead, and capture
+completeness. Distinguish async polls from calls, elapsed time from actual on-CPU time,
+and CPU timings from GPU timings. Preserve authoritative results for identical
+input/tick sequences.
 
-Existing tracing supports diagnostics. Do not describe XRay integration or
-validation as complete. Performance fixes still require measurements identifying
-the bottleneck and a repeatable before/after comparison.
+Existing tracing supports diagnostics. Do not describe XRay integration or validation as
+complete. Performance fixes still require measurements identifying the bottleneck and a
+repeatable before/after comparison.
 
 ## AI-accessible operations
 
-The minimal in-process status/stop core and headless server integration exist.
-The headless server also exposes MCP `status` and `stop` through `--mcp-stdio`.
-The engine owns the service and host lifecycle; games can register additional tools.
-Native client integration, process supervision, and diagnostics forwarding remain planned.
-Readiness, diagnostics, and orderly shutdown form the initial baseline; profiling
-operations are deferred until that capability is available.
+Codex connects to the bridge; users launch games independently. Host and game APIs come
+from connection registrations. Bridge disconnect must leave gameplay running. Status,
+diagnostic retrieval, and graphics reporting are implemented; profiling remains
+deferred.
 
+- Cached schemas are distinct from live capabilities; disconnected instances return
+  explicit unavailable errors and old IDs never route to replacement connections.
+- Catalog changes emit notifications; fixed discovery/invocation tools remain usable
+  without automatic client refresh.
 - Client/server capabilities, arguments, results, and errors are machine-readable.
 - Asynchronous operations have request correlation and explicit completion/timeout.
 - Process and native-window operations remain host/tooling responsibilities.
@@ -61,19 +63,23 @@ operations are deferred until that capability is available.
 - Inspection returns owned snapshots, and collection/queues remain bounded.
 - Tests cover both hosts, unsupported/malformed requests, overload, disconnect,
   failed startup, and shutdown with pending work.
+- Diagnostic pagination reports eviction and truncation; cursors remain
+  process-local, and filtered events are not counted as retention loss.
+- Presentation counts remain separate from session progress and readiness.
 - Document only implemented tools and flags as available operations.
 
 ## Validation and documentation
 
-Use the relevant checks from [the repository guidelines](../AGENTS.md).
-For graphics changes, combine automated tests with bounded executable coverage
-and appropriate interactive checks. Record which platform/backend was exercised.
+Use the relevant checks from [the repository guidelines](../AGENTS.md). For graphics
+changes, combine automated tests with bounded executable coverage and appropriate
+interactive checks. Record which platform/backend was exercised.
 
-The current smoke counter measures client-session frames rather than confirmed
-GPU presentations. Windows/macOS interactive resize and minimize/restore remain
-open checks. Do not infer minimized-window behavior from suspension tests alone.
+The current smoke counter measures client-session frames rather than confirmed GPU
+presentations. Windows/macOS interactive resize and minimize/restore remain open checks.
+Do not infer minimized-window behavior from suspension tests alone.
 
-Keep README focused on current usage, architecture on contracts, roadmap on
-milestones, and TODO on actionable work. Preserve historical ADR rationale and
-label later implementation updates. Keep completed, unverified, and deferred work
-distinct.
+Apply [documentation ownership](../AGENTS.md#documentation-ownership): task checklists
+belong in TODO, phase criteria and evidence in the roadmap. Remove stale claims and
+broken links when updating a capability. Preserve historical ADR rationale, label dated
+implementation updates, and mark superseded plans clearly. Keep completed, unverified,
+and deferred work distinct.

@@ -85,4 +85,4 @@ durations must be distinguished from GPU execution measurements. See
 
 Surface behavior has automated coverage and a recorded bounded Windows GPU
 smoke run. Interactive Windows/macOS validation remains in
-[TODO](../../TODO.md#outstanding-host-validation).
+[TODO](../../TODO.md#native-host-validation).

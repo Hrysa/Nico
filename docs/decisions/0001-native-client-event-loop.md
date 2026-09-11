@@ -106,6 +106,17 @@ profiling capture is deferred to future experimental XRay integration.
 AI-accessible host operations are next and keep protocol dependencies out of runtime. See
 [the roadmap](../roadmap.md) and [current tasks](../../TODO.md).
 
+## Implementation update (2026-09-11)
+
+Independent-game MCP operations, structured diagnostics, and separate successful
+presentation counts are implemented. The bridge discovers host/game tools from
+connection registrations and never launches games or stops them on disconnect.
+The earlier direct server MCP transport was removed. Protocol dependencies remain
+outside runtime. Windows/Vulkan smoke and live MCP results are recorded in
+[roadmap phase 2](../roadmap.md#2-control-clients-and-servers-with-ai).
+Interactive platform checks remain in [TODO](../../TODO.md#native-host-validation).
+This updates implementation status without changing the event-loop decision.
+
 ## Primary references
 
 - [Winit crate documentation](https://docs.rs/winit/0.30.13/winit/)
