@@ -8,7 +8,7 @@ pixel, provided under the repository license. The headless
 consumes it; the native client also shares it between the movable world sprite and
 fixed HUD icon. The 3D HUD keeps that transparency fixture, while the cube uses
 [`textures/uv-checker.png`](textures/uv-checker.png), an original opaque 128x128
-checker with A1¨CD4 labels and red/green/blue/yellow corner markers, under the repository
+checker with A1â€“D4 labels and red/green/blue/yellow corner markers, under the repository
 license. Columns increase U and rows increase V. The 3D sample loads
 [`meshes/cube.glb`](meshes/cube.glb), an original 24-vertex, 36-index cube fixture
 provided under the repository license. It contains positions and UVs with no material.

@@ -4,9 +4,10 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Next: paired rendering samples
+## Next: define the reference game
 
-Selected scope and acceptance: [roadmap phase 4](docs/roadmap.md#4-display-the-game-world).
+The paired rendering samples are implemented. Next scope and acceptance:
+[roadmap phase 5](docs/roadmap.md#5-make-a-playable-local-game).
 
 - [ ] Define the full reference game's mechanic, platforms, and content scale
       before expanding beyond these samples.
@@ -34,8 +35,8 @@ Only take these up when a concrete consumer needs them:
       apply simulation commands at runtime-owned boundaries.
 - [ ] Connect a native gamepad provider through `nico-input` when a target device
       requires it.
-- [ ] Add Slang reflection and asset-backed shaders when the first rendered game
-      object needs them.
+- [ ] Add Slang reflection and asset-backed shader loading when reference-game
+      materials or content iteration require them.
 - [ ] Extract a provider-neutral host contract only if a second provider reveals
       shared requirements.
 

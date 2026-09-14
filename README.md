@@ -283,15 +283,16 @@ uploaded on bridge connection; `--mcp-stdio` is not supported.
 
 ## Shader workflow
 
-The bootstrap shader source is
-[`bootstrap.slang`](assets/presentation/shaders/bootstrap.slang); its generated
-[`bootstrap.wgsl`](assets/presentation/shaders/generated/wgpu/bootstrap.wgsl) is checked
-in and loaded at runtime by the bootstrap path. The minimal client instead loads
-[`quads.wgsl`](assets/presentation/shaders/generated/wgpu/quads.wgsl), generated from
-[`quads.slang`](assets/presentation/shaders/quads.slang). The compiler command processes
-all three shaders, including `meshes.slang` for the 3D sample. A normal client launch does not run Slang.
+Shader sources and generated WGSL live under
+[`assets/presentation/shaders`](assets/presentation/shaders). The bootstrap path loads
+`bootstrap.wgsl`; the 2D sample loads `quads.wgsl`; the 3D sample loads `meshes.wgsl`
+and `quads.wgsl` for its HUD.
 
-To regenerate or check the artifact, make `slangc` available through `PATH`,
+Keep all three generated WGSL artifacts committed. Normal Cargo builds and native
+launches do not require Slang or regenerate shaders. `nico-shaderc` processes all
+three sources, and `--check` detects stale generated output.
+
+To regenerate or check the artifacts, make `slangc` available through `PATH`,
 `NICO_SLANGC`, or the tool's `--slangc <PATH>` argument:
 
 ```text
@@ -387,7 +388,7 @@ cargo run -p minimal-game-client -- --sample 3d
 
 The default `--sample 2d` draws a sprite; `3d` loads `meshes/cube.glb`, mapping
 shared positions to world XY at Z=0. The perspective camera looks toward the origin.
-The cube uses an opaque 128x128 UV checker (`textures/uv-checker.png`), with A1¨CD4
+The cube uses an opaque 128x128 UV checker (`textures/uv-checker.png`), with A1â€“D4
 labels and colored corners. The HUD keeps the transparent 2x2 PNG. Meshes use depth
 testing and an unlit texture with alpha cutoff 0.5. The fixed HUD
 shares the quad renderer and texture cache; it draws after meshes without depth testing.
@@ -444,7 +445,7 @@ capture, not continuous video recording or profiling.
 | `crates/nico-ecs` | World, resources, and hecs entity/component storage |
 | `crates/nico-runtime` | Lifecycle, scheduling, fixed time, events, and services |
 | `crates/nico-input` | Provider-neutral physical device state |
-| `crates/nico-presentation` | Immutable world/HUD draw snapshots and presentation lifecycle |
+| `crates/nico-presentation` | Immutable 2D/3D draw snapshots and optional runtime lifecycle |
 | `crates/nico-render` | Bootstrap, textured quad and mesh pipelines, uploads, and frame recording |
 | `crates/nico-rhi` | Backend-neutral GPU contracts |
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
@@ -454,7 +455,7 @@ capture, not continuous video recording or profiling.
 | `crates/nico-ops` | Host control, optional tool catalogs, and bridge transport |
 | `apps/nico-bridge` | MCP entry point for independently launched game instances |
 | `apps/nico-shaderc` | Standalone offline shader compiler tool |
-| `assets/presentation/shaders` | Engine bootstrap shader source and generated artifact |
+| `assets/presentation/shaders` | Engine shader sources and committed WGSL artifacts |
 | `games/minimal-game` | Shared gameplay, client/server executables, and game asset roots |
 
 See [architecture](docs/architecture.md) for dependency direction and contracts, and

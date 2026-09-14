@@ -88,8 +88,8 @@ native gamepad provider is deferred.
 
 The game client maps `InputState` to semantic commands such as `PlayerCommand`. Shared
 gameplay and the server do not depend on physical-input types. The current client
-configuration selects title, bootstrap shader path, and smoke policy. A provider-neutral
-host contract requires evidence from a second provider.
+configuration selects title, rendering pipeline, shader paths, and smoke policy. A
+provider-neutral host contract requires evidence from a second provider.
 
 See [ADR 0001](decisions/0001-native-client-event-loop.md) for event-loop ownership.
 
@@ -99,18 +99,17 @@ Presentation may read the authoritative world immutably. It does not own or muta
 gameplay state. Direct queries are allowed; extraction and caching require a
 demonstrated need.
 
-Games publish `nico-presentation::Scene2d` as a runtime resource after game updates.
-`Presentation` accepts an immutable world/frame and copies that owned draw snapshot;
-it never gives the renderer world access. Textures are immutable `Arc<Texture>` values,
-so snapshots can retain CPU content after a store entry is released. An absent scene
-produces an empty snapshot. Shutdown releases the presentation's retained snapshot.
+Games publish `nico-presentation::Scene2d` and `Scene3d` as runtime resources after
+game updates. `Presentation` copies these snapshots through immutable world access;
+it never gives the renderer world access. Immutable `Arc<Texture>` and `Arc<Mesh>`
+values retain CPU content after store entries are released. Absent scenes produce
+empty snapshots. Shutdown releases both retained snapshots.
 
 `nico-render` consumes presentation contracts with default features disabled, keeping
 its own dependency path free of runtime. `nico-presentation`'s default `runtime` feature
 adds world extraction and lifecycle; its drawing contracts need only `nico-assets`.
-World quads use an
-explicit 2D camera; HUD quads use logical viewport coordinates. The same quad pipeline
-draws both. Shared/headless game logic does not depend on assets or presentation.
+World quads use an explicit 2D camera; HUD quads use logical viewport coordinates.
+The same quad pipeline draws both. Shared/headless game logic does not depend on assets or presentation.
 The native client maps shared positions to visuals in its game-owned extraction system.
 
 `nico-rhi` defines associated provider resource types for capabilities, buffers,
@@ -123,13 +122,19 @@ resize and recoverable surface outcomes, including zero-size, timeout, occlusion
 outdated/lost surfaces, and suboptimal frames. Unrecoverable failures use RHI error
 categories.
 
-`nico-render` selects shaders and pipelines, uploads CPU textures, records draw passes,
-submits commands, and presents. The texture cache identifies immutable allocations and
-retains only resources used by the current drawn frame; its CPU references are weak.
+`nico-render` selects shaders and pipelines, uploads textures and meshes, records draw
+passes, submits commands, and presents. The texture cache identifies immutable allocations and
+retires unused entries on drawn frames, retaining its fallback; CPU references are weak.
 Providers retain resources referenced by recorded/submitted work when wrappers drop.
 The pipelines rebuild if the surface format changes. Native hosts select a pipeline
 and supply viewport/DPI values but do not define scene draw calls. The bootstrap
-triangle remains available to hosts that do not select the quad pipeline.
+triangle remains available to hosts that do not select a scene pipeline.
+
+`Scene3d` holds a perspective camera and immutable mesh instances. The renderer and
+MCP sample controls share validation of stored f32 camera directions.
+`MeshRenderPipeline` owns depth, vertex/index caches, per-instance transform uniforms,
+and a shared quad renderer for HUD drawing and texture reuse. The mesh pass clears
+and depth-tests; the HUD pass loads its color target before one presentation.
 
 The smoke frame limit counts client-session frames, even when GPU acquisition skips
 presentation. It is bounded lifecycle coverage, not a successful-GPU-frame counter.
@@ -152,15 +157,16 @@ preserve that split when implemented.
 the default CPU asset API remains dependency-free. `TextureStore` and `MeshStore`
 specialize the same runtime resource, `AssetStore<T>`. Each store uses a distinct typed
 service completion and one engine-owned worker that reads/decodes files through the
-existing service boundary;
-runtime systems publish results, reconcile lease release, and dispatch bounded work.
+existing service boundary. Runtime systems publish results, reconcile lease release,
+and dispatch bounded work.
 The host supplies an immutable ID/path catalog. A general importer, dependency resolver,
 and packaging pipeline are not present. Usage belongs in [README](../README.md#texture-loading).
 
-Engine bootstrap shaders live separately under the repository's
+Engine shaders live separately under the repository's
 `assets/presentation/shaders/` root. `nico-shaderc` compiles Slang into the checked-in
-WGSL artifact outside Cargo's build graph. The host reads that artifact synchronously,
-waits for GPU initialization, and creates the pipeline before its first redraw. This
+WGSL artifacts outside Cargo's build graph. The host reads selected artifacts
+synchronously, waits for GPU initialization, and creates pipelines before its first
+redraw. This
 direct file read is not the planned service-backed asset load. Backend shader/pipeline
 preparation still occurs at runtime.
 
@@ -170,12 +176,8 @@ A supported source encoding can itself be a shipping asset: the selected
 data formats when concrete consumers require them. Asset leases retain CPU content
 independently of copyable handle identity; an explicit `Arc<Texture>` can pin pixels
 for a snapshot beyond store release. GPU resource lifetime remains owned by the renderer;
-texture and mesh upload and both consumers are implemented. `Scene3d` holds a
-perspective camera and immutable mesh instances. `MeshRenderPipeline` owns depth,
-vertex/index caches, per-instance transform uniforms, and a shared quad renderer for
-HUD drawing and texture reuse. The mesh pass clears and depth-tests; the HUD pass
-loads its color target before one presentation. See the
-[mesh design](plans/2026-09-14-mesh-assets.md) for the bounded GLB subset.
+texture and mesh upload and both consumers are implemented. The
+[mesh design](plans/2026-09-14-mesh-assets.md) defines the bounded GLB subset.
 
 ## Measurement and profiling requirements
 
@@ -323,5 +325,6 @@ Surface COPY_SRC is enabled only when supported; capture errors do not change
 presentation success. Launch starts a single background PNG encoding/write job on
 retrieval, returns pending while it runs, and retains one local artifact per process.
 Encoding never runs on the bridge heartbeat/call thread. New captures are rejected
-while the encoder is busy, and teardown joins active work. Shutdown fails pending requests. Usage and bounds belong in
+while the encoder is busy, and teardown joins active work. Shutdown fails pending
+capture requests. Usage and bounds belong in
 [README](../README.md#window-snapshots-through-mcp).

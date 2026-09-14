@@ -4,7 +4,7 @@ Status: texture loading, leases, and the 2D sprite/HUD consumer implemented, 202
 mesh loading and the 3D consumer are implemented in the
 [mesh extension](2026-09-14-mesh-assets.md). Phase outcomes belong
 in the [roadmap](../roadmap.md#3-load-game-assets); implementation actions belong in
-[TODO](../../TODO.md#next-paired-rendering-samples).
+[TODO](../../TODO.md#next-define-the-reference-game).
 
 ## First consumer and format
 
@@ -64,7 +64,8 @@ operation. The render integration must explicitly retain what each needs.
 
 ## Implementation bounds
 
-`nico-assets/loading` optionally depends on runtime and `png`. `TextureStore::install`
+The `nico-assets/loading` feature depends on runtime, `png`, and the mesh extension's
+`gltf` decoder. `TextureStore::install`
 accepts a trusted content root and immutable ID/relative-path pairs. It rejects duplicate
 IDs and absolute/parent paths. This is local content routing, not a security sandbox.
 The catalog is host configuration; limits apply to requested resident entries.

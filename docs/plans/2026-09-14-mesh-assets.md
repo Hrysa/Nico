@@ -54,7 +54,7 @@ Per-command outcomes distinguish accepted requests from successful application.
 
 ## Validation texture update (2026-09-14)
 
-The cube now uses a separate opaque UV checker with A1¨CD4 labels and colored corners.
+The cube now uses a separate opaque UV checker with A1â€“D4 labels and colored corners.
 The HUD keeps the transparent 2x2 fixture. Both textures use the existing store and
 GPU cache; shared functionality does not require identical content. Texture controls
 release/reload or retry both in 3D mode, with separate checker state in MCP snapshots.

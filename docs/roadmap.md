@@ -7,8 +7,8 @@ contracts belong in [architecture.md](architecture.md).
 ## Final goal
 
 Build a Rust game engine that supports both 2D and 3D games and can support a complete,
-shippable client/server game. Both dimensions have focused rendering samples; a complete game remains planned. Game
-rules run in a shared headless core. The client displays the game and accepts player
+shippable client/server game. Both dimensions have focused rendering samples; a complete
+game remains planned. Game rules run in a shared headless core. The client displays the game and accepts player
 input. AI tools can inspect, test, and explicitly stop independently launched clients
 and servers through a separate MCP bridge.
 
@@ -121,10 +121,11 @@ schema caching are conditional extensions tracked in TODO; profiling remains def
 
 **Result:** Game code requests an asset and receives usable content or a clear error.
 
-**Status:** The first texture path is implemented through `nico-assets`' optional
-`loading` feature. A headless consumer loads the checked-in sample PNG, consumes CPU
-pixels, releases ownership, and shuts down. Mesh-only GLB loading now shares the
-same typed asset-store lifecycle; see the [mesh design](plans/2026-09-14-mesh-assets.md).
+**Status:** PNG and mesh-only GLB loading are implemented through `nico-assets`'
+optional `loading` feature. Both use the same typed asset-store lifecycle. The headless
+texture example and native samples consume shipping assets; see the
+[texture design](plans/2026-09-14-texture-assets.md) and
+[mesh design](plans/2026-09-14-mesh-assets.md).
 
 **Scope:** A typed runtime asset with explicit loading, ready, and failed states, handle
 resolution, ownership, and release behavior. Background byte loading uses the service
@@ -146,14 +147,13 @@ content. Shipping content can load without its authoring source files.
 does not yet put an object on screen.
 
 **Validation evidence (2026-09-14, Windows):** The workspace all-feature tests passed
-using `target/texture-validation`, including 14 new texture lifecycle/decoder tests.
+using `target/texture-validation`, with texture lifecycle/decoder and mesh validation coverage.
 The headless `load_texture` example loaded the checked-in 2x2 PNG (16 RGBA8 bytes),
 consumed it, verified release, and joined the worker. Tests cover shared leases,
 publication boundaries, cancellation/reacquisition, explicit retry, bounded requests,
 backend loss, snapshot retention, shutdown, PNG variants, malformed input, and limits.
 Workspace all-feature/all-target Clippy passed with warnings denied; formatting and
-documentation link targets passed checks. The default identity-only feature
-configuration also type-checks. This headless validation did not exercise GPU upload
+documentation link targets passed checks. The default CPU asset configuration also type-checks without runtime dependencies. This headless validation did not exercise GPU upload
 or visual sample behavior; phase 4 records rendering evidence. Non-Windows loader
 execution remains unverified.
 
@@ -161,96 +161,49 @@ execution remains unverified.
 
 **Result:** The screen reflects actual game entities and their positions.
 
-**Scope:** Spatial conventions and a camera connect shared entity state to loaded
-visuals through the immutable presentation boundary. Geometry, textures, and shaders
-support the selected reference-game content. Entity creation, movement, removal, missing
-assets, and rendering-resource lifetime have defined visible behavior.
+**Status:** Paired 2D and 3D rendering samples are implemented. They establish the
+rendering foundation; the reference game's mechanic, platforms, and content scale
+remain undefined. Concrete next actions belong in [TODO](../TODO.md#next-define-the-reference-game).
 
-**Selected approach:** Build paired samples sequentially. First, a 2D sample displays
-one movable world sprite and one fixed HUD icon using the same texture. Then a 3D
-sample displays one textured mesh and reuses the HUD. Shared 2D drawing functionality
-serves world sprites and HUD elements, with world-camera and viewport transforms
-respectively. UI layout and interaction can extend that foundation when needed.
-Both samples are implemented. These samples do not
-require choosing the full reference game's genre first.
+**Scope delivered:** Both samples follow shared entity positions through immutable
+presentation snapshots. The 2D world sprite and fixed HUD icon share one transparent
+PNG and quad pipeline. The 3D sample draws a mesh-only GLB cube with perspective,
+depth testing, and an opaque labeled UV checker, then draws the same transparent HUD.
+The mesh and HUD paths share texture-loading and GPU-cache functionality. Missing
+assets use fallbacks. MCP exposes owned sample state, bounded edits with per-command
+outcomes, and window-content PNG capture using background encoding.
 
-**2D scope delivered (2026-09-14):** Shared quad drawing consumes immutable world/HUD
-snapshots, uploads sRGB RGBA8 textures, blends straight alpha, and uses camera-relative
-world or logical viewport coordinates. The minimal client displays a loaded sprite
-following shared entity positions and a fixed HUD icon; both share the texture and
-pipeline. Missing content uses a fallback. Game-owned MCP tools expose owned sample
-state and bounded runtime-boundary edits. UI layout, text, panel clipping, and quad rotation remain outside this slice.
-
-**GPU evidence (2026-09-14, Windows/Vulkan, NVIDIA GTX 1660, driver 591.86):** The
-opt-in offscreen readback test passed orientation, transparency, half-alpha HUD
-layering, camera movement with fixed HUD placement, removal, fallback, and resource
-release after submission. This validates rendered pixels on this adapter, not display
-scanout or platform window lifecycle. Portable regression tests cover extraction from
-shared movement, entity creation/removal, command boundaries, asset failure/release,
-and invalid geometry. Broader platform validation remains in phase 1.
-
-**Native evidence (same Windows/Vulkan environment):** Live bridge calls observed CPU
-texture readiness, applied position/camera edits, hidden sprites with the HUD retained,
-texture release and reload, and successful presentation counts advancing from 19,151
-to 21,469 without a reported render failure. MCP stop was accepted and the test process
-exited successfully. The extended native smoke also passed the sample edits plus its
-existing independent lifecycle/restart checks. Only the existing OBS Vulkan hook
-API-version warning appeared in retrieved diagnostics. These checks do not establish
-interactive resize/minimize behavior or physical display scanout.
-
-Workspace all-feature tests, all-target Clippy with warnings denied, formatting,
-generated-shader checks, and relative documentation link checks passed. Final client
-tests and the isolated native smoke passed after adding bounded per-command outcome
-history. The renderer dependency tree contains no runtime/provider dependencies when
-built on its own, and presentation contracts type-check without their runtime feature.
-
-**3D scope and evidence (2026-09-14):** The client selects `--sample 2d|3d`.
-A mesh-only GLB cube follows the same shared positions, with perspective, depth testing,
-and an unlit textured alpha-cutoff material. The HUD reuses the quad renderer and GPU
-texture cache. Typed texture and mesh stores share loading, lease, retry, and shutdown
-logic. Tests cover malformed GLB/accessor bounds and concurrent store result isolation.
-On Windows/Vulkan, NVIDIA GTX 1660, driver 591.86, both offscreen GPU tests passed,
-including depth occlusion, perspective size, camera movement with fixed HUD, removal,
-and resource lifetime. Both native smoke modes passed structured sample controls and
-independent host lifecycle checks. These observations do not validate other platforms,
-window transitions, or display scanout. Full glTF scenes, imported materials, lighting,
-skinning, animation, and general transparent mesh sorting are deferred. The
-[mesh design](plans/2026-09-14-mesh-assets.md) defines the implemented subset.
-
-**Window snapshot evidence (2026-09-14, same Windows/Vulkan environment):** The new
-client-host `window_snapshot` tool captured two 1920x1080 PNGs through live bridge MCP.
-Visual inspection showed the loaded cube, perspective, alpha-cutout texture, and fixed
-HUD. A yaw edit changed mesh pixels while the HUD region remained byte-identical.
-Invalid and expired IDs were rejected, presentations continued without a reported
-failure, and the test client exited after MCP stop. An opt-in GPU regression passed
-13-pixel-wide padded-row readback and BGRA conversion. Updated native smoke tests
-passed PNG capture/retrieval in both 2D and 3D, alongside their existing lifecycle
-checks. This validates rendered window
-content, not desktop borders, physical scanout, or other platforms.
-
-**Opaque checker validation (2026-09-14, Windows/Vulkan, GTX 1660):** The cube now
-loads a separate opaque 128x128 A1¨CD4 checker; the HUD retains the transparent fixture.
-MCP captures of all six faces showed readable labels and the expected corner order.
-An independent ray/UV comparison of 11,031 sampled mesh pixels had no mismatches
-above one channel value; the HUD region was byte-identical across all six captures.
-Client regressions, workspace all-target/all-feature Clippy, and the updated 3D native
-smoke passed, including release/reload of both textures. This replaces the earlier
-cutout cube as the default sample; alpha-cutoff shader support is unchanged.
-
-**Review fixes (2026-09-14):** PNG encoding/file writes now run on one bounded
-background worker, leaving bridge polling and heartbeats responsive. Gated-worker
-regressions cover pending polls, overlap rejection, retained failures, and joined
-shutdown. MCP and rendering share validation of stored f32 camera directions; the
-`x=0.0001,y=0,z=0` boundary is rejected before application. Texture retry targets only
-failed entries, with regressions for either or both textures failing. Workspace
-all-feature tests, all-target Clippy, and both native smoke modes passed. The Windows
-3D smoke also verifies camera rejection leaves the host running and status calls work
-while polling snapshot completion.
+UI layout, text, panel clipping, quad rotation, lighting, imported glTF materials/scenes,
+skinning, animation, and sorted transparent meshes remain outside this scope. The
+mesh shader supports alpha cutoff; the current cube fixture is opaque to make its
+geometry and UV orientation easier to inspect. Usage belongs in
+[README](../README.md#2d-world-and-hud-sample), and ownership in
+[architecture](architecture.md#presentation-and-graphics).
 
 **Done when:** Input moves a game entity and its loaded visual moves with it.
-Creating/removing entities updates the screen correctly. The same game logic continues
+Creating/removing entities updates the screen correctly. Shared game logic continues
 to run headlessly without presentation assets. Focused 2D and 3D samples demonstrate
 these behaviors; the reference game may use either or both.
+
+### Validation evidence (2026-09-14)
+
+Native and GPU observations below used Windows/Vulkan, NVIDIA GeForce GTX 1660,
+driver 591.86. They do not establish other-platform support, window-transition
+behavior, or physical display scanout. Interactive lifecycle checks remain in phase 1.
+
+| Check | Observed result |
+| --- | --- |
+| Portable regressions | Shared movement, entity creation/removal, command boundaries and outcome history, asset failure/release, and invalid geometry passed. Camera validation rejects the f64-to-f32 boundary case before application; retry covers either or both textures failing. |
+| Quad GPU readback | Orientation, transparency, half-alpha HUD layering, camera movement with fixed HUD, removal, fallback, and resource release after submission passed. |
+| Mesh GPU readback | Depth occlusion, perspective size, camera movement with fixed HUD, removal, and resource lifetime passed. |
+| Window capture | MCP returned 1920x1080 PNGs; a yaw edit changed mesh pixels while the HUD region stayed byte-identical. Invalid/expired IDs were rejected. A separate GPU test verified 13-pixel-wide padded rows and BGRA conversion. |
+| Six-face checker inspection | All six faces showed readable A1-D4 labels and expected corner order. An independent ray/UV comparison of 11,031 sampled mesh pixels had no mismatches above one channel value; the HUD region stayed byte-identical. |
+| Background encoder | Gated-worker tests passed responsive pending polls, overlap rejection, retained failures, and joined shutdown. Encoding and file writes run outside the bridge call/heartbeat thread. |
+| Native smoke, both modes | Sample controls, release/reload of textures, PNG capture/retrieval, status calls while polling, independent bridge/game restarts, and orderly shutdown passed. The 3D scenario also confirmed camera-boundary rejection leaves the host running. Only the existing OBS Vulkan hook API-version warning appeared. |
+| Workspace and boundaries | All-feature tests, all-target Clippy with warnings denied, formatting, generated-shader checks, and documentation links passed. The standalone renderer dependency tree excludes runtime/providers; presentation contracts build without their runtime feature. |
+
+The initial 3D validation used the transparent PNG on the cube. The opaque checker
+replaced that fixture after visual review; alpha-cutoff support remains implemented.
 
 ## 5. Make a playable local game
 
