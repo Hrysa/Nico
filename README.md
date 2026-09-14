@@ -1,8 +1,8 @@
 # Nico
 
 Nico is an experimental Rust 2024 game engine with a headless runtime, shared
-client/server gameplay, and a Winit native client that renders a bootstrap triangle
-through Nico's RHI and its wgpu backend.
+client/server gameplay, and a Winit native client with textured 2D sprite and 3D mesh
+samples sharing a fixed HUD, through Nico's RHI and its wgpu backend.
 
 The core native client host implementation is complete. Interactive Windows and macOS
 resize/minimize/restore validation remains outstanding. Native gamepad integration and
@@ -36,8 +36,9 @@ The client runs until the window closes. The server runs at a configured 60 Hz b
 default; Ctrl+C terminates the process. The server runner supports orderly shutdown when
 runtime code requests exit or the registered MCP `stop` tool receives a request.
 
-The client maps WASD and arrow keys to shared gameplay movement commands. The triangle
-is fixed bootstrap geometry and does not yet visualize entity positions. The input model
+The client maps WASD and arrow keys to shared gameplay movement commands; the world
+sprite follows the entity while the HUD icon stays at the top-left. Both share the same
+PNG and quad pipeline. The input model
 supports gamepads, but there is no native gamepad provider.
 
 The smoke limit bounds client-session frames. It does not count only successful GPU
@@ -285,7 +286,10 @@ uploaded on bridge connection; `--mcp-stdio` is not supported.
 The bootstrap shader source is
 [`bootstrap.slang`](assets/presentation/shaders/bootstrap.slang); its generated
 [`bootstrap.wgsl`](assets/presentation/shaders/generated/wgpu/bootstrap.wgsl) is checked
-in and loaded at runtime. A normal client launch does not run Slang.
+in and loaded at runtime by the bootstrap path. The minimal client instead loads
+[`quads.wgsl`](assets/presentation/shaders/generated/wgpu/quads.wgsl), generated from
+[`quads.slang`](assets/presentation/shaders/quads.slang). The compiler command processes
+all three shaders, including `meshes.slang` for the 3D sample. A normal client launch does not run Slang.
 
 To regenerate or check the artifact, make `slangc` available through `PATH`,
 `NICO_SLANGC`, or the tool's `--slangc <PATH>` argument:
@@ -305,6 +309,134 @@ general asset loader. Offline WGSL generation still leaves backend shader and pi
 preparation at runtime. The reported roughly one-second startup delay has not been
 profiled; its cause remains unconfirmed.
 
+## Texture loading
+
+Enable `nico-assets`' optional `loading` feature for native background PNG loading.
+`TextureStore::install` registers an immutable `AssetId` to relative-path catalog,
+starts one worker, and installs runtime publication and shutdown systems. Register it
+before texture consumers. Acquire an `AssetLease<Texture>` through the store; cloned
+leases share a load, while copyable `Handle<Texture>` values retain identity only.
+Inspect `TextureState` for loading, CPU-ready content, or a structured failure. Failed
+loads require explicit retry; dropping the last lease permits release on the next update.
+
+Run the headless sample, which loads the checked-in PNG, consumes its dimensions/pixels,
+releases it, and joins the worker:
+
+```sh
+cargo run -p nico-assets --features loading --example load_texture
+cargo test -p nico-assets --features loading
+```
+
+The decoder normalizes static PNGs to RGBA8 with straight alpha. Color bytes are
+interpreted as sRGB; ICC/gamma conversion is not implemented. Defaults cap resident
+entries at 64, input at 16 MiB per file, dimensions at 4096, and decoded buffers at
+64 MiB each. The decoder also receives a 64 MiB internal allocation limit; these are
+separate bounds, not a single process-memory budget. Animated PNG is rejected.
+Shutdown joins active local I/O/decoding, so cancellation is not an immediate interrupt.
+Content paths are trusted host configuration, not a filesystem sandbox.
+
+GPU upload and both 2D and 3D samples with a shared HUD are implemented.
+Ready CPU pixels are pinned with an `Arc` in immutable presentation snapshots. See the
+[texture design](docs/plans/2026-09-14-texture-assets.md) for lifecycle details.
+
+## 2D world and HUD sample
+
+The native client loads `textures/sample.png` from
+`games/minimal-game/assets/presentation`; `--asset-root PATH` overrides that directory.
+The original 2x2 fixture intentionally makes texture orientation and transparency visible.
+Missing/loading/failed textures draw a magenta/dark checkerboard. Shader artifacts are
+compiled from `quads.slang` with the existing `nico-shaderc` command.
+
+World coordinates use X right and Y up, with the camera centered in the viewport and
+128 logical pixels per world unit. The one-unit sprite follows shared `Position` state.
+The HUD icon is 48 logical pixels square and centered at (48,48) from the top-left,
+independent of the world camera. DPI scales both drawing paths. World quads draw in
+list order before HUD quads, using nearest sampling and straight-alpha blending.
+The pipeline supports at most 4096 quads per frame. Text, clipping panels, rotation,
+and UI layout/interaction are not implemented.
+
+After discovering a client through the bridge, use `list_game_tools` and `call_game_tool`:
+
+| Game tool | Operation |
+| --- | --- |
+| `sample_state` | Read positions, camera, draw counts, CPU texture state, and last applied command ID |
+| `sample_control` | Queue `set_position` or `set_camera` with `x`/`y`; `set_sprite_visible` or `set_texture_enabled` with boolean `value`; or `retry_texture` |
+
+Controls have a 32-request bound and apply at Update. `set_position` is a validation
+teleport; keyboard input still uses shared gameplay movement. Accepted command IDs
+must be reconciled with `last_applied_command` and the matching entry in
+`command_results` (the latest 32 outcomes). An older outcome may have been evicted;
+absence is not success. `command_error` describes only the most recently applied edit. Acceptance does
+not mean the change was applied or rendered. CPU texture readiness is separate from
+host successful presentation counts. Timed-out edits must not be retried blindly.
+
+The native smoke test exercises these controls. Opt-in GPU pixel validation runs with:
+
+```sh
+cargo test -p nico-rhi-wgpu gpu_ -- --ignored --nocapture
+```
+
+These tests need a graphics adapter; portable workspace tests leave them ignored.
+They check rendered offscreen pixels, not window scanout.
+
+## 3D mesh and shared HUD sample
+
+```sh
+cargo run -p minimal-game-client -- --sample 3d
+```
+
+The default `--sample 2d` draws a sprite; `3d` loads `meshes/cube.glb`, mapping
+shared positions to world XY at Z=0. The perspective camera looks toward the origin.
+The cube uses an opaque 128x128 UV checker (`textures/uv-checker.png`), with A1¨CD4
+labels and colored corners. The HUD keeps the transparent 2x2 PNG. Meshes use depth
+testing and an unlit texture with alpha cutoff 0.5. The fixed HUD
+shares the quad renderer and texture cache; it draws after meshes without depth testing.
+Missing meshes use a tetrahedron, and missing textures use the checkerboard.
+
+`MeshStore` and `TextureStore` specialize the same `AssetStore<T>` lifecycle.
+Mesh-only GLB accepts one indexed triangle primitive with float positions and UVs,
+embedded geometry, and identity node transforms. Materials, external buffers, scenes
+with multiple nodes, skins, animations, and sparse accessors are unsupported. Defaults
+limit a mesh to 250,000 vertices and 750,000 indices; drawing caps instances at 256.
+See the [mesh contract](docs/plans/2026-09-14-mesh-assets.md) for bounds and ownership.
+
+The registered `sample_state` includes mode, mesh readiness, counts, camera and yaw.
+In 3D mode, `sample_control` also accepts `set_mesh_enabled` with boolean `value`,
+`retry_mesh`, `set_camera3d` with `x`/`y`/`z`, and `set_mesh_yaw` with `radians`.
+These use the same queued command IDs and outcome history as the 2D controls.
+`checker_state`, `checker_error`, and `checker_resident` expose the cube texture
+separately from the HUD texture. `set_texture_enabled` and `retry_texture` apply to
+both textures in 3D mode. Retry queues only failed textures and reports `NotFailed`
+when neither texture has failed.
+
+After building the bridge and hosts into an isolated target directory, validate each
+mode with `python apps/nico-bridge/tests/native_smoke.py --bin-dir
+ target/texture-validation/debug --sample 2d` or `--sample 3d` (on one command line).
+
+## Window snapshots through MCP
+
+Discover the connected client and its tool schema, then call `window_snapshot` with
+`{}`. Poll with `{"request_id": 1}` (using the returned ID) until `ready` or `failed`.
+A ready result includes physical pixel dimensions and an absolute local PNG path.
+Native client hosts register this tool; servers do not expose it.
+
+Captures include rendered content and HUD before presentation, excluding desktop
+borders and other windows. They establish GPU readback completion, not display scanout.
+Only one request/result and one PNG file are retained per process. A newer request
+expires the previous ID, and its completed PNG overwrites the previous file. Copy the
+PNG first if you need both. Files live in the host's system temporary directory.
+
+Requests require an active, ready host. Polling reports timeout after five seconds
+if no capture completes. Unsupported surface copies/formats, skipped rendering, GPU
+failures, and shutdown produce errors. Dimensions are limited to 4096x4096 with
+RGBA8/BGRA8 surface formats. On-demand readback can pause rendering for the two-second
+GPU wait. The first retrieval of captured pixels starts a background PNG encoder;
+polls remain `pending` until it finishes. Encoding may take longer than the five-second
+capture deadline, while bridge calls and heartbeats continue. Only one encoding job
+runs per host; new captures return `snapshot_encoder_busy` until it finishes. Failures
+are retained, and host shutdown joins active encoding/file I/O. This is diagnostic
+capture, not continuous video recording or profiling.
+
 ## Workspace
 
 | Location | Responsibility |
@@ -312,12 +444,12 @@ profiled; its cause remains unconfirmed.
 | `crates/nico-ecs` | World, resources, and hecs entity/component storage |
 | `crates/nico-runtime` | Lifecycle, scheduling, fixed time, events, and services |
 | `crates/nico-input` | Provider-neutral physical device state |
-| `crates/nico-presentation` | Immutable world-facing presentation lifecycle; currently a null implementation |
-| `crates/nico-render` | Bootstrap shader/pipeline selection and frame recording |
+| `crates/nico-presentation` | Immutable world/HUD draw snapshots and presentation lifecycle |
+| `crates/nico-render` | Bootstrap, textured quad and mesh pipelines, uploads, and frame recording |
 | `crates/nico-rhi` | Backend-neutral GPU contracts |
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
 | `crates/nico-winit` | Native event loop, input adaptation, client coordination, and optional in-process host control |
-| `crates/nico-assets` | Stable `AssetId` and typed `Handle<T>` identity |
+| `crates/nico-assets` | Asset identity and leases; optional runtime-owned PNG/GLB loading |
 | `crates/nico-launch` | Native CLI, diagnostics, and optional client/server transport composition |
 | `crates/nico-ops` | Host control, optional tool catalogs, and bridge transport |
 | `apps/nico-bridge` | MCP entry point for independently launched game instances |

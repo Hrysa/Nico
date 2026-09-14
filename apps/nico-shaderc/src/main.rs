@@ -34,20 +34,32 @@ struct Args {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let project_root = find_project_root(args.root.as_deref())?;
-    let source = project_root.join(SOURCE);
-    let output = project_root.join(OUTPUT);
     let compiler = args
         .slangc
         .map(PathBuf::into_os_string)
         .or_else(|| env::var_os("NICO_SLANGC"))
         .unwrap_or_else(|| OsString::from("slangc"));
 
-    if args.check {
-        check_artifact(&compiler, &source, &output)?;
-        println!("shader artifacts are current");
-    } else {
-        compile_shader(&compiler, &source, &output)?;
-        println!("generated {}", output.display());
+    for (source, output) in [
+        (
+            "assets/presentation/shaders/meshes.slang",
+            "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
+        ),
+        (SOURCE, OUTPUT),
+        (
+            "assets/presentation/shaders/quads.slang",
+            "assets/presentation/shaders/generated/wgpu/quads.wgsl",
+        ),
+    ] {
+        let source = project_root.join(source);
+        let output = project_root.join(output);
+        if args.check {
+            check_artifact(&compiler, &source, &output)?;
+            println!("shader artifacts are current");
+        } else {
+            compile_shader(&compiler, &source, &output)?;
+            println!("generated {}", output.display());
+        }
     }
     Ok(())
 }

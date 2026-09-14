@@ -1,5 +1,10 @@
 //! Backend-neutral rendering policy built on Nico's RHI.
 
+mod quads;
+pub use quads::QuadRenderPipeline;
+mod meshes;
+pub use meshes::MeshRenderPipeline;
+
 use nico_rhi::{
     Color, ColorTargetState, ColorWrites, FragmentState, GraphicsShaderArtifact, LoadOp,
     MultisampleState, Operations, PipelineLayoutDescriptor, PrimitiveState,

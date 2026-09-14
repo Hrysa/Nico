@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+glam = "0.30"
+nico-assets = { path = "../nico-assets" }
+nico-presentation = { path = "../nico-presentation", default-features = false }
 nico-rhi = { path = "../nico-rhi" }
 
 [lints]

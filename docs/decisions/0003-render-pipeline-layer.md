@@ -51,3 +51,22 @@ is deferred to future experimental XRay integration. When measured, shader/pipel
 creation and frame recording/submission costs must not be labeled as GPU execution
 time. Planned AI operations expose rendering diagnostics through host/tooling
 boundaries; the renderer does not own an MCP transport.
+
+## Implementation update (2026-09-14)
+
+`QuadRenderPipeline` now draws world sprites and HUD quads from immutable
+`nico-presentation::Scene2d` snapshots. The presentation crate separates its optional
+runtime lifecycle from drawing contracts; the renderer depends only on those contracts,
+asset CPU data, and RHI. The minimal client extracts shared positions and pins loaded
+textures in its snapshot. Uploads, texture bindings, straight-alpha blending, and draw
+ordering remain renderer policy; providers retain resource uses through submitted work.
+The bootstrap path remains available. Current scope and validation belong in
+[roadmap phase 4](../roadmap.md#4-display-the-game-world).
+
+## Implementation update: 2026-09-14, 3D consumer
+
+`MeshRenderPipeline` now consumes immutable `Scene3d` snapshots using indexed geometry,
+perspective uniforms, depth testing, and unlit alpha-cutoff textures. It owns a shared
+`QuadRenderPipeline` for texture uploads and the final HUD pass. Provider contracts
+remain backend-neutral; runtime ownership stays outside the renderer. The bounded
+asset subset is documented in the [mesh design](../plans/2026-09-14-mesh-assets.md).

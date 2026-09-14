@@ -1,4 +1,5 @@
 mod controls;
+mod sample;
 
 use std::error::Error;
 
@@ -21,6 +22,13 @@ struct GameArgs {
 
     #[command(flatten)]
     host: HostArgs,
+
+    /// Directory containing this game's presentation assets.
+    #[arg(long, default_value = "games/minimal-game/assets/presentation")]
+    asset_root: std::path::PathBuf,
+    /// Select the paired 2D or 3D rendering sample.
+    #[arg(long, default_value = "2d", value_parser = ["2d", "3d"])]
+    sample: String,
 }
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -32,17 +40,32 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "minimal game client starting"
     );
     let builder = AppBuilder::new().add_plugin(MinimalGamePlugin);
-    let (builder, tools) = if args.host.bridge_address().is_some() {
+    let (builder, mut tools) = if args.host.bridge_address().is_some() {
         let (builder, tools) = minimal_game_shared::tools::register(builder)?;
         (builder, Some(tools))
     } else {
         (builder, None)
     };
+    let mut sample_tools = tools.take().unwrap_or_default();
+    let mode3d = args.sample == "3d";
+    let builder = sample::register(builder, &mut sample_tools, args.asset_root, mode3d)?;
+    if args.host.bridge_address().is_some() {
+        tools = Some(sample_tools);
+    }
     let app = builder.build()?;
     let config = NativeClientConfig::new(
         "Nico minimal game",
         "assets/presentation/shaders/generated/wgpu/bootstrap.wgsl",
-    );
+    )
+    .with_quad_shader("assets/presentation/shaders/generated/wgpu/quads.wgsl");
+    let config = if mode3d {
+        config.with_mesh_shaders(
+            "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
+            "assets/presentation/shaders/generated/wgpu/quads.wgsl",
+        )
+    } else {
+        config
+    };
     let mut host = ClientHost::new(args.host).with_game_identity("minimal_game", "1");
     if let Some(tools) = tools {
         host = host.with_mcp_tools(tools);

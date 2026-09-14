@@ -4,8 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["runtime"]
+runtime = ["dep:nico-runtime"]
+
 [dependencies]
-nico-runtime = { path = "../nico-runtime" }
+nico-assets = { path = "../nico-assets" }
+nico-runtime = { path = "../nico-runtime", optional = true }
 
 [lints]
 workspace = true

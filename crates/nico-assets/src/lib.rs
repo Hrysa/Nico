@@ -2,6 +2,40 @@
 
 use std::marker::PhantomData;
 
+mod texture;
+pub use texture::Texture;
+mod mesh;
+pub use mesh::{Mesh, MeshVertex};
+
+#[cfg(feature = "loading")]
+pub mod loading;
+
+/// Owning reference to an asset. Clone to share ownership; drop to release it.
+///
+/// Unlike a handle, a lease keeps a store entry alive. Final release is reconciled
+/// at a runtime boundary; dropping a lease never mutates the world or blocks.
+pub struct AssetLease<T> {
+    handle: Handle<T>,
+    ownership: std::sync::Arc<()>,
+}
+
+impl<T> AssetLease<T> {
+    /// Returns identity without transferring or retaining ownership.
+    #[must_use]
+    pub const fn handle(&self) -> Handle<T> {
+        self.handle
+    }
+}
+
+impl<T> Clone for AssetLease<T> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle,
+            ownership: self.ownership.clone(),
+        }
+    }
+}
+
 /// Stable, type-independent identity of an asset.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AssetId(u128);

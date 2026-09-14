@@ -14,7 +14,7 @@ use nico_input::{
 };
 use nico_ops::{GraphicsOutcome, HostEndpoint};
 use nico_presentation::{Presentation, RenderFrame};
-use nico_render::{BootstrapRenderPipeline, RenderStatus};
+use nico_render::{BootstrapRenderPipeline, MeshRenderPipeline, QuadRenderPipeline, RenderStatus};
 use nico_rhi::{Extent3d, RhiSurface};
 use nico_rhi_wgpu::{WgpuBackend, WgpuDevice};
 use nico_runtime::{App, events::Event};
@@ -55,6 +55,8 @@ pub struct NativeClientConfig {
     title: String,
     bootstrap_shader_path: PathBuf,
     smoke_frames: Option<u64>,
+    quad_rendering: bool,
+    mesh_shader_path: Option<PathBuf>,
 }
 
 impl NativeClientConfig {
@@ -65,6 +67,8 @@ impl NativeClientConfig {
             title: title.into(),
             bootstrap_shader_path: bootstrap_shader_path.into(),
             smoke_frames: None,
+            quad_rendering: false,
+            mesh_shader_path: None,
         }
     }
 
@@ -74,6 +78,29 @@ impl NativeClientConfig {
         self.smoke_frames = smoke_frames;
         self
     }
+
+    /// Selects the shared world/HUD quad pipeline with an externally compiled shader.
+    #[must_use]
+    pub fn with_quad_shader(mut self, path: impl Into<PathBuf>) -> Self {
+        self.bootstrap_shader_path = path.into();
+        self.quad_rendering = true;
+        self.mesh_shader_path = None;
+        self
+    }
+    /// Selects perspective meshes with a shared quad/HUD overlay.
+    #[must_use]
+    pub fn with_mesh_shaders(mut self, mesh: impl Into<PathBuf>, hud: impl Into<PathBuf>) -> Self {
+        self.bootstrap_shader_path = hud.into();
+        self.quad_rendering = true;
+        self.mesh_shader_path = Some(mesh.into());
+        self
+    }
+}
+
+enum NativeRenderer {
+    Bootstrap(BootstrapRenderPipeline<WgpuDevice>),
+    Quads(QuadRenderPipeline<WgpuDevice>),
+    Meshes(Box<MeshRenderPipeline<WgpuDevice>>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,7 +190,9 @@ struct NativeClientHost {
     session: ClientSession,
     window: Option<Arc<Window>>,
     graphics: Option<WgpuBackend<Window>>,
-    renderer: Option<BootstrapRenderPipeline<WgpuDevice>>,
+    renderer: Option<NativeRenderer>,
+    quad_rendering: bool,
+    mesh_shader_path: Option<PathBuf>,
     active: bool,
     focused: bool,
     size: PhysicalSize<u32>,
@@ -187,6 +216,10 @@ impl NativeClientHost {
             window: None,
             graphics: None,
             renderer: None,
+            quad_rendering: config.quad_rendering,
+            mesh_shader_path: config
+                .mesh_shader_path
+                .map(|path| resolve_asset_path(&path)),
             active: false,
             focused: false,
             size: PhysicalSize::new(0, 0),
@@ -475,11 +508,36 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
             )) {
                 Ok(graphics) => {
                     let artifact = nico_rhi::builtin_shaders::bootstrap_wgsl(&shader_bytes);
-                    match BootstrapRenderPipeline::new(
-                        graphics.device(),
-                        graphics.surface().format(),
-                        artifact,
-                    ) {
+                    let renderer = if let Some(path) = &self.mesh_shader_path {
+                        match fs::read(path) {
+                            Ok(bytes) => MeshRenderPipeline::new(
+                                graphics.device(),
+                                graphics.surface().format(),
+                                nico_rhi::builtin_shaders::bootstrap_wgsl(&bytes),
+                                artifact,
+                            )
+                            .map(|renderer| NativeRenderer::Meshes(Box::new(renderer))),
+                            Err(error) => Err(nico_rhi::RhiError::new(
+                                nico_rhi::RhiErrorKind::Backend,
+                                format!("failed to read mesh shader {}: {error}", path.display()),
+                            )),
+                        }
+                    } else if self.quad_rendering {
+                        QuadRenderPipeline::new(
+                            graphics.device(),
+                            graphics.surface().format(),
+                            artifact,
+                        )
+                        .map(NativeRenderer::Quads)
+                    } else {
+                        BootstrapRenderPipeline::new(
+                            graphics.device(),
+                            graphics.surface().format(),
+                            artifact,
+                        )
+                        .map(NativeRenderer::Bootstrap)
+                    };
+                    match renderer {
                         Ok(renderer) => {
                             self.graphics = Some(graphics);
                             self.renderer = Some(renderer);
@@ -638,8 +696,55 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                     return;
                 }
                 if let (Some(graphics), Some(renderer)) = (&mut self.graphics, &mut self.renderer) {
+                    let snapshot = self.operations.as_ref().map(|host| host.snapshots());
+                    let request = snapshot.as_ref().and_then(|slot| slot.take_request());
                     let (device, queue, surface) = graphics.parts();
-                    match renderer.render(device, queue, surface) {
+                    if request.is_some() {
+                        surface.request_snapshot();
+                    }
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map_or(1.0, |window| window.scale_factor())
+                        as f32;
+                    let viewport = [
+                        self.size.width as f32 / scale,
+                        self.size.height as f32 / scale,
+                    ];
+                    let rendered = match renderer {
+                        NativeRenderer::Bootstrap(renderer) => {
+                            renderer.render(device, queue, surface)
+                        }
+                        NativeRenderer::Meshes(renderer) => renderer.render(
+                            device,
+                            queue,
+                            surface,
+                            self.session.presentation.scene3d(),
+                            self.session.presentation.scene(),
+                            viewport,
+                            Extent3d::surface(self.size.width, self.size.height),
+                        ),
+                        NativeRenderer::Quads(renderer) => renderer.render(
+                            device,
+                            queue,
+                            surface,
+                            self.session.presentation.scene(),
+                            viewport,
+                        ),
+                    };
+                    if let Some(id) = request {
+                        snapshot.as_ref().unwrap().complete(
+                            id,
+                            surface
+                                .take_snapshot()
+                                .map(|pixels| nico_ops::snapshot::Pixels {
+                                    width: pixels.width,
+                                    height: pixels.height,
+                                    rgba: pixels.rgba,
+                                }),
+                        );
+                    }
+                    match rendered {
                         Ok(status) => self.report_render(status),
                         Err(error) => {
                             self.report_graphics_failure(GraphicsOutcome::RenderFailed);

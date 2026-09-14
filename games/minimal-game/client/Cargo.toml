@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+nico-assets = { path = "../../../crates/nico-assets", features = ["loading"] }
+nico-presentation = { path = "../../../crates/nico-presentation" }
+nico-ops = { path = "../../../crates/nico-ops", features = ["mcp"] }
+serde_json = "1"
 clap.workspace = true
 minimal-game-shared = { path = "../shared", features = ["tools"] }
 nico-input = { path = "../../../crates/nico-input" }

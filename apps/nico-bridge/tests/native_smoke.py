@@ -76,6 +76,7 @@ class Mcp:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bin-dir", type=pathlib.Path, required=True)
+    parser.add_argument("--sample", choices=("2d", "3d"), default="2d")
     args = parser.parse_args()
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -102,8 +103,79 @@ def main():
             server = start("minimal-game-server", "--bridge", address)
             bridge = Mcp(start("nico-bridge", "--listen", address, mcp=True))
             server_id = bridge.ready("server")
-            client = start("minimal-game-client", "--bridge", address)
+            client = start("minimal-game-client", "--bridge", address, "--sample", args.sample)
             client_id = bridge.ready("client")
+            # Discover the new sample tools before invoking them. These edits are
+            # queued; acceptance is distinct from runtime application.
+            catalogs = bridge.call("list_game_tools", {})
+            assert "sample_control" in json.dumps(catalogs), catalogs
+
+            def sample_until(predicate):
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    state = bridge.game(client_id, "sample_state")
+                    if predicate(state):
+                        return state
+                    time.sleep(0.02)
+                raise TimeoutError(f"sample condition not met: {state}")
+
+            def edit(action, **values):
+                accepted = bridge.game(client_id, "sample_control", {"action": action, **values})
+                assert accepted["accepted"], accepted
+                state = sample_until(lambda state: state["last_applied_command"] >= accepted["command_id"])
+                outcome = next(item for item in state["command_results"] if item["command_id"] == accepted["command_id"])
+                assert outcome["error"] is None, state
+                return state
+
+            sample_until(lambda state: state["texture_state"] == "ready")
+            if args.sample == "3d":
+                loaded = sample_until(lambda state: state["mesh_state"] == "ready" and state["checker_state"] == "ready")
+                assert loaded["mesh_vertices"] == 24 and loaded["mesh_indices"] == 36, loaded
+                assert loaded["mesh_draws"] == 1 and loaded["world_quads"] == 0, loaded
+                rejected = bridge.request("tools/call", {"name": "call_game_tool", "arguments": {
+                    "instance_id": client_id, "tool_name": "sample_control",
+                    "arguments": {"action": "set_camera3d", "x": 0.0001, "y": 0, "z": 0}}})
+                assert rejected.get("isError"), rejected
+                assert bridge.game(client_id, "status")["failure"] is None
+                rotated = edit("set_mesh_yaw", radians=0.5)
+                assert rotated["mesh_yaw"] == 0.5, rotated
+                camera3d = edit("set_camera3d", x=3, y=2, z=4)
+                assert camera3d["camera3d_position"] == [3, 2, 4], camera3d
+                edit("set_mesh_enabled", value=False)
+                unloaded = sample_until(lambda state: not state["mesh_resident"])
+                assert unloaded["texture_state"] == "ready" and unloaded["hud_quads"] == 1, unloaded
+                edit("set_mesh_enabled", value=True)
+                sample_until(lambda state: state["mesh_state"] == "ready")
+            assert "window_snapshot" in json.dumps(catalogs), catalogs
+            capture = bridge.game(client_id, "window_snapshot")
+            request_id = capture["request_id"]
+            deadline = time.monotonic() + 10
+            while capture["state"] == "pending" and time.monotonic() < deadline:
+                time.sleep(0.02)
+                capture = bridge.game(client_id, "window_snapshot", {"request_id": request_id})
+                assert bridge.game(client_id, "status")["failure"] is None
+            assert capture["state"] == "ready", capture
+            image = pathlib.Path(capture["path"]).read_bytes()
+            assert image[:8] == b"\x89PNG\r\n\x1a\n", capture
+            assert int.from_bytes(image[16:20], "big") == capture["width"], capture
+            assert int.from_bytes(image[20:24], "big") == capture["height"], capture
+            assert bridge.game(client_id, "window_snapshot", {"request_id": request_id}) == capture
+            moved = edit("set_position", x=2, y=1)
+            assert moved["positions"] == [[2, 1]], moved
+            camera = edit("set_camera", x=1, y=0)
+            assert camera["camera_center"] == [1, 0] and camera["hud_center"] == [48, 48], camera
+            hidden = edit("set_sprite_visible", value=False)
+            assert hidden["world_quads"] == 0 and hidden["hud_quads"] == 1, hidden
+            assert hidden["mesh_draws"] == 0, hidden
+            edit("set_texture_enabled", value=False)
+            sample_until(lambda state: not state["texture_resident"] and (args.sample != "3d" or not state["checker_resident"]))
+            edit("set_texture_enabled", value=True)
+            sample_until(lambda state: state["texture_state"] == "ready")
+            if args.sample == "3d":
+                sample_until(lambda state: state["checker_state"] == "ready")
+            edit("set_sprite_visible", value=True)
+            edit("set_camera", x=0, y=0)
+            edit("set_position", x=0, y=0)
             initial_diagnostics = {}
             for role, instance in [("server", server_id), ("client", client_id)]:
                 state = bridge.call(f"minimal_game.{role}.game_state", {"instance_id": instance, "arguments": {}})
@@ -151,7 +223,7 @@ def main():
                     assert status["host"]["graphics"]["presented_frames"] > 0, status
             assert bridge.call("list_game_tools", {})["catalogs"], "offline schemas were lost"
             bridge.close()
-            print(json.dumps({"result": "passed", "client_and_server_ready": True,
+            print(json.dumps({"result": "passed", "sample": args.sample, "sample_controls": True, "window_snapshot": True, "client_and_server_ready": True,
                               "custom_tools_routed": True, "diagnostics_survive_bridge_restart": True,
                               "graphics_status_retained": True, "games_survive_bridge_restart": True,
                               "server_restarted_without_bridge_restart": True,

@@ -4,5 +4,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+loading = ["dep:nico-runtime", "dep:png", "dep:gltf"]
+
+[dependencies]
+nico-runtime = { path = "../nico-runtime", optional = true }
+png = { version = "0.18", optional = true }
+gltf = { version = "1.4", default-features = false, features = ["utils"], optional = true }
+
+[[example]]
+name = "load_texture"
+required-features = ["loading"]
+
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true

@@ -661,6 +661,9 @@ pub enum SurfaceAcquire<F, V> {
 }
 
 /// GPU device and resource factory.
+/// Providers must retain resources referenced by recorded commands and submitted
+/// work. Dropping a resource wrapper must not invalidate those uses; callers need
+/// not wait for GPU completion before releasing their own resource references.
 pub trait RhiDevice {
     type Buffer;
     type Texture;

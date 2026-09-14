@@ -12,3 +12,9 @@ wgpu.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+nico-render = { path = "../nico-render" }
+nico-presentation = { path = "../nico-presentation", default-features = false }
+nico-assets = { path = "../nico-assets" }
+pollster.workspace = true

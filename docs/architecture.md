@@ -34,7 +34,7 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | `nico-rhi` | Backend-neutral GPU resource, command, and surface contracts |
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
 | `nico-winit` | Native window lifecycle, input adaptation, and client-session coordination |
-| `nico-assets` | Stable asset and typed handle identity |
+| `nico-assets` | Asset/handle identity, owning leases, and optional runtime-owned PNG/GLB loading |
 | `nico-launch` | Native CLI, diagnostics, and client/server transport composition |
 | `nico-ops` | Dependency-free host control core; optional tool catalogs and game bridge transport |
 | `apps/nico-shaderc` | Offline shader compilation outside the Rust build graph |
@@ -99,10 +99,19 @@ Presentation may read the authoritative world immutably. It does not own or muta
 gameplay state. Direct queries are allowed; extraction and caching require a
 demonstrated need.
 
-The current `nico-presentation::Presentation` is a null lifecycle implementation: it
-accepts a world/frame and counts frames. The Winit host separately drives
-`nico-render::BootstrapRenderPipeline`. The triangle uses fixed geometry and is not
-connected to game positions.
+Games publish `nico-presentation::Scene2d` as a runtime resource after game updates.
+`Presentation` accepts an immutable world/frame and copies that owned draw snapshot;
+it never gives the renderer world access. Textures are immutable `Arc<Texture>` values,
+so snapshots can retain CPU content after a store entry is released. An absent scene
+produces an empty snapshot. Shutdown releases the presentation's retained snapshot.
+
+`nico-render` consumes presentation contracts with default features disabled, keeping
+its own dependency path free of runtime. `nico-presentation`'s default `runtime` feature
+adds world extraction and lifecycle; its drawing contracts need only `nico-assets`.
+World quads use an
+explicit 2D camera; HUD quads use logical viewport coordinates. The same quad pipeline
+draws both. Shared/headless game logic does not depend on assets or presentation.
+The native client maps shared positions to visuals in its game-owned extraction system.
 
 `nico-rhi` defines associated provider resource types for capabilities, buffers,
 textures, bindings, shaders, pipelines, commands, uploads, passes, and surfaces.
@@ -114,9 +123,13 @@ resize and recoverable surface outcomes, including zero-size, timeout, occlusion
 outdated/lost surfaces, and suboptimal frames. Unrecoverable failures use RHI error
 categories.
 
-`nico-render` selects shaders and pipelines, records the bootstrap pass, submits
-commands, and presents. It rebuilds the pipeline if the surface format changes. Native
-hosts compose and drive these layers but do not define scene draw calls.
+`nico-render` selects shaders and pipelines, uploads CPU textures, records draw passes,
+submits commands, and presents. The texture cache identifies immutable allocations and
+retains only resources used by the current drawn frame; its CPU references are weak.
+Providers retain resources referenced by recorded/submitted work when wrappers drop.
+The pipelines rebuild if the surface format changes. Native hosts select a pipeline
+and supply viewport/DPI values but do not define scene draw calls. The bootstrap
+triangle remains available to hosts that do not select the quad pipeline.
 
 The smoke frame limit counts client-session frames, even when GPU acquisition skips
 presentation. It is bounded lifecycle coverage, not a successful-GPU-frame counter.
@@ -134,8 +147,15 @@ Each game owns `assets/logic` for authoritative content and `assets/presentation
 client-only content. Logic assets must not depend on presentation assets. Packaging must
 preserve that split when implemented.
 
-`nico-assets` defines `AssetId` and `Handle<T>` identity only. A general loader,
-manifest, importer, dependency resolver, and packaging pipeline are not present.
+`nico-assets` defines `AssetId`, copyable `Handle<T>` identity, and owning
+`AssetLease<T>`. Its optional `loading` feature depends on runtime and PNG/glTF decoders;
+the default CPU asset API remains dependency-free. `TextureStore` and `MeshStore`
+specialize the same runtime resource, `AssetStore<T>`. Each store uses a distinct typed
+service completion and one engine-owned worker that reads/decodes files through the
+existing service boundary;
+runtime systems publish results, reconcile lease release, and dispatch bounded work.
+The host supplies an immutable ID/path catalog. A general importer, dependency resolver,
+and packaging pipeline are not present. Usage belongs in [README](../README.md#texture-loading).
 
 Engine bootstrap shaders live separately under the repository's
 `assets/presentation/shaders/` root. `nico-shaderc` compiles Slang into the checked-in
@@ -144,8 +164,18 @@ waits for GPU initialization, and creates the pipeline before its first redraw. 
 direct file read is not the planned service-backed asset load. Backend shader/pipeline
 preparation still occurs at runtime.
 
-Source files and authoring metadata stay outside the future shipping runtime contract.
-Introduce new data formats when concrete consumers require them.
+Authoring project files and metadata stay outside the future shipping runtime contract.
+A supported source encoding can itself be a shipping asset: the selected
+[texture design](plans/2026-09-14-texture-assets.md) uses PNG directly. Introduce new
+data formats when concrete consumers require them. Asset leases retain CPU content
+independently of copyable handle identity; an explicit `Arc<Texture>` can pin pixels
+for a snapshot beyond store release. GPU resource lifetime remains owned by the renderer;
+texture and mesh upload and both consumers are implemented. `Scene3d` holds a
+perspective camera and immutable mesh instances. `MeshRenderPipeline` owns depth,
+vertex/index caches, per-instance transform uniforms, and a shared quad renderer for
+HUD drawing and texture reuse. The mesh pass clears and depth-tests; the HUD pass
+loads its color target before one presentation. See the
+[mesh design](plans/2026-09-14-mesh-assets.md) for the bounded GLB subset.
 
 ## Measurement and profiling requirements
 
@@ -281,3 +311,17 @@ Parallel scheduling, public math representation, physics, audio, UI, production
 materials/render graphs, scene/prefab formats, and import caching remain deferred.
 Profiling implementation and broader visual development tools are deferred; phase status
 and priorities belong in the roadmap and TODO.
+
+## Window snapshot ownership
+
+Native clients register `window_snapshot` through `nico-launch`. `nico-ops` holds a
+bounded request/result slot with process-local IDs; tooling queues requests and reads
+owned pixels. `nico-winit` consumes requests at rendering, and the wgpu provider copies
+the color target before presentation, waits for bounded GPU completion, removes row
+padding, and converts BGRA to RGBA. This adds no runtime dependency to the provider.
+Surface COPY_SRC is enabled only when supported; capture errors do not change
+presentation success. Launch starts a single background PNG encoding/write job on
+retrieval, returns pending while it runs, and retains one local artifact per process.
+Encoding never runs on the bridge heartbeat/call thread. New captures are rejected
+while the encoder is busy, and teardown joins active work. Shutdown fails pending requests. Usage and bounds belong in
+[README](../README.md#window-snapshots-through-mcp).

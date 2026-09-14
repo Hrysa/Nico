@@ -1,5 +1,11 @@
 //! `wgpu` implementation of Nico's rendering hardware interface.
 
+#[cfg(test)]
+mod quad_tests;
+
+mod snapshot;
+pub use snapshot::CapturedPixels;
+
 use std::{
     borrow::Cow,
     fmt::Debug,
@@ -55,6 +61,8 @@ pub struct WgpuSurface<W> {
     configuration: wgpu::SurfaceConfiguration,
     extent: Extent3d,
     configured: bool,
+    capture_requested: bool,
+    capture_result: Option<Result<CapturedPixels, String>>,
     failure: Arc<Mutex<Option<BackendFailure>>>,
 }
 
@@ -191,6 +199,8 @@ where
             configuration,
             extent,
             configured: false,
+            capture_requested: false,
+            capture_result: None,
             failure,
         };
         surface.configure_if_presentable(&device);
@@ -691,6 +701,10 @@ where
     }
 
     fn present(&mut self, device: &WgpuDevice, queue: &WgpuQueue, frame: Self::Frame) {
+        if self.capture_requested {
+            self.capture_requested = false;
+            self.capture_result = Some(snapshot::readback(device, queue, &frame.texture.texture));
+        }
         queue.inner.present(frame.texture);
         if frame.reconfigure_after_present {
             self.configure_if_presentable(device);
@@ -1062,6 +1076,9 @@ fn surface_configuration(
                 "surface exposes no texture format supported by the Nico RHI profile",
             )
         })?;
+    if capabilities.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+        configuration.usage |= wgpu::TextureUsages::COPY_SRC;
+    }
     configuration.view_formats = vec![configuration.format];
     Ok(configuration)
 }
@@ -1329,6 +1346,24 @@ fn record_failure(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if failure.is_none() {
         *failure = Some(BackendFailure { kind, message });
+    }
+}
+
+impl<W> WgpuSurface<W> {
+    /// Capture the next rendered surface image before presentation.
+    pub fn request_snapshot(&mut self) {
+        self.capture_requested = true;
+        self.capture_result = None;
+    }
+    /// Finish this render attempt; skipped acquisition is an explicit capture failure.
+    pub fn take_snapshot(&mut self) -> Result<CapturedPixels, String> {
+        self.capture_requested = false;
+        self.capture_result.take().unwrap_or_else(|| {
+            Err(
+                "no surface image rendered (suspended, occluded, zero-sized, or render failure)"
+                    .into(),
+            )
+        })
     }
 }
 

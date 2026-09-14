@@ -11,6 +11,8 @@ pub mod mcp;
 #[cfg(feature = "bridge")]
 pub mod bridge;
 
+pub mod snapshot;
+
 use std::{
     error::Error,
     fmt,
@@ -123,6 +125,7 @@ impl Error for HostClosed {}
 pub struct HostControl {
     stop: Arc<StopSender>,
     status: Arc<Mutex<HostStatus>>,
+    snapshots: snapshot::SnapshotControl,
 }
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
@@ -153,6 +156,11 @@ impl Drop for StopSender {
 }
 
 impl HostControl {
+    /// Bounded client snapshot requests; only enabled by a supporting host.
+    pub fn snapshots(&self) -> snapshot::SnapshotControl {
+        self.snapshots.clone()
+    }
+
     /// Returns the latest published snapshot, which may lag a busy host.
     #[must_use]
     pub fn status(&self) -> HostStatus {
@@ -205,11 +213,17 @@ impl HostControl {
 pub struct HostEndpoint {
     stop: Receiver<()>,
     status: Arc<Mutex<HostStatus>>,
+    snapshots: snapshot::SnapshotControl,
     stop_requested: bool,
     wakeup: Arc<Wakeup>,
 }
 
 impl HostEndpoint {
+    /// Host-owned snapshot publication boundary.
+    pub fn snapshots(&self) -> snapshot::SnapshotControl {
+        self.snapshots.clone()
+    }
+
     /// Installs a host wakeup for stop requests and last-controller disconnect.
     ///
     /// The callback runs on the requesting/dropping thread and must return promptly,
@@ -309,6 +323,7 @@ impl HostEndpoint {
 
 impl Drop for HostEndpoint {
     fn drop(&mut self) {
+        self.snapshots.close();
         self.wakeup
             .0
             .lock()
@@ -337,6 +352,7 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
         failure: None,
     }));
     let wakeup = Arc::new(Wakeup::default());
+    let snapshots = snapshot::SnapshotControl::default();
     (
         HostControl {
             stop: Arc::new(StopSender {
@@ -344,10 +360,12 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
                 wakeup: wakeup.clone(),
             }),
             status: status.clone(),
+            snapshots: snapshots.clone(),
         },
         HostEndpoint {
             stop: receiver,
             status,
+            snapshots,
             stop_requested: false,
             wakeup,
         },

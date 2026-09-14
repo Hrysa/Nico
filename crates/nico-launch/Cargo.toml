@@ -7,9 +7,10 @@ license.workspace = true
 [features]
 default = []
 server = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime"]
-client = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
+client = ["dep:png","dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
 
 [dependencies]
+png = { version = "0.18", optional = true }
 clap.workspace = true
 nico-ops = { path = "../nico-ops", features = ["bridge"], optional = true }
 nico-runtime = { path = "../nico-runtime", optional = true }

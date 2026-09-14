@@ -13,6 +13,11 @@ pub struct Position {
 }
 
 impl Position {
+    /// Creates an authoritative position in world units.
+    #[must_use]
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
     /// Returns the horizontal world position.
     #[must_use]
     pub const fn x(self) -> f32 {

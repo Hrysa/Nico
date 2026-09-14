@@ -14,6 +14,8 @@ pub mod server;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "client")]
+mod snapshot;
 
 use clap::{Args, ValueEnum};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt::format::FmtSpan};

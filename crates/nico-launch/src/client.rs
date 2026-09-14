@@ -85,11 +85,13 @@ impl ClientHost {
             .identity
             .ok_or_else(|| io::Error::other("bridge mode requires a game identity"))?;
         let (control, endpoint) = control_channel();
+        control.snapshots().enable();
+        let tools = crate::snapshot::register(self.tools, control.clone())?;
         let _bridge = BridgeClient::start(
             address,
             GameRegistration::new(game, GameRole::Client, version),
             control,
-            crate::diagnostics::register(self.tools)?,
+            crate::diagnostics::register(tools)?,
         )?;
         run_native_client_with_operations(app, config, map_input, endpoint)
     }

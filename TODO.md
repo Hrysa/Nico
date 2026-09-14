@@ -4,13 +4,12 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Next: asset loading
+## Next: paired rendering samples
 
-- [ ] Resolve the reference game's initial 2D/3D scope, core mechanic, platforms,
-      and content scale before selecting its first asset.
-- [ ] Select that asset type and name its sample consumer.
-- [ ] Write the implementation tasks for the selected asset against the
-      [phase 3 completion criteria](docs/roadmap.md#3-load-game-assets).
+Selected scope and acceptance: [roadmap phase 4](docs/roadmap.md#4-display-the-game-world).
+
+- [ ] Define the full reference game's mechanic, platforms, and content scale
+      before expanding beyond these samples.
 
 ## Native host validation
 
