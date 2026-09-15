@@ -18,4 +18,4 @@ See [the shader workflow](../../../README.md#shader-workflow).
 Loading preserves the logic/presentation split and follows the
 [measurement and AI-operation requirements](../../../docs/architecture.md).
 Asset outcomes belong in [roadmap phase 3](../../../docs/roadmap.md#3-load-game-assets);
-concrete next actions belong in [TODO](../../../TODO.md#next-define-the-reference-game).
+concrete next actions belong in [TODO](../../../TODO.md).

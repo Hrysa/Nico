@@ -1,0 +1,15 @@
+[package]
+name = "arena-arpg-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arena-arpg-shared = { path = "../shared", features = ["tools"] }
+clap.workspace = true
+nico-launch = { path = "../../../crates/nico-launch", features = ["server"] }
+nico-runtime = { path = "../../../crates/nico-runtime" }
+tracing.workspace = true
+
+[lints]
+workspace = true

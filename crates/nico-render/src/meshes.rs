@@ -1,5 +1,5 @@
 use crate::{DEFAULT_CLEAR_COLOR, QuadRenderPipeline, RenderStatus, acquired_frame};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Vec3};
 use nico_assets::{Mesh, MeshVertex};
 use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d};
 use nico_rhi::*;
@@ -400,8 +400,7 @@ fn invalid(message: &str) -> RhiError {
 }
 fn camera_matrix(camera: Camera3d, aspect: f32) -> Result<Mat4, RhiError> {
     let position = Vec3::from(camera.position);
-    let target = Vec3::from(camera.target);
-    if !camera.has_valid_view_direction()
+    if !camera.has_valid_pose()
         || !aspect.is_finite()
         || aspect <= 0.0
         || !camera.near.is_finite()
@@ -413,7 +412,8 @@ fn camera_matrix(camera: Camera3d, aspect: f32) -> Result<Mat4, RhiError> {
         return Err(invalid("invalid perspective camera"));
     }
     let result = Mat4::perspective_rh(camera.vertical_fov_radians, aspect, camera.near, camera.far)
-        * Mat4::look_at_rh(position, target, Vec3::Y);
+        * Mat4::from_quat(camera.orientation.conjugate())
+        * Mat4::from_translation(-position);
     if !result.is_finite() {
         return Err(invalid("camera transform overflow"));
     }
@@ -422,7 +422,7 @@ fn camera_matrix(camera: Camera3d, aspect: f32) -> Result<Mat4, RhiError> {
 fn transform(camera: Mat4, mesh: &MeshInstance) -> Result<Mat4, RhiError> {
     if !mesh.scale.is_finite()
         || mesh.scale <= 0.0
-        || !mesh.yaw_radians.is_finite()
+        || (!mesh.orientation.is_finite() || !mesh.orientation.is_normalized())
         || mesh
             .position
             .iter()
@@ -434,7 +434,7 @@ fn transform(camera: Mat4, mesh: &MeshInstance) -> Result<Mat4, RhiError> {
     let result = camera
         * Mat4::from_scale_rotation_translation(
             Vec3::splat(mesh.scale),
-            Quat::from_rotation_y(mesh.yaw_radians),
+            mesh.orientation,
             Vec3::from(mesh.position),
         );
     if !result.is_finite() {
@@ -447,29 +447,49 @@ fn transform(camera: Mat4, mesh: &MeshInstance) -> Result<Mat4, RhiError> {
 mod tests {
     use super::*;
     #[test]
-    fn view_direction_validation_matches_camera_precision_boundaries() {
-        for x in [0.0001f32, f32::from_bits(0.0001f32.to_bits() + 1), 0.0002] {
+    fn quaternion_camera_supports_vertical_views_and_roll() {
+        use nico_presentation::Quaternion;
+        for orientation in [
+            Quaternion::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            Quaternion::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+            Quaternion::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        ] {
             let camera = Camera3d {
-                position: [x, 0.0, 0.0],
+                position: [0.0; 3],
+                orientation,
                 ..Camera3d::default()
             };
-            assert_eq!(
-                camera.has_valid_view_direction(),
-                camera_matrix(camera, 1.0).is_ok()
-            );
+            let matrix = camera_matrix(camera, 1.0).unwrap();
+            let center = matrix.project_point3(orientation * Vec3::new(0.0, 0.0, -2.0));
+            assert!(center.x.abs() < 1e-5 && center.y.abs() < 1e-5);
+            let right = matrix.project_point3(orientation * Vec3::new(1.0, 0.0, -2.0));
+            assert!(right.x > 0.0 && right.y.abs() < 1e-5);
         }
-        assert!(
-            !Camera3d {
-                position: [0.0001, 0.0, 0.0],
-                ..Camera3d::default()
-            }
-            .has_valid_view_direction()
-        );
     }
     #[test]
-    fn perspective_uses_zero_to_one_depth_and_rejects_degenerate_cameras() {
+    fn mesh_transforms_use_full_quaternion_rotation_and_reject_invalid_units() {
+        use nico_presentation::Quaternion;
+        let mut mesh = MeshInstance {
+            mesh: None,
+            texture: None,
+            position: [1.0, 2.0, 3.0],
+            scale: 2.0,
+            orientation: Quaternion::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            color: [1.0; 4],
+        };
+        let point = transform(Mat4::IDENTITY, &mesh)
+            .unwrap()
+            .transform_point3(Vec3::Y);
+        assert!((point - Vec3::new(1.0, 2.0, 5.0)).length() < 1e-5);
+        mesh.orientation = Quaternion::from_xyzw(0.0, 0.0, 0.0, 2.0);
+        assert!(transform(Mat4::IDENTITY, &mesh).is_err());
+    }
+    #[test]
+    fn perspective_uses_zero_to_one_depth_and_rejects_invalid_poses() {
+        use nico_presentation::Quaternion;
         let mut camera = Camera3d {
             position: [0.0, 0.0, 3.0],
+            orientation: Quaternion::IDENTITY,
             ..Camera3d::default()
         };
         let matrix = camera_matrix(camera, 1.0).unwrap();
@@ -477,9 +497,16 @@ mod tests {
         assert!(near.z.abs() < 0.0001);
         let far = matrix.project_point3(Vec3::new(0.0, 0.0, 3.0 - camera.far));
         assert!((far.z - 1.0).abs() < 0.0001);
-        camera.position = camera.target;
-        assert!(camera_matrix(camera, 1.0).is_err());
-        camera.position = [0.0, 2.0, 0.0];
+        for orientation in [
+            Quaternion::from_xyzw(0.0, 0.0, 0.0, 0.0),
+            Quaternion::from_xyzw(0.0, 0.0, 0.0, 2.0),
+            Quaternion::from_xyzw(f32::NAN, 0.0, 0.0, 1.0),
+        ] {
+            camera.orientation = orientation;
+            assert!(camera_matrix(camera, 1.0).is_err());
+        }
+        camera.orientation = Quaternion::IDENTITY;
+        camera.position[0] = f32::INFINITY;
         assert!(camera_matrix(camera, 1.0).is_err());
     }
 }

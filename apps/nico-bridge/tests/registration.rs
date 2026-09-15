@@ -260,3 +260,125 @@ fn bridge_starts_with_only_management_tools_and_no_game_processes() {
     );
     mcp.close();
 }
+
+#[test]
+fn arena_tools_route_through_bridge_and_preserve_commands_across_reconnect() {
+    use arena_arpg_shared::{ArenaPlugin, FIXED_STEP};
+    let (builder, catalog) =
+        arena_arpg_shared::tools::register(nico_runtime::AppBuilder::new().add_plugin(ArenaPlugin))
+            .unwrap();
+    let mut app = builder.build().unwrap();
+    app.start().unwrap();
+    let (control, mut host) = control_channel();
+    host.running(0);
+    let endpoint = address();
+    let adapter = BridgeClient::start(
+        endpoint,
+        GameRegistration::new("arena-arpg", GameRole::Server, "1"),
+        control,
+        catalog,
+    )
+    .unwrap();
+    let mut mcp = Mcp::start(endpoint);
+    let first = mcp.connected("server");
+    let catalog = mcp.call("list_game_tools", json!({}));
+    assert!(catalog.to_string().contains("game_attack"));
+    assert!(catalog.to_string().contains("phase_ticks_remaining"));
+    fn routed(mcp: &mut Mcp, instance: &str, name: &str, args: Value) -> Value {
+        mcp.call(
+            "call_game_tool",
+            json!({"instance_id":instance,"tool_name":name,"arguments":args}),
+        )["structuredContent"]
+            .clone()
+    }
+    let initial = routed(&mut mcp, &first, "game_state", json!({}));
+    assert_eq!(initial["run_id"], 1);
+    let accepted = routed(
+        &mut mcp,
+        &first,
+        "game_move",
+        json!({"run_id":1,"x":1,"z":0,"ticks":3}),
+    );
+    let id = accepted["command_id"].as_u64().unwrap();
+    assert_eq!(
+        routed(&mut mcp, &first, "game_command", json!({"command_id":id}))["state"],
+        "pending"
+    );
+    app.tick(FIXED_STEP).unwrap();
+    assert_eq!(
+        routed(&mut mcp, &first, "game_command", json!({"command_id":id}))["state"],
+        "running"
+    );
+    mcp.close();
+    assert!(!host.stop_requested());
+    app.tick(FIXED_STEP).unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    let mut reconnected = Mcp::start(endpoint);
+    let second = reconnected.connected("server");
+    assert_ne!(first, second);
+    let completed = routed(
+        &mut reconnected,
+        &second,
+        "game_command",
+        json!({"command_id":id}),
+    );
+    assert_eq!(completed["state"], "completed");
+    assert_eq!(completed["applied_ticks"], 3);
+    assert_eq!(
+        routed(&mut reconnected, &second, "game_state", json!({}))["tick"],
+        3
+    );
+    let attack = routed(
+        &mut reconnected,
+        &second,
+        "game_attack",
+        json!({"run_id":1,"yaw":0}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_command",
+            json!({"command_id":attack})
+        )["state"],
+        "completed"
+    );
+    assert_eq!(
+        routed(&mut reconnected, &second, "game_state", json!({}))["actors"][0]["action"]["phase"],
+        "windup"
+    );
+    let reset = routed(
+        &mut reconnected,
+        &second,
+        "game_restart",
+        json!({"run_id":1}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_command",
+            json!({"command_id":reset})
+        )["result_run_id"],
+        2
+    );
+    assert!(!host.stop_requested());
+    app.shutdown().unwrap();
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_restart",
+            json!({"run_id":2})
+        )["error"]["code"],
+        "shutting_down"
+    );
+    drop(adapter);
+    reconnected.close();
+}

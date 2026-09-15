@@ -5,6 +5,8 @@
 //! runtime, presentation, or game crate. Client applications map [`InputState`]
 //! into game-owned semantic commands.
 
+pub mod fixed;
+
 use std::collections::{HashMap, HashSet};
 
 /// Provider-local identity assigned by an input adapter.

@@ -101,3 +101,6 @@ mod tests {
         assert_eq!(handle.id().to_u128(), 42);
     }
 }
+
+/// Procedural CPU mesh builders.
+pub mod procedural;

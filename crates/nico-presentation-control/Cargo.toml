@@ -1,0 +1,14 @@
+[package]
+name = "nico-presentation-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = "0.30"
+nico-spatial = { path = "../nico-spatial" }
+nico-assets = { path = "../nico-assets" }
+nico-presentation = { path = "../nico-presentation", default-features = false }
+
+[lints]
+workspace = true

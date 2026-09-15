@@ -29,8 +29,10 @@ interrupt active local I/O; shutdown joins the worker. Paths are trusted host co
 
 ## Rendering and sample
 
-`Scene3d` contains a perspective camera and mesh instances with translation, Y-axis
-yaw, positive uniform scale, tint, and optional ready mesh/texture references.
+`Scene3d` contains a perspective camera and mesh instances with translation, unit
+quaternion orientation, positive uniform scale, tint, and optional ready mesh/texture
+references. Camera poses also use unit quaternions; the renderer inverts the pose
+directly, supporting roll and vertical views without fixed-up reconstruction.
 The renderer uses right-handed view/projection matrices with zero-to-one depth,
 indexed draws, a depth target recreated when extent changes, and a distinct uniform
 buffer for each instance. Draws are capped at 256; geometry has the same vertex/index

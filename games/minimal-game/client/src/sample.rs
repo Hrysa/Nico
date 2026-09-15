@@ -4,19 +4,18 @@ use nico_assets::{
     AssetId, AssetLease, Handle, Mesh, Texture,
     loading::{MeshState, MeshStore, TextureLimits, TextureState, TextureStore},
 };
-use nico_ops::mcp::{CallToolResult, Tool, ToolExtensions};
+use nico_ops::{
+    commands::{FifoCommands, SubmitError},
+    mcp::{CallToolResult, Tool, ToolExtensions},
+    publication::Publication,
+};
 use nico_presentation::{Camera2d, Camera3d, MeshInstance, Quad, Scene2d, Scene3d};
 use nico_runtime::{AppBuilder, Plugin, RuntimeError, RuntimeResult, Stage};
 use serde_json::{Map, Value, json};
 use std::{
-    collections::VecDeque,
     io,
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, SyncSender},
-    },
+    sync::{Arc, Mutex},
 };
 
 const TEXTURE: Handle<Texture> = Handle::new(AssetId::from_u128(1));
@@ -34,6 +33,7 @@ enum Action {
     Mesh(bool),
     RetryMesh,
     Camera3d([f32; 3]),
+    CameraOrientation(nico_presentation::Quaternion),
     Yaw(f32),
 }
 #[derive(Debug)]
@@ -41,9 +41,12 @@ struct Command {
     id: u64,
     action: Action,
 }
-struct Sender {
-    channel: SyncSender<Command>,
-    next: u64,
+type Commands = Arc<Mutex<FifoCommands<Command, (u64, Option<String>), CAPACITY>>>;
+fn commands() -> Commands {
+    Arc::new(Mutex::new(FifoCommands::new(CAPACITY)))
+}
+fn submit(queue: &Commands, action: Action) -> Result<u64, SubmitError> {
+    queue.lock().unwrap().submit(|id| Command { id, action })
 }
 struct Sample {
     lease: Option<AssetLease<Texture>>,
@@ -56,7 +59,6 @@ struct Sample {
     visible: bool,
     applied: u64,
     error: Option<String>,
-    results: VecDeque<(u64, Option<String>)>,
 }
 
 pub fn register(
@@ -82,31 +84,29 @@ pub fn register(
             TextureLimits::default(),
         )?;
     }
-    let (sender, receiver) = mpsc::sync_channel(CAPACITY);
-    let sender = Mutex::new(Sender {
-        channel: sender,
-        next: 1,
-    });
-    let snapshot = Arc::new(Mutex::new(None::<Value>));
-    let closed = Arc::new(AtomicBool::new(false));
+    let queue = commands();
+    let snapshot = Arc::new(Mutex::new(Publication::<Value>::default()));
     let observed = snapshot.clone();
     tools.register(Tool::new("sample_state", "Read the owned rendering sample snapshot. Texture readiness describes CPU pixels, not GPU completion. Compare last_applied_command with accepted command IDs.",
         json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone())
-        .with_raw_output_schema(json!({"type":"object","required":["frame","last_applied_command","command_results","texture_state","world_quads","hud_quads"],"properties":{
+        .with_raw_output_schema(json!({"type":"object","required":["snapshot_sequence","snapshot_age_ms","closed","frame","last_applied_command","command_results","texture_state","world_quads","hud_quads"],"properties":{
+            "snapshot_sequence":{"type":"integer","minimum":1},"snapshot_age_ms":{"type":"integer","minimum":0},"closed":{"type":"boolean"},
             "frame":{"type":"integer"},"last_applied_command":{"type":"integer"},
             "command_results":{"type":"array","maxItems":32,"items":{"type":"object","required":["command_id","error"],"properties":{"command_id":{"type":"integer"},"error":{"type":["string","null"]}},"additionalProperties":false}},
             "texture_state":{"enum":["loading","ready","failed","disabled"]},"world_quads":{"type":"integer"},"hud_quads":{"type":"integer"},
             "sample_mode":{"enum":["2d","3d"]},"mesh_state":{"enum":["unused","loading","ready","failed","disabled"]},
             "mesh_draws":{"type":"integer"},"mesh_vertices":{"type":"integer"},"mesh_indices":{"type":"integer"},
             "checker_state":{"enum":["unused","loading","ready","failed","disabled"]},"checker_error":{"type":["string","null"]},"checker_resident":{"type":"boolean"},
+            "camera3d_orientation":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},
             "mesh_resident":{"type":"boolean"},"mesh_yaw":{"type":"number"},"camera3d_position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}
         }}).as_object().unwrap().clone().into()), move |args| {
         if !args.is_empty() { return error("invalid_arguments", "sample_state accepts no arguments"); }
-        observed.lock().unwrap().clone().map(CallToolResult::structured).unwrap_or_else(|| error("not_ready", "no sample frame published"))
+        observed.lock().unwrap().json().map(CallToolResult::structured).unwrap_or_else(|| error("not_ready", "no sample frame published"))
     })?;
-    let stopped = closed.clone();
-    tools.register(Tool::new("sample_control", "Queue one sample edit at the runtime Update boundary. set_position teleports world sprites for validation. Acceptance is not application; inspect sample_state. Do not blindly retry timed-out mutations.",
+    let sender = queue.clone();
+    tools.register(Tool::new("sample_control", "Queue one sample edit at the runtime Update boundary. set_camera_orientation takes a finite unit quaternion in XYZW order. set_camera3d restores origin targeting. set_position teleports world sprites for validation. Acceptance is not application; inspect sample_state. Do not blindly retry timed-out mutations.",
         json!({"type":"object","oneOf":[
+            {"required":["action","x","y","z","w"],"properties":{"action":{"const":"set_camera_orientation"},"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"},"w":{"type":"number"}},"additionalProperties":false},
             {"required":["action","x","y"],"properties":{"action":{"enum":["set_position","set_camera"]},"x":{"type":"number","minimum":-10000,"maximum":10000},"y":{"type":"number","minimum":-10000,"maximum":10000}},"additionalProperties":false},
             {"required":["action","value"],"properties":{"action":{"enum":["set_sprite_visible","set_texture_enabled","set_mesh_enabled"]},"value":{"type":"boolean"}},"additionalProperties":false},
             {"required":["action"],"properties":{"action":{"enum":["retry_texture","retry_mesh"]}},"additionalProperties":false},
@@ -115,21 +115,16 @@ pub fn register(
         ]}).as_object().unwrap().clone())
         .with_raw_output_schema(json!({"type":"object","required":["accepted","command_id"],"properties":{"accepted":{"const":true},"command_id":{"type":"integer","minimum":1}},"additionalProperties":false}).as_object().unwrap().clone().into()), move |args| {
         let action = match parse(&args) { Ok(value) => value, Err(()) => return error("invalid_arguments", "arguments do not match an action schema") };
-        if stopped.load(Ordering::Acquire) { return error("closed", "sample has stopped"); }
-        let mut sender = sender.lock().unwrap();
-        let id = sender.next;
-        if id == u64::MAX { return error("closed", "sample command identity exhausted"); }
-        match sender.channel.try_send(Command { id, action }) {
-            Ok(()) => { sender.next += 1; CallToolResult::structured(json!({"accepted":true,"command_id":id})) },
-            Err(mpsc::TrySendError::Full(_)) => error("overloaded", "sample command queue is full"),
-            Err(mpsc::TrySendError::Disconnected(_)) => error("closed", "sample has stopped"),
+        match submit(&sender, action) {
+            Ok(id) => CallToolResult::structured(json!({"accepted":true,"command_id":id})),
+            Err(SubmitError::Closed | SubmitError::IdExhausted) => error("closed", "sample cannot accept commands"),
+            Err(_) => error("overloaded", "sample command queue is full"),
         }
     })?;
     Ok(builder.add_plugin(SamplePlugin {
         mode3d,
-        receiver: Arc::new(Mutex::new(receiver)),
+        queue,
         snapshot,
-        closed,
     }))
 }
 
@@ -139,6 +134,17 @@ fn error(code: &str, message: &str) -> CallToolResult {
 
 fn parse(args: &Map<String, Value>) -> Result<Action, ()> {
     match args.get("action").and_then(Value::as_str) {
+        Some("set_camera_orientation") if args.len() == 5 => {
+            let mut xyzw = [0.0f32; 4];
+            for (i, key) in ["x", "y", "z", "w"].into_iter().enumerate() {
+                xyzw[i] = args.get(key).and_then(Value::as_f64).ok_or(())? as f32;
+            }
+            let orientation = nico_presentation::Quaternion::from_array(xyzw);
+            if !orientation.is_finite() || !orientation.is_normalized() {
+                return Err(());
+            }
+            Ok(Action::CameraOrientation(orientation.normalize()))
+        }
         Some(action @ ("set_position" | "set_camera")) if args.len() == 3 => {
             let x = args.get("x").and_then(Value::as_f64).ok_or(())?;
             let y = args.get("y").and_then(Value::as_f64).ok_or(())?;
@@ -177,12 +183,7 @@ fn parse(args: &Map<String, Value>) -> Result<Action, ()> {
                 return Err(());
             }
             let position = [x as f32, y as f32, z as f32];
-            if !(Camera3d {
-                position,
-                ..Camera3d::default()
-            })
-            .has_valid_view_direction()
-            {
+            if Camera3d::looking_at(position, [0.0; 3], [0.0, 1.0, 0.0]).is_none() {
                 return Err(());
             }
             Ok(Action::Camera3d(position))
@@ -200,9 +201,8 @@ fn parse(args: &Map<String, Value>) -> Result<Action, ()> {
 
 struct SamplePlugin {
     mode3d: bool,
-    receiver: Arc<Mutex<Receiver<Command>>>,
-    snapshot: Arc<Mutex<Option<Value>>>,
-    closed: Arc<AtomicBool>,
+    queue: Commands,
+    snapshot: Arc<Mutex<Publication<Value>>>,
 }
 
 fn runtime_error(error: impl std::fmt::Display) -> RuntimeError {
@@ -226,7 +226,6 @@ impl Plugin for SamplePlugin {
             visible: true,
             applied: 0,
             error: None,
-            results: VecDeque::new(),
         });
         builder.insert_resource(Scene2d::default());
         builder.insert_resource(Scene3d::default());
@@ -253,14 +252,17 @@ impl Plugin for SamplePlugin {
             }
             Ok(())
         });
-        let receiver = self.receiver.clone();
+        let queue = self.queue.clone();
         let snapshot = self.snapshot.clone();
         builder.add_system(Stage::Update, "sample::extract", move |context| {
-            let commands: Vec<_> = receiver.lock().unwrap().try_iter().take(CAPACITY).collect();
+            let commands: Vec<_> = {
+                let mut queue = queue.lock().unwrap();
+                std::iter::from_fn(|| queue.pop()).take(CAPACITY).collect()
+            };
             for command in commands {
                 let mut failure = None;
                 let mode3d = context.world.resource::<Sample>()?.mode3d;
-                if !mode3d && matches!(command.action, Action::Mesh(_) | Action::RetryMesh | Action::Camera3d(_) | Action::Yaw(_)) {
+                if !mode3d && matches!(command.action, Action::Mesh(_) | Action::RetryMesh | Action::Camera3d(_) | Action::CameraOrientation(_) | Action::Yaw(_)) {
                     failure = Some("3D sample is not selected".into());
                 } else { match command.action {
                     Action::Position([x,y]) => for position in context.world.query::<&mut Position>().iter() { *position = Position::new(x,y); },
@@ -298,14 +300,14 @@ impl Plugin for SamplePlugin {
                         Err(error) => failure = Some(error.to_string()),
                     },
                     Action::RetryMesh => if let Err(error) = context.world.resource_mut::<MeshStore>()?.retry(MESH) { failure = Some(error.to_string()); },
-                    Action::Camera3d(position) => context.world.resource_mut::<Sample>()?.camera3d.position = position,
+                    Action::CameraOrientation(orientation) => context.world.resource_mut::<Sample>()?.camera3d.orientation = orientation,
+                    Action::Camera3d(position) => context.world.resource_mut::<Sample>()?.camera3d = Camera3d::looking_at(position, [0.0; 3], [0.0, 1.0, 0.0]).expect("validated sample camera"),
                     Action::Yaw(radians) => context.world.resource_mut::<Sample>()?.yaw = radians,
                 } }
                 let sample = context.world.resource_mut::<Sample>()?;
                 sample.applied = command.id;
                 sample.error = failure.clone();
-                if sample.results.len() == CAPACITY { sample.results.pop_front(); }
-                sample.results.push_back((command.id, failure));
+                queue.lock().unwrap().record((command.id, failure));
             }
             let sample = context.world.resource::<Sample>()?;
             let store = context.world.resource::<TextureStore>()?;
@@ -336,27 +338,45 @@ impl Plugin for SamplePlugin {
                 }
             };
             let scene3d = Scene3d { camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
-                positions.iter().map(|p| MeshInstance { position: [p[0],p[1],0.0], yaw_radians: sample.yaw, scale: 1.0,
+                positions.iter().map(|p| MeshInstance { position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
                     color: [1.0;4], mesh: mesh.clone(), texture: checker.clone() }).collect()
             } else { Vec::new() } };
             let value = json!({"frame":context.time.frame_number(),"last_applied_command":sample.applied,"command_error":sample.error,
                 "sample_mode":if sample.mode3d {"3d"} else {"2d"}, "mesh_state":mesh_state,"mesh_error":mesh_error,
                 "mesh_resident":mesh_store.is_some_and(|s| s.state(MESH).is_some()),"mesh_draws":scene3d.meshes.len(),
                 "mesh_vertices":mesh.as_ref().map_or(0,|m| m.vertices().len()),"mesh_indices":mesh.as_ref().map_or(0,|m| m.indices().len()),
-                "camera3d_position":sample.camera3d.position,"mesh_yaw":sample.yaw,
-                "command_results":sample.results.iter().map(|(id,error)| json!({"command_id":id,"error":error})).collect::<Vec<_>>(),
+                "camera3d_orientation":sample.camera3d.orientation.to_array(),"camera3d_position":sample.camera3d.position,"mesh_yaw":sample.yaw,
+                "command_results":queue.lock().unwrap().history().iter().map(|(id,error)| json!({"command_id":id,"error":error})).collect::<Vec<_>>(),
                 "checker_state":checker_state,"checker_error":checker_error,"checker_resident":store.state(CHECKER).is_some(),
                 "texture_state":texture_state,"texture_error":texture_error,"texture_resident":store.state(TEXTURE).is_some(),
                 "positions":positions,"camera_center":scene.camera.center,"pixels_per_unit":scene.camera.pixels_per_unit,
                 "world_quads":scene.world.len(),"hud_quads":scene.hud.len(),"hud_center":[48,48],"hud_size":[48,48]});
             *context.world.resource_mut::<Scene2d>()? = scene;
             *context.world.resource_mut::<Scene3d>()? = scene3d;
-            *snapshot.lock().unwrap() = Some(value);
+            snapshot.lock().unwrap().publish(value);
             Ok(())
         });
-        let closed = self.closed.clone();
+        let queue = self.queue.clone();
+        let snapshot = self.snapshot.clone();
         builder.add_system(Stage::Shutdown, "sample::release", move |context| {
-            closed.store(true, Ordering::Release);
+            let mut queue = queue.lock().unwrap();
+            queue.close_with(|command| (command.id, Some("cancelled: sample closed".into())));
+            let mut published = snapshot.lock().unwrap();
+            let mut value = published.get().cloned().unwrap_or_else(
+                || json!({"frame":0,"last_applied_command":0,"texture_state":"disabled"}),
+            );
+            value["command_results"] = json!(
+                queue
+                    .history()
+                    .iter()
+                    .map(|(id, error)| json!({"command_id":id,"error":error}))
+                    .collect::<Vec<_>>()
+            );
+            value["world_quads"] = json!(0);
+            value["hud_quads"] = json!(0);
+            value["mesh_draws"] = json!(0);
+            published.publish(value);
+            published.close();
             context.world.resource_mut::<Sample>()?.lease = None;
             context.world.resource_mut::<Sample>()?.mesh_lease = None;
             context.world.resource_mut::<Sample>()?.checker_lease = None;
@@ -425,6 +445,10 @@ mod tests {
     #[test]
     fn sample_commands_reject_unknown_fields_and_out_of_range_values() {
         for value in [
+            json!({"action":"set_camera_orientation","x":0,"y":0,"z":0,"w":0}),
+            json!({"action":"set_camera_orientation","x":0,"y":0,"z":0,"w":2}),
+            json!({"action":"set_camera_orientation","x":0,"y":0,"z":0}),
+            json!({"action":"set_camera_orientation","x":0,"y":0,"z":0,"w":1,"extra":0}),
             json!({"action":"set_camera","x":0,"y":1,"extra":true}),
             json!({"action":"set_position","x":10001,"y":0}),
             json!({"action":"set_texture_enabled","value":1}),
@@ -434,6 +458,14 @@ mod tests {
         ] {
             assert!(parse(value.as_object().unwrap()).is_err());
         }
+        assert!(matches!(
+            parse(
+                json!({"action":"set_camera_orientation","x":0,"y":0,"z":0,"w":1})
+                    .as_object()
+                    .unwrap()
+            ),
+            Ok(Action::CameraOrientation(_))
+        ));
         assert!(matches!(
             parse(
                 json!({"action":"set_camera","x":0,"y":1})
@@ -513,8 +545,8 @@ mod tests {
     #[test]
     fn retry_only_failed_textures_preserves_healthy_content() {
         for (fail_hud, fail_checker) in [(false, true), (true, false), (true, true)] {
-            let (sender, receiver) = mpsc::sync_channel(CAPACITY);
-            let snapshot = Arc::new(Mutex::new(None));
+            let sender = commands();
+            let snapshot = Arc::new(Mutex::new(Publication::default()));
             let mut builder = AppBuilder::new().add_plugin(MinimalGamePlugin);
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/presentation");
             TextureStore::install(
@@ -553,9 +585,8 @@ mod tests {
             let mut app = builder
                 .add_plugin(SamplePlugin {
                     mode3d: true,
-                    receiver: Arc::new(Mutex::new(receiver)),
+                    queue: sender.clone(),
                     snapshot: snapshot.clone(),
-                    closed: Arc::new(AtomicBool::new(false)),
                 })
                 .build()
                 .unwrap();
@@ -563,7 +594,7 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 app.tick(Duration::ZERO).unwrap();
-                let state = snapshot.lock().unwrap().clone().unwrap();
+                let state = snapshot.lock().unwrap().json().unwrap();
                 if state["texture_state"] == if fail_hud { "failed" } else { "ready" }
                     && state["checker_state"] == if fail_checker { "failed" } else { "ready" }
                 {
@@ -572,14 +603,9 @@ mod tests {
                 assert!(Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(2));
             }
-            sender
-                .try_send(Command {
-                    id: 1,
-                    action: Action::Retry,
-                })
-                .unwrap();
+            assert_eq!(submit(&sender, Action::Retry), Ok(1));
             app.tick(Duration::ZERO).unwrap();
-            let state = snapshot.lock().unwrap().clone().unwrap();
+            let state = snapshot.lock().unwrap().json().unwrap();
             assert!(state["command_error"].is_null(), "{state}");
             assert_eq!(
                 state["texture_state"],
@@ -595,9 +621,8 @@ mod tests {
 
     #[test]
     fn queued_controls_apply_at_update_and_texture_release_is_reconciled() {
-        let (sender, receiver) = mpsc::sync_channel(CAPACITY);
-        let snapshot = Arc::new(Mutex::new(None));
-        let closed = Arc::new(AtomicBool::new(false));
+        let sender = commands();
+        let snapshot = Arc::new(Mutex::new(Publication::default()));
         let mut builder = AppBuilder::new().add_plugin(MinimalGamePlugin);
         TextureStore::install(
             &mut builder,
@@ -609,9 +634,8 @@ mod tests {
         let mut app = builder
             .add_plugin(SamplePlugin {
                 mode3d: false,
-                receiver: Arc::new(Mutex::new(receiver)),
+                queue: sender.clone(),
                 snapshot: snapshot.clone(),
-                closed: closed.clone(),
             })
             .build()
             .unwrap();
@@ -625,20 +649,15 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            sender
-                .try_send(Command {
-                    id: index as u64 + 1,
-                    action,
-                })
-                .unwrap();
+            assert_eq!(submit(&sender, action), Ok(index as u64 + 1));
         }
-        assert!(snapshot.lock().unwrap().is_none());
+        assert!(snapshot.lock().unwrap().get().is_none());
         assert_eq!(
             app.world().query::<&Position>().iter().next().unwrap().x(),
             0.0
         );
         app.tick(Duration::ZERO).unwrap();
-        let value = snapshot.lock().unwrap().clone().unwrap();
+        let value = snapshot.lock().unwrap().json().unwrap();
         assert_eq!(value["positions"], json!([[2.0, 3.0]]));
         assert_eq!(value["camera_center"], json!([1.0, 0.0]));
         assert_eq!(value["world_quads"], 0);
@@ -652,16 +671,11 @@ mod tests {
                 .state(TEXTURE)
                 .is_none()
         );
-        sender
-            .try_send(Command {
-                id: 5,
-                action: Action::Texture(true),
-            })
-            .unwrap();
+        assert_eq!(submit(&sender, Action::Texture(true)), Ok(5));
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             app.tick(Duration::ZERO).unwrap();
-            if snapshot.lock().unwrap().as_ref().unwrap()["texture_state"] == "failed" {
+            if snapshot.lock().unwrap().get().unwrap()["texture_state"] == "failed" {
                 break;
             }
             assert!(Instant::now() < deadline);
@@ -677,10 +691,10 @@ mod tests {
             (7, Action::Retry),
             (8, Action::Camera([0.0, 0.0])),
         ] {
-            sender.try_send(Command { id, action }).unwrap();
+            assert_eq!(submit(&sender, action), Ok(id));
         }
         app.tick(Duration::ZERO).unwrap();
-        let value = snapshot.lock().unwrap().clone().unwrap();
+        let value = snapshot.lock().unwrap().json().unwrap();
         assert!(value["command_error"].is_null());
         assert_eq!(
             value["command_results"]
@@ -692,34 +706,46 @@ mod tests {
             "NotFailed"
         );
         for id in 9..=40 {
-            sender
-                .try_send(Command {
-                    id,
-                    action: Action::Visible(false),
-                })
-                .unwrap();
+            assert_eq!(submit(&sender, Action::Visible(false)), Ok(id));
         }
         assert!(matches!(
-            sender.try_send(Command {
-                id: 41,
-                action: Action::Visible(true)
-            }),
-            Err(mpsc::TrySendError::Full(_))
+            submit(&sender, Action::Visible(true)),
+            Err(SubmitError::Busy)
         ));
         app.tick(Duration::ZERO).unwrap();
-        sender
-            .try_send(Command {
-                id: 41,
-                action: Action::Visible(true),
-            })
-            .unwrap();
+        assert_eq!(submit(&sender, Action::Visible(true)), Ok(41));
         app.tick(Duration::ZERO).unwrap();
-        let value = snapshot.lock().unwrap().clone().unwrap();
+        let value = snapshot.lock().unwrap().json().unwrap();
         let outcomes = value["command_results"].as_array().unwrap();
         assert_eq!(outcomes.len(), CAPACITY);
         assert_eq!(outcomes[0]["command_id"], 10);
         assert_eq!(outcomes.last().unwrap()["command_id"], 41);
+        assert_eq!(submit(&sender, Action::Visible(false)), Ok(42));
         app.shutdown().unwrap();
-        assert!(closed.load(Ordering::Acquire));
+        assert!(sender.lock().unwrap().is_closed());
+        assert_eq!(
+            submit(&sender, Action::Visible(true)),
+            Err(SubmitError::Closed)
+        );
+        let final_state = snapshot.lock().unwrap().json().unwrap();
+        assert_eq!(final_state["closed"], true);
+        assert_eq!(final_state["last_applied_command"], 41);
+        assert_eq!(
+            final_state["command_results"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["command_id"],
+            42
+        );
+        assert_eq!(
+            final_state["command_results"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["error"],
+            "cancelled: sample closed"
+        );
+        assert_eq!(final_state["hud_quads"], 0);
     }
 }

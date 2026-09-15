@@ -4,6 +4,8 @@ members = [
     "apps/nico-bridge",
     "apps/nico-shaderc",
     "crates/nico-assets",
+    "crates/nico-spatial",
+    "crates/nico-presentation-control",
     "crates/nico-ecs",
     "crates/nico-input",
     "crates/nico-launch",
@@ -17,6 +19,9 @@ members = [
     "games/minimal-game/client",
     "games/minimal-game/server",
     "games/minimal-game/shared",
+    "games/arena-arpg/shared",
+    "games/arena-arpg/client",
+    "games/arena-arpg/server",
 ]
 
 [workspace.package]

@@ -1,0 +1,22 @@
+[package]
+name = "arena-arpg-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arena-arpg-shared = { path = "../shared", features = ["tools"] }
+clap.workspace = true
+nico-assets = { path = "../../../crates/nico-assets" }
+nico-presentation-control = { path = "../../../crates/nico-presentation-control" }
+nico-input = { path = "../../../crates/nico-input" }
+nico-launch = { path = "../../../crates/nico-launch", features = ["client"] }
+nico-ops = { path = "../../../crates/nico-ops", features = ["mcp"] }
+nico-presentation = { path = "../../../crates/nico-presentation" }
+nico-runtime = { path = "../../../crates/nico-runtime" }
+nico-winit = { path = "../../../crates/nico-winit" }
+serde_json = "1"
+tracing.workspace = true
+
+[lints]
+workspace = true

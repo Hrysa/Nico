@@ -15,6 +15,9 @@ game client -> nico-winit -> nico-input
                         -> nico-render -> nico-rhi
                         -> nico-rhi-wgpu -> nico-rhi
                                         -> wgpu
+game client -> nico-presentation-control -> nico-presentation (contracts only)
+                                       -> nico-spatial
+shared gameplay -> nico-spatial
 game server -> shared gameplay -> nico-runtime
 ```
 
@@ -28,15 +31,17 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | --- | --- |
 | `nico-ecs` | World, resources, entities/components, and hecs query vocabulary |
 | `nico-runtime` | Lifecycle, schedules, time, events, and service completion publication |
-| `nico-input` | Provider-neutral physical device state |
+| `nico-input` | Provider-neutral device state and frame-to-fixed-step accumulation |
 | `nico-presentation` | Immutable world-facing presentation lifecycle |
+| `nico-presentation-control` | Camera control, coordinate helpers, bitmap text caching/layout, and quad construction |
 | `nico-render` | Shader/pipeline selection, frame recording, submission, and presentation |
 | `nico-rhi` | Backend-neutral GPU resource, command, and surface contracts |
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
 | `nico-winit` | Native window lifecycle, input adaptation, and client-session coordination |
-| `nico-assets` | Asset/handle identity, owning leases, and optional runtime-owned PNG/GLB loading |
+| `nico-assets` | Asset identity, leases, procedural meshes, and optional runtime-owned PNG/GLB loading |
+| `nico-spatial` | Headless sphere/box queries and bounded circle sliding |
 | `nico-launch` | Native CLI, diagnostics, and client/server transport composition |
-| `nico-ops` | Dependency-free host control core; optional tool catalogs and game bridge transport |
+| `nico-ops` | Host control, command bookkeeping, owned publication; optional tool catalogs and bridge transport |
 | `apps/nico-shaderc` | Offline shader compilation outside the Rust build graph |
 | `apps/nico-bridge` | CLI entry point for the independent-game MCP bridge |
 
@@ -130,8 +135,14 @@ The pipelines rebuild if the surface format changes. Native hosts select a pipel
 and supply viewport/DPI values but do not define scene draw calls. The bootstrap
 triangle remains available to hosts that do not select a scene pipeline.
 
-`Scene3d` holds a perspective camera and immutable mesh instances. The renderer and
-MCP sample controls share validation of stored f32 camera directions.
+`Scene3d` holds a perspective camera and immutable mesh instances. Both store
+orientation as a finite normalized `Quaternion` (the shared glam quaternion type,
+XYZW order), mapping local axes into world space. Camera local forward is -Z and
+local up is +Y. The renderer inverts the camera pose directly, so vertical views
+and roll do not require a fixed world-up vector. Invalid/non-unit orientations are
+rejected. `Camera3d::looking_at` is an optional targeting helper and rejects coincident
+targets or an up vector parallel to the view; these constraints do not apply to
+explicit quaternion poses.
 `MeshRenderPipeline` owns depth, vertex/index caches, per-instance transform uniforms,
 and a shared quad renderer for HUD drawing and texture reuse. The mesh pass clears
 and depth-tests; the HUD pass loads its color target before one presentation.
@@ -147,6 +158,101 @@ See [ADR 0002](decisions/0002-nico-rhi-wgpu-backend.md) for the GPU boundary and
 Games live under `games/<game>/` with `shared`, `client`, and `server` packages. Shared
 Rust plugins own authoritative setup and behavior. The client adds local input and
 presentation; the server remains headless.
+
+`arena-arpg-shared` owns a bounded four-actor combat simulation as a runtime resource.
+Actor slots are reused across three waves; identity includes run and wave. Shared
+`ActorKind` stats drive authoritative attacks, presentation reach, and tool timing.
+Intermissions, roster replacement, position reset, and health recovery run at fixed
+boundaries; run time persists through wave transitions.
+`ArenaPlugin` consumes game-owned `TickInput` events only at fixed boundaries and
+requires the exported 60 Hz `FIXED_STEP`. Inputs describe one tick; held movement
+must be resubmitted. Latest input wins at a boundary, except a valid current-run
+restart takes priority. `Arena` exposes immutable snapshots and `StepReport` records
+the latest semantic rejection/reset result. `InputFocusLost` clears pending intent
+without undoing a combat action already started. Dodge buffering lives in the shared
+simulation so human and MCP input use the same readiness rules. The adapter retains
+a buffered dodge's command until actual action start or cancellation. Shared state
+also reserves spaced monster strike times; rendering only reads the resulting phases.
+
+The optional `tools` feature registers the arena's game catalog through `nico-ops`.
+It stores one movement lease, one combat request, a reserved restart request, and
+128 terminal outcomes. Runtime boundaries arbitrate human input, apply requests,
+and publish owned snapshots with outcomes atomically under a process-local mutex.
+This lock covers only bounded four-actor work; no I/O or callbacks run under it.
+Shutdown closes acceptance and retains final snapshots/outcomes. Engine hosts still
+own all service threads and transport; the default shared crate depends on the
+headless runtime and spatial queries. Detailed rules belong in the
+[reference-game design](plans/2026-09-15-reference-game.md).
+
+`arena-arpg-client` maps frame input into fixed-step intent before `ArenaPlugin`,
+retaining movement through catch-up ticks while consuming action edges once. Run
+reset and wave transitions suppress held movement until release. Game-owned camera tuning and procedural
+visual extraction publish `Scene3d`/`Scene2d` after simulation. Camera boom collision
+uses the perimeter geometry; text, health, attack telegraphs, and poses use existing
+mesh/quad contracts. The client adds bounded camera commands and an owned
+view snapshot. The server composes the same shared rules at 60 Hz; neither host
+currently replicates state to the other.
+
+`nico-presentation-control` is the common home for stateful presentation controllers.
+Its `camera` module owns reusable orbit math, angle bounds, and distance restoration.
+It uses headless `nico-spatial` queries and presentation contracts without the
+optional runtime lifecycle. Games supply targets, tuning, geometry, and
+collision filtering through a query callback; the arena wrapper selects the hero
+pivot and perimeter. Expanded-box sweeps are conservative at corners, and a configured
+minimum boom distance can overlap nearby geometry. Shared game-authored wall dimensions
+drive mesh construction, camera queries, and authoritative collision; actor centers
+stop one actor radius inside the wall inner face (11.4 units from arena center). Orbit yaw/pitch
+remain input coordinates for game limits; the controller derives a normalized
+quaternion for its boom and published camera, with no independent mutable Euler pose.
+The arena's planar actor-facing angles remain gameplay data and are converted to
+quaternions when publishing mesh instances.
+
+The `coordinates` module supplies quaternion local-to-world point transforms,
+floor-relative direction rotation, and cylindrical billboarding. A billboard view
+parallel to its up axis returns `None`; the caller chooses a stable fallback.
+The arena retains axis bindings, actor poses, body proportions, and health-bar layout.
+
+`nico-assets::procedural` builds validated boxes and XZ sectors/arcs. UVs, sizes,
+angles, and tessellation counts are supplied by callers; palette and attack range
+remain game data. `nico-presentation-control::text` supplies a cached bootstrap 5x7
+ASCII font, text measurement, line breaks, and quad construction. It is not a full
+font-shaping or UI system. The arena owns HUD layout and scales it at small sizes.
+
+`nico-input::fixed` accumulates frame deltas/edges and persists held axes across
+catch-up ticks. Edges coalesce until consumed. Game bindings and focus/run/wave
+cancellation policy remain in the arena adapter.
+
+`nico-ops::commands::CommandBook` owns bounded request lanes, checked monotonic IDs,
+closed acceptance, and configurable terminal-history retention. Arena gameplay,
+camera tools, and engine window tools use it. The caller owns synchronization and
+must finalize pending work on close; command completion semantics and arbitration
+remain with the appropriate game or native host.
+
+`FifoCommands` adds submission ordering over that bookkeeping for the rendering
+sample. Closing drains queued requests into caller-defined cancellation outcomes;
+work already popped is finalized by the runtime owner. The sample publishes those
+outcomes in its final closed snapshot before releasing its presentation resources.
+
+`nico-ops::publication::Publication` stores an owned payload, monotonic sequence,
+publication time, and closed state. Reads calculate age without refreshing it, and
+closing retains the last payload and its timestamp. Games embed it under their
+existing locks, preserving atomic arena snapshot/outcome publication. JSON state
+tools expose `snapshot_sequence`, `snapshot_age_ms`, and `closed`. Arena presentation
+is constructed outside its tooling lock; `client_state` window fields describe the
+last published frame. Use the engine `window_state` tool for current host observations.
+
+`nico-launch::client` owns the shared `--background` option and maps it to native
+initial-focus configuration. Both clients inherit it; games still choose titles and
+pointer-capture policy.
+
+`nico-winit` owns OS pointer capture. Engine `window_control` requests wake the
+native event loop and complete independently of redraw or simulation. Capture
+requires the configured capture policy and an active, focused window; release is
+allowed while inactive. Operational snapshots read host-owned capture state directly;
+`NativeWindowState` is its runtime mirror, published before input dispatch. Capture clicks
+are consumed; Escape releases capture. Focus loss/suspension releases input and
+publishes `WindowFocusLost`, which the game maps to its semantic input cancellation.
+Actual capture and request acceptance remain distinct; platform APIs stay in Winit.
 
 Each game owns `assets/logic` for authoritative content and `assets/presentation` for
 client-only content. Logic assets must not depend on presentation assets. Packaging must
@@ -328,3 +434,15 @@ Encoding never runs on the bridge heartbeat/call thread. New captures are reject
 while the encoder is busy, and teardown joins active work. Shutdown fails pending
 capture requests. Usage and bounds belong in
 [README](../README.md#window-snapshots-through-mcp).
+
+## Native window operation ownership
+
+`nico-launch` registers client-only `window_control`/`window_state` tools. The
+`nico-ops` channel holds one pending request/latest outcome and an owned observed
+window snapshot with age. Accepted operations wake the native event loop using the
+host's existing wake callback. `nico-winit` consumes requests on the event thread,
+independently of redraw or application ticks, so minimized clients can be restored.
+Platform calls never run on bridge threads. Applied records submission to the window
+manager; separately observed window state confirms the effect. Host teardown cancels
+pending work and closes the slot. This introduces no runtime or game-owned transport.
+Arguments and retention rules belong in [README](../README.md#window-controls-through-mcp).

@@ -278,7 +278,7 @@ fn gpu_meshes_use_depth_perspective_and_shared_hud() {
         mesh: Some(mesh),
         texture: Some(texture.clone()),
         position: [0.0; 3],
-        yaw_radians: 0.0,
+        orientation: nico_presentation::Quaternion::IDENTITY,
         scale: 1.0,
         color: [0.0, 1.0, 0.0, 1.0],
     };
@@ -290,6 +290,7 @@ fn gpu_meshes_use_depth_perspective_and_shared_hud() {
     let mut scene = Scene3d {
         camera: Camera3d {
             position: [0.0, 0.0, 3.0],
+            orientation: nico_presentation::Quaternion::IDENTITY,
             ..Camera3d::default()
         },
         meshes: vec![near, far],
@@ -349,7 +350,6 @@ fn gpu_meshes_use_depth_perspective_and_shared_hud() {
         "perspective must shrink more distant geometry"
     );
     scene.camera.position[0] = 1.0;
-    scene.camera.target[0] = 1.0;
     renderer
         .render(
             &device,

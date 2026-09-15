@@ -13,6 +13,10 @@ ownership; [the roadmap](roadmap.md) records phase status and evidence;
 - Game clients own composition/bindings; shared gameplay consumes semantic commands.
 - Provider types stay inside their integration boundaries.
 - Presentation reads gameplay immutably; GPU resources stay outside authoritative state.
+- Stateful camera/text controllers and coordinate helpers belong in
+  `nico-presentation-control`; immutable draw contracts remain in `nico-presentation`.
+- Games own tuning, bindings, authored content, and combat policy; reusable spatial,
+  input accumulation, command bookkeeping, and publication mechanics stay in engine crates.
 - `nico-render` owns draw policy; the RHI provider owns native resources and recovery.
 - New contracts have concrete consumers, providers, lifecycle rules, and tests.
 - New crates establish real ownership or dependency boundaries.
@@ -61,6 +65,10 @@ deferred.
 - Process and native-window operations remain host/tooling responsibilities.
 - Simulation commands execute at controlled runtime boundaries.
 - Inspection returns owned snapshots, and collection/queues remain bounded.
+- Snapshot age reflects publication time, including while inactive or closed.
+  Last-frame window fields must not be presented as current host observations.
+- Accepted queued work receives a terminal outcome on shutdown; FIFO consumers
+  preserve submission order when reusing queue capacity.
 - Tests cover both hosts, unsupported/malformed requests, overload, disconnect,
   failed startup, and shutdown with pending work.
 - Diagnostic pagination reports eviction and truncation; cursors remain
@@ -75,8 +83,9 @@ changes, combine automated tests with bounded executable coverage and appropriat
 interactive checks. Record which platform/backend was exercised.
 
 The current smoke counter measures client-session frames rather than confirmed GPU
-presentations. Windows/macOS interactive resize and minimize/restore remain open checks.
-Do not infer minimized-window behavior from suspension tests alone.
+presentations. Platform-specific evidence and remaining manual checks belong in the
+[roadmap](roadmap.md#1-run-a-native-client) and [TODO](../TODO.md#native-host-validation).
+Do not infer OS suspension from desktop minimization or unit tests alone.
 
 Apply [documentation ownership](../AGENTS.md#documentation-ownership): task checklists
 belong in TODO, phase criteria and evidence in the roadmap. Remove stale claims and

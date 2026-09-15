@@ -1,11 +1,12 @@
 # Nico
 
 Nico is an experimental Rust 2024 game engine with a headless runtime, shared
-client/server gameplay, and a Winit native client with textured 2D sprite and 3D mesh
-samples sharing a fixed HUD, through Nico's RHI and its wgpu backend.
+client/server gameplay, a third-person arena ARPG prototype, and textured 2D/3D
+rendering samples. Native clients use Winit and Nico's RHI with its wgpu backend.
 
-The core native client host implementation is complete. Interactive Windows and macOS
-resize/minimize/restore validation remains outstanding. Native gamepad integration and
+The core native client host implementation is complete. Automated Windows window
+transitions and rendering recovery are verified in the recorded environment; manual
+input/close-button and macOS validation remain. Native gamepad integration and
 Slang reflection/asset-backed shaders are deferred.
 
 AI tooling connects to **`nico-bridge`**, a separate MCP process. You launch game
@@ -23,6 +24,108 @@ and toolchain changes are deferred. XRay is not integrated or validated for Nico
 custom profiler is planned now.
 
 ## Run and validate
+
+The arena ARPG prototype has a third-person native client and a headless server,
+with shared melee, dodge, monster pursuit, collision, and win/loss/restart rules.
+Its camera uses engine orbit and collision mechanics; the game supplies the hero
+target, tuning, and arena geometry. Camera and mesh orientations use normalized
+quaternions; orbit controls retain yaw/pitch limits. See the
+[architecture](docs/architecture.md#assets-and-game-construction) for engine ownership.
+Clear three waves: three grunts, then two grunts and one brute, then one grunt and
+two brutes. Purple brutes move slowly and hit farther, with a longer windup.
+Between waves, a three-second countdown resets positions and restores 40 health
+(up to 100). Clearing the final wave wins.
+Run from the repository root:
+
+```text
+cargo run -p arena-arpg-client
+cargo run -p arena-arpg-server
+```
+
+Click the viewport to capture the pointer. WASD moves relative to the camera,
+mouse motion looks around, left click attacks, Space dodges, R restarts, and Escape
+releases the pointer. The capture click does not attack. Dodge can cancel sword recovery; a press up to
+150 ms before readiness is buffered. Earlier presses are ignored. Monster strikes
+are spaced at least half a second apart. Pale-gold pulses and an overhead warning
+mark the final 200 ms of windup. The shared client option `--background` opens the
+window without requesting focus and is available to both arena and minimal clients.
+Focus loss releases input; simulation continues. Client and server run independent solo encounters;
+multiplayer synchronization is not implemented. The server requires 60 Hz.
+
+Both hosts attempt the default bridge connection; `--no-bridge` disables it and
+`--bridge ADDRESS` overrides it. The client supports `--smoke-frames N`. Visuals
+use procedural meshes, textures, and bitmap text; no external game assets or
+skeletal animation are required. Attack sectors show full reach with a growing windup
+fill and a yellow active strike; the HUD shows dodge cooldown progress. Rendering
+uses the repository's generated shaders.
+See [phase 5](docs/roadmap.md#5-make-a-playable-local-game) for validation limits.
+
+### Arena operations
+
+With `arena-arpg-shared`'s `tools` feature enabled, call
+`arena_arpg_shared::tools::register(builder.add_plugin(ArenaPlugin))` and pass the
+returned `ToolExtensions` to the engine host. Use `FIXED_STEP` for the runtime.
+Registration adds game handlers and snapshot publication; engine hosts own the bridge
+connection. Both arena hosts compose this adapter, registered as `arena_arpg`;
+the minimal-game rendering samples keep their separate tools.
+
+| Tool | Purpose |
+| --- | --- |
+| `game_state` | Read run/wave/countdown, actor type and combat stats, health, snapshot age, and action phases. |
+| `game_move` | Queue world-space movement for 1..120 simulation ticks; zero direction waits. |
+| `game_attack` | Request melee facing yaw radians, with zero along +Z. |
+| `game_dodge` | Request a dodge along a nonzero world-space direction. |
+| `game_restart` | Reset the current run and cancel old actions. |
+| `game_command` | Poll acceptance/execution outcome by command ID. |
+| `client_state` (client only) | Read camera, draw counts, and window fields from the last published frame, with age and closed state. |
+| `client_control` (client only) | Queue `camera` with yaw/pitch. |
+
+For camera controls, poll `client_state.last_applied_command`. Pointer capture uses
+engine `window_control` with `{"action":"pointer_capture","value":true}`; poll
+`window_state` with its `request_id` for completion and observed capture state.
+Capture requires an enabled, active, focused window; release also works while inactive.
+Shutdown marks the view `closed` and reports any `cancelled_command_id`.
+
+Discover connected instances and original schemas through `list_game_tools` before
+using `call_game_tool`. Mutations require the current `run_id`; accepted means queued.
+Combat completion means the action started, not that damage landed. A buffered
+dodge stays `running` until execution, with a null start tick and zero applied ticks.
+`game_state.buffered_dodge` exposes its stored direction; newer human combat input,
+focus loss, wave clear, restart, defeat, and shutdown cancel unexecuted dodges. Movement counts
+lease ticks even while combat blocks locomotion. Wave clears cancel remaining lease
+ticks with `wave_cleared`; intermission rejects movement/combat with `intermission`,
+while restart remains available. Actor slots are reused each wave; use run ID, wave,
+and actor ID together. Poll outcomes before inspecting the
+corresponding run/tick; do not blindly retry a timed-out mutation. History retains
+128 terminal outcomes and survives run reset and bridge reconnect, not process exit.
+
+Validate handlers and real bridge routing with:
+
+```text
+cargo test -p arena-arpg-shared --features tools
+cargo test -p nico-bridge --test registration arena_tools_route
+cargo build -p arena-arpg-client -p arena-arpg-server -p nico-bridge --target-dir target/texture-validation
+python apps/nico-bridge/tests/arena_native_smoke.py --bin-dir target/texture-validation/debug
+```
+
+The native test opens a client window, uses a private bridge port, and cleans up
+only its own processes. It requests focus on that window for capture/focus-loss checks,
+resizes, maximizes, minimizes, restores, verifies presentations resume, and stops both
+hosts. It saves screenshots and a report under `target/arena-native-evidence`.
+Use `--combat-only` to test gameplay, buffered dodges, captures, and orderly stop
+without requesting focus or exercising window transitions; the report records this
+reduced scope explicitly.
+
+Compare three deterministic combat policies without graphics:
+
+```text
+cargo run -p arena-arpg-shared --example combat_assessment
+```
+
+The CSV output records idle, rush, and telegraph-reactive outcomes, simulation duration,
+health, reached wave, and action counts. These are scripted comparisons, not human playtest results.
+
+### Native rendering samples
 
 Run from the repository root with a Rust toolchain supporting edition 2024:
 
@@ -225,6 +328,12 @@ process exited. Client readiness requires successful GPU presentation; server re
 requires a successful tick. Readiness can stay latched during client suspension, while
 `host.active` becomes false.
 
+Game state tools include `snapshot_sequence`, `snapshot_age_ms`, and `closed`.
+Age measures time since publication; reading a snapshot does not refresh it.
+Arena `client_state` window fields describe its last published frame; use
+`window_state` for current host observations. The rendering sample records
+cancellation outcomes for queued commands when it shuts down.
+
 Calling a registered `stop` tool explicitly requests shutdown of that instance.
 Acceptance does not prove completion or OS process exit. Bridge/Codex disconnect never
 requests game shutdown. Calls have a five-second deadline; after a timeout or connection
@@ -404,6 +513,10 @@ See the [mesh contract](docs/plans/2026-09-14-mesh-assets.md) for bounds and own
 The registered `sample_state` includes mode, mesh readiness, counts, camera and yaw.
 In 3D mode, `sample_control` also accepts `set_mesh_enabled` with boolean `value`,
 `retry_mesh`, `set_camera3d` with `x`/`y`/`z`, and `set_mesh_yaw` with `radians`.
+`set_camera_orientation` accepts a finite unit quaternion with `x`/`y`/`z`/`w`,
+allowing vertical views and roll. `sample_state.camera3d_orientation` reports XYZW;
+`set_camera3d` restores origin targeting. Arena `client_state` also reports camera
+`orientation` in XYZW order alongside its game-specific orbit controls.
 These use the same queued command IDs and outcome history as the 2D controls.
 `checker_state`, `checker_error`, and `checker_resident` expose the cube texture
 separately from the HUD texture. `set_texture_enabled` and `retry_texture` apply to
@@ -413,6 +526,27 @@ when neither texture has failed.
 After building the bridge and hosts into an isolated target directory, validate each
 mode with `python apps/nico-bridge/tests/native_smoke.py --bin-dir
  target/texture-validation/debug --sample 2d` or `--sample 3d` (on one command line).
+
+## Window controls through MCP
+
+Native clients register `window_control` and `window_state`; discover the connected
+instance and schemas first. Examples of `window_control` arguments:
+
+- `{"action":"resize","width":800,"height":600}` uses logical pixels, bounded to
+  widths 320..3840 and heights 240..2160.
+- `{"action":"maximize"}`, `{"action":"minimize"}`, or `{"action":"restore"}`.
+  Restore clears both minimization and maximization.
+- `{"action":"focus"}` requests foreground activation of this client window.
+
+Acceptance returns a `request_id`. Poll `window_state` with that ID for
+`pending`/`applied`/`failed`; an empty object reads just the observed window state.
+Verify actual size, focus, minimized/maximized state, and snapshot age: `applied`
+means the platform call returned, and the window manager may ignore it. Minimized
+is null when the platform cannot report it. Pointer capture is reported separately.
+Only one request and its latest outcome are retained; a new request expires the old
+ID. Requests wake the native event loop even when rendering is stopped. No timeout
+implicitly cancels an operation; reconcile by ID before issuing another mutation.
+Shutdown cancels pending work. Use the existing `stop` tool for orderly shutdown.
 
 ## Window snapshots through MCP
 
@@ -444,19 +578,22 @@ capture, not continuous video recording or profiling.
 | --- | --- |
 | `crates/nico-ecs` | World, resources, and hecs entity/component storage |
 | `crates/nico-runtime` | Lifecycle, scheduling, fixed time, events, and services |
-| `crates/nico-input` | Provider-neutral physical device state |
+| `crates/nico-input` | Provider-neutral device state and frame-to-fixed-step accumulation |
 | `crates/nico-presentation` | Immutable 2D/3D draw snapshots and optional runtime lifecycle |
+| `crates/nico-presentation-control` | Camera control, coordinate helpers, and cached bitmap text |
+| `crates/nico-spatial` | Headless sphere/box queries and bounded circle sliding |
 | `crates/nico-render` | Bootstrap, textured quad and mesh pipelines, uploads, and frame recording |
 | `crates/nico-rhi` | Backend-neutral GPU contracts |
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
 | `crates/nico-winit` | Native event loop, input adaptation, client coordination, and optional in-process host control |
-| `crates/nico-assets` | Asset identity and leases; optional runtime-owned PNG/GLB loading |
+| `crates/nico-assets` | Asset identity, leases, procedural meshes, and optional PNG/GLB loading |
 | `crates/nico-launch` | Native CLI, diagnostics, and optional client/server transport composition |
-| `crates/nico-ops` | Host control, optional tool catalogs, and bridge transport |
+| `crates/nico-ops` | Host control, command bookkeeping, publication, optional tool catalogs and bridge transport |
 | `apps/nico-bridge` | MCP entry point for independently launched game instances |
 | `apps/nico-shaderc` | Standalone offline shader compiler tool |
 | `assets/presentation/shaders` | Engine shader sources and committed WGSL artifacts |
 | `games/minimal-game` | Shared gameplay, client/server executables, and game asset roots |
+| `games/arena-arpg` | Shared arena combat and native client/server executables |
 
 See [architecture](docs/architecture.md) for dependency direction and contracts, and
 [AGENTS.md](AGENTS.md) for contribution rules. Physics, audio, UI, and broader devtools

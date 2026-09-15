@@ -1,0 +1,11 @@
+[package]
+name = "nico-spatial"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = "0.30"
+
+[lints]
+workspace = true

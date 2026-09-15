@@ -15,6 +15,9 @@ use std::{io, net::SocketAddr};
 
 #[derive(Args, Clone, Copy, Debug, Default)]
 pub struct ClientArgs {
+    /// Open without requesting foreground focus.
+    #[arg(long)]
+    pub background: bool,
     /// Exit after this many client-session frames, including skipped GPU presentations.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     pub smoke_frames: Option<u64>,
@@ -78,6 +81,11 @@ impl ClientHost {
         map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
     ) -> NativeClientResult<App> {
         let config = config.with_smoke_frames(self.args.smoke_frames);
+        let config = if self.args.background {
+            config.with_initial_focus(false)
+        } else {
+            config
+        };
         let Some(address) = self.args.bridge_address() else {
             return run_native_client(app, config, map_input);
         };
@@ -87,6 +95,7 @@ impl ClientHost {
         let (control, endpoint) = control_channel();
         control.snapshots().enable();
         let tools = crate::snapshot::register(self.tools, control.clone())?;
+        let tools = crate::window::register(tools, control.clone())?;
         let _bridge = BridgeClient::start(
             address,
             GameRegistration::new(game, GameRole::Client, version),
@@ -111,6 +120,12 @@ mod tests {
     #[test]
     fn bridge_defaults_can_be_overridden_or_disabled() {
         let defaults = TestArgs::parse_from(["client"]).client;
+        assert!(!defaults.background);
+        assert!(
+            TestArgs::parse_from(["client", "--background"])
+                .client
+                .background
+        );
         assert_eq!(
             defaults.bridge_address().unwrap().to_string(),
             nico_ops::bridge::DEFAULT_ADDRESS

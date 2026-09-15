@@ -12,6 +12,7 @@ pub mod mcp;
 pub mod bridge;
 
 pub mod snapshot;
+pub mod window;
 
 use std::{
     error::Error,
@@ -126,6 +127,7 @@ pub struct HostControl {
     stop: Arc<StopSender>,
     status: Arc<Mutex<HostStatus>>,
     snapshots: snapshot::SnapshotControl,
+    window: window::WindowControl,
 }
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
@@ -156,6 +158,17 @@ impl Drop for StopSender {
 }
 
 impl HostControl {
+    pub fn window(&self) -> window::WindowControl {
+        self.window.clone()
+    }
+
+    /// Queue one native operation and wake the host even when no redraw is pending.
+    pub fn request_window(&self, action: window::WindowAction) -> Result<u64, &'static str> {
+        let id = self.window.request(action)?;
+        self.stop.wakeup.notify();
+        Ok(id)
+    }
+
     /// Bounded client snapshot requests; only enabled by a supporting host.
     pub fn snapshots(&self) -> snapshot::SnapshotControl {
         self.snapshots.clone()
@@ -214,11 +227,16 @@ pub struct HostEndpoint {
     stop: Receiver<()>,
     status: Arc<Mutex<HostStatus>>,
     snapshots: snapshot::SnapshotControl,
+    window: window::WindowControl,
     stop_requested: bool,
     wakeup: Arc<Wakeup>,
 }
 
 impl HostEndpoint {
+    pub fn window(&self) -> window::WindowControl {
+        self.window.clone()
+    }
+
     /// Host-owned snapshot publication boundary.
     pub fn snapshots(&self) -> snapshot::SnapshotControl {
         self.snapshots.clone()
@@ -324,6 +342,7 @@ impl HostEndpoint {
 impl Drop for HostEndpoint {
     fn drop(&mut self) {
         self.snapshots.close();
+        self.window.close();
         self.wakeup
             .0
             .lock()
@@ -353,6 +372,7 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
     }));
     let wakeup = Arc::new(Wakeup::default());
     let snapshots = snapshot::SnapshotControl::default();
+    let window = window::WindowControl::default();
     (
         HostControl {
             stop: Arc::new(StopSender {
@@ -361,11 +381,13 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
             }),
             status: status.clone(),
             snapshots: snapshots.clone(),
+            window: window.clone(),
         },
         HostEndpoint {
             stop: receiver,
             status,
             snapshots,
+            window,
             stop_requested: false,
             wakeup,
         },
@@ -572,3 +594,9 @@ mod tests {
         second_host.finish(Ok(()));
     }
 }
+
+/// Inbound request lanes and bounded outcomes.
+pub mod commands;
+
+/// Owned snapshots and freshness metadata.
+pub mod publication;

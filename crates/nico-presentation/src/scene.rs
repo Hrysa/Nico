@@ -36,54 +36,73 @@ pub struct Scene2d {
     pub hud: Vec<Quad>,
 }
 
-/// Right-handed perspective camera; Y is up and clip depth is zero to one.
+/// Right-handed perspective camera with local -Z forward and +Y up.
+/// Orientation maps camera-local axes into world space. Clip depth is zero to one.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera3d {
     pub position: [f32; 3],
-    pub target: [f32; 3],
+    pub orientation: crate::Quaternion,
     pub vertical_fov_radians: f32,
     pub near: f32,
     pub far: f32,
 }
 impl Camera3d {
-    /// Validates the stored f32 view direction, including the fixed Y-up singularity.
-    /// Callers must also validate projection and target-specific constraints.
-    pub fn has_valid_view_direction(&self) -> bool {
-        if self
-            .position
-            .iter()
-            .chain(&self.target)
-            .any(|v| !v.is_finite())
+    /// Validates the pose, independently of projection parameters. Vertical views
+    /// and roll are supported; no fixed world-up vector is reconstructed.
+    pub fn has_valid_pose(&self) -> bool {
+        self.position.iter().all(|v| v.is_finite())
+            && self.orientation.is_finite()
+            && self.orientation.is_normalized()
+    }
+    /// Convenience for target-based controls. Parallel/degenerate forward and up
+    /// vectors return None; explicit quaternion poses have no such restriction.
+    pub fn looking_at(position: [f32; 3], target: [f32; 3], up: [f32; 3]) -> Option<Self> {
+        use glam::{Mat3, Quat, Vec3};
+        let position_vector = Vec3::from(position);
+        let backward = position_vector - Vec3::from(target);
+        let up = Vec3::from(up);
+        if !position_vector.is_finite()
+            || !backward.is_finite()
+            || !up.is_finite()
+            || !backward.length_squared().is_finite()
+            || backward.length_squared() < 1e-8
+            || !up.length_squared().is_finite()
+            || up.length_squared() < 1e-8
         {
-            return false;
+            return None;
         }
-        let [x, y, z] = std::array::from_fn(|i| self.target[i] - self.position[i]);
-        let length_squared = x * x + y * y + z * z;
-        length_squared.is_finite()
-            && length_squared >= 1e-8
-            && (x * x + z * z) / length_squared >= 1e-8
+        let backward = backward.normalize();
+        let right = up.normalize().cross(backward);
+        if right.length_squared() < 1e-8 {
+            return None;
+        }
+        let right = right.normalize();
+        let orientation =
+            Quat::from_mat3(&Mat3::from_cols(right, backward.cross(right), backward)).normalize();
+        Some(Self {
+            position,
+            orientation,
+            vertical_fov_radians: std::f32::consts::FRAC_PI_3,
+            near: 0.1,
+            far: 100.0,
+        })
     }
 }
 impl Default for Camera3d {
     fn default() -> Self {
-        Self {
-            position: [2.0, 1.5, 3.0],
-            target: [0.0; 3],
-            vertical_fov_radians: std::f32::consts::FRAC_PI_3,
-            near: 0.1,
-            far: 100.0,
-        }
+        Self::looking_at([2.0, 1.5, 3.0], [0.0; 3], [0.0, 1.0, 0.0])
+            .expect("valid default camera pose")
     }
 }
 
 /// One static mesh instance. Missing mesh/texture uses renderer fallback content.
-/// Rotation is around world Y, in radians. Scale must be positive.
+/// Orientation is a finite unit quaternion. Scale must be positive.
 #[derive(Clone, Debug)]
 pub struct MeshInstance {
     pub mesh: Option<Arc<Mesh>>,
     pub texture: Option<Arc<Texture>>,
     pub position: [f32; 3],
-    pub yaw_radians: f32,
+    pub orientation: crate::Quaternion,
     pub scale: f32,
     pub color: [f32; 4],
 }

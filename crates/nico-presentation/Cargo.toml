@@ -9,6 +9,7 @@ default = ["runtime"]
 runtime = ["dep:nico-runtime"]
 
 [dependencies]
+glam = "0.30"
 nico-assets = { path = "../nico-assets" }
 nico-runtime = { path = "../nico-runtime", optional = true }
 

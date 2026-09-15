@@ -4,23 +4,32 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Next: define the reference game
+## Next: reference-game balance evidence
 
-The paired rendering samples are implemented. Next scope and acceptance:
-[roadmap phase 5](docs/roadmap.md#5-make-a-playable-local-game).
+Acceptance: [roadmap phase 5](docs/roadmap.md#5-make-a-playable-local-game).
 
-- [ ] Define the full reference game's mechanic, platforms, and content scale
-      before expanding beyond these samples.
+- [ ] Record detailed human win/loss/restart outcomes across all three waves and
+      encounter duration for phase 5 balance decisions; initial playtest approval
+      for the engine extraction is recorded in the roadmap.
+- [ ] Tune wave rosters, recovery, and difficulty from those observations before further content
+      or choosing phase 6 synchronization; see the
+      [reference-game design](docs/plans/2026-09-15-reference-game.md).
 
 ## Native host validation
 
 Acceptance criteria: [roadmap phase 1](docs/roadmap.md#1-run-a-native-client).
 
-- [ ] Windows: resize repeatedly, maximize/restore, minimize/restore, and close
-      after transitions; record OS, backend, adapter, and results.
+- [ ] Windows: verify physical keyboard/mouse play and close-button shutdown after
+      transitions; automated MCP resize/maximize/minimize/restore and stop passed
+      in the recorded phase 1 environment.
 - [ ] macOS: repeat the same checks and record the environment and results.
-- [ ] Check rendering recovery, GPU validation errors, frame timing after restore,
-      focus-loss input release, and clean shutdown; fix observed failures.
+- [ ] Validate OS-originated suspend/resume on a supported desktop. The shared
+      Winit suspension path and wakeup/stop handling have unit coverage; native
+      Windows minimization is recorded separately from OS suspension.
+- [ ] Measure individual frame timing after restore and validate held physical-key
+      release across focus loss. Automated presentation recovery, pointer release,
+      movement-command cancellation, and orderly stop passed on Windows.
+- [ ] Check GPU recovery/failure paths beyond the successful Windows transitions.
 
 Use successful presentation counts alongside session-frame counts when checking
 rendering. Desktop minimization and Winit suspension require separate checks.

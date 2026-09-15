@@ -9,6 +9,8 @@ clap.workspace = true
 nico-ops = { path = "../../crates/nico-ops", features = ["bridge"] }
 
 [dev-dependencies]
+arena-arpg-shared = { path = "../../games/arena-arpg/shared", features = ["tools"] }
+nico-runtime = { path = "../../crates/nico-runtime" }
 serde_json = "1"
 
 [lints]

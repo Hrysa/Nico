@@ -7,16 +7,17 @@ contracts belong in [architecture.md](architecture.md).
 ## Final goal
 
 Build a Rust game engine that supports both 2D and 3D games and can support a complete,
-shippable client/server game. Both dimensions have focused rendering samples; a complete
-game remains planned. Game rules run in a shared headless core. The client displays the game and accepts player
+shippable client/server game. Both dimensions have focused rendering samples and the
+local arena prototype is implemented; a shippable release remains planned. Game rules run
+in a shared headless core. The client displays the game and accepts player
 input. AI tools can inspect, test, and explicitly stop independently launched clients
 and servers through a separate MCP bridge.
 
 Use one small **reference game** to prove the engine works from development to release.
-The game is the test case for engine capabilities. Its genre, initial 2D/3D scope,
-player count, and target platforms still need to be defined. Choosing a first sample
-does not narrow the engine's support to one dimension; focused samples must also
-validate the other dimension.
+The game is the test case for engine capabilities. Its initial scope is a third-person
+arena ARPG, with platform, player-count, and content targets described
+in phase 5. The reference game's scope does not narrow
+the engine's support to one dimension; focused samples validate both dimensions.
 
 ## The path at a glance
 
@@ -27,7 +28,7 @@ validate the other dimension.
 | 2. Control clients and servers with AI | Discover independent games, inspect readiness, call game tools, and stop | Implemented; Windows end-to-end verified |
 | 3. Load game assets | Request usable game content by asset identity | PNG and mesh-only GLB paths implemented |
 | 4. Display the game world | Show loaded content moving with game state | 2D and 3D samples with shared HUD implemented |
-| 5. Make a playable local game | Move, collide, complete an objective, and restart | Planned |
+| 5. Make a playable local game | Move, collide, complete an objective, and restart | Native arena approved in initial playtest; detailed balance evidence remains |
 | 6. Play over a network | Two clients play together on one authoritative server | Planned |
 | 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Planned |
 | 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Planned |
@@ -70,6 +71,21 @@ are tracked in [TODO: native host validation](../TODO.md#native-host-validation)
 **Done when:** The lifecycle checks pass on the recorded environments. The current smoke
 counter counts client-session frames, so successful rendering must also be observed.
 This phase's triangle still does not display gameplay state.
+
+**Windows validation (2026-09-15, Vulkan, NVIDIA GeForce GTX 1660):** Engine-owned
+MCP window controls drove logical sizes 800x600, 1100x700, 640x480, and 1280x720,
+maximize/restore, and minimize/restore in a test-owned arena client. Observed window
+state confirmed each transition. Each visible transition was followed by at least
+ten additional successful presentations, observed over 0.31–0.35 seconds in the
+recorded run. This is a polling interval including MCP overhead, not individual frame
+timing or GPU execution time. Minimize reported zero extent, lost focus, released
+pointer capture, and cancelled a queued gameplay movement lease with `focus_lost`.
+Restore resumed rendering, and both hosts exited successfully after `stop`.
+That run recorded 1,846 successful presentations and no host failure; diagnostics
+contained the existing OBS Vulkan hook warning. Desktop minimization does not prove
+Winit suspension behavior. Physical held-key release, close-button interaction,
+individual frame timing, injected GPU failures, and macOS remain unverified.
+The latest full arena regression is recorded under [phase 5](#validation-evidence).
 
 ## 2. Control clients and servers with AI
 
@@ -162,8 +178,9 @@ execution remains unverified.
 **Result:** The screen reflects actual game entities and their positions.
 
 **Status:** Paired 2D and 3D rendering samples are implemented. They establish the
-rendering foundation; the reference game's mechanic, platforms, and content scale
-remain undefined. Concrete next actions belong in [TODO](../TODO.md#next-define-the-reference-game).
+rendering foundation; the reference game's initial scope is selected in phase 5,
+with scenario rules recorded in its design. Concrete next actions belong in
+[TODO](../TODO.md#next-reference-game-balance-evidence).
 
 **Scope delivered:** Both samples follow shared entity positions through immutable
 presentation snapshots. The 2D world sprite and fixed HUD icon share one transparent
@@ -209,16 +226,86 @@ replaced that fixture after visual review; alpha-cutoff support remains implemen
 
 **Result:** A player can complete a small game loop on one machine.
 
-**Scope:** One reference scenario has a starting state, player actions, an objective,
-success/failure, and restart. Shared gameplay owns movement, interactions, and the
-required collision/physics behavior at simulation boundaries. Feedback and basic UI make
-the scenario playable; automation uses the same semantic commands.
+**Status (2026-09-15):** The three-wave arena prototype, shared headless simulation,
+MCP adapter, and native hosts are implemented. The user approved the engine
+extraction build while playing. Detailed human win/loss/restart outcomes, encounter
+duration, and balance assessment remain outstanding; see [TODO](../TODO.md#next-reference-game-balance-evidence).
 
-**Done when:** A person can start, play, win or lose, and restart. A headless test can
-exercise the same rules and check movement, collision, outcomes, and reset.
+**Scope:** One hero with melee and dodge clears three waves of grunt/brute enemies
+in one compact 3D arena. The game has telegraphed attacks, health, intermissions,
+victory, defeat, and restart. Windows and solo play come first; macOS is unverified.
+Roughly five minutes is a pacing target, not a measured human encounter duration.
+Equipment, loot, and progression follow balance assessment. Detailed rules and
+acceptance cases belong in the [reference-game design](plans/2026-09-15-reference-game.md).
+The earlier collect-and-escape proposal was replaced by this scenario on 2026-09-15.
 
-**Dependency for phase 6:** The chosen physics implementation's repeatability limits are
-known; fixed simulation steps alone do not prove cross-platform determinism.
+**Done when:** A person can start, play, win or lose, and restart. Headless tests
+exercise the same movement, collision, combat, outcomes, and reset rules.
+
+**Dependency for phase 6:** Both current hosts run independent solo simulations.
+Two-player co-op requires an authoritative server and synchronization model;
+cross-platform floating-point repeatability remains unverified. Fixed steps alone
+do not establish determinism across platforms.
+
+### Implementation and engine boundaries
+
+Shared gameplay owns combat, waves, spawns, authored arena geometry, and semantic
+commands applied at fixed boundaries. Following feedback about wave-two attacks,
+dodge gained recovery cancellation and a nine-tick input buffer; monster strikes
+are spaced by at least 30 ticks and the last 12 windup ticks have stronger warnings.
+
+Reusable camera control, quaternion coordinate helpers, bitmap text, procedural
+meshes, spatial queries, input accumulation, command bookkeeping, and snapshot
+publication now live in existing engine layers. Native pointer/window operations
+and the common `--background` option are engine-owned. The rendering sample
+finalizes queued commands on shutdown. The [architecture](architecture.md) owns
+these contracts; the [resolved boundary review](reviews/2026-09-15-game-engine-boundaries.md)
+records the follow-up findings and resolutions.
+
+### Validation evidence
+
+**Automated checks (2026-09-15, Windows):** Workspace all-feature tests, strict
+all-feature/all-target Clippy, formatting, and whitespace checks passed after the
+boundary fixes. Coverage includes combat timing/outcomes, wave transitions, fixed
+input accumulation, camera collision, quaternion transforms, FIFO ordering,
+overload, stale publications, and queued shutdown cancellation. The Winit suspension
+callback shares its tested suspension routine; OS-originated suspension remains a
+separate native validation requirement.
+
+**Scripted balance baseline:** The headless `combat_assessment` after the
+responsiveness update produced the following results on the tested build:
+
+| Policy | Outcome | Simulation ticks / seconds | Health |
+| --- | --- | --- | --- |
+| Idle | Lost on wave 1 | 550 / 9.167 | 0 |
+| Rush nearest monster | Lost on wave 3 | 1461 / 24.350 | 0 |
+| React to windup and dodge sideways | Won all waves | 3019 / 50.317 | 100 |
+
+Before that update, rush lost on wave 2. This comparison demonstrates a scripted
+completion path and improved scripted survivability, not human difficulty or pacing.
+
+**Latest native run (2026-09-15, Windows / NVIDIA GeForce GTX 1660 / Vulkan):**
+`target/arena-boundary-review-evidence/report.json` records a passed
+`combat_and_window_lifecycle` scenario with 7,126 successful client presentations.
+Both hosts cleared all waves at 100 health: server tick 2896, client tick 3050.
+Buffered dodges began at the recovery boundary. Defeat/restart, camera operations,
+resize/maximize/minimize/restore, pointer capture/release while minimized,
+focus-loss command cancellation, snapshot capture, and orderly process exits passed.
+The orbit capture was visually inspected. Earlier focus automation timed out in
+`target/arena-fairness-evidence`; later full runs passed. This does not guarantee
+that desktop focus requests will always be granted.
+
+Both 2D and 3D private-bridge sample scenarios passed with shared `--background`
+and publication metadata checks. The 3D scenario includes roll and vertical camera
+commands, continued rendering, capture, reconnect, and independent shutdown.
+The explicit GPU depth/perspective/shared-HUD regression passed during the preceding
+quaternion update. These are functional checks, not CPU/GPU performance measurements
+or proof of display scanout. Native artifacts are generated under ignored `target/`.
+
+**Human acceptance:** The user reported "lgtm while playing" for the preceding
+engine-extraction build. No issues or tuning requests were reported. Specific wave
+outcomes, duration, and manual lifecycle results were not supplied; this closes that
+refactor's acceptance check but does not complete phase 5 balance validation.
 
 ## 6. Play over a network
 
@@ -327,9 +414,9 @@ the dependent phase approaches.
 | When | Decision | Why it matters |
 | --- | --- | --- |
 | Phase 3 entry (selected) | Paired samples: texture loading, 2D sprite and HUD first, then a textured 3D mesh | Establishes the first consumers and implementation order for both dimensions |
-| Before expanding beyond paired samples | Reference game: core mechanic, platforms, content scale | Bounds further content and rendering requirements |
-| Before phase 5 | Exact playable scenario and collision/physics needs | Gives gameplay a concrete completion test |
-| Before phase 6 | Player count, network conditions, synchronization model | Determines replication and latency handling |
+| Before expanding beyond paired samples (selected) | Third-person arena ARPG; Windows first; one arena; solo followed by two-player co-op | Bounds further content and rendering requirements |
+| Before phase 5 (selected) | Melee combat and dodge with kinematic floor movement; monster behavior, arena, and tests specified in the reference-game design | Gives gameplay a concrete completion test |
+| Before phase 6 | Two-player co-op selected; network conditions and synchronization model remain open | Determines replication and latency handling |
 | Before phase 7 | Required media features, devices, languages, accessibility cases | Makes the player-experience scope finite |
 | Before phase 9 | Target hardware and measurable performance budgets | Makes performance acceptance testable |
 | Before phase 10 | Distribution channel and final support matrix | Determines packaging and release validation |

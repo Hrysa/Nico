@@ -137,6 +137,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena-arpg-client"
+version = "0.1.0"
+dependencies = [
+ "arena-arpg-shared",
+ "clap",
+ "nico-assets",
+ "nico-input",
+ "nico-launch",
+ "nico-ops",
+ "nico-presentation",
+ "nico-presentation-control",
+ "nico-runtime",
+ "nico-winit",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "arena-arpg-server"
+version = "0.1.0"
+dependencies = [
+ "arena-arpg-shared",
+ "clap",
+ "nico-launch",
+ "nico-runtime",
+ "tracing",
+]
+
+[[package]]
+name = "arena-arpg-shared"
+version = "0.1.0"
+dependencies = [
+ "nico-ops",
+ "nico-runtime",
+ "nico-spatial",
+ "serde_json",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1203,8 +1242,10 @@ dependencies = [
 name = "nico-bridge"
 version = "0.1.0"
 dependencies = [
+ "arena-arpg-shared",
  "clap",
  "nico-ops",
+ "nico-runtime",
  "serde_json",
 ]
 
@@ -1248,8 +1289,19 @@ dependencies = [
 name = "nico-presentation"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "nico-assets",
  "nico-runtime",
+]
+
+[[package]]
+name = "nico-presentation-control"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "nico-assets",
+ "nico-presentation",
+ "nico-spatial",
 ]
 
 [[package]]
@@ -1293,6 +1345,13 @@ name = "nico-shaderc"
 version = "0.1.0"
 dependencies = [
  "clap",
+]
+
+[[package]]
+name = "nico-spatial"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]

@@ -103,7 +103,7 @@ def main():
             server = start("minimal-game-server", "--bridge", address)
             bridge = Mcp(start("nico-bridge", "--listen", address, mcp=True))
             server_id = bridge.ready("server")
-            client = start("minimal-game-client", "--bridge", address, "--sample", args.sample)
+            client = start("minimal-game-client", "--bridge", address, "--sample", args.sample, "--background")
             client_id = bridge.ready("client")
             # Discover the new sample tools before invoking them. These edits are
             # queued; acceptance is distinct from runtime application.
@@ -127,7 +127,9 @@ def main():
                 assert outcome["error"] is None, state
                 return state
 
-            sample_until(lambda state: state["texture_state"] == "ready")
+            initial = sample_until(lambda state: state["texture_state"] == "ready")
+            assert initial["snapshot_sequence"] >= 1 and initial["snapshot_age_ms"] >= 0, initial
+            assert initial["closed"] is False, initial
             if args.sample == "3d":
                 loaded = sample_until(lambda state: state["mesh_state"] == "ready" and state["checker_state"] == "ready")
                 assert loaded["mesh_vertices"] == 24 and loaded["mesh_indices"] == 36, loaded
@@ -141,6 +143,13 @@ def main():
                 assert rotated["mesh_yaw"] == 0.5, rotated
                 camera3d = edit("set_camera3d", x=3, y=2, z=4)
                 assert camera3d["camera3d_position"] == [3, 2, 4], camera3d
+                # Quaternion poses exercise roll and vertical views without world-up reconstruction.
+                for quaternion in ((0, 0, 2 ** -0.5, 2 ** -0.5), (2 ** -0.5, 0, 0, 2 ** -0.5)):
+                    oriented = edit("set_camera_orientation", **dict(zip(("x", "y", "z", "w"), quaternion)))
+                    assert all(abs(a - b) < 1e-5 for a, b in zip(oriented["camera3d_orientation"], quaternion)), oriented
+                    sample_until(lambda state: state["frame"] >= oriented["frame"] + 2)
+                    assert bridge.game(client_id, "status")["failure"] is None
+                edit("set_camera3d", x=3, y=2, z=4)
                 edit("set_mesh_enabled", value=False)
                 unloaded = sample_until(lambda state: not state["mesh_resident"])
                 assert unloaded["texture_state"] == "ready" and unloaded["hud_quads"] == 1, unloaded
