@@ -4,7 +4,7 @@ Status: texture loading, leases, and the 2D sprite/HUD consumer implemented, 202
 mesh loading and the 3D consumer are implemented in the
 [mesh extension](2026-09-14-mesh-assets.md). Phase outcomes belong
 in the [roadmap](../roadmap.md#3-load-game-assets); implementation actions belong in
-[TODO](../../TODO.md#next-reference-game-balance-evidence).
+[TODO](../../TODO.md).
 
 ## First consumer and format
 

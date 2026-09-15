@@ -1,0 +1,21 @@
+[package]
+name = "nico-physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["runtime"]
+runtime = ["dep:nico-runtime"]
+
+[dependencies]
+rapier = { package = "rapier3d-f64", version = "0.35.3", features = ["enhanced-determinism"] }
+nico-ecs = { path = "../nico-ecs" }
+nico-runtime = { path = "../nico-runtime", optional = true }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "falling_box"
+required-features = ["runtime"]

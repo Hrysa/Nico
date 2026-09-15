@@ -2,10 +2,10 @@
 
 Status: shared simulation, MCP adapter, native hosts, camera, and combat presentation
 implemented, including three waves and grunt/brute enemies. Initial human playtest
-approval is recorded; detailed balance evidence and tuning remain. This replaces the earlier
+and balance approval are recorded; no tuning changes are requested. This replaces the earlier
 collect-and-escape proposal. Scope targets belong in
 [roadmap phase 5](../roadmap.md#5-make-a-playable-local-game); actions belong in
-[TODO](../../TODO.md#next-reference-game-balance-evidence).
+[TODO](../../TODO.md#next-networked-co-op-design).
 
 ## First playable encounter
 
@@ -17,7 +17,7 @@ abilities are later ARPG design work after the combat slice is playable.
 
 Windows first, solo first, and later two-player online co-op remain the targets.
 Numeric rules below remain initial choices. Scripted combat comparisons are recorded
-in the roadmap; human balance assessment remains pending.
+in the roadmap; the user has accepted the current balance.
 
 ## Camera and controls
 
@@ -113,13 +113,14 @@ hero die together. Health clamps at zero.
 
 ## Movement and collision
 
-The game chooses kinematic floor movement using engine `nico-spatial` sweeps
-and bounded sliding, with no jumping or rigid-body solver. Actors have circular footprints of radius 0.4. Sweep movement against
+The game chooses kinematic floor movement using `nico-physics` and Rapier's
+character controller, with no jumping or gravity-driven actors. Actors have circular
+footprints of radius 0.4. Sweep movement against
 walls and living actors, slide at contact, and stop at corners. Dodge uses the
 same path and cannot pass through actors or walls. Resolve actors in stable ID
 order against latest positions; do not push actors. This introduces an explicit
-ordering bias to assess in playtests. Use a 0.0001-unit contact tolerance and at
-most four slide iterations per actor; discard unresolved motion after that bound.
+ordering bias to assess in playtests. Use a 0.0001-unit contact margin and Rapier's
+bounded controller iterations; discard unresolved motion when its bound is reached.
 Reject overlapping or out-of-bounds spawns. The open arena needs direct pursuit,
 not navigation around interior obstacles.
 
@@ -198,7 +199,7 @@ schemas through the bridge. MCP directions are world-space; camera input stays l
 This table defines acceptance scope. Completed headless checks and their tested
 environment are recorded in the roadmap, including handler and bridge-routing
 coverage and isolated native scenarios. Initial human approval is recorded there;
-detailed balance and manual lifecycle evidence remain outstanding.
+current balance is accepted, while the separate manual lifecycle checks remain.
 
 | Area | Required evidence |
 | --- | --- |
@@ -218,7 +219,7 @@ pacing through playtests before expanding ARPG content.
 ## Engine integration
 
 The arena consumes engine camera control, quaternion coordinate helpers, procedural
-meshes, cached bitmap text, spatial queries, frame input accumulation, command
+meshes, cached bitmap text, Rapier movement, frame input accumulation, command
 bookkeeping, and snapshot publication. The game supplies tuning, poses, bindings,
 and authored geometry. Camera and mesh poses publish unit quaternions; planar facing
 angles remain gameplay data. Native pointer operations and launch policy are

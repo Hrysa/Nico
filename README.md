@@ -572,6 +572,28 @@ runs per host; new captures return `snapshot_encoder_busy` until it finishes. Fa
 are retained, and host shutdown joins active encoding/file I/O. This is diagnostic
 capture, not continuous video recording or profiling.
 
+## Physics
+
+`nico-physics` integrates Rapier 3D behind Nico-owned types. It supports fixed,
+dynamic, and kinematic bodies; balls, cuboids, and capsules; collision groups,
+sensors, shape casts, and character movement. Simulation uses 64-bit coordinates
+and unit quaternions. The arena now uses Rapier for wall/actor collision and sliding;
+combat timing and floor-movement policy remain game-owned.
+
+The optional runtime adapter maps `PhysicsBody` components to provider bodies,
+steps at fixed boundaries, writes poses back, and publishes owned `ContactFrame`
+events. Removing a component or entity removes its body at the next fixed step.
+Run the bounded ECS example:
+
+```text
+cargo run -p nico-physics --example falling_box
+```
+
+This first integration has one collider per body and no exposed joints, mesh
+colliders, or 2D dynamics. Cross-platform determinism and performance are unverified.
+See [physics ownership](docs/architecture.md#physics) and the
+[integration design](docs/plans/2026-09-15-physics.md).
+
 ## Workspace
 
 | Location | Responsibility |
@@ -581,7 +603,8 @@ capture, not continuous video recording or profiling.
 | `crates/nico-input` | Provider-neutral device state and frame-to-fixed-step accumulation |
 | `crates/nico-presentation` | Immutable 2D/3D draw snapshots and optional runtime lifecycle |
 | `crates/nico-presentation-control` | Camera control, coordinate helpers, and cached bitmap text |
-| `crates/nico-spatial` | Headless sphere/box queries and bounded circle sliding |
+| `crates/nico-spatial` | Conservative camera sphere/box queries |
+| `crates/nico-physics` | Rapier 3D integration, character movement, and optional ECS/runtime adapter |
 | `crates/nico-render` | Bootstrap, textured quad and mesh pipelines, uploads, and frame recording |
 | `crates/nico-rhi` | Backend-neutral GPU contracts |
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
@@ -596,7 +619,7 @@ capture, not continuous video recording or profiling.
 | `games/arena-arpg` | Shared arena combat and native client/server executables |
 
 See [architecture](docs/architecture.md) for dependency direction and contracts, and
-[AGENTS.md](AGENTS.md) for contribution rules. Physics, audio, UI, and broader devtools
+[AGENTS.md](AGENTS.md) for contribution rules. Audio, UI, and broader devtools
 have no placeholder crates.
 
 ## Documentation

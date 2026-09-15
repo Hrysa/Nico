@@ -240,11 +240,22 @@ pub struct StepReport {
 }
 
 /// Runtime-owned simulation resource. Snapshots are immutable or cloned for tools.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Arena {
     level: Level,
     snapshot: Snapshot,
     next_attack: u64,
+    collision: collision::CollisionWorld,
+}
+impl Clone for Arena {
+    fn clone(&self) -> Self {
+        Self {
+            level: self.level.clone(),
+            snapshot: self.snapshot.clone(),
+            next_attack: self.next_attack,
+            collision: collision::CollisionWorld::default(),
+        }
+    }
 }
 impl Default for Arena {
     fn default() -> Self {
@@ -259,6 +270,7 @@ impl Arena {
             level,
             snapshot,
             next_attack: 1,
+            collision: collision::CollisionWorld::default(),
         })
     }
     fn initial(level: &Level, run_id: u64) -> Snapshot {
@@ -427,6 +439,7 @@ impl Arena {
                 *intent = toward.unit().scale(stats.speed / 60.0);
             }
         }
+        self.collision.sync(&self.snapshot.actors);
         for (i, intent) in intents.into_iter().enumerate() {
             if self.snapshot.actors[i].health == 0 {
                 continue;
@@ -437,15 +450,7 @@ impl Arena {
                 Action::Dodge { direction, .. } => direction.scale(8.0 / 60.0),
                 Action::Attack { .. } => Vec2::default(),
             };
-            let blockers: Vec<_> = self
-                .snapshot
-                .actors
-                .iter()
-                .enumerate()
-                .filter(|(j, a)| *j != i && a.health > 0)
-                .map(|(_, a)| a.position)
-                .collect();
-            let position = collision::slide(actor.position, delta, &blockers);
+            let position = self.collision.slide(i, actor.position, delta);
             let actor = &mut self.snapshot.actors[i];
             if actor.action == Action::Idle && delta.dot(delta) > 0.0 {
                 actor.facing = delta.unit();

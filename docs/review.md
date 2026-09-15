@@ -20,6 +20,10 @@ ownership; [the roadmap](roadmap.md) records phase status and evidence;
 - `nico-render` owns draw policy; the RHI provider owns native resources and recovery.
 - New contracts have concrete consumers, providers, lifecycle rules, and tests.
 - New crates establish real ownership or dependency boundaries.
+- Rapier types/handles stay inside `nico-physics`. Check fixed-step ownership,
+  entity/body removal, immediate query freshness without consuming dynamics changes,
+  sensor detection across body types, collision filtering, and bounded contact
+  publication. Game damage and movement policy remain game-owned.
 
 ## Runtime behavior
 

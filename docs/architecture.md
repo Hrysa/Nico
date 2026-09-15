@@ -17,7 +17,8 @@ game client -> nico-winit -> nico-input
                                         -> wgpu
 game client -> nico-presentation-control -> nico-presentation (contracts only)
                                        -> nico-spatial
-shared gameplay -> nico-spatial
+shared gameplay -> nico-physics -> Rapier 3D
+                              -> nico-runtime (optional adapter) -> nico-ecs
 game server -> shared gameplay -> nico-runtime
 ```
 
@@ -39,7 +40,8 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
 | `nico-winit` | Native window lifecycle, input adaptation, and client-session coordination |
 | `nico-assets` | Asset identity, leases, procedural meshes, and optional runtime-owned PNG/GLB loading |
-| `nico-spatial` | Headless sphere/box queries and bounded circle sliding |
+| `nico-spatial` | Conservative camera sphere/box queries |
+| `nico-physics` | Rapier body/collider ownership, queries, character movement, and optional fixed-step ECS adapter |
 | `nico-launch` | Native CLI, diagnostics, and client/server transport composition |
 | `nico-ops` | Host control, command bookkeeping, owned publication; optional tool catalogs and bridge transport |
 | `apps/nico-shaderc` | Offline shader compilation outside the Rust build graph |
@@ -178,10 +180,10 @@ The optional `tools` feature registers the arena's game catalog through `nico-op
 It stores one movement lease, one combat request, a reserved restart request, and
 128 terminal outcomes. Runtime boundaries arbitrate human input, apply requests,
 and publish owned snapshots with outcomes atomically under a process-local mutex.
-This lock covers only bounded four-actor work; no I/O or callbacks run under it.
+This lock covers bounded four-actor work; no I/O or external callbacks run under it.
 Shutdown closes acceptance and retains final snapshots/outcomes. Engine hosts still
 own all service threads and transport; the default shared crate depends on the
-headless runtime and spatial queries. Detailed rules belong in the
+headless runtime and physics integration. Detailed rules belong in the
 [reference-game design](plans/2026-09-15-reference-game.md).
 
 `arena-arpg-client` maps frame input into fixed-step intent before `ArenaPlugin`,
@@ -284,6 +286,46 @@ independently of copyable handle identity; an explicit `Arc<Texture>` can pin pi
 for a snapshot beyond store release. GPU resource lifetime remains owned by the renderer;
 texture and mesh upload and both consumers are implemented. The
 [mesh design](plans/2026-09-14-mesh-assets.md) defines the bounded GLB subset.
+
+## Physics
+
+`nico-physics` owns a Rapier 3D world behind provider-independent descriptors,
+world-local body IDs, and owned results. It has no presentation or host dependency.
+The default `runtime` feature adds a plugin above the runtime; runtime and ECS never
+depend on physics. Standalone simulations can disable that feature and own the world
+directly. Coordinates use f64; poses contain unit XYZW quaternions.
+
+`PhysicsPlugin` synchronizes `PhysicsBody` components in stable entity order at each
+FixedUpdate, steps using the runtime delta, and writes poses/velocities back. Its
+`PhysicsEntities` resource maps generational ECS identities to private provider
+bodies. Despawn/component removal removes the corresponding body and collider;
+shape/material edits replace them. Kinematic pose edits set motion targets; fixed
+and dynamic pose edits teleport. Register intent producers before physics and
+result consumers after physics. Shutdown releases physics state without workers.
+
+World mutations become visible to subsequent queries without advancing simulation.
+Lookups use a separate collider snapshot and spatial tree, rebuilt lazily after
+geometry changes or a dynamics step. Refreshing them never consumes pending
+changes in the dynamics world. Queries support body exclusion, collision groups,
+and optional sensors. Sensors detect all body-type combinations, including fixed
+triggers with kinematic characters; bilateral collision masks still apply. Solid
+colliders retain Rapier's default active collision types. Each body
+has one collider. Contact observations are capped at 4,096 pairs with a truncation
+flag; the runtime emits them as owned `ContactFrame` events through the existing
+bounded event bus. They describe touching pairs, not hit damage or contact starts.
+
+The arena uses a persistent world inside its `Arena` resource instead of the ECS
+adapter, so headless direct stepping and runtime/MCP stepping share the same path.
+It synchronizes live actor spheres and authored wall cuboids, then moves actors in
+stable slot order with Rapier's controller. Game rules retain planar movement,
+contact margins, collision dimensions, no actor pushing, and combat hit sectors.
+The unused handwritten circle-slide solver was removed; conservative camera queries
+remain in `nico-spatial`. This does not turn the arena into a gravity-driven game.
+
+The integration enables Rapier's enhanced determinism and uses single-threaded
+stepping. Nico cross-platform repeatability remains unverified. Physics profiling
+is not enabled. API bounds and deferred features belong in the
+[integration design](plans/2026-09-15-physics.md).
 
 ## Measurement and profiling requirements
 
@@ -411,11 +453,11 @@ Capture excludes span timing and is not a profiler.
 - Add crates for demonstrated ownership/dependency boundaries, not placeholders.
 - Keep stable asset/player/network identities distinct from generational ECS IDs.
 - Libraries emit diagnostics; hosts initialize subscribers and exporters.
-- Keep physics authoritative if it is introduced for shared collision rules.
+- Keep physics authoritative and run it at simulation-owned boundaries.
 - Use measurements to justify optimization, extraction, and caching.
 - Keep protocol/provider types out of unrelated engine-facing APIs.
 
-Parallel scheduling, public math representation, physics, audio, UI, production
+Parallel scheduling, broader math APIs, advanced physics, audio, UI, production
 materials/render graphs, scene/prefab formats, and import caching remain deferred.
 Profiling implementation and broader visual development tools are deferred; phase status
 and priorities belong in the roadmap and TODO.

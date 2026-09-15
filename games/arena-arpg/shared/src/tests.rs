@@ -238,7 +238,9 @@ fn normalized_movement_and_idle_stop() {
 fn sweeps_block_tunneling_and_allow_wall_sliding() {
     let p = collision::slide(Vec2::new(11.3, 0.0), Vec2::new(100.0, 2.0), &[]);
     assert!(p.x <= geometry::CENTER_LIMIT && p.x > geometry::CENTER_LIMIT - 0.01);
-    assert!((p.z - 2.0).abs() < 1e-8);
+    // Rapier's iterative shape cast has a small numerical error, well below the
+    // arena's 0.0001-unit separation margin.
+    assert!((p.z - 2.0).abs() < 1e-6, "wall slide: {p:?}");
     let corner = collision::slide(Vec2::new(11.3, 11.3), Vec2::new(5.0, 5.0), &[]);
     assert!(corner.x <= geometry::CENTER_LIMIT && corner.z <= geometry::CENTER_LIMIT);
     let p = collision::slide(

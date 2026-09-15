@@ -5,6 +5,7 @@ members = [
     "apps/nico-shaderc",
     "crates/nico-assets",
     "crates/nico-spatial",
+    "crates/nico-physics",
     "crates/nico-presentation-control",
     "crates/nico-ecs",
     "crates/nico-input",

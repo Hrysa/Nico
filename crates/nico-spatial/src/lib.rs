@@ -1,7 +1,5 @@
-//! Headless geometric queries and bounded kinematic movement. No runtime or
-//! presentation dependencies. Callers supply geometry, radii, and iteration policy.
-mod slide;
-pub use slide::{Circle, SlideSettings, slide_circle};
+//! Headless geometric queries. No runtime or presentation dependencies.
+//! Camera callers supply geometry and radii. Body movement lives in nico-physics.
 
 /// A finite boom query. `direction` is unit length; a query returns the nearest
 /// contact distance in world units, or None. Geometry and filtering are caller-owned.

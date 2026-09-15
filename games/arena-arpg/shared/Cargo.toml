@@ -8,7 +8,7 @@ license.workspace = true
 tools = ["dep:nico-ops", "dep:serde_json"]
 
 [dependencies]
-nico-spatial = { path = "../../../crates/nico-spatial" }
+nico-physics = { path = "../../../crates/nico-physics", default-features = false }
 nico-runtime = { path = "../../../crates/nico-runtime" }
 nico-ops = { path = "../../../crates/nico-ops", features = ["mcp"], optional = true }
 serde_json = { version = "1", optional = true }

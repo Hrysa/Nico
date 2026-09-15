@@ -65,10 +65,9 @@ impl Plugin for ArenaPlugin {
             Ok(())
         });
         app.add_system(Stage::Shutdown, "arena::clear_input", |context| {
-            context
-                .world
-                .resource_mut::<Arena>()?
-                .clear_buffered_input();
+            let arena = context.world.resource_mut::<Arena>()?;
+            arena.clear_buffered_input();
+            arena.collision.close();
             Ok(())
         });
         Ok(())

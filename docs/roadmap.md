@@ -28,7 +28,7 @@ the engine's support to one dimension; focused samples validate both dimensions.
 | 2. Control clients and servers with AI | Discover independent games, inspect readiness, call game tools, and stop | Implemented; Windows end-to-end verified |
 | 3. Load game assets | Request usable game content by asset identity | PNG and mesh-only GLB paths implemented |
 | 4. Display the game world | Show loaded content moving with game state | 2D and 3D samples with shared HUD implemented |
-| 5. Make a playable local game | Move, collide, complete an objective, and restart | Native arena approved in initial playtest; detailed balance evidence remains |
+| 5. Make a playable local game | Move, collide, complete an objective, and restart | Local arena and current balance accepted; Rapier integration validated on Windows |
 | 6. Play over a network | Two clients play together on one authoritative server | Planned |
 | 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Planned |
 | 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Planned |
@@ -180,7 +180,7 @@ execution remains unverified.
 **Status:** Paired 2D and 3D rendering samples are implemented. They establish the
 rendering foundation; the reference game's initial scope is selected in phase 5,
 with scenario rules recorded in its design. Concrete next actions belong in
-[TODO](../TODO.md#next-reference-game-balance-evidence).
+[TODO](../TODO.md#next-networked-co-op-design).
 
 **Scope delivered:** Both samples follow shared entity positions through immutable
 presentation snapshots. The 2D world sprite and fixed HUD icon share one transparent
@@ -228,14 +228,16 @@ replaced that fixture after visual review; alpha-cutoff support remains implemen
 
 **Status (2026-09-15):** The three-wave arena prototype, shared headless simulation,
 MCP adapter, and native hosts are implemented. The user approved the engine
-extraction build while playing. Detailed human win/loss/restart outcomes, encounter
-duration, and balance assessment remain outstanding; see [TODO](../TODO.md#next-reference-game-balance-evidence).
+extraction build while playing and subsequently accepted the current combat balance.
+No tuning changes are requested. Detailed encounter-duration measurements were not
+supplied; they are not a blocker for the accepted prototype. Next major scope is
+[networked co-op](../TODO.md#next-networked-co-op-design).
 
 **Scope:** One hero with melee and dodge clears three waves of grunt/brute enemies
 in one compact 3D arena. The game has telegraphed attacks, health, intermissions,
 victory, defeat, and restart. Windows and solo play come first; macOS is unverified.
 Roughly five minutes is a pacing target, not a measured human encounter duration.
-Equipment, loot, and progression follow balance assessment. Detailed rules and
+Equipment, loot, and progression are later content work. Detailed rules and
 acceptance cases belong in the [reference-game design](plans/2026-09-15-reference-game.md).
 The earlier collect-and-escape proposal was replaced by this scenario on 2026-09-15.
 
@@ -284,7 +286,7 @@ responsiveness update produced the following results on the tested build:
 Before that update, rush lost on wave 2. This comparison demonstrates a scripted
 completion path and improved scripted survivability, not human difficulty or pacing.
 
-**Latest native run (2026-09-15, Windows / NVIDIA GeForce GTX 1660 / Vulkan):**
+**Boundary-refactor native run (2026-09-15, Windows / NVIDIA GeForce GTX 1660 / Vulkan):**
 `target/arena-boundary-review-evidence/report.json` records a passed
 `combat_and_window_lifecycle` scenario with 7,126 successful client presentations.
 Both hosts cleared all waves at 100 health: server tick 2896, client tick 3050.
@@ -305,7 +307,44 @@ or proof of display scanout. Native artifacts are generated under ignored `targe
 **Human acceptance:** The user reported "lgtm while playing" for the preceding
 engine-extraction build. No issues or tuning requests were reported. Specific wave
 outcomes, duration, and manual lifecycle results were not supplied; this closes that
-refactor's acceptance check but does not complete phase 5 balance validation.
+refactor's acceptance check. The user subsequently reported that everything looked
+fine and accepted the current balance, closing the tuning task without requesting
+additional measurement. This does not establish the five-minute pacing target.
+
+### Rapier integration validation
+
+The [physics integration](plans/2026-09-15-physics.md) adds a thin `nico-physics`
+wrapper around Rapier 3D, with f64 poses, private provider handles, fixed/dynamic/
+kinematic bodies, character movement, queries, collision filtering, and owned
+contact observations. The optional ECS/runtime adapter manages component changes,
+entity removal, fixed stepping, and shutdown. The arena uses a persistent physics
+world for its existing planar movement; the unused handwritten slide solver was
+removed. Camera queries and combat rules retain their existing ownership.
+
+On Windows (2026-09-15), workspace all-feature tests and strict all-target Clippy
+passed after resolving both findings from the
+[integration review](reviews/2026-09-15-rapier-integration.md). All 13 physics tests
+passed, covering dynamics, slope movement, pushing, contacts, filtering, query
+freshness, ECS lifecycle, bounded output, invalid input, and provider failure.
+Regressions verify trajectory equivalence with/without lookups and kinematic
+sensor entry/exit through direct physics and runtime events. All 10 runtime-free
+physics tests also passed. No performance measurements or cross-platform
+determinism claims are made.
+
+The initial integration's bounded falling-box example settled its half-unit box at
+Y=0.49993 after 180 ticks. Its headless assessment loses at tick 550 for idle and tick 1461
+for rush; reactive play wins at tick 2893 (48.217 simulation seconds) with 100 health.
+Compared with the earlier baseline, exact paths and completion ticks can change
+with the collision implementation; attack/dodge timing and wave rules are unchanged.
+
+The corrected native build passed the complete combat/window lifecycle harness on
+Windows / GTX 1660 / Vulkan
+(`target/arena-rapier-review-fixes/report.json`), recording 7,226 successful
+presentations. Server and client cleared all three waves at ticks 2879 and 3232,
+both with 100 health. Buffered dodges, defeat/restart, camera/capture, window
+transitions, focus-loss cancellation, and orderly exits passed. The orbit capture
+was visually inspected. This arena run validates the migrated movement path;
+the focused engine regressions exercise the two review failures.
 
 ## 6. Play over a network
 

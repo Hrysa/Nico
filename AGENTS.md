@@ -6,7 +6,8 @@ Nico is a Rust 2024 workspace. Engine crates live under `crates/`: `nico-runtime
 headless application kernel and depends on the hecs-backed `nico-ecs` world crate.
 `nico-input` owns device state, `nico-presentation` owns the immutable presentation
 boundary. `nico-presentation-control` owns camera control, coordinate helpers, and
-cached bitmap text; `nico-spatial` owns headless queries and bounded sliding.
+cached bitmap text; `nico-spatial` owns conservative camera queries. `nico-physics`
+owns the Rapier 3D integration, body/collider lifecycle, and optional runtime adapter.
 `nico-render` uses `nico-rhi` contracts. `nico-rhi-wgpu` implements those
 contracts; `nico-winit` composes the native client. `nico-assets` owns asset identity,
 leases, and optional runtime-owned PNG/GLB loading through its `loading` feature,
@@ -15,7 +16,7 @@ features own native host transport composition and lifecycle. `nico-ops` provide
 dependency-free host control, command bookkeeping, and owned snapshot publication.
 Its optional `mcp` feature owns host/game tool catalogs
 and handlers; `bridge` owns registration, routing, and reconnects. `apps/nico-bridge` is
-the executable entry point. Physics and broader devtools have no placeholder crates.
+the executable entry point. Audio, UI, and broader devtools have no placeholder crates.
 Runtime must not depend on presentation, providers, or launch policy, and `nico-ecs`
 must not depend on runtime.
 

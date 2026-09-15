@@ -4,16 +4,14 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Next: reference-game balance evidence
+## Next: networked co-op design
 
-Acceptance: [roadmap phase 5](docs/roadmap.md#5-make-a-playable-local-game).
+Acceptance: [roadmap phase 6](docs/roadmap.md#6-play-over-a-network).
 
-- [ ] Record detailed human win/loss/restart outcomes across all three waves and
-      encounter duration for phase 5 balance decisions; initial playtest approval
-      for the engine extraction is recorded in the roadmap.
-- [ ] Tune wave rosters, recovery, and difficulty from those observations before further content
-      or choosing phase 6 synchronization; see the
-      [reference-game design](docs/plans/2026-09-15-reference-game.md).
+- [ ] Define player/session identity, authoritative input handling, state snapshots,
+      and disconnect/rejoin behavior for two-player arena co-op.
+- [ ] Choose interpolation/prediction and reconciliation requirements; assess Rapier
+      repeatability against the chosen model before assuming lockstep or rollback.
 
 ## Native host validation
 
