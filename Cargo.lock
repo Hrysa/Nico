@@ -151,6 +151,8 @@ version = "0.1.0"
 dependencies = [
  "arena-arpg-shared",
  "clap",
+ "glam 0.30.10",
+ "nico-animation",
  "nico-assets",
  "nico-input",
  "nico-launch",
@@ -1354,6 +1356,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nico-animation"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "nico-assets",
+ "serde_json",
+]
+
+[[package]]
 name = "nico-assets"
 version = "0.1.0"
 dependencies = [
@@ -1371,6 +1382,25 @@ dependencies = [
  "clap",
  "nico-ops",
  "nico-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "nico-character-preview"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "glam 0.30.10",
+ "nico-animation",
+ "nico-assets",
+ "nico-ecs",
+ "nico-input",
+ "nico-launch",
+ "nico-ops",
+ "nico-presentation",
+ "nico-presentation-control",
+ "nico-runtime",
+ "nico-winit",
  "serde_json",
 ]
 

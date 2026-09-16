@@ -8,7 +8,17 @@ def main():
     parser.add_argument('--bin-dir',type=pathlib.Path,required=True)
     parser.add_argument('--output-dir',type=pathlib.Path,default=pathlib.Path('target/arena-native-evidence'))
     parser.add_argument('--combat-only',action='store_true',help='Skip window transition/focus checks; still verify gameplay, captures, diagnostics and orderly stop')
-    args=parser.parse_args(); args.output_dir.mkdir(parents=True,exist_ok=True)
+    parser.add_argument('--character-model',type=pathlib.Path,help='Local imported hero GLB; requires --character-animations')
+    parser.add_argument('--character-animations',type=pathlib.Path,help='Local RPG animation directory; requires --character-model')
+    parser.add_argument('--procedural-hero',action='store_true',help='Use procedural visuals instead of the default game hero assets')
+    args=parser.parse_args()
+    if args.procedural_hero and (args.character_model or args.character_animations):
+        parser.error('--procedural-hero conflicts with character overrides')
+    if bool(args.character_model)!=bool(args.character_animations):
+        parser.error('--character-model and --character-animations must be supplied together')
+    if args.character_model and (not args.character_model.is_file() or not args.character_animations.is_dir()):
+        parser.error('character model must be a file and character animations must be a directory')
+    args.output_dir.mkdir(parents=True,exist_ok=True)
     (args.output_dir/'report.json').write_text(json.dumps({'result':'running'}),encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0)); address=f'127.0.0.1:{sock.getsockname()[1]}'
@@ -22,26 +32,49 @@ def main():
     try:
         server=start('arena-arpg-server','--bridge',address)
         bridge=Mcp(start('nico-bridge','--listen',address,mcp=True)); sid=bridge.ready('server')
-        client=start('arena-arpg-client','--bridge',address,'--background'); cid=bridge.ready('client')
+        character_arguments=[]
+        if args.procedural_hero:
+            character_arguments=['--procedural-hero']
+        if args.character_model:
+            character_arguments=['--character-model',str(args.character_model.resolve()),'--character-animations',str(args.character_animations.resolve())]
+        client=start('arena-arpg-client','--bridge',address,'--background',*character_arguments); cid=bridge.ready('client')
+        instances=bridge.call('list_instances',{})['instances']
+        for instance,p in ((sid,server),(cid,client)):
+            registered=next(i for i in instances if i['instance_id']==instance)
+            assert registered['pid']==p.pid,registered
+        if not args.procedural_hero:
+            view=bridge.game(cid,'client_state')
+            assert view['animation'] is not None,view
+        print(json.dumps({'event':'control_started','instances':instances}),flush=True)
         catalog=json.dumps(bridge.call('list_game_tools',{}))
         assert all(name in catalog for name in ('client_control','window_state','window_control'))
-        def command(instance,name,**values):
+        focus_cancellations=[]
+        def command(instance,name,allow_focus_cancel=False,**values):
             state=bridge.game(instance,'game_state')
             accepted=bridge.game(instance,name,dict(run_id=state['run_id'],**values))
             deadline=time.monotonic()+8
             while time.monotonic()<deadline:
                 result=bridge.game(instance,'game_command',{'command_id':accepted['command_id']})
                 if result['state'] not in ('pending','running'):
+                    if allow_focus_cancel and name=='game_move' and result['state']=='cancelled' and result['reason']=='focus_lost':
+                        focus_cancellations.append({'instance_id':instance,'command':result})
+                        # Cancellation is terminal. Let the policy read fresh state;
+                        # do not retry a timed-out or ambiguously executed mutation.
+                        return result
                     assert result['state']=='completed',result
                     return result
                 time.sleep(.01)
             raise TimeoutError(name)
+        captures=[]
         def capture(name):
             result=bridge.game(cid,'window_snapshot'); deadline=time.monotonic()+10
             while result['state']=='pending' and time.monotonic()<deadline:
                 time.sleep(.03);result=bridge.game(cid,'window_snapshot',{'request_id':result['request_id']})
             assert result['state']=='ready',result
             shutil.copyfile(result['path'],args.output_dir/name)
+            captures.append({'file':name,'instance_id':cid,'capture':result,
+                'game_state_after_capture':bridge.game(cid,'game_state'),
+                'client_state_after_capture':bridge.game(cid,'client_state')})
         command(cid,'game_restart');capture('arena-start.png')
         edit=bridge.game(cid,'client_control',{'action':'camera','yaw':.45,'pitch':.65});deadline=time.monotonic()+5
         while time.monotonic()<deadline:
@@ -67,6 +100,8 @@ def main():
             while time.monotonic()<deadline:
                 state=bridge.game(instance,'game_state')
                 if state['state']!='playing':break
+                if state['wave'] not in waves:
+                    print(json.dumps({'event':'wave','instance_id':instance,'wave':state['wave']}),flush=True)
                 waves.add(state['wave'])
                 if state['intermission_ticks']>0:
                     if instance==cid and state['wave'] not in intermissions:
@@ -82,10 +117,13 @@ def main():
                     threat=next((m for m in threats if m['action']['phase_ticks_remaining']<=12),None)
                     if threat and hero['dodge_cooldown']==0:command(instance,'game_dodge',x=threat['facing']['z'],z=-threat['facing']['x'])
                     elif d<=2 and not threats:command(instance,'game_attack',yaw=math.atan2(dx,dz))
-                    elif d>2:command(instance,'game_move',x=dx/d,z=dz/d,ticks=1)
+                    elif d>2:command(instance,'game_move',allow_focus_cancel=True,x=dx/d,z=dz/d,ticks=1)
                 time.sleep(.012)
             assert state['state']=='won' and state['wave']==3 and waves=={1,2,3} and intermissions=={1,2},state
             runs.append({'role':'server' if instance==sid else 'client','win_tick':state['tick'],'waves':sorted(waves),'health':state['actors'][0]['health'],'automated_win_elapsed_seconds':round(time.monotonic()-started,3)})
+            runs[-1]['victory']=state
+            runs[-1]['intermissions']=sorted(intermissions)
+            print(json.dumps({'event':'victory','instance_id':instance,'tick':state['tick']}),flush=True)
             if instance==cid:capture('arena-victory.png')
             command(instance,'game_restart');deadline=time.monotonic()+25;telegraph_captured=False
             while time.monotonic()<deadline:
@@ -95,8 +133,12 @@ def main():
                     capture('arena-telegraph.png');telegraph_captured=True
                 time.sleep(.025)
             assert state['state']=='lost',state
+            runs[-1]['defeat']=state
             if instance==cid:capture('arena-defeat.png')
             command(instance,'game_restart')
+            restarted=bridge.game(instance,'game_state')
+            assert restarted['state']=='playing' and restarted['wave']==1 and restarted['run_id']!=state['run_id'],restarted
+            runs[-1]['restart_after_defeat']=restarted
         transitions=[];outcome=None
         if not args.combat_only:
             transitions=[]
@@ -148,9 +190,16 @@ def main():
         assert status['graphics']['presented_frames']>0 and status['failure'] is None,status
         view=bridge.game(cid,'client_state')
         report={'result':'passed','scope':'combat_only' if args.combat_only else 'combat_and_window_lifecycle','buffer_checks':buffer_checks,'runs':runs,'window_transitions':transitions,'focus_loss_command':outcome,'status':status,'client_view':view,'diagnostics':{role:bridge.game(i,'diagnostics') for role,i in [('client',cid),('server',sid)]}}
+        report.update(instances=instances,captures=captures,gameplay_focus_cancellations=focus_cancellations,
+            capture_sampling='PNG and subsequent game/client snapshots are separate samples, not the same frame',
+            user_observation='not collected by this automated test',
+            character={'mode':'procedural' if args.procedural_hero else ('imported_override' if args.character_model else 'imported_default'),
+                'model':str(args.character_model.resolve()) if args.character_model else None,
+                'animations':str(args.character_animations.resolve()) if args.character_animations else None})
         for instance,p in ((cid,client),(sid,server)):
             assert bridge.game(instance,'stop')['accepted'];assert p.wait(timeout=10)==0
         bridge.close();(args.output_dir/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+        print(json.dumps({'event':'control_stopped','window_open':False,'client_exit':client.returncode,'server_exit':server.returncode}),flush=True)
         print(json.dumps({'result':'passed','output':str(args.output_dir.resolve()),'presented_frames':status['graphics']['presented_frames']}))
     except Exception as error:
         (args.output_dir/'report.json').write_text(json.dumps({'result':'failed','error':str(error)}),encoding='utf-8')

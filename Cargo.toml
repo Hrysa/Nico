@@ -2,8 +2,10 @@
 resolver = "3"
 members = [
     "apps/nico-bridge",
+    "apps/nico-character-preview",
     "apps/nico-shaderc",
     "crates/nico-assets",
+    "crates/nico-animation",
     "crates/nico-spatial",
     "crates/nico-physics",
     "crates/nico-presentation-control",

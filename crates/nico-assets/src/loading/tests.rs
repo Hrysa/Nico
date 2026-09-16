@@ -8,13 +8,25 @@ fn handle(id: u128) -> Handle<Texture> {
 fn manual(capacity: usize) -> (App, Backend) {
     let (service, backend) = service_channel(1).unwrap();
     let store = TextureStore {
-        catalog: (1..=3)
-            .map(|id| (AssetId::from_u128(id), PathBuf::from("unused.png")))
-            .collect(),
+        catalog: {
+            let mut registry = crate::import::ImportRegistry::new();
+            let importer = registry.register(crate::importers::PngImporter).unwrap();
+            for id in 1..=3 {
+                registry
+                    .asset(
+                        AssetId::from_u128(id),
+                        "unused.png",
+                        &importer,
+                        Default::default(),
+                        Default::default(),
+                    )
+                    .unwrap();
+            }
+            registry.into_entries(Path::new("."))
+        },
         entries: BTreeMap::new(),
-        limits: TextureLimits {
+        limits: StoreLimits {
             max_assets: capacity,
-            ..TextureLimits::default()
         },
         next_generation: 0,
         active: None,
@@ -282,55 +294,6 @@ fn fixture() -> PathBuf {
 }
 
 #[test]
-fn real_png_is_decoded_and_limits_are_enforced() {
-    let texture = decode_png(&fixture(), TextureLimits::default()).unwrap();
-    assert_eq!((texture.width(), texture.height()), (2, 2));
-    assert_eq!(
-        texture.pixels(),
-        &[
-            255, 255, 255, 255, 255, 80, 40, 255, 40, 160, 255, 255, 0, 0, 0, 0
-        ]
-    );
-    for limits in [
-        TextureLimits {
-            max_file_bytes: 1,
-            ..TextureLimits::default()
-        },
-        TextureLimits {
-            max_dimension: 1,
-            ..TextureLimits::default()
-        },
-    ] {
-        assert!(matches!(
-            decode_png(&fixture(), limits),
-            Err(TextureError::LimitExceeded)
-        ));
-    }
-    assert!(
-        decode_png(
-            &fixture(),
-            TextureLimits {
-                max_decoded_bytes: 1,
-                ..TextureLimits::default()
-            }
-        )
-        .is_err()
-    );
-    assert!(matches!(
-        decode_png(
-            &fixture().with_extension("missing"),
-            TextureLimits::default()
-        ),
-        Err(TextureError::Io(_))
-    ));
-    let invalid = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    assert!(matches!(
-        decode_png(&invalid, TextureLimits::default()),
-        Err(TextureError::InvalidPng(_))
-    ));
-}
-
-#[test]
 fn native_worker_loads_real_content_and_joins_on_shutdown() {
     let mut builder = AppBuilder::new();
     TextureStore::install(
@@ -423,68 +386,4 @@ fn shutdown_releases_completed_but_unpublished_pixels() {
     complete(&backend, Ok(texture));
     app.shutdown().unwrap();
     assert!(weak.upgrade().is_none());
-}
-
-fn encoded(color: png::ColorType, depth: png::BitDepth, pixels: &[u8]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
-        encoder.set_color(color);
-        encoder.set_depth(depth);
-        if color == png::ColorType::Indexed {
-            encoder.set_palette(vec![10, 20, 30]);
-            encoder.set_trns(vec![40]);
-        }
-        encoder
-            .write_header()
-            .unwrap()
-            .write_image_data(pixels)
-            .unwrap();
-    }
-    bytes
-}
-
-#[test]
-fn png_variants_normalize_to_rgba8_and_truncation_fails() {
-    for (color, depth, input, expected) in [
-        (
-            png::ColorType::Grayscale,
-            png::BitDepth::Eight,
-            vec![10],
-            [10, 10, 10, 255],
-        ),
-        (
-            png::ColorType::GrayscaleAlpha,
-            png::BitDepth::Eight,
-            vec![10, 20],
-            [10, 10, 10, 20],
-        ),
-        (
-            png::ColorType::Rgb,
-            png::BitDepth::Eight,
-            vec![10, 20, 30],
-            [10, 20, 30, 255],
-        ),
-        (
-            png::ColorType::Indexed,
-            png::BitDepth::Eight,
-            vec![0],
-            [10, 20, 30, 40],
-        ),
-        (
-            png::ColorType::Grayscale,
-            png::BitDepth::Sixteen,
-            vec![10, 255],
-            [10, 10, 10, 255],
-        ),
-    ] {
-        let mut bytes = encoded(color, depth, &input);
-        let texture = decode_bytes(bytes.clone(), TextureLimits::default()).unwrap();
-        assert_eq!(texture.pixels(), expected);
-        bytes.truncate(bytes.len() / 2);
-        assert!(matches!(
-            decode_bytes(bytes, TextureLimits::default()),
-            Err(TextureError::InvalidPng(_))
-        ));
-    }
 }

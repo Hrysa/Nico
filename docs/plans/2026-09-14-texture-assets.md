@@ -1,5 +1,11 @@
 # Texture loading and asset leases
 
+**Implementation update (2026-09-16):** The
+[extensible import contract](2026-09-16-extensible-asset-import.md) replaces the
+sealed decoder and monolithic feature arrangement described below. PNG now uses
+the public importer interface; `loading` remains a compatibility feature. Identity,
+leases, publication, and shutdown rules in this document remain in force.
+
 Status: texture loading, leases, and the 2D sprite/HUD consumer implemented, 2026-09-14;
 mesh loading and the 3D consumer are implemented in the
 [mesh extension](2026-09-14-mesh-assets.md). Phase outcomes belong

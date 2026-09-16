@@ -5,6 +5,7 @@ use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::sync::Arc;
 
 pub struct Visuals {
+    pub imported_hero: bool,
     white: Arc<Texture>,
     shade: Arc<Texture>,
     font: BitmapFont,
@@ -35,6 +36,7 @@ impl Visuals {
             pixels.extend_from_slice(&[v, v, v, 255]);
         }
         Self {
+            imported_hero: false,
             white,
             shade: Arc::new(Texture::rgba8(6, 1, pixels).unwrap()),
             font: BitmapFont::default(),
@@ -68,6 +70,7 @@ impl Visuals {
         color: [f32; 4],
     ) -> MeshInstance {
         MeshInstance {
+            skin_palette: None,
             mesh: Some(mesh.clone()),
             texture: Some(self.shade.clone()),
             position,
@@ -192,80 +195,84 @@ impl Visuals {
                     [x, y, z],
                 )
             };
-            scene.meshes.push(self.instance(
-                &self.body,
-                local(0.0, 0.9, 0.0),
-                yaw,
-                if hero { 1.0 } else { 1.2 * body_scale },
-                color,
-            ));
-            scene.meshes.push(self.instance(
-                &self.head,
-                local(0.0, 1.47, 0.0),
-                yaw,
-                1.0,
-                if hero { [0.55, 0.82, 0.91, 1.0] } else { color },
-            ));
+            if !hero || !self.imported_hero {
+                scene.meshes.push(self.instance(
+                    &self.body,
+                    local(0.0, 0.9, 0.0),
+                    yaw,
+                    if hero { 1.0 } else { 1.2 * body_scale },
+                    color,
+                ));
+                scene.meshes.push(self.instance(
+                    &self.head,
+                    local(0.0, 1.47, 0.0),
+                    yaw,
+                    1.0,
+                    if hero { [0.55, 0.82, 0.91, 1.0] } else { color },
+                ));
+            }
             if !dead {
-                let walk = if actor.action == Action::Idle
-                    && self.moving[i]
-                    && state.state == RunState::Playing
-                {
-                    (state.tick as f32 * 0.22 + i as f32).sin() * 0.12
-                } else {
-                    0.0
-                };
-                for sign in [-1.0, 1.0] {
-                    scene.meshes.push(self.instance(
-                        &self.limb,
-                        local(sign * 0.17, 0.32, walk * sign),
-                        yaw,
-                        1.0,
-                        [0.1, 0.19, 0.24, 1.0],
-                    ));
-                    scene.meshes.push(self.instance(
-                        &self.limb,
-                        local(sign * 0.43, 0.94, 0.0),
-                        yaw,
-                        1.0,
-                        color,
-                    ));
-                    if !hero {
+                if !hero || !self.imported_hero {
+                    let walk = if actor.action == Action::Idle
+                        && self.moving[i]
+                        && state.state == RunState::Playing
+                    {
+                        (state.tick as f32 * 0.22 + i as f32).sin() * 0.12
+                    } else {
+                        0.0
+                    };
+                    for sign in [-1.0, 1.0] {
                         scene.meshes.push(self.instance(
-                            &self.horn,
-                            local(sign * 0.18, 1.77, 0.0),
+                            &self.limb,
+                            local(sign * 0.17, 0.32, walk * sign),
                             yaw,
                             1.0,
-                            [0.85, 0.68, 0.38, 1.0],
+                            [0.1, 0.19, 0.24, 1.0],
                         ));
-                    }
-                }
-                let swing = match actor.action {
-                    Action::Attack { elapsed, .. } => {
-                        let windup = stats.windup as f32;
-                        let t = elapsed as f32;
-                        if t < windup {
-                            -0.8 * t / windup
-                        } else if t < windup + 6.0 {
-                            (t - windup) / 6.0 * 1.6 - 0.8
-                        } else {
-                            let recovery = stats.recovery as f32;
-                            0.8 * (1.0 - (t - windup - 6.0) / recovery).clamp(0.0, 1.0)
+                        scene.meshes.push(self.instance(
+                            &self.limb,
+                            local(sign * 0.43, 0.94, 0.0),
+                            yaw,
+                            1.0,
+                            color,
+                        ));
+                        if !hero {
+                            scene.meshes.push(self.instance(
+                                &self.horn,
+                                local(sign * 0.18, 1.77, 0.0),
+                                yaw,
+                                1.0,
+                                [0.85, 0.68, 0.38, 1.0],
+                            ));
                         }
                     }
-                    _ => 0.0,
-                };
-                scene.meshes.push(self.instance(
-                    &self.blade,
-                    local(0.43, 1.03, 0.5),
-                    yaw + swing,
-                    if hero { 1.0 } else { 0.7 },
-                    if imminent {
-                        [1.0, 0.95, 0.45, 1.0]
-                    } else {
-                        [0.72, 0.91, 0.98, 1.0]
-                    },
-                ));
+                    let swing = match actor.action {
+                        Action::Attack { elapsed, .. } => {
+                            let windup = stats.windup as f32;
+                            let t = elapsed as f32;
+                            if t < windup {
+                                -0.8 * t / windup
+                            } else if t < windup + 6.0 {
+                                (t - windup) / 6.0 * 1.6 - 0.8
+                            } else {
+                                let recovery = stats.recovery as f32;
+                                0.8 * (1.0 - (t - windup - 6.0) / recovery).clamp(0.0, 1.0)
+                            }
+                        }
+                        _ => 0.0,
+                    };
+                    scene.meshes.push(self.instance(
+                        &self.blade,
+                        local(0.43, 1.03, 0.5),
+                        yaw + swing,
+                        if hero { 1.0 } else { 0.7 },
+                        if imminent {
+                            [1.0, 0.95, 0.45, 1.0]
+                        } else {
+                            [0.72, 0.91, 0.98, 1.0]
+                        },
+                    ));
+                }
                 scene.meshes.push(self.instance(
                     &self.ring,
                     [position[0], 0.02, position[2]],
@@ -538,7 +545,7 @@ impl Visuals {
         self.font.draw(&mut hud.hud, text, p, scale, color);
     }
 }
-fn box_mesh(size: [f32; 3]) -> Arc<Mesh> {
+pub(crate) fn box_mesh(size: [f32; 3]) -> Arc<Mesh> {
     let uvs = std::array::from_fn(|face| [(face as f32 + 0.5) / 6.0, 0.5]);
     Arc::new(nico_assets::procedural::cuboid(size, uvs).expect("valid arena cuboid"))
 }

@@ -8,6 +8,12 @@ pub(super) fn description(name: &str) -> &'static str {
         "game_move" => {
             "Queue world-space movement for 1..120 fixed ticks. Zero direction waits. One movement lease at a time. Acceptance is not execution; poll game_command. Never blindly retry after timeout."
         }
+        "game_move_hold" => {
+            "Hold world-space movement for 1..120 simulation ticks. lease_id 0 starts a hold: its command_id is the lease ID. Renew/change direction using that lease ID before expiry; renewals return separate command IDs. No release gap on renewal. Poll game_command and game_state.movement_hold. Expiry counts simulation ticks, not wall time. Never blindly retry timeouts."
+        }
+        "game_move_release" => {
+            "Release the named movement hold at the next fixed boundary. Poll game_command for application; the hold ends cancelled/released. A stale lease cannot stop a newer hold."
+        }
         "game_attack" => {
             "Queue one melee attack facing yaw radians (zero is +Z). Completes when the action starts, not when damage lands. Poll game_command and game_state; never blindly retry after timeout."
         }
@@ -45,6 +51,10 @@ pub(super) fn input(name: &str) -> Value {
         "game_move" => {
             json!({"run_id":integer(1),"x":axis,"z":axis,"ticks":{"type":"integer","minimum":1,"maximum":120}})
         }
+        "game_move_hold" => {
+            json!({"run_id":integer(1),"lease_id":integer(0),"x":axis,"z":axis,"ticks":{"type":"integer","minimum":1,"maximum":120}})
+        }
+        "game_move_release" => json!({"run_id":integer(1),"lease_id":integer(1)}),
         "game_dodge" => json!({"run_id":integer(1),"x":axis,"z":axis}),
         _ => unreachable!(),
     })
@@ -62,6 +72,7 @@ pub(super) fn output(name: &str) -> Value {
             );
             object(
                 json!({"closed":{"type":"boolean"},"snapshot_sequence":integer(1),"snapshot_age_ms":integer(0),"run_id":integer(1),"tick":integer(0),
+                "movement_hold":{"anyOf":[{"type":"null"},object(json!({"lease_id":integer(1),"x":{"type":"number"},"z":{"type":"number"},"remaining_ticks":{"type":"integer","minimum":1,"maximum":120},"state":{"enum":["pending","running"]}}))]},
                 "state":{"enum":["playing","won","lost"]},"actors":{"type":"array","items":actor,"minItems":4,"maxItems":4},
                 "buffered_dodge":{"anyOf":[vector,{"type":"null"}]},"next_monster_strike_tick":integer(0),"wave":{"type":"integer","minimum":1,"maximum":3},"total_waves":{"const":3},"wave_tick":integer(0),"intermission_ticks":{"type":"integer","minimum":0,"maximum":180},"monsters_remaining":{"type":"integer","minimum":0,"maximum":3},"active_movement_command_id":nullable_integer()}),
             )

@@ -283,6 +283,8 @@ fn arena_tools_route_through_bridge_and_preserve_commands_across_reconnect() {
     let first = mcp.connected("server");
     let catalog = mcp.call("list_game_tools", json!({}));
     assert!(catalog.to_string().contains("game_attack"));
+    assert!(catalog.to_string().contains("game_move_hold"));
+    assert!(catalog.to_string().contains("game_move_release"));
     assert!(catalog.to_string().contains("phase_ticks_remaining"));
     fn routed(mcp: &mut Mcp, instance: &str, name: &str, args: Value) -> Value {
         mcp.call(
@@ -367,6 +369,64 @@ fn arena_tools_route_through_bridge_and_preserve_commands_across_reconnect() {
             json!({"command_id":reset})
         )["result_run_id"],
         2
+    );
+    let lease = routed(
+        &mut reconnected,
+        &second,
+        "game_move_hold",
+        json!({"run_id":2,"lease_id":0,"x":1,"z":0,"ticks":3}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    let renewed = routed(
+        &mut reconnected,
+        &second,
+        "game_move_hold",
+        json!({"run_id":2,"lease_id":lease,"x":1,"z":0,"ticks":3}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_command",
+            json!({"command_id":renewed})
+        )["state"],
+        "completed"
+    );
+    assert_eq!(
+        routed(&mut reconnected, &second, "game_state", json!({}))["movement_hold"]["remaining_ticks"],
+        2
+    );
+    let release = routed(
+        &mut reconnected,
+        &second,
+        "game_move_release",
+        json!({"run_id":2,"lease_id":lease}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    app.tick(FIXED_STEP).unwrap();
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_command",
+            json!({"command_id":release})
+        )["state"],
+        "completed"
+    );
+    assert_eq!(
+        routed(
+            &mut reconnected,
+            &second,
+            "game_command",
+            json!({"command_id":lease})
+        )["reason"],
+        "released"
     );
     assert!(!host.stop_requested());
     app.shutdown().unwrap();

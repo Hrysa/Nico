@@ -40,6 +40,7 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
 | `nico-winit` | Native window lifecycle, input adaptation, and client-session coordination |
 | `nico-assets` | Asset identity, leases, procedural meshes, and optional runtime-owned PNG/GLB loading |
+| `nico-animation` | Runtime-free CPU poses, skin matrices, humanoid profiles and retargeting |
 | `nico-spatial` | Conservative camera sphere/box queries |
 | `nico-physics` | Rapier body/collider ownership, queries, character movement, and optional fixed-step ECS adapter |
 | `nico-launch` | Native CLI, diagnostics, and client/server transport composition |
@@ -261,14 +262,51 @@ client-only content. Logic assets must not depend on presentation assets. Packag
 preserve that split when implemented.
 
 `nico-assets` defines `AssetId`, copyable `Handle<T>` identity, and owning
-`AssetLease<T>`. Its optional `loading` feature depends on runtime and PNG/glTF decoders;
-the default CPU asset API remains dependency-free. `TextureStore` and `MeshStore`
+`AssetLease<T>`. Its default CPU assets and public import interface are dependency-free.
+`png-import` and `gltf-import` independently enable built-in importers;
+`runtime-loading` enables the runtime adapter. `loading` enables all three for
+existing consumers. `TextureStore` and `MeshStore`
 specialize the same runtime resource, `AssetStore<T>`. Each store uses a distinct typed
 service completion and one engine-owned worker that reads/decodes files through the
 existing service boundary. Runtime systems publish results, reconcile lease release,
 and dispatch bounded work.
-The host supplies an immutable ID/path catalog. A general importer, dependency resolver,
-and packaging pipeline are not present. Usage belongs in [README](../README.md#texture-loading).
+The host supplies an immutable catalog selecting importer, source, typed settings,
+and budgets per asset ID. `AssetImporter` is implemented on a decoder rather than
+its output type; `ImportRegistry<T>` accepts multiple engine or userland importers
+for T. Output types require only `Send + Sync + 'static`. Registration/configuration
+errors precede worker startup, and sources/importer descriptors support structured
+inspection. Shared source reading is bounded; importers receive primary bytes and
+cooperative cancellation/output accounting, without world or GPU access. Worker
+loss fails pending entries; user code is not automatically restarted or sandboxed.
+Native publication and identity/lease semantics are unchanged.
+
+External dependency reads, a dependency scheduler, and packaging are not implemented.
+The static mesh GLB importer remains restricted; the separate `ModelGlbImporter`
+produces validated immutable bundles of scene nodes, geometry, skins, clips,
+materials, textures, and encoded images. It uses the same public registry and
+`AssetStore<Model>` lifecycle. Usage belongs in
+[README](../README.md#extending-asset-import); the
+[import contract](plans/2026-09-16-extensible-asset-import.md) owns extension details.
+
+`nico-animation` consumes CPU model contracts and glam only. It owns pure pose
+sampling, parent-order transform evaluation, mesh-local skin matrices, and canonical
+humanoid conversion. Userland supplies bone-name/index profiles, reference-pose
+calibration, and basis/root-motion policy; presets cover the supplied Mixamo/RPG
+rigs. Source skinning hierarchy and weights are retained. The initial 22 body roles
+leave unmapped finger/helper joints at their reference local transforms. Poses
+borrow their exact model; cross-model pose reuse is rejected. Games will select
+animation states from authoritative snapshots. `AnimationPlayer` owns elapsed-time
+playback and transitions independently of runtime scheduling; `Attachment` resolves
+a named node once and computes its evaluated affine socket transform.
+`nico-presentation-control::model::ModelVisual` owns shared immutable mesh/texture
+assembly and produces independent palette snapshots from model-space node matrices.
+Callers provide matrices in that exact model node order; this raw matrix boundary
+does not validate model identity. Loading, animation selection, and instance placement
+remain caller policy. The arena client optionally loads a local Mixamo hero and RPG
+clips, selects motion from owned snapshots, and publishes animation observations
+through `client_state`. Its named hand attachment uses a one-joint palette to retain
+affine transforms; gameplay collision and damage remain unchanged. The [model/animation contract](plans/2026-09-16-model-animation.md)
+defines the supported subset and mathematical conventions.
 
 Engine shaders live separately under the repository's
 `assets/presentation/shaders/` root. `nico-shaderc` compiles Slang into the checked-in
@@ -488,3 +526,51 @@ Platform calls never run on bridge threads. Applied records submission to the wi
 manager; separately observed window state confirms the effect. Host teardown cancels
 pending work and closes the slot. This introduces no runtime or game-owned transport.
 Arguments and retention rules belong in [README](../README.md#window-controls-through-mcp).
+
+## Character preview composition
+
+`apps/nico-character-preview` composes the normal native host, imports local model
+bundles before startup, and spawns an ECS character through a code prefab function.
+Instances share immutable assets and own playback state. Its Update system samples
+or retargets a pose using per-instance reusable buffers and publishes immutable
+model-space joint palettes with persistent skin geometry through `Scene3d`.
+`Mesh` validates joint indices and weights at construction; each `MeshInstance`
+provides a palette matching its geometry. The renderer retains geometry uploads
+and per-draw palette buffers, writes active joint matrices, and uses a separate
+skinned vertex pipeline. Static mesh layout/shading remain unchanged. The optional
+native skin shader is configured through `with_skin_shader`. Preview-only base-color
+decoding, camera, and clip selection stay in the tool; runtime remains independent
+of animation and presentation.
+
+MCP handlers queue bounded commands or read owned publications. Playback changes
+apply at Update; shutdown closes the queue with terminal cancellation results,
+closes publication, despawns the character, and clears scene resources. Engine
+launch/host crates retain transport, capture, and lifecycle ownership. This code
+prefab is not a serialized ECS prefab system.
+
+
+### Animated render visibility
+
+`ModelVisual` caches an influence box for each joint/primitive from vertices with
+positive weights. At extraction it transforms these boxes through current joint
+palettes and instance placement; the union conservatively contains weighted skin
+positions without CPU vertex deformation. Bounds include a numerical margin and
+require finite affine transforms. They cover the current pose only. Callers union
+attachment geometry separately and keep objects visible if bounds fail.
+
+`Camera3d::view_projection` provides the shared zero-to-one depth matrix for drawing
+and frustum tests. `ModelBounds::intersects_clip` rejects only boxes wholly outside
+a common frustum plane; invalid input stays visible. The preview and imported arena
+hero use this to omit offscreen draws and publish bounds/visibility through MCP.
+The preview optionally caps per-instance pose evaluation, holds the displayed pose,
+and accumulates elapsed time for the next sample. Camera changes force a fresh pose
+before culling; bounds describe displayed geometry, not future motion. Arena pose
+evaluation retains its normal rate. Visibility is presentation policy;
+it does not change physics, gameplay collision, or camera obstruction geometry.
+
+
+Arena attack timing uses `AnimationPlayer::update_at` to map snapshot phases to
+an authored source contact marker without cancelling crossfades. The same snapshot
+continues to own hit tests and movement. The local RPG right-hand preset calibrates
+weapon direction and length at load time; invalid reach calibration is a content
+error, not a reason to alter authoritative combat rules.

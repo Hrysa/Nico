@@ -35,6 +35,192 @@ fn tick(app: &mut App, count: usize) {
     }
 }
 
+fn hold(endpoint: &Operations, lease: u64, x: f64, z: f64, ticks: u16) -> u64 {
+    call(
+        endpoint,
+        "game_move_hold",
+        json!({"run_id":1,"lease_id":lease,"x":x,"z":z,"ticks":ticks}),
+    )["command_id"]
+        .as_u64()
+        .unwrap()
+}
+
+#[test]
+fn hold_renewal_has_no_idle_boundary_and_release_stops_on_next_tick() {
+    let (mut app, endpoint) = harness();
+    app.start().unwrap();
+    let lease = hold(&endpoint, 0, 1., 0., 3);
+    tick(&mut app, 2);
+    let renewal = hold(&endpoint, lease, 1., 0., 3);
+    tick(&mut app, 2);
+    assert_eq!(poll(&endpoint, renewal)["state"], "completed");
+    assert_eq!(poll(&endpoint, lease)["applied_ticks"], 4);
+    assert_eq!(snapshot(&endpoint)["movement_hold"]["remaining_ticks"], 1);
+    assert!(
+        (snapshot(&endpoint)["actors"][0]["position"]["x"]
+            .as_f64()
+            .unwrap()
+            - 4. / 15.)
+            .abs()
+            < 1e-10
+    );
+    let release = call(
+        &endpoint,
+        "game_move_release",
+        json!({"run_id":1,"lease_id":lease}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    tick(&mut app, 2);
+    assert_eq!(poll(&endpoint, release)["state"], "completed");
+    assert_eq!(poll(&endpoint, lease)["reason"], "released");
+    assert!(snapshot(&endpoint)["movement_hold"].is_null());
+    assert!(
+        (snapshot(&endpoint)["actors"][0]["position"]["x"]
+            .as_f64()
+            .unwrap()
+            - 4. / 15.)
+            .abs()
+            < 1e-10
+    );
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn hold_can_steer_and_expires_without_renewal_while_stale_edits_cannot_revive_it() {
+    let (mut app, endpoint) = harness();
+    app.start().unwrap();
+    let lease = hold(&endpoint, 0, 1., 0., 2);
+    tick(&mut app, 1);
+    hold(&endpoint, lease, 0., 1., 2);
+    tick(&mut app, 3);
+    let p = snapshot(&endpoint)["actors"][0]["position"].clone();
+    assert!((p["x"].as_f64().unwrap() - 1. / 15.).abs() < 1e-10);
+    assert!((p["z"].as_f64().unwrap() + 6. - 2. / 15.).abs() < 1e-10);
+    assert_eq!(poll(&endpoint, lease)["reason"], "lease_expired");
+    let newer = hold(&endpoint, 0, -1., 0., 10);
+    let stale = hold(&endpoint, lease, 1., 0., 120);
+    tick(&mut app, 1);
+    assert_eq!(poll(&endpoint, stale)["reason"], "inactive_lease");
+    let release = call(
+        &endpoint,
+        "game_move_release",
+        json!({"run_id":1,"lease_id":lease}),
+    )["command_id"]
+        .as_u64()
+        .unwrap();
+    tick(&mut app, 1);
+    assert_eq!(poll(&endpoint, release)["reason"], "inactive_lease");
+    assert_eq!(snapshot(&endpoint)["active_movement_command_id"], newer);
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn hold_and_pending_renewal_obey_cancellation_boundaries() {
+    for reason in [
+        "focus_lost",
+        "human_input",
+        "restarted",
+        "shutdown",
+        "wave_cleared",
+        "run_finished",
+    ] {
+        let (mut app, endpoint) = harness();
+        app.start().unwrap();
+        let lease = hold(&endpoint, 0, 1., 0., 120);
+        tick(&mut app, 1);
+        let renewal = hold(&endpoint, lease, 0., 1., 120);
+        match reason {
+            "focus_lost" => app.send_event(InputFocusLost),
+            "human_input" => {
+                let mut input = TickInput::idle(1);
+                input.movement = Vec2::new(-1., 0.);
+                app.send_event(input);
+            }
+            "restarted" => {
+                call(&endpoint, "game_restart", json!({"run_id":1}));
+            }
+            "shutdown" => {}
+            "wave_cleared" => {
+                for actor in &mut app
+                    .world_mut()
+                    .resource_mut::<Arena>()
+                    .unwrap()
+                    .snapshot
+                    .actors[1..]
+                {
+                    actor.health = 0;
+                }
+            }
+            "run_finished" => {
+                app.world_mut()
+                    .resource_mut::<Arena>()
+                    .unwrap()
+                    .snapshot
+                    .actors[0]
+                    .health = 0;
+            }
+            _ => unreachable!(),
+        }
+        if reason == "shutdown" {
+            app.shutdown().unwrap();
+        } else {
+            tick(&mut app, 1);
+        }
+        assert_eq!(poll(&endpoint, lease)["reason"], reason);
+        assert!(snapshot(&endpoint)["movement_hold"].is_null());
+        assert_eq!(
+            poll(&endpoint, renewal)["state"],
+            if matches!(reason, "wave_cleared" | "run_finished") {
+                "completed"
+            } else {
+                "cancelled"
+            }
+        );
+        if reason != "shutdown" {
+            app.shutdown().unwrap();
+        }
+    }
+}
+
+#[test]
+fn hold_slots_are_bounded_and_do_not_replace_finite_moves() {
+    let (mut app, endpoint) = harness();
+    app.start().unwrap();
+    let finite = movement(&endpoint, 1, 3);
+    assert_eq!(
+        call(
+            &endpoint,
+            "game_move_hold",
+            json!({"run_id":1,"lease_id":0,"x":1,"z":0,"ticks":120})
+        )["error"]["code"],
+        "busy"
+    );
+    let edit = hold(&endpoint, finite, 1., 0., 120);
+    assert_eq!(
+        call(
+            &endpoint,
+            "game_move_release",
+            json!({"run_id":1,"lease_id":finite})
+        )["error"]["code"],
+        "busy"
+    );
+    tick(&mut app, 3);
+    assert_eq!(poll(&endpoint, edit)["reason"], "inactive_lease");
+    assert_eq!(poll(&endpoint, finite)["state"], "completed");
+    for args in [
+        json!({"run_id":1,"lease_id":0,"x":1,"z":0,"ticks":0}),
+        json!({"run_id":1,"lease_id":0,"x":1,"z":0,"ticks":121}),
+        json!({"run_id":1,"lease_id":0,"x":2,"z":0,"ticks":30}),
+    ] {
+        assert_eq!(
+            call(&endpoint, "game_move_hold", args)["error"]["code"],
+            "invalid_arguments"
+        );
+    }
+    app.shutdown().unwrap();
+}
+
 #[test]
 fn shutdown_cancels_buffered_tool_dodge_and_publishes_cleared_input() {
     let (mut app, endpoint) = harness();

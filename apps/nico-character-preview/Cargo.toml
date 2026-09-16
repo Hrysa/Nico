@@ -1,0 +1,23 @@
+[package]
+name = "nico-character-preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+glam = "0.30"
+serde_json = "1"
+nico-animation = { path = "../../crates/nico-animation" }
+nico-assets = { path = "../../crates/nico-assets", features = ["gltf-import", "png-import"] }
+nico-ecs = { path = "../../crates/nico-ecs" }
+nico-input = { path = "../../crates/nico-input" }
+nico-launch = { path = "../../crates/nico-launch", features = ["client"] }
+nico-ops = { path = "../../crates/nico-ops", features = ["mcp"] }
+nico-presentation = { path = "../../crates/nico-presentation" }
+nico-presentation-control = { path = "../../crates/nico-presentation-control" }
+nico-runtime = { path = "../../crates/nico-runtime" }
+nico-winit = { path = "../../crates/nico-winit" }
+
+[lints]
+workspace = true

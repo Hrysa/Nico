@@ -25,13 +25,21 @@ impl Default for Operations {
         }
     }
 }
-struct ViewPlugin(Arc<Mutex<Operations>>);
-pub fn register(builder: AppBuilder, tools: &mut ToolExtensions) -> std::io::Result<AppBuilder> {
+struct ViewPlugin(
+    Arc<Mutex<Operations>>,
+    Option<Arc<crate::character::CharacterAssets>>,
+);
+pub fn register(
+    builder: AppBuilder,
+    tools: &mut ToolExtensions,
+    character: Option<Arc<crate::character::CharacterAssets>>,
+) -> std::io::Result<AppBuilder> {
     let ops = Arc::new(Mutex::new(Operations::default()));
     let observed = ops.clone();
     tools.register(Tool::new("client_state","Read the last published camera and drawing snapshot with age and closed state. Window fields describe that frame; use engine window_state for current host observations.",
         json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone())
-        .with_raw_output_schema(json!({"type":"object","required":["snapshot_sequence","snapshot_age_ms","run_id","tick","last_applied_command","camera","focused","pointer_captured","capture_error","logical_size","mesh_draws","hud_quads","closed","cancelled_command_id"],"properties":{
+        .with_raw_output_schema(json!({"type":"object","required":["snapshot_sequence","snapshot_age_ms","run_id","tick","last_applied_command","camera","focused","pointer_captured","capture_error","logical_size","mesh_draws","hud_quads","closed","cancelled_command_id","animation"],"properties":{
+            "animation":crate::character::state_schema(),
             "snapshot_sequence":{"type":"integer","minimum":1},"snapshot_age_ms":{"type":"integer","minimum":0},
             "closed":{"type":"boolean"},"cancelled_command_id":{"type":["integer","null"]},
             "run_id":{"type":"integer"},"tick":{"type":"integer"},"last_applied_command":{"type":"integer"},
@@ -62,7 +70,7 @@ pub fn register(builder: AppBuilder, tools: &mut ToolExtensions) -> std::io::Res
         let id = match ops.commands.submit(0, |id| (id, edit)) { Ok(id)=>id, Err(_)=>return error("busy") };
         CallToolResult::structured(json!({"accepted":true,"command_id":id}))
     })?;
-    Ok(builder.add_plugin(ViewPlugin(ops)))
+    Ok(builder.add_plugin(ViewPlugin(ops, character)))
 }
 fn error(code: &str) -> CallToolResult {
     CallToolResult::structured_error(json!({"error":{"code":code}}))
@@ -73,6 +81,8 @@ impl Plugin for ViewPlugin {
         builder.insert_resource(Scene3d::default());
         let ops = self.0.clone();
         let mut visuals = Visuals::new();
+        visuals.imported_hero = self.1.is_some();
+        let mut character = self.1.clone().map(crate::character::Character::new);
         builder.add_system(Stage::Update,"arena_client::extract",move |ctx| {
             let request = ops.lock().unwrap().commands[0].take();
             if let Some((_,edit))=request {
@@ -84,13 +94,18 @@ impl Plugin for ViewPlugin {
             let dt=ctx.time.delta().as_secs_f32();
             let camera=ctx.world.resource_mut::<Camera>()?;
             let view=camera.view([snapshot.actors[0].position.x as f32,snapshot.actors[0].position.z as f32],dt);
-            let (scene,hud)=visuals.render(&snapshot,view,window.logical_size,window.pointer_captured,dt);
+            let (mut scene,hud)=visuals.render(&snapshot,view,window.logical_size,window.pointer_captured,dt);
+            if let Some(character) = &mut character {
+                scene.meshes.extend(character.render(&snapshot, ctx.time.delta(), view.view_projection(window.logical_size[0] / window.logical_size[1])).map_err(|e| nico_runtime::RuntimeError::System { stage: "Update", name: "arena_client::extract".into(), message:e.to_string() })?);
+                if scene.meshes.len() > 256 { return Err(nico_runtime::RuntimeError::System { stage:"Update", name:"arena_client::extract".into(), message:"arena draw budget exceeded".into() }); }
+            }
             let mut ops=ops.lock().unwrap();
             if let Some((id,_))=request { ops.commands.record(id); }
             let last_applied = ops.commands.history().back().copied().unwrap_or(0);
             ops.snapshot.publish(json!({"closed":false,"cancelled_command_id":null,"run_id":snapshot.run_id,"tick":snapshot.tick,"last_applied_command":last_applied,
                 "camera":{"position":view.position,"target":[snapshot.actors[0].position.x as f32,1.2,snapshot.actors[0].position.z as f32],"orientation":view.orientation.to_array(),"yaw":camera.rig.yaw(),"pitch":camera.rig.pitch(),"distance":camera.rig.distance()},
                 "focused":window.focused,"pointer_captured":window.pointer_captured,"capture_error":window.capture_error,
+                "animation":character.as_ref().map(crate::character::Character::state),
                 "logical_size":window.logical_size,"mesh_draws":scene.meshes.len(),"hud_quads":hud.hud.len()}));
             *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<Scene2d>()?=hud;Ok(())
         });
@@ -124,7 +139,7 @@ mod tests {
         let mut app = AppBuilder::new()
             .add_plugin(ControlsPlugin)
             .add_plugin(ArenaPlugin)
-            .add_plugin(ViewPlugin(ops.clone()))
+            .add_plugin(ViewPlugin(ops.clone(), None))
             .build()
             .unwrap();
         app.start().unwrap();

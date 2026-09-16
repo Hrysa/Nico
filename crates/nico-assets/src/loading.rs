@@ -1,4 +1,4 @@
-//! Bounded native PNG and mesh-only GLB loading. Install before asset consumers.
+//! Bounded runtime adapter for registered CPU importers. Install before consumers.
 //!
 //! The store is mutated only by runtime code. One worker reads trusted local
 //! content; cancellation is cooperative and shutdown joins any active read/decode.
@@ -6,10 +6,8 @@
 
 use std::{
     collections::BTreeMap,
-    fmt,
-    fs::File,
-    io::{self, Cursor, Read},
-    path::{Component, Path, PathBuf},
+    io,
+    path::Path,
     sync::{Arc, Mutex, Weak},
     thread::{self, JoinHandle},
     time::Duration,
@@ -25,63 +23,18 @@ use nico_runtime::{
 };
 
 use crate::{AssetId, AssetLease, Handle};
+#[cfg(any(feature = "png-import", feature = "gltf-import"))]
+use std::path::PathBuf;
 
 pub use crate::Texture;
 
-/// Structured loading failures. Failed entries remain inspectable until released.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AssetError {
-    UnknownAsset,
-    Capacity,
-    Closed,
-    NotFailed,
-    Io(String),
-    InvalidPng(String),
-    InvalidMesh(String),
-    UnsupportedMesh,
-    UnsupportedPng,
-    LimitExceeded,
-    Cancelled,
-    WorkerUnavailable,
-}
-
-impl fmt::Display for AssetError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for AssetError {}
-
+pub use crate::asset_error::{AssetError, AssetLimits};
 /// Ready describes CPU availability only; it makes no GPU readiness claim.
 #[derive(Debug)]
 pub enum AssetState<T> {
     Loading,
     Ready(Arc<T>),
     Failed(AssetError),
-}
-
-/// Per-store bounds, including input and decoded allocations for each asset.
-#[derive(Clone, Copy, Debug)]
-pub struct AssetLimits {
-    pub max_assets: usize,
-    pub max_file_bytes: usize,
-    pub max_decoded_bytes: usize,
-    pub max_dimension: u32,
-    pub max_vertices: usize,
-    pub max_indices: usize,
-}
-
-impl Default for AssetLimits {
-    fn default() -> Self {
-        Self {
-            max_assets: 64,
-            max_file_bytes: 16 * 1024 * 1024,
-            max_decoded_bytes: 64 * 1024 * 1024,
-            max_dimension: 4096,
-            max_vertices: 250_000,
-            max_indices: 750_000,
-        }
-    }
 }
 
 pub type TextureError = AssetError;
@@ -93,36 +46,119 @@ pub type MeshState = AssetState<crate::Mesh>;
 pub type TextureStore = AssetStore<Texture>;
 pub type MeshStore = AssetStore<crate::Mesh>;
 
-mod mesh;
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::Texture {}
-    impl Sealed for crate::Mesh {}
+/// Resident-entry capacity. Source and decoder budgets belong to catalog entries.
+#[derive(Clone, Copy, Debug)]
+pub struct StoreLimits {
+    pub max_assets: usize,
 }
-/// Built-in decoder contract; implementations are sealed to supported asset types.
-pub trait DecodeAsset: sealed::Sealed + Send + Sync + 'static {
-    const SERVICE: &'static str;
-    fn decode(path: &Path, limits: AssetLimits) -> Result<Arc<Self>, AssetError>;
-}
-impl DecodeAsset for Texture {
-    const SERVICE: &'static str = "texture_assets";
-    fn decode(path: &Path, limits: AssetLimits) -> Result<Arc<Self>, AssetError> {
-        decode_png(path, limits)
+impl Default for StoreLimits {
+    fn default() -> Self {
+        Self { max_assets: 64 }
     }
 }
-impl DecodeAsset for crate::Mesh {
-    const SERVICE: &'static str = "mesh_assets";
-    fn decode(path: &Path, limits: AssetLimits) -> Result<Arc<Self>, AssetError> {
-        mesh::decode(path, limits)
+
+#[cfg(any(feature = "png-import", feature = "gltf-import"))]
+fn install_builtin<I: crate::import::AssetImporter>(
+    app: &mut AppBuilder,
+    root: impl AsRef<Path>,
+    assets: impl IntoIterator<Item = (AssetId, PathBuf)>,
+    limits: AssetLimits,
+    importer: I,
+    settings: I::Settings,
+) -> io::Result<()> {
+    use crate::import::{ImportBudget, ImportRegistry};
+    if limits.max_assets == 0
+        || limits.max_file_bytes == 0
+        || limits.max_decoded_bytes == 0
+        || limits.max_dimension == 0
+        || limits.max_vertices == 0
+        || limits.max_indices == 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "asset limits must be nonzero",
+        ));
+    }
+    let invalid = |error| io::Error::new(io::ErrorKind::InvalidInput, error);
+    importer.validate_settings(&settings).map_err(invalid)?;
+    let mut registry = ImportRegistry::new();
+    let token = registry.register(importer).map_err(invalid)?;
+    for (id, path) in assets {
+        registry
+            .asset(
+                id,
+                path,
+                &token,
+                settings.clone(),
+                ImportBudget {
+                    max_input_bytes: limits.max_file_bytes,
+                    max_decoded_bytes: limits.max_decoded_bytes,
+                },
+            )
+            .map_err(invalid)?;
+    }
+    AssetStore::install_with_importers(
+        app,
+        root,
+        registry,
+        StoreLimits {
+            max_assets: limits.max_assets,
+        },
+    )
+}
+
+#[cfg(feature = "png-import")]
+impl TextureStore {
+    /// Convenience installation using the built-in PNG importer and legacy limits.
+    pub fn install(
+        app: &mut AppBuilder,
+        root: impl AsRef<Path>,
+        assets: impl IntoIterator<Item = (AssetId, PathBuf)>,
+        limits: TextureLimits,
+    ) -> io::Result<()> {
+        install_builtin(
+            app,
+            root,
+            assets,
+            limits,
+            crate::importers::PngImporter,
+            crate::importers::PngSettings {
+                max_dimension: limits.max_dimension,
+            },
+        )
     }
 }
+
+#[cfg(feature = "gltf-import")]
+impl MeshStore {
+    /// Convenience installation using the restricted static GLB importer.
+    pub fn install(
+        app: &mut AppBuilder,
+        root: impl AsRef<Path>,
+        assets: impl IntoIterator<Item = (AssetId, PathBuf)>,
+        limits: MeshLimits,
+    ) -> io::Result<()> {
+        install_builtin(
+            app,
+            root,
+            assets,
+            limits,
+            crate::importers::StaticGlbImporter,
+            crate::importers::StaticGlbSettings {
+                max_vertices: limits.max_vertices,
+                max_indices: limits.max_indices,
+            },
+        )
+    }
+}
+
 struct Entry<T = Texture> {
     owners: Weak<()>,
     generation: u64,
     state: AssetState<T>,
 }
 struct LoadRequest<T = Texture> {
-    path: PathBuf,
+    entry: crate::import::ImportEntry<T>,
     result: Arc<Mutex<Option<LoadResult<T>>>>,
 }
 type LoadResult<T = Texture> = Result<Arc<T>, AssetError>;
@@ -148,10 +184,10 @@ struct ActiveLoad<T = Texture> {
 /// Requests share entries. The final lease permits retirement at the next update.
 /// Cloning a ready asset's `Arc` explicitly pins CPU data beyond store retirement.
 /// GPU consumers must independently retain resources needed by snapshots/submissions.
-pub struct AssetStore<T: DecodeAsset> {
-    catalog: BTreeMap<AssetId, PathBuf>,
+pub struct AssetStore<T: Send + Sync + 'static> {
+    catalog: BTreeMap<AssetId, crate::import::ImportEntry<T>>,
     entries: BTreeMap<AssetId, Entry<T>>,
-    limits: AssetLimits,
+    limits: StoreLimits,
     next_generation: u64,
     active: Option<ActiveLoad<T>>,
     service: Runtime<T>,
@@ -159,17 +195,25 @@ pub struct AssetStore<T: DecodeAsset> {
     closed: bool,
 }
 
-impl<T: DecodeAsset> AssetStore<T> {
-    /// Registers immutable asset paths, starts a decoder worker, and installs update
-    /// and shutdown systems. Duplicate IDs, non-relative paths, zero limits, and a
-    /// second installation are rejected. Content paths are trusted host configuration.
-    pub fn install(
+impl<T: Send + Sync + 'static> AssetStore<T> {
+    /// Catalog provenance remains inspectable independently of residency/readiness.
+    #[must_use]
+    pub fn source(&self, handle: Handle<T>) -> Option<&crate::import::ImportSource> {
+        self.catalog.get(&handle.id()).map(|entry| &entry.source)
+    }
+    /// Enumerates configured identities and provenance for structured inspection.
+    pub fn sources(&self) -> impl Iterator<Item = (AssetId, &crate::import::ImportSource)> {
+        self.catalog.iter().map(|(id, entry)| (*id, &entry.source))
+    }
+    /// Installs a frozen registry with one worker for this output type.
+    /// Importers are trusted code; cancellation is cooperative and shutdown joins them.
+    pub fn install_with_importers(
         app: &mut AppBuilder,
         root: impl AsRef<Path>,
-        assets: impl IntoIterator<Item = (AssetId, PathBuf)>,
-        limits: AssetLimits,
+        registry: crate::import::ImportRegistry<T>,
+        limits: StoreLimits,
     ) -> io::Result<()> {
-        let store = Self::create(root.as_ref(), assets, limits)?;
+        let store = Self::create(root.as_ref(), registry, limits)?;
         Self::attach(app, store)
     }
 
@@ -186,76 +230,45 @@ impl<T: DecodeAsset> AssetStore<T> {
         }
         let service = store.service.clone();
         app.insert_resource(store);
-        app.add_service(T::SERVICE, service);
+        let name = format!("assets::{}", std::any::type_name::<T>());
+        app.add_service(&name, service);
         let mut reader = EventReader::<ServiceCompletion<LoadCompletion<T>>>::new();
-        app.add_system(
-            Stage::Update,
-            format!("{}::resolve", T::SERVICE),
-            move |context| {
-                let completions = context.events.read(&mut reader);
-                let store = context.world.resource_mut::<Self>()?;
-                store.reconcile();
-                if completions.missed() != 0 {
-                    store.fail_active(AssetError::WorkerUnavailable);
-                }
-                for completion in completions {
-                    store.publish(completion);
-                }
-                store.dispatch();
-                Ok(())
-            },
-        );
-        app.add_system(
-            Stage::Shutdown,
-            format!("{}::shutdown", T::SERVICE),
-            |context| {
-                context.world.resource_mut::<Self>()?.shutdown();
-                Ok(())
-            },
-        );
+        app.add_system(Stage::Update, format!("{name}::resolve"), move |context| {
+            let completions = context.events.read(&mut reader);
+            let store = context.world.resource_mut::<Self>()?;
+            store.reconcile();
+            if completions.missed() != 0 {
+                store.fail_active(AssetError::WorkerUnavailable);
+            }
+            for completion in completions {
+                store.publish(completion);
+            }
+            store.dispatch();
+            Ok(())
+        });
+        app.add_system(Stage::Shutdown, format!("{name}::shutdown"), |context| {
+            context.world.resource_mut::<Self>()?.shutdown();
+            Ok(())
+        });
         Ok(())
     }
 
     fn create(
         root: &Path,
-        assets: impl IntoIterator<Item = (AssetId, PathBuf)>,
-        limits: AssetLimits,
+        registry: crate::import::ImportRegistry<T>,
+        limits: StoreLimits,
     ) -> io::Result<Self> {
-        if limits.max_assets == 0
-            || limits.max_file_bytes == 0
-            || limits.max_decoded_bytes == 0
-            || limits.max_dimension == 0
-            || limits.max_vertices == 0
-            || limits.max_indices == 0
-        {
+        if limits.max_assets == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "asset limits must be nonzero",
+                "asset capacity must be nonzero",
             ));
         }
-        let mut catalog = BTreeMap::new();
-        for (id, path) in assets {
-            if path.as_os_str().is_empty()
-                || path
-                    .components()
-                    .any(|c| !matches!(c, Component::Normal(_)))
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "asset paths must contain only relative normal components",
-                ));
-            }
-            if catalog.insert(id, root.join(path)).is_some() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "duplicate asset ID",
-                ));
-            }
-        }
+        let catalog = registry.into_entries(root);
         let (service, backend) = service_channel(1).expect("nonzero capacity");
         let worker = thread::Builder::new()
-            .name(T::SERVICE.into())
-            .spawn(move || worker::<T>(backend, limits))?;
+            .name(format!("assets::{}", std::any::type_name::<T>()))
+            .spawn(move || worker::<T>(backend))?;
         Ok(Self {
             catalog,
             entries: BTreeMap::new(),
@@ -408,7 +421,7 @@ impl<T: DecodeAsset> AssetStore<T> {
         {
             let result = Arc::new(Mutex::new(None));
             match self.service.submit(LoadRequest {
-                path: self.catalog[&id].clone(),
+                entry: self.catalog[&id].clone(),
                 result: result.clone(),
             }) {
                 Ok(request) => {
@@ -441,13 +454,13 @@ impl<T: DecodeAsset> AssetStore<T> {
 
 struct Installed<T>(std::marker::PhantomData<fn() -> T>);
 
-impl<T: DecodeAsset> Drop for AssetStore<T> {
+impl<T: Send + Sync + 'static> Drop for AssetStore<T> {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-fn worker<T: DecodeAsset>(backend: Backend<T>, limits: AssetLimits) {
+fn worker<T: Send + Sync + 'static>(backend: Backend<T>) {
     loop {
         match backend.try_next() {
             Ok(request) => {
@@ -455,7 +468,7 @@ fn worker<T: DecodeAsset>(backend: Backend<T>, limits: AssetLimits) {
                 let result = if context.is_cancelled() {
                     Err(AssetError::Cancelled)
                 } else {
-                    T::decode(&request.path, limits)
+                    request.entry.load(&|| context.is_cancelled()).map(Arc::new)
                 };
                 let result = if context.is_cancelled() {
                     Err(AssetError::Cancelled)
@@ -478,76 +491,5 @@ fn worker<T: DecodeAsset>(backend: Backend<T>, limits: AssetLimits) {
     }
 }
 
-fn decode_png(path: &Path, limits: TextureLimits) -> LoadResult {
-    let file = File::open(path).map_err(|e| TextureError::Io(e.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take((limits.max_file_bytes as u64).saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|e| TextureError::Io(e.to_string()))?;
-    if bytes.len() > limits.max_file_bytes {
-        return Err(TextureError::LimitExceeded);
-    }
-    decode_bytes(bytes, limits)
-}
-
-fn decode_bytes(bytes: Vec<u8>, limits: TextureLimits) -> LoadResult {
-    let mut decoder = png::Decoder::new(Cursor::new(bytes));
-    decoder.set_limits(png::Limits {
-        bytes: limits.max_decoded_bytes,
-    });
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| TextureError::InvalidPng(e.to_string()))?;
-    let info = reader.info();
-    if info.animation_control.is_some() {
-        return Err(TextureError::UnsupportedPng);
-    }
-    let (width, height) = (info.width, info.height);
-    let rgba_len = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or(TextureError::LimitExceeded)?;
-    if width > limits.max_dimension
-        || height > limits.max_dimension
-        || rgba_len > limits.max_decoded_bytes
-    {
-        return Err(TextureError::LimitExceeded);
-    }
-    let size = reader
-        .output_buffer_size()
-        .ok_or(TextureError::LimitExceeded)?;
-    if size > limits.max_decoded_bytes {
-        return Err(TextureError::LimitExceeded);
-    }
-    let mut decoded = vec![0; size];
-    let output = reader
-        .next_frame(&mut decoded)
-        .map_err(|e| TextureError::InvalidPng(e.to_string()))?;
-    reader
-        .finish()
-        .map_err(|e| TextureError::InvalidPng(e.to_string()))?;
-    let mut pixels = Vec::with_capacity(rgba_len);
-    let channels = output.color_type.samples();
-    for pixel in decoded[..output.buffer_size()].chunks_exact(channels) {
-        match output.color_type {
-            png::ColorType::Grayscale => {
-                pixels.extend_from_slice(&[pixel[0], pixel[0], pixel[0], 255])
-            }
-            png::ColorType::GrayscaleAlpha => {
-                pixels.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]])
-            }
-            png::ColorType::Rgb => pixels.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]),
-            png::ColorType::Rgba => pixels.extend_from_slice(pixel),
-            png::ColorType::Indexed => return Err(TextureError::UnsupportedPng),
-        }
-    }
-    Ok(Arc::new(Texture {
-        width,
-        height,
-        pixels,
-    }))
-}
-
-#[cfg(test)]
+#[cfg(all(test, feature = "png-import", feature = "gltf-import"))]
 mod tests;

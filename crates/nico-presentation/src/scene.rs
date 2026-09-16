@@ -47,6 +47,26 @@ pub struct Camera3d {
     pub far: f32,
 }
 impl Camera3d {
+    /// The zero-to-one depth transform shared by rendering and visibility queries.
+    /// Returns None for invalid parameters or arithmetic overflow.
+    pub fn view_projection(&self, aspect: f32) -> Option<glam::Mat4> {
+        use glam::{Mat4, Vec3};
+        if !self.has_valid_pose()
+            || !aspect.is_finite()
+            || aspect <= 0.
+            || !self.near.is_finite()
+            || !self.far.is_finite()
+            || self.near <= 0.
+            || self.far <= self.near
+            || !(0.01..3.13).contains(&self.vertical_fov_radians)
+        {
+            return None;
+        }
+        let result = Mat4::perspective_rh(self.vertical_fov_radians, aspect, self.near, self.far)
+            * Mat4::from_quat(self.orientation.conjugate())
+            * Mat4::from_translation(-Vec3::from(self.position));
+        result.is_finite().then_some(result)
+    }
     /// Validates the pose, independently of projection parameters. Vertical views
     /// and roll are supported; no fixed world-up vector is reconstructed.
     pub fn has_valid_pose(&self) -> bool {
@@ -95,11 +115,14 @@ impl Default for Camera3d {
     }
 }
 
-/// One static mesh instance. Missing mesh/texture uses renderer fallback content.
+/// One mesh instance. Missing mesh/texture uses renderer fallback content.
 /// Orientation is a finite unit quaternion. Scale must be positive.
 #[derive(Clone, Debug)]
 pub struct MeshInstance {
     pub mesh: Option<Arc<Mesh>>,
+    /// Model-space joint matrices, then instance transform. Required for skinned
+    /// geometry; absent for static geometry. Immutable snapshots own their data.
+    pub skin_palette: Option<Arc<Vec<nico_assets::model::Matrix4>>>,
     pub texture: Option<Arc<Texture>>,
     pub position: [f32; 3],
     pub orientation: crate::Quaternion,

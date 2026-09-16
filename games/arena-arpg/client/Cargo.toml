@@ -7,7 +7,9 @@ license.workspace = true
 [dependencies]
 arena-arpg-shared = { path = "../shared", features = ["tools"] }
 clap.workspace = true
-nico-assets = { path = "../../../crates/nico-assets" }
+nico-assets = { path = "../../../crates/nico-assets", features = ["gltf-import", "png-import"] }
+nico-animation = { path = "../../../crates/nico-animation" }
+glam = "0.30"
 nico-presentation-control = { path = "../../../crates/nico-presentation-control" }
 nico-input = { path = "../../../crates/nico-input" }
 nico-launch = { path = "../../../crates/nico-launch", features = ["client"] }

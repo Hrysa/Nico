@@ -275,6 +275,7 @@ fn gpu_meshes_use_depth_perspective_and_shared_hud() {
     );
     let texture = Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap());
     let near = MeshInstance {
+        skin_palette: None,
         mesh: Some(mesh),
         texture: Some(texture.clone()),
         position: [0.0; 3],
@@ -283,6 +284,7 @@ fn gpu_meshes_use_depth_perspective_and_shared_hud() {
         color: [0.0, 1.0, 0.0, 1.0],
     };
     let far = MeshInstance {
+        skin_palette: None,
         position: [0.0, 0.0, -1.0],
         color: [1.0, 0.0, 0.0, 1.0],
         ..near.clone()
@@ -420,4 +422,153 @@ fn gpu_snapshot_unpads_rows_and_converts_bgra() {
     assert_eq!((captured.width, captured.height), (13, 7));
     let expected: Vec<u8> = (0..91).flat_map(|i| [230, 21, i, 255]).collect();
     assert_eq!(captured.rgba, expected);
+}
+
+#[test]
+#[ignore = "requires a real graphics adapter; run explicitly for rendering changes"]
+fn gpu_skinning_matches_cpu_reference_and_updates_shared_geometry_instances() {
+    use nico_assets::{Mesh, MeshVertex, SkinWeights, model::IDENTITY};
+    use nico_presentation::{Camera3d, MeshInstance, Scene3d};
+    use nico_render::MeshRenderPipeline;
+    let (device, queue, mut target) = setup();
+    let mut renderer = MeshRenderPipeline::new(
+        &device,
+        TextureFormat::Rgba8UnormSrgb,
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/meshes.wgsl"
+        )),
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/quads.wgsl"
+        )),
+    )
+    .unwrap();
+    renderer
+        .enable_skinning(
+            &device,
+            builtin_shaders::bootstrap_wgsl(include_bytes!(
+                "../../../assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl"
+            )),
+        )
+        .unwrap();
+    let mut reference_renderer = MeshRenderPipeline::new(
+        &device,
+        TextureFormat::Rgba8UnormSrgb,
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/meshes.wgsl"
+        )),
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/quads.wgsl"
+        )),
+    )
+    .unwrap();
+    let vertices = vec![
+        MeshVertex {
+            position: [-0.4, -0.4, 0.],
+            uv: [0.5; 2],
+        },
+        MeshVertex {
+            position: [0.4, -0.4, 0.],
+            uv: [0.5; 2],
+        },
+        MeshVertex {
+            position: [0., 0.4, 0.],
+            uv: [0.5; 2],
+        },
+    ];
+    let mesh = Arc::new(
+        Mesh::skinned_triangles(
+            vertices.clone(),
+            vec![0, 1, 2],
+            vec![
+                SkinWeights {
+                    joints: [0, 1, 0, 0],
+                    weights: [0.25, 0.75, 0., 0.]
+                };
+                3
+            ],
+            2,
+        )
+        .unwrap(),
+    );
+    let white = Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap());
+    let mut scene = Scene3d {
+        camera: Camera3d::looking_at([0., 0., 3.], [0.; 3], [0., 1., 0.]).unwrap(),
+        meshes: vec![],
+    };
+    let hud = Scene2d::default();
+    for translation in [-0.5f32, 0.5] {
+        let mut joint = IDENTITY;
+        joint[3][0] = translation;
+        let palette = Arc::new(vec![IDENTITY, joint]);
+        let draw = MeshInstance {
+            mesh: Some(mesh.clone()),
+            skin_palette: Some(palette),
+            texture: Some(white.clone()),
+            position: [0.; 3],
+            orientation: nico_presentation::Quaternion::IDENTITY,
+            scale: 1.,
+            color: [0., 1., 0., 1.],
+        };
+        let mut other = draw.clone();
+        other.position[1] = 0.8;
+        other.color = [1., 0., 0., 1.];
+        other.skin_palette = Some(Arc::new(vec![IDENTITY; 2]));
+        let mut static_draw = other.clone();
+        static_draw.mesh = Some(Arc::new(
+            Mesh::triangles(vertices.clone(), vec![0, 1, 2]).unwrap(),
+        ));
+        static_draw.skin_palette = None;
+        static_draw.position[1] = -0.8;
+        static_draw.color = [0., 0., 1., 1.];
+        scene.meshes = vec![draw, other, static_draw];
+        renderer
+            .render(
+                &device,
+                &queue,
+                &mut target,
+                &scene,
+                &hud,
+                [64.; 2],
+                Extent3d::surface(64, 64),
+            )
+            .unwrap();
+        let gpu = pixels(&device, &queue, &target);
+        assert!(gpu.chunks_exact(4).any(|p| p == [0, 255, 0, 255]));
+        assert!(gpu.chunks_exact(4).any(|p| p == [255, 0, 0, 255]));
+        // CPU reference uses exactly the same weighted translation, then the instance transform.
+        let mut deformed = vertices.clone();
+        for v in &mut deformed {
+            v.position[0] += translation * 0.75;
+        }
+        scene.meshes[0].mesh = Some(Arc::new(Mesh::triangles(deformed, vec![0, 1, 2]).unwrap()));
+        scene.meshes[0].skin_palette = None;
+        scene.meshes[1].mesh = Some(Arc::new(
+            Mesh::triangles(vertices.clone(), vec![0, 1, 2]).unwrap(),
+        ));
+        scene.meshes[1].skin_palette = None;
+        reference_renderer
+            .render(
+                &device,
+                &queue,
+                &mut target,
+                &scene,
+                &hud,
+                [64.; 2],
+                Extent3d::surface(64, 64),
+            )
+            .unwrap();
+        assert_eq!(gpu, pixels(&device, &queue, &target));
+    }
+    scene.meshes.clear();
+    renderer
+        .render(
+            &device,
+            &queue,
+            &mut target,
+            &scene,
+            &hud,
+            [64.; 2],
+            Extent3d::surface(64, 64),
+        )
+        .unwrap();
 }

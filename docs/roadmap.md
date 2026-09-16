@@ -26,16 +26,19 @@ the engine's support to one dimension; focused samples validate both dimensions.
 | 0. Run game logic | Simulate game state without a window | Implemented |
 | 1. Run a native client | Open a window, receive input, and draw | Core implemented; validation remains |
 | 2. Control clients and servers with AI | Discover independent games, inspect readiness, call game tools, and stop | Implemented; Windows end-to-end verified |
-| 3. Load game assets | Request usable game content by asset identity | PNG and mesh-only GLB paths implemented |
+| 3. Load game assets | Request usable game content by asset identity | Extensible PNG, static-mesh GLB, and model GLB import implemented |
 | 4. Display the game world | Show loaded content moving with game state | 2D and 3D samples with shared HUD implemented |
 | 5. Make a playable local game | Move, collide, complete an objective, and restart | Local arena and current balance accepted; Rapier integration validated on Windows |
 | 6. Play over a network | Two clients play together on one authoritative server | Planned |
-| 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Planned |
+| 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Animation pipeline implemented; imported-hero encounter verified; broader experience pending |
 | 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Planned |
 | 9. Validate performance | Profile representative workloads and meet defined budgets | Deferred |
 | 10. Ship the game | Run release packages on supported machines | Planned |
 
-Work proceeds in this order by default. Platform lifecycle validation can continue
+**Priority update (2026-09-16):** Client humanoid models, skeletal animation, and
+supporting presentation work in phase 7 precede phase 6 networking. Phase numbers
+remain stable for existing references. Two-player co-op remains planned after this
+client work. Platform lifecycle validation can continue
 alongside later phases. Basic UI, importing, and automation appear when first needed;
 phases 7 and 8 complete those workflows. Measurement and regression testing apply
 throughout, even while deep profiling remains deferred. Phase 10 packaging work may
@@ -137,11 +140,32 @@ schema caching are conditional extensions tracked in TODO; profiling remains def
 
 **Result:** Game code requests an asset and receives usable content or a clear error.
 
-**Status:** PNG and mesh-only GLB loading are implemented through `nico-assets`'
-optional `loading` feature. Both use the same typed asset-store lifecycle. The headless
+**Status:** PNG, static-mesh GLB, and bounded model GLB import use the public
+`nico-assets` importer interface and typed asset-store lifecycle. Optional decoder
+and runtime features compose through the compatibility `loading` feature. The headless
 texture example and native samples consume shipping assets; see the
 [texture design](plans/2026-09-14-texture-assets.md) and
 [mesh design](plans/2026-09-14-mesh-assets.md).
+
+**Import extensibility (2026-09-16):** Public `AssetImporter` and typed
+`ImportRegistry<T>` support userland importers, multiple formats per output type,
+per-asset settings/budgets, and custom asset types. PNG/static-GLB use that same
+interface. Runtime-free import and independently selectable decoder features
+preserve existing loading convenience and lifecycle behavior. Generic model
+import and initial CPU humanoid conversion are now implemented, with a standalone
+native GPU preview. Playback transitions and optional imported arena hero rendering are implemented. The
+[import contract](plans/2026-09-16-extensible-asset-import.md) defines current bounds.
+
+**Extension validation (2026-09-16, Windows):** Workspace all-feature tests and
+strict all-feature/all-target Clippy passed using `target/asset-import-review`.
+The final asset suite passed 19 unit tests, nine public-API integration tests, and
+one executable documentation example. External implementations exercise an engine
+texture type and a custom text type, explicit importer selection, per-entry settings,
+registration rejection, source/output limits, structured errors, retry, cancellation,
+stale completion, worker panic, and joined shutdown. Base, PNG-only, GLB-only, and
+runtime-only feature configurations passed tests and strict package Clippy; the
+base normal dependency tree is empty. This change did not run GPU/native window
+validation and does not establish character import or cross-platform behavior.
 
 **Scope:** A typed runtime asset with explicit loading, ready, and failed states, handle
 resolution, ownership, and release behavior. Background byte loading uses the service
@@ -180,7 +204,7 @@ execution remains unverified.
 **Status:** Paired 2D and 3D rendering samples are implemented. They establish the
 rendering foundation; the reference game's initial scope is selected in phase 5,
 with scenario rules recorded in its design. Concrete next actions belong in
-[TODO](../TODO.md#next-networked-co-op-design).
+[TODO](../TODO.md#next-client-humanoid-models-and-animation).
 
 **Scope delivered:** Both samples follow shared entity positions through immutable
 presentation snapshots. The 2D world sprite and fixed HUD icon share one transparent
@@ -231,7 +255,7 @@ MCP adapter, and native hosts are implemented. The user approved the engine
 extraction build while playing and subsequently accepted the current combat balance.
 No tuning changes are requested. Detailed encounter-duration measurements were not
 supplied; they are not a blocker for the accepted prototype. Next major scope is
-[networked co-op](../TODO.md#next-networked-co-op-design).
+[client character presentation](../TODO.md#next-client-humanoid-models-and-animation).
 
 **Scope:** One hero with melee and dodge clears three waves of grunt/brute enemies
 in one compact 3D arena. The game has telegraphed attacks, health, intermissions,
@@ -297,6 +321,28 @@ The orbit capture was visually inspected. Earlier focus automation timed out in
 `target/arena-fairness-evidence`; later full runs passed. This does not guarantee
 that desktop focus requests will always be granted.
 
+**Renewable MCP movement (2026-09-16):** `game_move_hold` and
+`game_move_release` add continuous, named movement leases to both arena hosts.
+Renewals and direction changes apply at fixed boundaries; expiry is measured in
+simulation ticks. The [README](../README.md) owns usage and cancellation rules.
+All 45 shared and 17 client tests passed, including renewal continuity, steering,
+expiry, stale edits, bounded slots and cancellation. The bridge registration test
+also routed start/renew/release successfully; strict Clippy passed for the arena
+packages and bridge. In a Windows debug client with the imported character,
+one lease remained active for 272 consecutive ticks across eight renewals and a
+direction change. Explicit release stopped movement; an unrenewed hold expired
+after exactly 30 ticks. This verifies command continuity, not frame smoothness or
+wall-clock expiry during suspension.
+
+The initial hold check used command/state responses and did not establish what the
+user saw on the desktop. A follow-up used the user's confirmed client (PID 3628),
+ran a 30-second movement sequence, and inspected six GPU captures while renewing
+the hold. The images show running poses, changing direction, and changing arena
+wall/floor positions. State observations reported corresponding movement and a
+running animation; those reads were after capture completion, not frame-exact
+capture metadata. This establishes rendered movement in that follow-up, not desktop
+scanout or an explanation for the user's earlier idle-window report.
+
 Both 2D and 3D private-bridge sample scenarios passed with shared `--background`
 and publication metadata checks. The 3D scenario includes roll and vertical camera
 commands, continued rendering, capture, reconnect, and independent shutdown.
@@ -348,6 +394,9 @@ the focused engine regressions exercise the two review failures.
 
 ## 6. Play over a network
 
+**Status (2026-09-16):** Planned after the client character and presentation work
+in phase 7, following the user's priority change.
+
 **Result:** At least two clients play the reference scenario on one server that owns the
 authoritative game state.
 
@@ -374,6 +423,142 @@ accessible to automation.
 **Done when:** A player can configure the game, enter a session, understand its state,
 finish, and exit. Required visual/audio and accessibility checks pass; restart,
 disconnect, and focus loss leave input, sound, and UI in a valid state.
+
+### Client character milestone
+
+**Status (2026-09-16):** Generic GLB model/skin/clip import and CPU animation with
+humanoid conversion and a standalone GPU-skinned preview are implemented ahead of
+networking. Compiled mappings and reusable pose buffers remove per-frame geometry
+rebuilding. Playback transitions are implemented. Fresh Windows/GTX 1660 Vulkan
+validation covered workspace/all-feature checks, four GPU tests, a two-character
+preview, and an imported-hero encounter completing waves 1–3 on both hosts, followed
+by defeat/restart and orderly shutdown. The user confirmed watching all three waves
+and victory. The [fresh review](reviews/2026-09-16-uncommitted-mcp-review.md) records
+build/scenario evidence and limits. Earlier 16/64-character cadence measurements
+and visual contact calibration have not been revalidated. Broader character-art
+acceptance remains part of phase 7.
+
+**Game-owned hero assets (2026-09-16):** The arena now loads its model and six
+selected clips from `games/arena-arpg/assets/presentation/characters/hero/` by
+default. `--procedural-hero` selects the original visuals; paired path overrides
+remain available for experiments. The selected files match the original inputs
+byte-for-byte. Asset provenance and outstanding redistribution terms remain in the
+[source record](plans/2026-09-16-character-assets.md).
+The updated client passed 20 package tests, strict Clippy and formatting. A final
+Windows/GTX 1660 Vulkan MCP run with no asset overrides completed all three waves,
+defeat/restart and shutdown on both hosts; client victory was captured and inspected.
+The [review record](reviews/2026-09-16-uncommitted-mcp-review.md#game-asset-location-update)
+also preserves two preceding failed automation attempts and the focus-cancellation
+handling adjustment. These results do not claim a user-watched demonstration.
+
+The dated investigation notes below retain their original chronology. Earlier MCP
+measurements and visual claims are historical, not fresh validation authority;
+the status paragraph above supersedes their implementation-status statements.
+
+**Asset inspection (2026-09-16):** The supplied Ch03 character and 64 RPG clip
+files were structurally inspected. The clips share a skinned mesh and skeleton,
+but that skeleton differs from Ch03's Mixamo rig. CPU retargeting now bridges the
+body mappings; clip visual suitability and animation source/license remain
+unresolved. A native attack-pose preview was captured as recorded below; full clip
+acceptance is outstanding. Findings and candidate roles are recorded in the
+[asset selection](plans/2026-09-16-character-assets.md).
+
+**Scope:** One rigged hero establishes reusable skeleton and clip assets, pose
+evaluation, skinned rendering, clip transitions, and weapon attachment. Idle,
+locomotion, melee, dodge, hit reaction, and death follow gameplay snapshots.
+In-place clips preserve simulation-owned movement, collision, damage, and action
+timing; visual reactions must not introduce gameplay interruptions. The server
+continues to run without presentation assets. Engine layers own reusable animation
+capabilities; the game owns character content and state-to-animation mapping.
+
+**Humanoid implementation (2026-09-16):** A canonical body mapping and CPU animation
+conversion layer supports the supplied Mixamo and RPG skeletons.
+Shared bone roles and a reference pose allow motion transfer while each model
+retains its original skinning hierarchy and bind matrices. Explicit profiles and
+mapping overrides cover source differences; arbitrary formats and automatic
+recognition of every rig are not assumed. Details belong in the
+[model/animation contract](plans/2026-09-16-model-animation.md).
+
+The extensible, runtime-free import prerequisite is implemented: userland can
+register new formats and asset types. Generic skeleton import and userland
+humanoid profiles now consume that interface. The
+[import design](plans/2026-09-16-extensible-asset-import.md) defines the implemented
+boundary and links to the implemented CPU consumers.
+
+**CPU validation (2026-09-16, Windows):** Workspace all-feature tests and strict
+all-feature/all-target Clippy passed using `target/asset-import-review`. Four new
+model-import regressions cover valid bundles, malformed ranges/hierarchies/bindings,
+limits, and image/material handling. Five animation regressions cover time origins,
+loop/clamp/STEP/slerp, reference axes and poses, limb proportions, root policies,
+mapping failures/index overrides, and mesh-local skin matrix composition.
+
+Local Ch03 (65 skin joints) and all 64 RPG GLBs (53 skin joints each) imported.
+The headless retarget example mapped 22 body roles on both rigs and evaluated nine
+poses per clip: 576 poses and 9,411,840 target vertex evaluations, all finite.
+Structured results are in ignored
+`target/character-import-evidence/retarget.jsonl`. Materials explicitly fall back
+from optional specular/IOR extensions. This is CPU numerical validation, not native
+rendering, visual animation acceptance, a performance measurement, or proof of
+cross-platform behavior. No supplied asset binaries were added to shipping roots.
+
+**Native preview validation (2026-09-16, Windows, GTX 1660/Vulkan):**
+`nico-character-preview` rendered locally supplied Ch03 with RPG
+`Unarmed-Attack-L1` retargeting. MCP discovery, state inspection, seek/pause at
+0.25 seconds, and 1920x1080 GPU-readback capture succeeded; host status reported
+360 successful presentation API calls at the recorded check. The captured image
+shows a textured, deformed character. The session subsequently stopped cleanly
+at 1,332 steps and the process exited with code 0. The capture is retained in
+ignored `target/character-preview-evidence/attack-025.png`.
+
+Four focused preview regressions cover independent ECS instance state, selected
+scene/CPU deformation/reference pose, seek/loop and rejected controls, and malformed
+control arguments. Package tests, strict all-target Clippy, and formatting passed.
+This does not establish GPU skinning, complete animation quality, PBR fidelity,
+physical input coverage, or performance. Usage belongs in the
+[README](../README.md#native-character-preview).
+
+**Preview frame inspection (2026-09-16):** The HUD and `preview_state.frame_timing`
+now report wall-clock Update cadence over windows of at least one second, including
+average/minimum/maximum intervals and sample count. Two deterministic tests cover
+elapsed-weighted FPS, zero intervals, window reset, and stalls; all six preview
+unit tests and strict package all-target Clippy passed. This is a frame-cadence
+readout, not CPU/GPU profiling. This addition has not had a separate native capture.
+
+**Playback-rate investigation (2026-09-16):** A read-only MCP observation of the
+running preview at about 28 Updates/second measured 1.698 seconds of clip-clock
+advance over 1.697 seconds of wall time, including a loop wrap, at speed 1.
+A regression verifies equal playback position and deformed pose after three
+seconds divided into 30, 60, or 144 Updates/second. It passes in debug and release;
+all seven preview tests and strict package Clippy pass. The reported release-only
+speed difference is not reproduced by these checks; the two launch configurations
+and live release playback still need comparison. No playback behavior was changed.
+
+**GPU skinning foundation (2026-09-16, Windows, GTX 1660/Vulkan):** The native
+preview now retains shared geometry and updates joint palettes. Compiled humanoid
+rigs retain model ownership; pose sampling, blending and retargeting have reusable
+buffers with failure-safe publication. A real-GPU regression matches weighted
+skinning against CPU reference pixels for shared geometry with independent palettes.
+Native Ch03/RPG `Unarmed-Attack-L1` debug preview measured 58.34 Updates/second,
+17.14 ms mean and 17.65 ms maximum over a 59-interval window. This differs from the
+earlier ~28 FPS CPU preview, but is not a controlled CPU/GPU timing breakdown or a
+crowd-capacity claim. The host reported 7,879 presentations before orderly MCP stop;
+process exit was 0. Capture: ignored `target/character-preview-evidence/gpu-skinning.png`.
+Workspace all-feature tests, strict all-target/all-feature Clippy, all four opt-in
+GPU regressions, generated shader checks, and formatting passed. Full production
+acceptance remains open in the linked plan.
+
+**Done when:** The native arena displays the rigged hero with correct bind pose,
+joint deformation, weapon attachment, and readable transitions synchronized with
+combat. Import and sampling regressions cover malformed data and boundary times;
+native captures and MCP inspection demonstrate transitions, restart, and asset
+lifecycle behavior. Validation evidence must identify the tested asset and platform.
+
+Following client work applies the pipeline to enemies and adds the materials,
+lighting, shadows, combat effects/audio, and settings needed by the arena. Advanced
+inverse kinematics, ragdolls, and animation-driven root motion are outside the
+initial character milestone. Humanoid motion conversion is now included; further
+retargeting quality features follow demonstrated needs. Concrete actions belong in
+[TODO](../TODO.md#next-client-humanoid-models-and-animation).
 
 ## 8. Make development repeatable
 
@@ -459,3 +644,132 @@ the dependent phase approaches.
 | Before phase 7 | Required media features, devices, languages, accessibility cases | Makes the player-experience scope finite |
 | Before phase 9 | Target hardware and measurable performance budgets | Makes performance acceptance testable |
 | Before phase 10 | Distribution channel and final support matrix | Determines packaging and release validation |
+
+
+## Historical animation progress notes (2026-09-16)
+
+These chronological notes preserve earlier implementation reports and the original
+acceptance conclusion. Pending-work statements describe their point in time. The
+earlier MCP evidence was rejected as validation authority; measurements and visual
+claims here are not current acceptance. See the
+[client character milestone](#client-character-milestone) for current status.
+
+**Playback and shared model presentation (2026-09-16):** The elapsed-time player
+supports looping/one-shot completion, crossfades, interruption, pause, seek, speed,
+and retargeted clips. Named attachment transforms and reusable `ModelVisual`
+assembly are implemented. Focused checks passed: 15 animation, 9 presentation-control,
+and 7 preview tests, plus strict Clippy for those packages. These cover transition
+continuity, independent clocks/palettes, socket hierarchy and instance placement,
+invalid inputs, and snapshot resource retention/release.
+
+On Windows/GTX 1660/Vulkan, the two-file Ch03 idle/attack debug preview accepted MCP
+clip/fade/looping controls and held the attack endpoint with `finished=true`.
+A later endpoint sample reported 58.56 Updates/second, mean 17.08 ms, max 17.79 ms;
+this is wall-clock cadence, not CPU execution time or a crowd benchmark. The native
+capture is retained locally at `target/character-preview-evidence/playback-once.png`.
+That capture predates the updated completion HUD and shared-renderer extraction.
+The updated extraction/`--once` build subsequently completed a 1,200-frame bounded
+native run and exited 0; its capture request did not produce a retained image before
+shutdown. Physical A/D clip switching has not been manually verified. Arena state
+selection, visible weapon attachment, crowd update policy, and the final workspace
+acceptance audit remain incomplete.
+
+
+**Imported arena hero (2026-09-16, Windows, GTX 1660/Vulkan):** An opt-in local
+Mixamo/RPG hero now replaces the procedural hero body while retaining the arena,
+enemies, combat telegraphs, HUD, and authoritative simulation. The named right-hand
+socket drives a visible blade through a full-affine palette. MCP state reported
+idle/run/attack/dodge/hit/death, and completed move/attack/dodge/restart command
+outcomes were checked. Native capture inspection confirmed the hero and attached
+blade in the arena (`target/character-preview-evidence/arena-dodge.png` and
+`arena-death.png`, local ignored evidence). Source clip suitability, weapon grip,
+and exact strike-contact calibration are not established by these captures.
+
+The native session stopped through MCP after 8,365 reported presentation successes;
+the process exited 0. Sixteen client and 41 shared-game tests pass, alongside
+strict client Clippy. Focused regressions
+cover repeated/skipped snapshots, action identity, normalized action duration, hit
+precedence, terminal death completion, and run/wave reset. The imported-hero path
+remains client-only; enemies are procedural. Later sections record crowd, animated-bounds, resource/failure and workspace
+acceptance.
+
+
+**Animated bounds and draw visibility (2026-09-16):** `ModelVisual` now retains
+per-joint influence boxes and evaluates current-pose bounds without per-vertex CPU
+skinning. Preview and imported arena hero extraction use conservative frustum tests;
+the arena unions the blade into hero bounds. Render and visibility share
+`Camera3d::view_projection`. Invalid visibility inputs stay visible. This culls draws
+only; CPU pose evaluation frequency is unchanged and crowd policy remains open.
+
+Forty-four tests passed across presentation-control, render, preview, and arena
+client, with strict Clippy for those packages. Bounds regressions compare weighted
+vertices across 100 affine poses, including inverse binds, unequal/negative scales,
+shear, near-normalized weights, rigid geometry, and selected-scene exclusion.
+Frustum tests cover plane crossings, camera-enclosing boxes, behind-camera and
+near/far rejection, plus invalid-input fallback.
+
+The Windows/GTX 1660/Vulkan debug preview exposed changing finite bounds at MCP
+seeks 0, 0.25, and 0.6 seconds, retaining its visible model draw. Native capture
+`target/character-preview-evidence/animated-bounds.png` was inspected. One cadence
+sample was 58.52 Updates/second (mean 17.09 ms, max 17.51 ms), not a CPU profile or
+crowd benchmark. The session stopped via MCP after 5,490 reported presentation
+successes and exited 0. Native offscreen/re-entry and reduced-rate crowd tests remain
+required, along with weapon calibration and the final production audit.
+
+
+**Bounded crowd preview (2026-09-16, Windows, GTX 1660/Vulkan):** The preview
+supports 1..64 ECS characters sharing immutable assets and retaining independent
+players, positions and palette snapshots. The aggregate model draw limit is 256.
+CLI and MCP pose caps hold displayed poses and consume accumulated elapsed time;
+selection, per-instance placement, camera target, sampled time/pending time and
+visible/evaluated counts are discoverable through the bridge. Twelve preview tests
+pass, including capped/full timing parity at 30/60/144 host rates, pause/completion,
+placement/re-entry, input limits, and despawn/snapshot asset release. Strict preview
+Clippy passes.
+
+Five approximately one-second cadence windows were sampled per case at 1920x1080:
+
+| Build and workload | Pose evaluation | Observed Update FPS range |
+| --- | --- | --- |
+| Debug, 16 visible Ch03/RPG attack instances | Every Update | 55.19–56.55 |
+| Same debug session, same 16 instances | 15 Hz cap | 58.38–58.72 |
+| Release, 64 visible instances | Every Update | 58.39–58.61 |
+
+These are wall-clock Update intervals, including renderer/waits; they do not measure
+CPU execution, GPU completion, or general crowd capacity. The capped session sampled
+3–5 instances on the inspected frames while preserving elapsed playback. MCP tests
+paused/seeked instance 0 independently, moved it offscreen (16 to 15 draws), moved
+the camera away (zero draws), and restored the grid (16 draws). All command outcomes
+were checked. Captures `target/character-preview-evidence/crowd-16.png` and
+`crowd-64-release.png` were inspected. Both sessions stopped through MCP and exited
+0 (6,255 and 9,179 reported presentation successes respectively).
+
+`cargo test --workspace --all-features --target-dir target/asset-import-review`
+and strict workspace/all-target/all-feature Clippy passed. The initial default-target
+attempt encountered the running bridge executable's Windows file lock; isolated
+validation succeeded while leaving the bridge running. Shader artifacts are current,
+and all four explicit real-GPU tests passed, including weighted skinning versus the
+CPU reference and shared-geometry independent palettes. Evidence logs are
+`target/character-preview-evidence/production-workspace-tests.log`,
+`production-clippy.log`, and `production-gpu-tests.log`. The gate-closure entry below records subsequent contact calibration and the final
+requirement audit.
+
+
+**Original production animation gate-closure claim (2026-09-16; superseded validation):** The
+[acceptance review](reviews/2026-09-16-production-animation.md) maps all six production
+implementation gates to code, tests and native evidence. The arena now uses the
+right-hand attack; its inspected peak-forward marker at 49/120 of the source clip
+maps to the authoritative active-phase boundary. A full-affine local +Y attachment
+and load-time weapon-length solve align the blade tip with the two-metre hero reach.
+Native MCP observed contact at 0.326666647 seconds with length 1.159424782 metres;
+`arena-calibrated-contact.png` records an inspected active-phase frame. That session
+stopped after 3,812 presentation successes and exited 0.
+
+`update_at` preserves fades under an external action clock; a regression covers
+late observations at contact without delayed blending. Seventeen arena, sixteen
+animation and thirteen preview tests pass. The final workspace/all-feature test and
+strict Clippy runs also pass. A missing-file native launch exited 1 before host
+startup. Preview diagnostic labels/extensions are now bounded for bridge publication.
+This was the original completion conclusion. Current validation is limited to the
+[client character milestone](#client-character-milestone); phase-7 art, licensing,
+lighting/effects and broader character-content acceptance remain separate work.

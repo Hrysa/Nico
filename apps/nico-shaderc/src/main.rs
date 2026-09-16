@@ -42,6 +42,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (source, output) in [
         (
+            "assets/presentation/shaders/skinned_meshes.slang",
+            "assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl",
+        ),
+        (
             "assets/presentation/shaders/meshes.slang",
             "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
         ),

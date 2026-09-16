@@ -5,7 +5,7 @@ implemented, including three waves and grunt/brute enemies. Initial human playte
 and balance approval are recorded; no tuning changes are requested. This replaces the earlier
 collect-and-escape proposal. Scope targets belong in
 [roadmap phase 5](../roadmap.md#5-make-a-playable-local-game); actions belong in
-[TODO](../../TODO.md#next-networked-co-op-design).
+[TODO](../../TODO.md#next-client-humanoid-models-and-animation).
 
 ## First playable encounter
 

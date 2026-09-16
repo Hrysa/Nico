@@ -10,9 +10,12 @@ cached bitmap text; `nico-spatial` owns conservative camera queries. `nico-physi
 owns the Rapier 3D integration, body/collider lifecycle, and optional runtime adapter.
 `nico-render` uses `nico-rhi` contracts. `nico-rhi-wgpu` implements those
 contracts; `nico-winit` composes the native client. `nico-assets` owns asset identity,
-leases, and optional runtime-owned PNG/GLB loading through its `loading` feature,
-and `nico-launch` owns native CLI and diagnostics startup; its `client` and `server`
-features own native host transport composition and lifecycle. `nico-ops` provides
+leases, model bundles, userland import contracts, and optional runtime-owned PNG/GLB
+loading through its `loading` feature.
+`nico-animation` owns runtime-free CPU pose sampling, skin matrices, humanoid profiles,
+and motion retargeting. `nico-launch` owns native CLI and diagnostics startup; its
+`client` and `server` features own native host transport composition and lifecycle.
+`nico-ops` provides
 dependency-free host control, command bookkeeping, and owned snapshot publication.
 Its optional `mcp` feature owns host/game tool catalogs
 and handlers; `bridge` owns registration, routing, and reconnects. `apps/nico-bridge` is
@@ -93,6 +96,20 @@ session progress, and successful presentation counts have different meanings.
 Presentation API success is not proof of GPU completion or display scanout. Stop
 acceptance is not shutdown completion or process exit. Timed-out mutations may have
 executed; do not retry them blindly.
+
+For visual gameplay validation, MCP command completion and game-state changes alone
+are insufficient. Identify the exact client instance and PID; for a user-watched
+demonstration, confirm it is the window the user is watching. Announce when control
+starts, sustain commands long enough to observe the behavior, and inspect rendered
+captures from that same instance while actions are active. Compare those captures
+with game and presentation state; do not describe separately sampled data as the
+same frame. GPU captures establish rendered output, not desktop visibility. Get
+the user's confirmation before claiming a user-watched demonstration succeeded.
+Announce when automated control stops and whether the window remains open; an open
+window does not mean commands are still being sent. If the user's observation
+disagrees with tool results, investigate the discrepancy instead of declaring the
+visual test passed or assuming the user missed the action. Report command, rendering,
+and user-observed results separately, with any unresolved limits.
 
 Native diagnostic capture uses bounded tracing events, exclusive process-local cursors,
 eviction counts, and truncation flags. It shares the host logging filter, excludes span

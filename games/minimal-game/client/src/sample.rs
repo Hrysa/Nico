@@ -338,7 +338,7 @@ impl Plugin for SamplePlugin {
                 }
             };
             let scene3d = Scene3d { camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
-                positions.iter().map(|p| MeshInstance { position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
+                positions.iter().map(|p| MeshInstance { skin_palette: None, position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
                     color: [1.0;4], mesh: mesh.clone(), texture: checker.clone() }).collect()
             } else { Vec::new() } };
             let value = json!({"frame":context.time.frame_number(),"last_applied_command":sample.applied,"command_error":sample.error,

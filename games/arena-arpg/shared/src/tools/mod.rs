@@ -14,16 +14,18 @@ use std::{
 };
 
 const HISTORY: usize = 128;
-const NAMES: [&str; 6] = [
+const NAMES: [&str; 8] = [
     "game_state",
     "game_move",
+    "game_move_hold",
+    "game_move_release",
     "game_attack",
     "game_dodge",
     "game_restart",
     "game_command",
 ];
 
-/// Adds publication/shutdown integration and the six discoverable game tools.
+/// Adds publication/shutdown integration and discoverable game tools.
 /// Add ArenaPlugin to the builder as well. No service or transport is started here.
 pub fn register(builder: AppBuilder) -> io::Result<(AppBuilder, ToolExtensions)> {
     let operations = Operations::default();
@@ -63,7 +65,7 @@ impl Plugin for ToolsPlugin {
 pub(crate) struct Operations(Arc<Mutex<State>>);
 struct State {
     published: nico_ops::publication::Publication<Snapshot>,
-    commands: nico_ops::commands::CommandBook<Request, Record, 3>,
+    commands: nico_ops::commands::CommandBook<Request, Record, 4>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -76,6 +78,8 @@ impl Default for State {
 #[derive(Clone, Copy)]
 enum Kind {
     Move(Vec2, u16),
+    Hold(Vec2, u16),
+    EditHold(u64, Option<(Vec2, u16)>),
     Attack(f64),
     Dodge(Vec2),
     Restart,
@@ -83,7 +87,8 @@ enum Kind {
 impl Kind {
     fn slot(self) -> usize {
         match self {
-            Self::Move(..) => 0,
+            Self::Move(..) | Self::Hold(..) => 0,
+            Self::EditHold(..) => 3,
             Self::Attack(_) | Self::Dodge(_) => 1,
             Self::Restart => 2,
         }
@@ -101,7 +106,7 @@ struct Record {
     status: &'static str,
     start: Option<u64>,
     end: Option<u64>,
-    applied: u16,
+    applied: u64,
     reason: Option<&'static str>,
 }
 impl Record {
@@ -150,6 +155,22 @@ fn direction(arguments: &Map<String, Value>) -> Option<Vec2> {
 fn mutation(name: &str, args: &Map<String, Value>) -> Option<(u64, Kind)> {
     let run_id = positive(args, "run_id")?;
     let kind = match name {
+        "game_move_hold" if exact(args, &["run_id", "lease_id", "x", "z", "ticks"]) => {
+            let lease = args.get("lease_id")?.as_u64()?;
+            let ticks = args.get("ticks")?.as_u64()?;
+            if !(1..=120).contains(&ticks) {
+                return None;
+            }
+            let direction = direction(args)?;
+            if lease == 0 {
+                Kind::Hold(direction, ticks as u16)
+            } else {
+                Kind::EditHold(lease, Some((direction, ticks as u16)))
+            }
+        }
+        "game_move_release" if exact(args, &["run_id", "lease_id"]) => {
+            Kind::EditHold(positive(args, "lease_id")?, None)
+        }
         "game_move" if exact(args, &["run_id", "x", "z", "ticks"]) => {
             let ticks = args.get("ticks")?.as_u64()?;
             if !(1..=120).contains(&ticks) {
@@ -208,6 +229,11 @@ impl Operations {
                     .map(|r| r.record.id),
             );
             value["closed"] = json!(state.published.is_closed());
+            value["movement_hold"] = state.commands[0].as_ref().and_then(|r| {
+                if let Kind::Hold(direction, remaining) = r.kind {
+                    Some(json!({"lease_id":r.record.id,"x":direction.x,"z":direction.z,"remaining_ticks":remaining,"state":r.record.status}))
+                } else { None }
+            }).unwrap_or(Value::Null);
             return CallToolResult::structured(value);
         }
         if name == "game_command" {
@@ -293,7 +319,7 @@ impl Operations {
         } else {
             TickInput::idle(before.run_id)
         };
-        for slot in 0..3 {
+        for slot in 0..4 {
             if state.commands[slot]
                 .as_ref()
                 .is_some_and(|r| r.record.source_run != before.run_id)
@@ -309,6 +335,7 @@ impl Operations {
             for slot in 0..2 {
                 state.cancel(slot, "restarted", arena.snapshot());
             }
+            state.cancel(3, "restarted", arena.snapshot());
             if let Some(mut request) = state.commands[2].take() {
                 request.record.start = Some(before.tick);
                 request.record.applied = 1;
@@ -322,9 +349,11 @@ impl Operations {
             input = TickInput::idle(before.run_id);
             state.cancel(0, "focus_lost", &before);
             state.cancel(1, "focus_lost", &before);
+            state.cancel(3, "focus_lost", &before);
         } else {
             if input.movement != Vec2::default() {
                 state.cancel(0, "human_input", &before);
+                state.cancel(3, "human_input", &before);
             }
             if input.attack_yaw.is_some() || input.dodge.is_some() {
                 arena.clear_buffered_input();
@@ -335,9 +364,32 @@ impl Operations {
             for slot in 0..2 {
                 state.cancel(slot, "run_finished", &before);
             }
+            state.cancel(3, "run_finished", &before);
+        }
+        // Renew/release only the named hold, at the same fixed boundary as movement.
+        // A delayed edit can never resurrect an expired hold or affect a newer one.
+        if let Some(mut edit) = state.commands[3].take() {
+            let Kind::EditHold(id, value) = edit.kind else {
+                unreachable!()
+            };
+            let matches = state.commands[0]
+                .as_ref()
+                .is_some_and(|r| r.record.id == id && matches!(r.kind, Kind::Hold(..)));
+            if matches {
+                edit.record.start = Some(before.tick);
+                edit.record.applied = 1;
+                if let Some((direction, ticks)) = value {
+                    state.commands[0].as_mut().unwrap().kind = Kind::Hold(direction, ticks);
+                } else {
+                    state.cancel(0, "released", &before);
+                }
+                state.finish(edit, "completed", None, &before);
+            } else {
+                state.finish(edit, "rejected", Some("inactive_lease"), &before);
+            }
         }
         if let Some(request) = &mut state.commands[0] {
-            if let Kind::Move(direction, _) = request.kind {
+            if let Kind::Move(direction, _) | Kind::Hold(direction, _) = request.kind {
                 input.movement = direction;
             }
             request.record.status = "running";
@@ -380,12 +432,23 @@ impl Operations {
             }
         }
         if let Some(mut request) = state.commands[0].take() {
-            request.record.applied += 1;
-            let Kind::Move(_, ticks) = request.kind else {
-                unreachable!()
+            request.record.applied = request.record.applied.saturating_add(1);
+            let expired = match &mut request.kind {
+                Kind::Move(_, ticks) => request.record.applied == u64::from(*ticks),
+                Kind::Hold(_, remaining) => {
+                    *remaining -= 1;
+                    *remaining == 0
+                }
+                _ => unreachable!(),
             };
-            if request.record.applied == ticks {
-                state.finish(request, "completed", None, after);
+            if expired {
+                let hold = matches!(request.kind, Kind::Hold(..));
+                state.finish(
+                    request,
+                    if hold { "cancelled" } else { "completed" },
+                    hold.then_some("lease_expired"),
+                    after,
+                );
             } else if after.intermission_ticks > 0 {
                 state.finish(request, "cancelled", Some("wave_cleared"), after);
             } else if after.state != RunState::Playing {
@@ -403,7 +466,7 @@ impl Operations {
     fn close(&self, snapshot: &Snapshot) {
         let mut state = self.0.lock().expect("arena operations poisoned");
         state.commands.close();
-        for slot in 0..3 {
+        for slot in 0..4 {
             state.cancel(slot, "shutdown", snapshot);
         }
         state.publish(snapshot);

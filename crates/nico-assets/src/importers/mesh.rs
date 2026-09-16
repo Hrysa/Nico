@@ -1,20 +1,9 @@
-use super::{AssetError, AssetLimits};
-use crate::{Mesh, MeshVertex};
-use std::{fs::File, io::Read, path::Path, sync::Arc};
+use crate::{
+    Mesh, MeshVertex,
+    asset_error::{AssetError, AssetLimits},
+};
 
-pub(super) fn decode(path: &Path, limits: AssetLimits) -> Result<Arc<Mesh>, AssetError> {
-    let file = File::open(path).map_err(|e| AssetError::Io(e.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take((limits.max_file_bytes as u64).saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|e| AssetError::Io(e.to_string()))?;
-    if bytes.len() > limits.max_file_bytes {
-        return Err(AssetError::LimitExceeded);
-    }
-    decode_bytes(&bytes, limits)
-}
-
-fn decode_bytes(bytes: &[u8], limits: AssetLimits) -> Result<Arc<Mesh>, AssetError> {
+pub(super) fn decode_bytes(bytes: &[u8], limits: AssetLimits) -> Result<Mesh, AssetError> {
     if !bytes.starts_with(b"glTF") {
         return Err(AssetError::InvalidMesh("expected binary GLB".into()));
     }
@@ -149,7 +138,6 @@ fn decode_bytes(bytes: &[u8], limits: AssetLimits) -> Result<Arc<Mesh>, AssetErr
         return Err(AssetError::InvalidMesh("truncated attributes".into()));
     }
     Mesh::triangles(vertices, values)
-        .map(Arc::new)
         .ok_or_else(|| AssetError::InvalidMesh("invalid triangle geometry".into()))
 }
 
@@ -215,11 +203,13 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "runtime-loading", feature = "png-import"))]
     #[test]
     fn mesh_and_texture_completions_have_independent_identity_and_lifetimes() {
-        use super::super::{MeshState, MeshStore, TextureState, TextureStore};
+        use crate::loading::{MeshState, MeshStore, TextureState, TextureStore};
         use crate::{AssetId, Handle, Texture};
         use nico_runtime::AppBuilder;
+        use std::path::Path;
         use std::time::{Duration, Instant};
         let mut builder = AppBuilder::new().with_event_capacity(1);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))

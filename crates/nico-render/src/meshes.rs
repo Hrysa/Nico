@@ -20,6 +20,16 @@ struct Uniform<D: RhiDevice> {
     buffer: D::Buffer,
     binding: D::BindGroup,
 }
+struct SkinPipeline<D: RhiDevice> {
+    shader: D::ShaderModule,
+    pipeline: D::RenderPipeline,
+    layout: D::BindGroupLayout,
+    uniforms: Vec<Option<Uniform<D>>>,
+    vertex_entry: String,
+    fragment_entry: String,
+}
+const PALETTE_BYTES: u64 = 256 * 64;
+
 struct Depth<D: RhiDevice> {
     _texture: D::Texture,
     view: D::TextureView,
@@ -30,6 +40,7 @@ struct Depth<D: RhiDevice> {
 /// quad/HUD pass. Both passes share GPU texture uploads, bindings, and retirement.
 pub struct MeshRenderPipeline<D: RhiDevice> {
     hud: QuadRenderPipeline<D>,
+    skin: Option<SkinPipeline<D>>,
     shader: D::ShaderModule,
     pipeline: D::RenderPipeline,
     uniform_layout: D::BindGroupLayout,
@@ -71,6 +82,7 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             format,
             mesh_shader.vertex_entry_point,
             mesh_shader.fragment_entry_point,
+            None,
         )?;
         let fallback = Arc::new(
             Mesh::triangles(
@@ -98,6 +110,7 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
         );
         Ok(Self {
             hud,
+            skin: None,
             shader,
             pipeline,
             uniform_layout,
@@ -109,6 +122,50 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             vertex_entry: mesh_shader.vertex_entry_point.into(),
             fragment_entry: mesh_shader.fragment_entry_point.into(),
         })
+    }
+
+    /// Installs the independently compiled GPU skinning shader. Static draws keep
+    /// their existing vertex format and pipeline. Palette buffers persist per draw.
+    pub fn enable_skinning(
+        &mut self,
+        device: &D,
+        artifact: GraphicsShaderArtifact<'_>,
+    ) -> Result<(), RhiError> {
+        if device.capabilities().limits.max_uniform_buffer_binding_size < PALETTE_BYTES {
+            return Err(invalid("device cannot bind a 256-joint palette"));
+        }
+        let shader = device.create_shader_module(artifact.module)?;
+        let layout = device.create_bind_group_layout(BindGroupLayoutDescriptor {
+            label: Some("skin palette layout"),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                binding_type: BindingType::Buffer {
+                    kind: BufferBindingKind::Uniform,
+                    dynamic_offset: false,
+                    minimum_size: NonZeroU64::new(PALETTE_BYTES),
+                },
+            }],
+        })?;
+        let pipeline = pipeline(
+            device,
+            &shader,
+            self.hud.texture_layout(),
+            &self.uniform_layout,
+            self.format,
+            artifact.vertex_entry_point,
+            artifact.fragment_entry_point,
+            Some(&layout),
+        )?;
+        self.skin = Some(SkinPipeline {
+            shader,
+            pipeline,
+            layout,
+            uniforms: Vec::new(),
+            vertex_entry: artifact.vertex_entry_point.into(),
+            fragment_entry: artifact.fragment_entry_point.into(),
+        });
+        Ok(())
     }
 
     /// Physical extent owns depth allocation; logical viewport controls HUD sizing.
@@ -129,6 +186,9 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
         if scene.meshes.len() > MAX_INSTANCES {
             return Err(invalid("mesh instance limit exceeded"));
         }
+        for mesh in &scene.meshes {
+            validate_skin(mesh, self.skin.is_some())?;
+        }
         let camera = camera_matrix(scene.camera, viewport[0] / viewport[1])?;
         let transforms: Vec<_> = scene
             .meshes
@@ -148,7 +208,20 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                 surface.format(),
                 &self.vertex_entry,
                 &self.fragment_entry,
+                None,
             )?;
+            if let Some(skin) = &mut self.skin {
+                skin.pipeline = pipeline(
+                    device,
+                    &skin.shader,
+                    self.hud.texture_layout(),
+                    &self.uniform_layout,
+                    surface.format(),
+                    &skin.vertex_entry,
+                    &skin.fragment_entry,
+                    Some(&skin.layout),
+                )?;
+            }
             self.format = surface.format();
         }
         if self.depth.as_ref().is_none_or(|d| d.extent != extent) {
@@ -196,6 +269,9 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             })
         });
         self.uniforms.truncate(scene.meshes.len());
+        if let Some(skin) = &mut self.skin {
+            skin.uniforms.resize_with(scene.meshes.len(), || None);
+        }
         let mut draws = Vec::with_capacity(scene.meshes.len());
         for (index, instance) in scene.meshes.iter().enumerate() {
             let mesh = instance.mesh.as_ref().unwrap_or(&self.fallback);
@@ -247,6 +323,44 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
             queue.write_buffer(&self.uniforms[index].buffer, 0, &bytes);
+            if let Some(skin) = &mut self.skin {
+                if let Some(palette) = &instance.skin_palette {
+                    if skin.uniforms[index].is_none() {
+                        let buffer = device.create_buffer(BufferDescriptor {
+                            label: Some("skin palette"),
+                            size: PALETTE_BYTES,
+                            usages: BufferUsages::UNIFORM | BufferUsages::COPY_DESTINATION,
+                        })?;
+                        let binding = device.create_bind_group(BindGroupDescriptor {
+                            label: Some("skin palette binding"),
+                            layout: &skin.layout,
+                            entries: &[BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::Buffer {
+                                    buffer: &buffer,
+                                    offset: 0,
+                                    size: NonZeroU64::new(PALETTE_BYTES),
+                                },
+                            }],
+                        })?;
+                        skin.uniforms[index] = Some(Uniform { buffer, binding });
+                    }
+                    let mut bytes = [0u8; PALETTE_BYTES as usize];
+                    for (dst, value) in bytes
+                        .chunks_exact_mut(4)
+                        .zip(palette.iter().flatten().flatten())
+                    {
+                        dst.copy_from_slice(&value.to_le_bytes());
+                    }
+                    queue.write_buffer(
+                        &skin.uniforms[index].as_ref().unwrap().buffer,
+                        0,
+                        &bytes[..palette.len() * 64],
+                    );
+                } else {
+                    skin.uniforms[index] = None;
+                }
+            }
             draws.push((mesh_slot, texture_slot));
         }
         let colors = [Some(RenderPassColorAttachment {
@@ -271,9 +385,15 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                     stencil_operations: None,
                 }),
             });
-            pass.set_pipeline(&self.pipeline);
             for (index, (mesh_slot, texture_slot)) in draws.into_iter().enumerate() {
                 let mesh = &self.meshes[mesh_slot];
+                if scene.meshes[index].skin_palette.is_some() {
+                    let skin = self.skin.as_ref().unwrap();
+                    pass.set_pipeline(&skin.pipeline);
+                    pass.set_bind_group(2, &skin.uniforms[index].as_ref().unwrap().binding, &[]);
+                } else {
+                    pass.set_pipeline(&self.pipeline);
+                }
                 pass.set_bind_group(0, self.hud.texture_binding(texture_slot), &[]);
                 pass.set_bind_group(1, &self.uniforms[index].binding, &[]);
                 pass.set_vertex_buffer(0, &mesh.vertices, 0..mesh.vertex_bytes);
@@ -308,10 +428,19 @@ fn upload<D: RhiDevice, Q: RhiQueue<D>>(
     if source.vertices().len() > 250_000 || source.indices().len() > 750_000 {
         return Err(invalid("GPU mesh geometry limit exceeded"));
     }
-    let mut vertices = Vec::with_capacity(source.vertices().len() * 20);
-    for vertex in source.vertices() {
+    let stride = if source.skin().is_some() { 52 } else { 20 };
+    let mut vertices = Vec::with_capacity(source.vertices().len() * stride);
+    for (index, vertex) in source.vertices().iter().enumerate() {
         for value in vertex.position.into_iter().chain(vertex.uv) {
             vertices.extend_from_slice(&value.to_le_bytes());
+        }
+        if let Some(skin) = source.skin() {
+            for joint in skin[index].joints {
+                vertices.extend_from_slice(&u32::from(joint).to_le_bytes());
+            }
+            for weight in skin[index].weights {
+                vertices.extend_from_slice(&weight.to_le_bytes());
+            }
         }
     }
     let indices: Vec<_> = source
@@ -340,6 +469,7 @@ fn upload<D: RhiDevice, Q: RhiQueue<D>>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pipeline<D: RhiDevice>(
     device: &D,
     shader: &D::ShaderModule,
@@ -348,10 +478,41 @@ fn pipeline<D: RhiDevice>(
     format: TextureFormat,
     vertex: &str,
     fragment: &str,
+    skin_layout: Option<&D::BindGroupLayout>,
 ) -> Result<D::RenderPipeline, RhiError> {
+    let mut layouts = vec![texture_layout, uniform_layout];
+    if let Some(skin) = skin_layout {
+        layouts.push(skin);
+    }
+    let mut attributes = vec![
+        VertexAttribute {
+            format: VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x2,
+            offset: 12,
+            shader_location: 1,
+        },
+    ];
+    if skin_layout.is_some() {
+        attributes.extend([
+            VertexAttribute {
+                format: VertexFormat::Uint32x4,
+                offset: 20,
+                shader_location: 2,
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32x4,
+                offset: 36,
+                shader_location: 3,
+            },
+        ]);
+    }
     let layout = device.create_pipeline_layout(PipelineLayoutDescriptor {
         label: Some("mesh pipeline layout"),
-        bind_group_layouts: &[texture_layout, uniform_layout],
+        bind_group_layouts: &layouts,
     })?;
     device.create_render_pipeline(RenderPipelineDescriptor {
         label: Some("unlit alpha-cutoff meshes"),
@@ -360,20 +521,9 @@ fn pipeline<D: RhiDevice>(
             shader,
             entry_point: vertex,
             buffers: &[VertexBufferLayout {
-                stride: 20,
+                stride: if skin_layout.is_some() { 52 } else { 20 },
                 step_mode: VertexStepMode::Vertex,
-                attributes: &[
-                    VertexAttribute {
-                        format: VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    VertexAttribute {
-                        format: VertexFormat::Float32x2,
-                        offset: 12,
-                        shader_location: 1,
-                    },
-                ],
+                attributes: &attributes,
             }],
         },
         fragment: Some(FragmentState {
@@ -395,29 +545,29 @@ fn pipeline<D: RhiDevice>(
     })
 }
 
+fn validate_skin(instance: &MeshInstance, enabled: bool) -> Result<(), RhiError> {
+    let joints = instance.mesh.as_ref().map_or(0, |m| m.joint_count());
+    match (joints, &instance.skin_palette) {
+        (0, None) => Ok(()),
+        (1..=256, Some(palette))
+            if enabled
+                && palette.len() >= joints
+                && palette.len() <= 256
+                && palette.iter().flatten().flatten().all(|x| x.is_finite()) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid("missing, unsupported, or invalid skin palette")),
+    }
+}
+
 fn invalid(message: &str) -> RhiError {
     RhiError::new(RhiErrorKind::InvalidDescriptor, message)
 }
 fn camera_matrix(camera: Camera3d, aspect: f32) -> Result<Mat4, RhiError> {
-    let position = Vec3::from(camera.position);
-    if !camera.has_valid_pose()
-        || !aspect.is_finite()
-        || aspect <= 0.0
-        || !camera.near.is_finite()
-        || !camera.far.is_finite()
-        || camera.near <= 0.0
-        || camera.far <= camera.near
-        || !(0.01..3.13).contains(&camera.vertical_fov_radians)
-    {
-        return Err(invalid("invalid perspective camera"));
-    }
-    let result = Mat4::perspective_rh(camera.vertical_fov_radians, aspect, camera.near, camera.far)
-        * Mat4::from_quat(camera.orientation.conjugate())
-        * Mat4::from_translation(-position);
-    if !result.is_finite() {
-        return Err(invalid("camera transform overflow"));
-    }
-    Ok(result)
+    camera
+        .view_projection(aspect)
+        .ok_or_else(|| invalid("invalid perspective camera or camera transform overflow"))
 }
 fn transform(camera: Mat4, mesh: &MeshInstance) -> Result<Mat4, RhiError> {
     if !mesh.scale.is_finite()
@@ -447,6 +597,50 @@ fn transform(camera: Mat4, mesh: &MeshInstance) -> Result<Mat4, RhiError> {
 mod tests {
     use super::*;
     #[test]
+    fn skin_palettes_require_supported_matching_geometry_and_finite_matrices() {
+        let mesh = Mesh::skinned_triangles(
+            vec![
+                MeshVertex {
+                    position: [0.; 3],
+                    uv: [0.; 2]
+                };
+                3
+            ],
+            vec![0, 1, 2],
+            vec![
+                nico_assets::SkinWeights {
+                    joints: [0; 4],
+                    weights: [1., 0., 0., 0.]
+                };
+                3
+            ],
+            1,
+        )
+        .unwrap();
+        let mut draw = MeshInstance {
+            mesh: Some(Arc::new(mesh)),
+            skin_palette: None,
+            texture: None,
+            position: [0.; 3],
+            orientation: glam::Quat::IDENTITY,
+            scale: 1.,
+            color: [1.; 4],
+        };
+        assert!(validate_skin(&draw, true).is_err());
+        draw.skin_palette = Some(Arc::new(vec![nico_assets::model::IDENTITY]));
+        assert!(validate_skin(&draw, true).is_ok());
+        assert!(validate_skin(&draw, false).is_err());
+        draw.skin_palette = Some(Arc::new(vec![]));
+        assert!(validate_skin(&draw, true).is_err());
+        let mut matrix = nico_assets::model::IDENTITY;
+        matrix[0][0] = f32::NAN;
+        draw.skin_palette = Some(Arc::new(vec![matrix]));
+        assert!(validate_skin(&draw, true).is_err());
+        draw.mesh = None;
+        assert!(validate_skin(&draw, true).is_err());
+    }
+
+    #[test]
     fn quaternion_camera_supports_vertical_views_and_roll() {
         use nico_presentation::Quaternion;
         for orientation in [
@@ -470,6 +664,7 @@ mod tests {
     fn mesh_transforms_use_full_quaternion_rotation_and_reject_invalid_units() {
         use nico_presentation::Quaternion;
         let mut mesh = MeshInstance {
+            skin_palette: None,
             mesh: None,
             texture: None,
             position: [1.0, 2.0, 3.0],

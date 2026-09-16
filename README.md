@@ -53,11 +53,12 @@ Focus loss releases input; simulation continues. Client and server run independe
 multiplayer synchronization is not implemented. The server requires 60 Hz.
 
 Both hosts attempt the default bridge connection; `--no-bridge` disables it and
-`--bridge ADDRESS` overrides it. The client supports `--smoke-frames N`. Visuals
-use procedural meshes, textures, and bitmap text; no external game assets or
-skeletal animation are required. Attack sectors show full reach with a growing windup
+`--bridge ADDRESS` overrides it. The client supports `--smoke-frames N`. Default
+visuals use the game-owned imported hero alongside procedural enemies, textures,
+and bitmap text. `--procedural-hero` skips character assets. Attack sectors show full reach with a growing windup
 fill and a yellow active strike; the HUD shows dodge cooldown progress. Rendering
-uses the repository's generated shaders.
+uses the repository's generated shaders. The [imported hero](#imported-arena-hero)
+supports explicit asset-path overrides.
 See [phase 5](docs/roadmap.md#5-make-a-playable-local-game) for validation limits.
 
 ### Arena operations
@@ -73,6 +74,8 @@ the minimal-game rendering samples keep their separate tools.
 | --- | --- |
 | `game_state` | Read run/wave/countdown, actor type and combat stats, health, snapshot age, and action phases. |
 | `game_move` | Queue world-space movement for 1..120 simulation ticks; zero direction waits. |
+| `game_move_hold` | Start or renew continuous movement without a release gap; optionally change direction. |
+| `game_move_release` | Release a specific movement hold at the next fixed boundary. |
 | `game_attack` | Request melee facing yaw radians, with zero along +Z. |
 | `game_dodge` | Request a dodge along a nonzero world-space direction. |
 | `game_restart` | Reset the current run and cancel old actions. |
@@ -99,6 +102,25 @@ and actor ID together. Poll outcomes before inspecting the
 corresponding run/tick; do not blindly retry a timed-out mutation. History retains
 128 terminal outcomes and survives run reset and bridge reconnect, not process exit.
 
+For continuous control, call `game_move_hold` with
+`{"run_id":1,"lease_id":0,"x":1,"z":0,"ticks":120}` (using the current run).
+The returned `command_id` is the hold's lease ID. Before it expires, call the same
+tool with that `lease_id`, a direction, and a fresh 1..120 tick budget. Renewals
+return separate command IDs that complete when applied; keep using the original
+lease ID. Renew well before expiry, for example every 30 ticks for a 120-tick hold.
+Release with `game_move_release` and `{"run_id":1,"lease_id":LEASE_ID}`.
+`game_state.movement_hold` exposes the lease, direction, remaining ticks and
+pending/running state. Poll each edit's command result to distinguish acceptance
+from application. A hold ends `cancelled` with `released` or `lease_expired`;
+late edits are rejected with `inactive_lease` and never revive old movement.
+
+Timeouts count **simulation ticks**, including ticks where combat blocks movement;
+they are not wall-clock deadlines during suspension. Bridge disconnect does not
+release immediately: without renewals the remaining tick budget expires. Manual
+movement, focus loss, restart, wave clear, defeat and shutdown also cancel holds.
+Finite `game_move` requests and holds share one movement slot. One queued
+renew/release edit is allowed at a time; additional requests return `busy`.
+
 Validate handlers and real bridge routing with:
 
 ```text
@@ -115,6 +137,19 @@ hosts. It saves screenshots and a report under `target/arena-native-evidence`.
 Use `--combat-only` to test gameplay, buffered dodges, captures, and orderly stop
 without requesting focus or exercising window transitions; the report records this
 reduced scope explicitly.
+
+The test uses the game-owned imported hero by default. Run the three-wave victory,
+defeat, and restart checks without window transitions:
+
+```text
+python apps/nico-bridge/tests/arena_native_smoke.py --bin-dir target/texture-validation/debug --combat-only --output-dir target/arena-imported-evidence
+```
+
+Use `--procedural-hero` to test the original visuals, or supply both
+`--character-model` and `--character-animations` to override the game assets.
+The report identifies instance IDs,
+PIDs, character mode, wave outcomes, and captures with separately sampled state.
+Automated results do not establish desktop visibility or user-observed success.
 
 Compare three deterministic combat policies without graphics:
 
@@ -419,6 +454,178 @@ general asset loader. Offline WGSL generation still leaves backend shader and pi
 preparation at runtime. The reported roughly one-second startup delay has not been
 profiled; its cause remains unconfirmed.
 
+## Extending asset import
+
+Game and external Rust crates can implement `nico_assets::import::AssetImporter`
+for an existing CPU asset type such as `Texture`, or for their own `Send + Sync`
+output type. Register implementations in `ImportRegistry<T>`, then configure each
+asset with an explicit importer token, relative source path, typed settings, and
+`ImportBudget`. Multiple importers may produce the same type; overlapping file
+extensions do not select or override an importer automatically.
+
+The [public example](crates/nico-assets/src/import.rs) demonstrates importing text
+without a runtime. `ImportRegistry::import_bytes` uses supplied bytes; for background
+file loading, pass the registry to `AssetStore::install_with_importers` before
+consumer systems. `source`/`sources` expose configured provenance, and import
+failures carry importer identity, category, diagnostic code, bounded text, and a
+truncation flag. Loading remains explicitly retried after failure.
+
+| Feature | Capability |
+| --- | --- |
+| Default | Dependency-free CPU assets, importer interface, typed registry, offline byte import |
+| `png-import` | `PngImporter` and `PngSettings`, without runtime |
+| `gltf-import` | Static mesh and generic model GLB importers, without runtime |
+| `runtime-loading` | Background `AssetStore<T>` loading, without built-in decoders |
+| `loading` | Compatibility combination of all three optional features |
+
+Importers receive bytes and cooperative cancellation/budget controls, never the
+world or GPU. Userland code is trusted; output accounting is cooperative and
+shutdown waits for active decoding. External source dependencies and hot reload
+remain future work. See the
+[import contract](docs/plans/2026-09-16-extensible-asset-import.md).
+
+## Model and humanoid animation
+
+`ModelGlbImporter` loads an immutable `Model` bundle containing node hierarchies,
+meshes, skins/inverse bind matrices, STEP/LINEAR clips, core materials, and embedded
+PNG/JPEG bytes. Images remain encoded. Its supported subset and configurable
+bounds are described in the [model contract](docs/plans/2026-09-16-model-animation.md).
+The static mesh importer and static rendering behavior remain compatible.
+
+`nico-animation` evaluates CPU poses and skin matrices. Its humanoid layer maps
+22 body roles through userland profiles, with Mixamo/RPG presets, explicit indexed
+overrides for duplicate names, reference-pose corrections, proportional translation,
+and in-place/preserved root-motion policies. Unmapped finger/helper joints retain
+their reference local poses. Humanoid rigs retain an `Arc<Model>` and compile their
+mapping/reference corrections once. `PoseBuffer` and `HumanoidWorkspace` provide
+reusable per-instance evaluation storage; failures preserve the previous valid pose.
+The native preview uses GPU skinning. `AnimationPlayer` supports looping, one-shot
+completion, crossfades, and continuous interruption. Named `Attachment` sockets
+follow evaluated joint poses. The arena can use a local imported hero. Bounded
+crowd preview and update policies are implemented. The
+[fresh review](docs/reviews/2026-09-16-uncommitted-mcp-review.md) records current
+validation, including the imported-hero three-wave victory; earlier 16/64-character
+measurements have not been revalidated. The
+[production plan](docs/plans/2026-09-16-production-animation.md) defines the scope.
+
+The headless examples emit JSON and accept local assets without starting a game:
+
+```sh
+cargo run -p nico-assets --features gltf-import --example inspect_model -- games/arena-arpg/assets/presentation/characters/hero/model.glb
+cargo run -p nico-animation --example inspect_retarget -- games/arena-arpg/assets/presentation/characters/hero/model.glb games/arena-arpg/assets/presentation/characters/hero/animations/RPG-Character@Unarmed-Idle.glb
+```
+
+These paths refer to the selected files in the arena asset folder. The examples
+explicitly permit core-material fallback for optional specular/IOR extensions.
+CPU deformation checks do not establish native visual quality.
+
+### Imported arena hero
+
+Run from the repository root with the game-owned model and six RPG clips:
+
+```sh
+cargo run -p arena-arpg-client
+```
+
+The default hero lives under `games/arena-arpg/assets/presentation/characters/hero/`,
+with `model.glb` and an `animations/` directory. Use `--procedural-hero` for the
+original procedural visuals. Custom `--character-model` and `--character-animations`
+overrides remain available and must be supplied together; they conflict with
+`--procedural-hero`. Missing default assets produce a startup error.
+The directory must contain single-clip `RPG-Character@Unarmed-*.glb`
+files for `Idle`, `Run-Forward`, `Attack-R1`, `Roll-Forward`, `GetHit-F1`, and `Death1`.
+This is game-owned content selection; the engine player and importer remain generic.
+The selected files are copied into the game asset folder for local development;
+the larger experimental collection remains in `tmp/`. Source and redistribution
+status are recorded in the [hero provenance notice](games/arena-arpg/assets/presentation/characters/hero/LICENSE.md).
+
+The hero selects animation from owned arena snapshots. Attack and dodge duration
+follow authoritative action timing; hit reactions follow health decreases. Death
+finishes on presentation time after simulation stops. Run/wave resets clear transient
+playback. The blade follows `mixamorig:RightHand` through a full affine palette.
+The right-hand attack contact marker (49/120 of the source clip) maps to the
+authoritative active-phase start. The blade follows local hand +Y; its length is
+calibrated at loading so its contact tip reaches the hero's attack radius. These
+body-only clips retain reference finger poses; they are demonstration character
+content, not a claim of finished weapon/finger animation. Animation never drives damage or collision.
+Enemies retain their procedural visuals.
+
+`client_state.animation` reports motion, clip time/completion, fade weight, model
+draw count, hand/weapon matrices, `render_bounds`, and `visible` (null animation
+with procedural visuals). Bounds include the attached blade. Existing
+`game_move`, `game_attack`, `game_dodge`, and `game_restart` exercise the integration.
+Loading happens before host startup and fails on missing/invalid content. The hero
+is limited to 32 primitives; the entire scene remains limited to 256 draws.
+
+### Native character preview
+
+Run from the repository root with locally supplied assets:
+
+```sh
+cargo run -p nico-character-preview -- --model tmp/Ch03_nonPBR.glb --animation tmp/animations/RPG-Character@Unarmed-Attack-L1.glb
+```
+
+Omit `--animation` to play the model's own clips; add `--bind-pose` to start paused
+at its reference pose. External animation currently uses the RPG-to-Mixamo presets.
+Repeat `--animation PATH` to load multiple files, then use A/D to select clips.
+Space pauses/resumes, R restarts, arrows orbit, and W/S zoom. Add `--once` to hold
+the final frame instead of looping. Close the window to exit. The animation set
+accepts at most 64 files and 256 MiB of aggregate source-file bytes (not a total
+heap-memory bound), with at most 128 clips and printable display labels of at most
+128 UTF-8 bytes. Omitted-extension diagnostics expose at most 32 names of 64
+characters each and report the total count and truncation flag.
+
+Add `--characters 16` for a shared-asset grid (1..64, with at most 256 total model
+draws). Instances start at different clip phases and keep independent state. Add
+`--update-hz 15` to cap pose evaluation; the default `0` evaluates every Update.
+A cap deliberately holds the displayed pose between evaluations, so low rates look
+stepped. Elapsed time accumulates without changing playback speed. Camera changes
+force fresh evaluation; edits flush pending elapsed time before applying.
+
+MCP `{"action":"select","value":3}` selects an instance for playback controls.
+`{"action":"update_hz","value":15}` changes its cap (0 or 1..120); the effective
+sampling rate cannot exceed host Updates. `position` with `x/y/z` moves the selected
+instance; `target` with `x/y/z` moves the shared camera target. Keyboard playback
+controls affect the selected instance. `preview_state.instances` exposes each
+instance's sampled clip time, pending elapsed seconds, position, bounds, visibility,
+and update cap. Top-level playback fields describe the selected instance; draw and
+visible/evaluated counts describe the entire scene. This is a held-pose policy,
+not prediction of future animation bounds or automatic distance-based LOD.
+
+The HUD shows Update FPS plus average and maximum frame intervals in milliseconds.
+Readings refresh after each non-overlapping window of at least one second. They
+measure wall-clock time between preview Updates, including rendering/waits and
+stalls; they are not GPU-completed FPS or CPU execution time. The first window shows
+`WARMING UP`. `preview_state.frame_timing` exposes the same measurement with exact
+FPS, mean/min/max milliseconds, sample count, and window duration (null initially).
+Long gaps, including suspension, remain visible in the next reading.
+
+The preview registers `preview_state` and `preview_control` through `nico-bridge`.
+Discover its `character_preview` instance first. Control actions use
+`{"action":"seek","value":0.25}` (also pauses), `playing`, `speed` (0..4), `clip`
+(an index across the loaded set), `bind_pose`, `in_place`, `looping` (boolean),
+and `fade_seconds` (0..5). `finished` reports a completed one-shot; `playing` means
+unpaused, including when a completed clip holds its final frame. `fade_weight`
+is null outside a transition. Camera control uses
+`{"action":"camera","yaw":0,"pitch":0.1,"distance":3}`. Acceptance returns an ID;
+check `preview_state.command_results` for application or rejection. The latest 32
+results are retained. `render_bounds` exposes the current model-space bounds and
+`visible` reports the frustum result. Standard `window_snapshot`, `status`, and
+`stop` also apply.
+
+The preview uses reusable `nico-presentation-control::model::ModelVisual` geometry
+and updates model-space joint palettes;
+the vertex shader deforms the geometry. Mesh/index GPU buffers remain resident while
+referenced by the scene. Preview and imported arena hero rendering use conservative
+pose bounds to skip offscreen draws. Pose evaluation defaults to every Update. The preview can cap its frequency
+per instance as described below. The current renderer supports up to 256 joints per palette
+and 256 draws per scene, with PNG base-color textures and unlit core material colors.
+This inspection tool does not implement PBR, GLB sampler/alpha-mode fidelity, skeleton
+overlays, or a timeline widget. Loading is bounded and happens before the host
+starts; load errors exit with a diagnostic. Assets remain at their supplied paths.
+The ECS spawn function shares immutable assets while keeping playback state per
+instance; a serialized prefab format is not introduced.
+
 ## Texture loading
 
 Enable `nico-assets`' optional `loading` feature for native background PNG loading.
@@ -610,6 +817,8 @@ See [physics ownership](docs/architecture.md#physics) and the
 | `crates/nico-rhi-wgpu` | Concrete wgpu resources, device, and surface recovery |
 | `crates/nico-winit` | Native event loop, input adaptation, client coordination, and optional in-process host control |
 | `crates/nico-assets` | Asset identity, leases, procedural meshes, and optional PNG/GLB loading |
+| `apps/nico-character-preview` | Native GPU-skinned model inspection with ECS instances and MCP controls |
+| `crates/nico-animation` | CPU pose sampling, skin matrices, humanoid profiles and retargeting |
 | `crates/nico-launch` | Native CLI, diagnostics, and optional client/server transport composition |
 | `crates/nico-ops` | Host control, command bookkeeping, publication, optional tool catalogs and bridge transport |
 | `apps/nico-bridge` | MCP entry point for independently launched game instances |

@@ -5,9 +5,14 @@ use std::marker::PhantomData;
 mod texture;
 pub use texture::Texture;
 mod mesh;
-pub use mesh::{Mesh, MeshVertex};
+pub use mesh::{Mesh, MeshVertex, SkinWeights};
 
-#[cfg(feature = "loading")]
+mod asset_error;
+pub use asset_error::{AssetError, AssetLimits};
+pub mod import;
+pub mod importers;
+
+#[cfg(feature = "runtime-loading")]
 pub mod loading;
 
 /// Owning reference to an asset. Clone to share ownership; drop to release it.
@@ -104,3 +109,6 @@ mod tests {
 
 /// Procedural CPU mesh builders.
 pub mod procedural;
+
+/// Immutable generic model, skin, and animation data.
+pub mod model;

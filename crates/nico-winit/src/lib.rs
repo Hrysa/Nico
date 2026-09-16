@@ -89,6 +89,7 @@ pub struct NativeClientConfig {
     smoke_frames: Option<u64>,
     quad_rendering: bool,
     mesh_shader_path: Option<PathBuf>,
+    skin_shader_path: Option<PathBuf>,
     pointer_capture: bool,
     initially_active: bool,
 }
@@ -103,6 +104,7 @@ impl NativeClientConfig {
             smoke_frames: None,
             quad_rendering: false,
             mesh_shader_path: None,
+            skin_shader_path: None,
             pointer_capture: false,
             initially_active: true,
         }
@@ -121,6 +123,7 @@ impl NativeClientConfig {
         self.bootstrap_shader_path = path.into();
         self.quad_rendering = true;
         self.mesh_shader_path = None;
+        self.skin_shader_path = None;
         self
     }
     /// Selects perspective meshes with a shared quad/HUD overlay.
@@ -129,6 +132,12 @@ impl NativeClientConfig {
         self.bootstrap_shader_path = hud.into();
         self.quad_rendering = true;
         self.mesh_shader_path = Some(mesh.into());
+        self
+    }
+    /// Enables GPU skinning alongside the mesh pipeline.
+    #[must_use]
+    pub fn with_skin_shader(mut self, shader: impl Into<PathBuf>) -> Self {
+        self.skin_shader_path = Some(shader.into());
         self
     }
     /// Enables click-to-capture and Escape-to-release. Capture clicks are consumed.
@@ -241,6 +250,7 @@ struct NativeClientHost {
     renderer: Option<NativeRenderer>,
     quad_rendering: bool,
     mesh_shader_path: Option<PathBuf>,
+    skin_shader_path: Option<PathBuf>,
     active: bool,
     focused: bool,
     size: PhysicalSize<u32>,
@@ -282,6 +292,7 @@ impl NativeClientHost {
             graphics: None,
             renderer: None,
             quad_rendering: config.quad_rendering,
+            skin_shader_path: config.skin_shader_path,
             mesh_shader_path: config
                 .mesh_shader_path
                 .map(|path| resolve_asset_path(&path)),
@@ -692,7 +703,24 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                                 nico_rhi::builtin_shaders::bootstrap_wgsl(&bytes),
                                 artifact,
                             )
-                            .map(|renderer| NativeRenderer::Meshes(Box::new(renderer))),
+                            .and_then(|mut renderer| {
+                                if let Some(path) = &self.skin_shader_path {
+                                    let bytes = fs::read(path).map_err(|error| {
+                                        nico_rhi::RhiError::new(
+                                            nico_rhi::RhiErrorKind::Backend,
+                                            format!(
+                                                "failed to read skin shader {}: {error}",
+                                                path.display()
+                                            ),
+                                        )
+                                    })?;
+                                    renderer.enable_skinning(
+                                        graphics.device(),
+                                        nico_rhi::builtin_shaders::bootstrap_wgsl(&bytes),
+                                    )?;
+                                }
+                                Ok(NativeRenderer::Meshes(Box::new(renderer)))
+                            }),
                             Err(error) => Err(nico_rhi::RhiError::new(
                                 nico_rhi::RhiErrorKind::Backend,
                                 format!("failed to read mesh shader {}: {error}", path.display()),

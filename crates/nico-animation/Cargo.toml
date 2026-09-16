@@ -1,0 +1,16 @@
+[package]
+name = "nico-animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nico-assets = { path = "../nico-assets" }
+glam = "0.30"
+
+[dev-dependencies]
+nico-assets = { path = "../nico-assets", features = ["gltf-import"] }
+serde_json = "1"
+
+[lints]
+workspace = true

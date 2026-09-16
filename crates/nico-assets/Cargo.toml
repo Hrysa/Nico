@@ -6,16 +6,23 @@ license.workspace = true
 
 [features]
 default = []
-loading = ["dep:nico-runtime", "dep:png", "dep:gltf"]
+loading = ["runtime-loading", "png-import", "gltf-import"]
+runtime-loading = ["dep:nico-runtime"]
+png-import = ["dep:png"]
+gltf-import = ["dep:gltf"]
 
 [dependencies]
 nico-runtime = { path = "../nico-runtime", optional = true }
 png = { version = "0.18", optional = true }
-gltf = { version = "1.4", default-features = false, features = ["utils"], optional = true }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"], optional = true }
 
 [[example]]
 name = "load_texture"
 required-features = ["loading"]
+
+[[example]]
+name = "inspect_model"
+required-features = ["gltf-import"]
 
 [dev-dependencies]
 serde_json = "1"

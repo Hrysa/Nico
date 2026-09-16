@@ -1,5 +1,10 @@
 # Mesh assets and the 3D sample
 
+**Implementation update (2026-09-16):** Static GLB decoding now implements the
+[public importer contract](2026-09-16-extensible-asset-import.md), with independently
+selectable decoder/runtime features. The restricted geometry subset and existing
+sample behavior below are preserved; this does not add character import.
+
 Status: implemented 2026-09-14. Validation evidence belongs in the
 [roadmap](../roadmap.md#4-display-the-game-world).
 
