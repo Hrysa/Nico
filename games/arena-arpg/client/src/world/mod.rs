@@ -1,3 +1,4 @@
+pub mod environment;
 pub mod network;
 mod prediction;
 mod visuals;
@@ -57,6 +58,7 @@ enum Edit {
     Attack { yaw: f64 },
     Dodge { x: f64, z: f64 },
     Pickup { id: u64 },
+    Talk,
     Equip,
     Respawn,
     Reconnect,
@@ -112,7 +114,7 @@ fn schema() -> serde_json::Map<String, Value> {
         {"properties":{"action":{"const":"attack"},"yaw":{"type":"number","minimum":-std::f64::consts::PI,"maximum":std::f64::consts::PI}},"required":["action","yaw"],"additionalProperties":false},
         {"properties":{"action":{"const":"dodge"},"x":number,"z":number},"required":["action","x","z"],"additionalProperties":false},
         {"properties":{"action":{"const":"pickup"},"id":{"type":"integer","minimum":1}},"required":["action","id"],"additionalProperties":false},
-        {"properties":{"action":{"enum":["equip","respawn","reconnect"]}},"required":["action"],"additionalProperties":false},
+        {"properties":{"action":{"enum":["talk","equip","respawn","reconnect"]}},"required":["action"],"additionalProperties":false},
         {"properties":{"action":{"const":"camera"},"yaw":{"type":"number","minimum":-std::f32::consts::PI,"maximum":std::f32::consts::PI},"pitch":{"type":"number","minimum":0.15,"maximum":1.1},"distance":{"type":"number","minimum":0.5,"maximum":20}},"required":["action","yaw","pitch","distance"],"additionalProperties":false}
     ]}).as_object().unwrap().clone()
 }
@@ -121,6 +123,7 @@ pub fn register(
     client: WorldClient,
     assets: [Option<Arc<CharacterAssets>>; 3],
     definitions: [VisualDefinition; 3],
+    environment: environment::Environment,
 ) -> std::io::Result<(AppBuilder, ToolExtensions)> {
     let ops = Arc::new(Mutex::new(Operations {
         commands: FifoCommands::new(128),
@@ -192,7 +195,7 @@ pub fn register(
                 Edit::Camera{yaw,pitch,distance}=>{camera.rig.set_angles(yaw,pitch);camera.rig.set_distance(distance);ops.commands.record(json!({"command_id":id,"state":"applied"}));},
                 Edit::Reconnect=>{reconnect=true;ops.commands.record(json!({"command_id":id,"state":"applied"}));},
                 Edit::Move{x,z,ticks}=>movement=Some(Movement{id,direction:Vec2::new(x,z),remaining:ticks}),
-                edit=>{command=Some(id);match edit{Edit::Attack{yaw}=>input.attack_yaw=Some(yaw),Edit::Dodge{x,z}=>input.dodge=Some(Vec2::new(x,z)),Edit::Pickup{id}=>input.pickup=Some(id),Edit::Equip=>input.equip=Some(ITEM_SWORD.into()),Edit::Respawn=>input.respawn=true,_=>unreachable!()};}
+                edit=>{command=Some(id);match edit{Edit::Attack{yaw}=>input.attack_yaw=Some(yaw),Edit::Dodge{x,z}=>input.dodge=Some(Vec2::new(x,z)),Edit::Pickup{id}=>input.pickup=Some(id),Edit::Talk=>input.talk=true,Edit::Equip=>input.equip=Some(ITEM_SWORD.into()),Edit::Respawn=>input.respawn=true,_=>unreachable!()};}
             }
         }
         let client=ctx.world.resource_mut::<WorldClient>()?;
@@ -200,6 +203,7 @@ pub fn register(
         if sample.pressed[0]{input.attack_yaw=Some(yaw);}
         if sample.pressed[1]{input.dodge=Some(if input.movement.x!=0.||input.movement.z!=0.{input.movement}else{client.prediction.as_ref().map_or(Vec2::new(yaw.sin(),yaw.cos()),|p|p.actor.facing)});}
         if sample.pressed[2]&&let Some(snapshot)=&client.latest&&let Some(local)=snapshot.objects.iter().find(|o|o.id==snapshot.player){input.pickup=snapshot.objects.iter().filter(|o|o.kind==ObjectKind::Loot&&(o.position.x-local.position.x).hypot(o.position.z-local.position.z)<=2.).min_by_key(|o|o.id).map(|o|o.id);}
+        if sample.pressed[2] && input.pickup.is_none(){input.talk=true;}
         if sample.pressed[3]{input.equip=Some(ITEM_SWORD.into());}input.respawn|=sample.pressed[4];
         if let Some(active)=&mut movement{input.movement=active.direction;active.remaining-=1;if active.remaining==0{command=Some(active.id);movement=None;}}
         if client.status=="connected"{
@@ -212,7 +216,7 @@ pub fn register(
         Ok(())
     });
     let read = ops.clone();
-    let mut visuals = visuals::Visuals::new(assets, definitions);
+    let mut visuals = visuals::Visuals::new(assets, definitions, environment);
     builder.add_system(Stage::Update,"world_client::extract",move|ctx|{
         let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
         let client=ctx.world.resource::<WorldClient>()?;let position=client.prediction.as_ref().map(|p|p.actor.position).unwrap_or(client.zone.settlement);let obstacles=client.zone.obstacles.clone();let dt=ctx.time.delta();
@@ -222,7 +226,7 @@ pub fn register(
         let client=ctx.world.resource::<WorldClient>()?;
         let (scene,hud)=visuals.render(client,view,window.logical_size,window.pointer_captured,dt).map_err(|message|RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message})?;
         if scene.meshes.len()>256{return Err(RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message:"world draw budget exceeded".into()});}
-        let mut ops=read.lock().unwrap();let state=json!({"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"rendered_meshes":scene.meshes.len(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);
+        let mut ops=read.lock().unwrap();let state=json!({"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"environment":visuals.environment.inspection,"rendered_meshes":scene.meshes.len(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);
         *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<Scene2d>()?=hud;Ok(())
     });
     builder.add_system(Stage::Shutdown, "world_client::close", move |ctx| {

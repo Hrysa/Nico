@@ -27,7 +27,8 @@ The hero uses an extracted Library 2 `Sword_Regular_C` clip; other hero motions
 retain compatible fallbacks. See `../characters/hero/LICENSE.md` for reproduction
 and selection details. Bestiary runtime copies and extracted monster animations
 are documented in `../characters/monsters/README.md`; both monster types are used
-in world and arena rendering. Nature is not yet connected to world rendering.
+in world and arena rendering. Selected Nature models are prepared for Meadow;
+see [world scenery](../worlds/README.md) for the layout and reproduction command.
 Bestiary retains its own QAL terms, including the
 restriction on redistribution as standalone assets; it is not CC0 or covered by
 the repository's code license.

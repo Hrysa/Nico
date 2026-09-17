@@ -35,6 +35,9 @@ struct Args {
     /// Directory containing matching .char-vis.toml definitions and relative assets.
     #[arg(long, default_value = character::definition::DEFAULT_VISUAL_ROOT)]
     visual_characters: PathBuf,
+    /// Client-only scenery definition; solid placements come from the server zone.
+    #[arg(long, default_value = world::environment::DEFAULT_VISUAL_WORLD)]
+    visual_world: PathBuf,
     /// Override the hero model; requires the selected animation directory.
     #[arg(long, requires = "character_animations")]
     character_model: Option<PathBuf>,
@@ -66,7 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
     let (builder, tools) = if !args.arena {
         let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
-        world::register(builder, client, character, definitions)?
+        let environment = world::environment::Environment::load(&args.visual_world)?;
+        world::register(builder, client, character, definitions, environment)?
     } else {
         let (builder, mut tools) = arena_arpg_shared::tools::register(
             builder

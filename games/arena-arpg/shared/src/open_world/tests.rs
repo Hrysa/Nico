@@ -259,3 +259,196 @@ fn authored_zone_loads_obstacles_and_camp_and_rejects_blocked_spawns() {
         "house blocks traversal"
     );
 }
+
+#[test]
+fn named_tree_obstacles_block_spawns_and_reject_duplicate_ids() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/logic/worlds/meadow.world.toml");
+    let mut zone = content::ZoneDefinition::load(&path).unwrap();
+    assert!(zone.blocked(Vec2::new(-20., -30.), 0.4));
+    assert!(!zone.blocked(Vec2::new(0., -10.), 0.4));
+    let mut world = OpenWorld::with_content(
+        CharacterCatalog::builtin(),
+        zone.clone(),
+        content::ItemDefinition::default(),
+    )
+    .unwrap();
+    let id = player(&mut world, "treewalker", Vec2::new(-20., -33.));
+    for sequence in 1..=120 {
+        world
+            .submit(
+                id,
+                PlayerInput {
+                    movement: Vec2::new(0., 1.),
+                    ..input(sequence)
+                },
+            )
+            .unwrap();
+        world.step();
+    }
+    assert!(
+        world.record(id).unwrap().position.z < -30.85,
+        "trunk blocks authoritative movement"
+    );
+    zone.obstacles[1].id = zone.obstacles[0].id.clone();
+    assert_eq!(zone.validate(), Err("invalid_obstacle"));
+}
+
+#[test]
+fn quest_requires_acceptance_camp_kills_and_nearby_living_turn_in() {
+    use quest::{QuestDefinition, QuestStage};
+    let mut catalog = CharacterCatalog::builtin().definitions().clone();
+    catalog[0].arena.attacks.primary.damage = 100;
+    catalog[0].arena.attacks.primary.windup_ticks = 2;
+    let mut w = OpenWorld::new(CharacterCatalog::new(catalog).unwrap());
+    w.zone.quest = Some(QuestDefinition {
+        warden: Vec2::new(0., -20.),
+        camp: Vec2::new(0., 2.),
+        camp_radius_m: 4.,
+    });
+    let a = player(&mut w, "alice", Vec2::new(0., 0.));
+    let b = player(&mut w, "bob", Vec2::new(-4., 0.));
+    let talk = PlayerInput {
+        talk: true,
+        ..Default::default()
+    };
+    w.interact(a, &talk);
+    assert_eq!(
+        w.snapshot(a).unwrap().last_error.as_deref(),
+        Some("warden_out_of_reach")
+    );
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Available);
+    w.zone.quest.as_mut().unwrap().warden = Vec2::new(0., 0.);
+    w.interact(a, &talk);
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Active);
+    w.interact(a, &talk);
+    assert_eq!(w.record(a).unwrap().experience, 0);
+    for sequence in 1..=3 {
+        let monster = w
+            .spawn_monster(ObjectKind::Grunt, Vec2::new(0., 2.))
+            .unwrap();
+        w.submit(
+            a,
+            PlayerInput {
+                attack_yaw: Some(0.),
+                ..input(sequence)
+            },
+        )
+        .unwrap();
+        for _ in 0..60 {
+            w.step();
+        }
+        assert_eq!(
+            w.objects().iter().find(|o| o.id == monster).unwrap().health,
+            0
+        );
+        assert_eq!(w.record(a).unwrap().quest.kills, sequence as u16);
+        w.remove(monster);
+    }
+    assert_eq!(w.record(b).unwrap().quest.stage, QuestStage::Available);
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Ready);
+    w.entities
+        .entities()
+        .get::<&mut Combat>(w.ids[&a])
+        .unwrap()
+        .health = 0;
+    w.interact(a, &talk);
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Ready);
+    w.entities
+        .entities()
+        .get::<&mut Combat>(w.ids[&a])
+        .unwrap()
+        .health = 100;
+    let record = w.disconnect(a).unwrap();
+    let a = w.connect(record).unwrap();
+    w.interact(a, &talk);
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Completed);
+    assert_eq!(w.record(a).unwrap().experience, 80);
+    assert_eq!(w.record(a).unwrap().inventory, vec![ITEM_SWORD]);
+    w.interact(a, &talk);
+    assert_eq!(w.record(a).unwrap().experience, 80);
+    assert_eq!(w.record(a).unwrap().inventory.len(), 1);
+}
+
+#[test]
+fn quest_records_migrate_and_validate_and_rewards_do_not_duplicate_owned_sword() {
+    use quest::{QuestProgress, QuestStage};
+    let old = CharacterRecord::new("legacy".into(), 100);
+    let mut value = serde_json::to_value(&old).unwrap();
+    value.as_object_mut().unwrap().remove("quest");
+    let restored: CharacterRecord = serde_json::from_value(value).unwrap();
+    assert_eq!(restored, old);
+    let mut bad = restored;
+    bad.quest = QuestProgress {
+        stage: QuestStage::Completed,
+        kills: 0,
+    };
+    assert!(bad.validate().is_err());
+    let mut w = world();
+    w.zone.quest = Some(quest::QuestDefinition {
+        warden: Vec2::new(0., -20.),
+        camp: Vec2::new(0., 9.),
+        camp_radius_m: 12.,
+    });
+    bad.quest.kills = 3;
+    bad.quest.stage = QuestStage::Ready;
+    bad.inventory = vec![ITEM_SWORD.into(); 32];
+    let a = w.connect(bad).unwrap();
+    w.interact(
+        a,
+        &PlayerInput {
+            talk: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(w.record(a).unwrap().experience, 50);
+    assert_eq!(w.record(a).unwrap().inventory.len(), 32);
+}
+
+#[test]
+fn kills_before_acceptance_and_outside_camp_do_not_advance_quest() {
+    use quest::{QuestDefinition, QuestStage};
+    let mut catalog = CharacterCatalog::builtin().definitions().clone();
+    catalog[0].arena.attacks.primary.damage = 100;
+    catalog[0].arena.attacks.primary.windup_ticks = 2;
+    let mut w = OpenWorld::new(CharacterCatalog::new(catalog).unwrap());
+    w.zone.quest = Some(QuestDefinition {
+        warden: Vec2::new(0., 0.),
+        camp: Vec2::new(0., 2.),
+        camp_radius_m: 4.,
+    });
+    let a = player(&mut w, "alice", Vec2::new(0., 0.));
+    for sequence in 1..=2 {
+        let monster = w
+            .spawn_monster(ObjectKind::Grunt, Vec2::new(0., 2.))
+            .unwrap();
+        if sequence == 2 {
+            w.interact(
+                a,
+                &PlayerInput {
+                    talk: true,
+                    ..Default::default()
+                },
+            );
+            w.zone.quest.as_mut().unwrap().camp = Vec2::new(20., 20.);
+        }
+        w.submit(
+            a,
+            PlayerInput {
+                attack_yaw: Some(0.),
+                ..input(sequence)
+            },
+        )
+        .unwrap();
+        for _ in 0..60 {
+            w.step();
+        }
+        assert_eq!(
+            w.objects().iter().find(|o| o.id == monster).unwrap().health,
+            0
+        );
+        assert_eq!(w.record(a).unwrap().quest.kills, 0);
+        w.remove(monster);
+    }
+    assert_eq!(w.record(a).unwrap().quest.stage, QuestStage::Active);
+}

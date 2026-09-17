@@ -65,6 +65,11 @@ definitions are shared by reference. The game owns action/dodge rules, AI, loot,
 inventory, progression, session protocol and persistence; these are not engine
 components or inheritance hierarchies.
 
+The Meadow quest stores bounded stage/count progress in each character record.
+Zone content owns the stationary warden and camp area; sequenced talk input is
+validated at the simulation boundary. Client rendering and prompts consume owned
+zone/snapshot values. See the [quest contract](plans/2026-09-17-meadow-quest.md).
+
 The authoritative server simulates at 60 Hz and consumes at most one sequenced
 input per player per tick. Movement is bounded and collision constrained. Each
 input describes one tick; missing inputs do not renew movement. Queues are bounded

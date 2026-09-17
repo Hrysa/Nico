@@ -10,6 +10,7 @@ use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 pub struct Visuals {
+    pub environment: super::environment::Environment,
     assets: [Option<Arc<CharacterAssets>>; 3],
     characters: BTreeMap<u64, Character>,
     definitions: [VisualDefinition; 3],
@@ -59,6 +60,7 @@ impl Visuals {
     pub fn new(
         assets: [Option<Arc<CharacterAssets>>; 3],
         definitions: [VisualDefinition; 3],
+        environment: super::environment::Environment,
     ) -> Self {
         let parts = definitions
             .iter()
@@ -71,6 +73,7 @@ impl Visuals {
             })
             .collect();
         Self {
+            environment,
             assets,
             characters: BTreeMap::new(),
             definitions,
@@ -111,6 +114,9 @@ impl Visuals {
         dt: Duration,
     ) -> Result<(Scene3d, Scene2d), String> {
         if self.epoch != client.epoch {
+            self.environment
+                .bind(&client.zone)
+                .map_err(|e| e.to_string())?;
             self.characters.clear();
             self.epoch = client.epoch;
             self.positions.clear();
@@ -157,7 +163,48 @@ impl Visuals {
             1.,
             [0.54, 0.48, 0.31, 1.],
         ));
+        let projection = camera.view_projection(size[0] / size[1].max(1.));
+        // A stationary, non-combatant warden uses the existing procedural body.
+        if let Some(q) = &client.zone.quest {
+            let p = &self.definitions[0].arena.procedural.parts;
+            for (i, offset) in [
+                (0, p.body.position_m),
+                (1, p.head.position_m),
+                (2, p.leg.position_m),
+                (3, p.arm.position_m),
+            ] {
+                for sign in if i >= 2 { &[-1., 1.][..] } else { &[1.][..] } {
+                    scene.meshes.push(draw(
+                        self.parts[0][i].clone(),
+                        self.shade.clone(),
+                        [
+                            q.warden.x as f32 + offset[0] * sign,
+                            offset[1],
+                            q.warden.z as f32 + offset[2],
+                        ],
+                        Quat::IDENTITY,
+                        1.,
+                        if i == 1 {
+                            [0.9, 0.7, 0.5, 1.]
+                        } else {
+                            [0.9, 0.65, 0.12, 1.]
+                        },
+                    ));
+                }
+            }
+            scene.meshes.push(draw(
+                self.cube.clone(),
+                self.white.clone(),
+                [q.warden.x as f32, 2.6, q.warden.z as f32],
+                Quat::from_rotation_z(0.78),
+                0.25,
+                [1., 0.85, 0.1, 1.],
+            ));
+        }
         for (index, obstacle) in client.zone.obstacles.iter().enumerate() {
+            if self.environment.obstacle(index, projection, &mut scene) {
+                continue;
+            }
             scene.meshes.push(draw(
                 self.obstacles
                     .get(index)
@@ -186,7 +233,6 @@ impl Visuals {
         });
         self.characters
             .retain(|id, _| objects.iter().any(|(_, o)| o.id == *id));
-        let projection = camera.view_projection(size[0] / size[1].max(1.));
         for (tick, o) in objects.iter().take(24) {
             // Reserve a complete actor, health bar and telegraph. An imported
             // model may have 32 primitives plus its sword; a fixed threshold
@@ -359,6 +405,7 @@ impl Visuals {
         }
         self.positions
             .retain(|id, _| objects.iter().any(|(_, o)| o.id == *id));
+        self.environment.decorate(projection, &mut scene);
         let scale = (size[0] / 800.).clamp(1., 2.5);
         let margin = 12.;
         rectangle(
@@ -414,7 +461,45 @@ impl Visuals {
                 [1.; 4],
             );
         }
-        let help = "WASD MOVE / MOUSE LOOK / LMB ATTACK / SPACE DODGE\nE PICK UP / F EQUIP / R RESPAWN / Q RECONNECT / ESC RELEASE";
+        if let (Some(q), Some(snapshot)) = (&client.zone.quest, &client.latest) {
+            use arena_arpg_shared::open_world::quest::QuestStage;
+            let (target, text) = match snapshot.quest.stage {
+                QuestStage::Available => {
+                    (q.warden, "MEADOW WATCH / SPEAK TO THE WARDEN".to_owned())
+                }
+                QuestStage::Active => (
+                    q.camp,
+                    format!("MEADOW WATCH / CAMP MONSTERS {}/3", snapshot.quest.kills),
+                ),
+                QuestStage::Ready => (q.warden, "MEADOW WATCH / RETURN FOR YOUR REWARD".to_owned()),
+                QuestStage::Completed => (
+                    q.warden,
+                    "MEADOW WATCH COMPLETE / +50 XP AND IRON SWORD".to_owned(),
+                ),
+            };
+            let distance = (target.x - local.x).hypot(target.z - local.z);
+            let nearby = (q.warden.x - local.x).hypot(q.warden.z - local.z) <= 2.5;
+            let hint = if nearby {
+                "E TALK / GOLD MARKER: WARDEN"
+            } else {
+                "GOLD MARKER: SETTLEMENT WARDEN"
+            };
+            rectangle(
+                &mut hud,
+                [margin, 100. * scale],
+                [390. * scale, 58. * scale],
+                [0.07, 0.1, 0.13, 0.9],
+                self.white.clone(),
+            );
+            self.font.draw(
+                &mut hud.hud,
+                &format!("{text}\nOBJECTIVE {distance:.0}M\n{hint}"),
+                [margin + 8., 108. * scale],
+                scale,
+                [1., 0.9, 0.5, 1.],
+            );
+        }
+        let help = "WASD MOVE / MOUSE LOOK / LMB ATTACK / SPACE DODGE\nE TALK/PICK UP / F EQUIP / R RESPAWN / Q RECONNECT / ESC RELEASE";
         rectangle(
             &mut hud,
             [margin, (size[1] - 38. * scale).max(0.)],
@@ -442,7 +527,7 @@ impl Visuals {
             self.font.draw(
                 &mut hud.hud,
                 "CONNECTION LOST / RETRYING",
-                [margin + 8., 100. * scale],
+                [margin + 8., 160. * scale],
                 scale,
                 [1., 0.5, 0.4, 1.],
             );

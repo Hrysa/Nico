@@ -377,14 +377,14 @@ mod tests {
         message(
             &mut a,
             ClientMessage::Hello {
-                version: 1,
+                version: PROTOCOL_VERSION,
                 character: "alice".into(),
             },
         );
         message(
             &mut b,
             ClientMessage::Hello {
-                version: 1,
+                version: PROTOCOL_VERSION,
                 character: "bob".into(),
             },
         );
@@ -436,7 +436,7 @@ mod tests {
         message(
             &mut a,
             ClientMessage::Hello {
-                version: 1,
+                version: PROTOCOL_VERSION,
                 character: "alice".into(),
             },
         );

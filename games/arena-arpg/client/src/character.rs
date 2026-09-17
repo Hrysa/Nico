@@ -583,7 +583,7 @@ impl Character {
     }
 }
 
-fn load(path: &Path) -> Result<Arc<Model>> {
+pub(crate) fn load(path: &Path) -> Result<Arc<Model>> {
     let mut bytes = Vec::new();
     File::open(path)?
         .take(64 * 1024 * 1024 + 1)

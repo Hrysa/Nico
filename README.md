@@ -42,6 +42,11 @@ not convert older commits; history migration is a separate operation that change
 commit IDs and requires coordinating any update to a shared remote branch.
 
 The default game is a shared outdoor world with a settlement and monster camp.
+Meadow uses imported Nature trees, rocks, bushes, grass, and flowers. Solid
+placements and trunk colliders come from the server's zone; small plants are
+decorative. The client option `--visual-world` selects its scenery TOML. See the
+[world scenery guide](games/arena-arpg/assets/presentation/worlds/README.md) for
+configuration, asset preparation, and rendering limitations.
 Run these commands in separate terminals from the repository root:
 
 ```text
@@ -57,10 +62,15 @@ digits or underscores. This milestone uses local development identities and
 loopback networking, not Internet accounts or MMO-scale infrastructure.
 
 WASD moves, mouse motion aims the camera, left click attacks, Space dodges,
-E picks up nearby loot, F equips the iron sword, R respawns after death, and Q
-reconnects. Click to capture the pointer; Escape releases it. The server saves
-position, health, XP, inventory and equipment every five simulation seconds and
-on disconnect/orderly shutdown. Monster state is not persistent.
+E talks to the nearby gold-marked warden or picks up loot, F equips the iron sword,
+R respawns after death, and Q reconnects. Click to capture the pointer; Escape
+releases it. The server saves position, health, XP, inventory, equipment, and quest
+progress every five simulation seconds and on disconnect/orderly shutdown.
+Monster state is not persistent.
+
+Speak to the warden to accept **Meadow Watch**, defeat three camp monsters, and
+return for 50 XP and an iron sword. Killing blows count after acceptance; the HUD
+tracks progress and distance. See the [quest contract](docs/plans/2026-09-17-meadow-quest.md).
 
 The game endpoint defaults to `127.0.0.1:47640`: override it with server `--listen`
 and client `--server`. Server `--data-dir` defaults to `target/world-data`; choose
@@ -70,7 +80,7 @@ authored zone and loot definitions. Both game modes require 60 Hz simulation.
 
 Through the bridge, discover the current instances and tool catalog. World servers
 expose `world_state` and queued `world_spawn`; clients expose `world_client_state`,
-`client_characters`, and queued `world_action` (movement, attack, dodge, pickup,
+`client_characters`, and queued `world_action` (movement, attack, dodge, talk, pickup,
 equip, respawn, reconnect and camera). A submitted client command is not proof of
 server success: compare its epoch/sequence with the authoritative acknowledgement
 and resulting world state. `last_disconnect`, prediction backlog and snapshot age

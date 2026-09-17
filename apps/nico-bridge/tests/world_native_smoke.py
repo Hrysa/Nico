@@ -113,7 +113,7 @@ def main():
     def record(snapshot):
         p = actor(snapshot)
         return {**{k: p[k] for k in ('position', 'health', 'equipped')},
-                **{k: snapshot['authoritative'][k] for k in ('experience', 'inventory')}}
+                **{k: snapshot['authoritative'][k] for k in ('experience', 'inventory', 'quest')}}
 
     save_directory = tempfile.TemporaryDirectory(prefix="nico-world-native-")
     saves = save_directory.name
@@ -132,6 +132,17 @@ def main():
             clients.append((identity, process))
         a, b = [c[0] for c in clients]
         print(json.dumps({'event': 'control_started', 'instances': report['instances']}), flush=True)
+        environment = until(lambda: state(a), lambda s: s.get('environment', {}).get('solid_models') == 11)
+        assert environment['environment']['loaded_models'] == 7
+        assert environment['environment']['decorations'] == 44
+        assert environment['rendered_meshes'] <= 256
+        report['checks']['environment'] = environment['environment']
+        go(a, 2, -19)
+        accepted_quest = command(a, 'talk')
+        assert accepted_quest['authoritative']['quest'] == {'stage': 'active', 'kills': 0}
+        report['checks']['quest_accepted'] = accepted_quest
+        capture(a, 'quest-accepted.png')
+        go(a, 0, -20)
         for identity in (a, b):
             command(identity, 'move', wait=False, x=0, z=-1, ticks=120)
             time.sleep(.3)

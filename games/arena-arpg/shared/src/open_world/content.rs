@@ -11,6 +11,8 @@ pub struct ZoneDefinition {
     pub half_extent_m: f64,
     pub settlement: Vec2,
     #[serde(default)]
+    pub quest: Option<super::quest::QuestDefinition>,
+    #[serde(default)]
     pub obstacles: Vec<Obstacle>,
     #[serde(default)]
     pub monsters: Vec<Spawn>,
@@ -22,6 +24,7 @@ impl Default for ZoneDefinition {
             id: "meadow".into(),
             half_extent_m: ZONE_LIMIT,
             settlement: Vec2::new(0., -20.),
+            quest: None,
             obstacles: vec![],
             monsters: vec![],
         }
@@ -30,6 +33,9 @@ impl Default for ZoneDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Obstacle {
+    /// Optional stable identity for client presentation; never a model path.
+    #[serde(default)]
+    pub id: String,
     pub center: [f64; 3],
     pub size: [f64; 3],
     pub color: [f32; 4],
@@ -107,8 +113,21 @@ impl ZoneDefinition {
         if !in_zone(self.settlement) {
             return Err("invalid_settlement");
         }
+        if let Some(q) = &self.quest
+            && (!in_zone(q.warden)
+                || !in_zone(q.camp)
+                || self.blocked(q.warden, 1.)
+                || super::distance(q.warden, self.settlement) > 8.
+                || !q.camp_radius_m.is_finite()
+                || !(1.0..=24.0).contains(&q.camp_radius_m))
+        {
+            return Err("invalid_quest_definition");
+        }
+        let mut obstacle_ids = std::collections::BTreeSet::new();
         for o in &self.obstacles {
-            if o.center.iter().any(|x| !x.is_finite())
+            if o.id.len() > 64
+                || (!o.id.is_empty() && !obstacle_ids.insert(&o.id))
+                || o.center.iter().any(|x| !x.is_finite())
                 || o.size
                     .iter()
                     .any(|x| !x.is_finite() || *x <= 0. || *x > 32.)

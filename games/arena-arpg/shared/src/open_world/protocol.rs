@@ -1,7 +1,7 @@
 //! Versioned game messages; transport carries opaque bounded frames.
 use super::{PlayerInput, WorldSnapshot};
 use serde::{Deserialize, Serialize};
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {

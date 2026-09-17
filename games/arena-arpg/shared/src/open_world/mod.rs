@@ -3,6 +3,7 @@
 pub mod content;
 pub mod persistence;
 pub mod protocol;
+pub mod quest;
 #[cfg(all(feature = "tools", feature = "network"))]
 pub mod runtime;
 #[cfg(feature = "network")]
@@ -36,6 +37,8 @@ pub struct CharacterRecord {
     pub experience: u64,
     pub inventory: Vec<String>,
     pub equipped: Option<String>,
+    #[serde(default)]
+    pub quest: quest::QuestProgress,
 }
 impl CharacterRecord {
     pub fn new(name: String, health: u16) -> Self {
@@ -47,6 +50,7 @@ impl CharacterRecord {
             experience: 0,
             inventory: vec![],
             equipped: None,
+            quest: quest::QuestProgress::default(),
         }
     }
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -60,7 +64,8 @@ impl CharacterRecord {
         {
             return Err("invalid_character_identity");
         }
-        if !valid_position(self.position)
+        if !self.quest.valid()
+            || !valid_position(self.position)
             || self.inventory.len() > 32
             || self.inventory.iter().any(|i| i != ITEM_SWORD)
             || self
@@ -83,6 +88,8 @@ pub struct PlayerInput {
     pub pickup: Option<ObjectId>,
     pub equip: Option<String>,
     pub respawn: bool,
+    #[serde(default)]
+    pub talk: bool,
 }
 impl PlayerInput {
     pub fn valid(&self) -> bool {
@@ -141,6 +148,7 @@ pub struct WorldSnapshot {
     pub acknowledged_input: u64,
     pub experience: u64,
     pub inventory: Vec<String>,
+    pub quest: quest::QuestProgress,
     pub last_error: Option<String>,
     pub objects: Vec<ObjectSnapshot>,
 }
@@ -508,6 +516,7 @@ impl OpenWorld {
             acknowledged_input: p.acknowledged,
             experience: p.record.experience,
             inventory: p.record.inventory.clone(),
+            quest: p.record.quest.clone(),
             last_error: p.last_error.clone(),
             objects: self
                 .objects()
@@ -735,6 +744,9 @@ impl OpenWorld {
         if self.entities.entities().get::<&Combat>(e).unwrap().health == 0 {
             return;
         }
+        if input.talk {
+            self.talk_to_warden(id);
+        }
         if let Some(drop_id) = input.pickup {
             let position = self.entities.entities().get::<&Position>(e).unwrap().0;
             let item = self.ids.get(&drop_id).and_then(|&d| {
@@ -842,6 +854,15 @@ impl OpenWorld {
                         .get::<&mut Player>(self.ids[&attacker])
                     {
                         p.record.experience = p.record.experience.saturating_add(10);
+                        let home = self.entities.entities().get::<&Monster>(e).unwrap().home;
+                        if self
+                            .zone
+                            .quest
+                            .as_ref()
+                            .is_some_and(|q| distance(home, q.camp) <= q.camp_radius_m)
+                        {
+                            p.record.quest.credit();
+                        }
                     }
                     let position = self.entities.entities().get::<&Position>(e).unwrap().0;
                     self.spawn_loot(position);

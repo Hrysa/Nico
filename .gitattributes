@@ -15,3 +15,4 @@ games/arena-arpg/assets/presentation/quaternius/*.md text eol=lf
 games/arena-arpg/assets/presentation/quaternius/*.json text eol=lf
 games/arena-arpg/assets/presentation/quaternius/**/*.txt -text -whitespace
 games/arena-arpg/assets/presentation/characters/monsters/*-License.txt -text -whitespace
+games/arena-arpg/assets/presentation/worlds/nature/License.txt -text -whitespace

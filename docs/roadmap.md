@@ -440,6 +440,28 @@ accessible to automation.
 finish, and exit. Required visual/audio and accessibility checks pass; restart,
 disconnect, and focus loss leave input, sound, and UI in a valid state.
 
+### Meadow scenery milestone
+
+**Status (2026-09-17):** Meadow uses seven imported Nature models for two rocks,
+nine trees, and 44 decorative plants. Server-owned obstacle IDs connect solid
+visuals to authoritative box collision; scenery definitions remain client-only.
+Focused tests and the two-client native world scenario passed. The
+[Nature review](reviews/2026-09-17-nature.md) records rendered evidence and the
+remaining material, collision, and art-acceptance limits.
+
+### Meadow quest milestone
+
+**Status (2026-09-17):** A settlement warden offers Meadow Watch: three camp
+killing blows, return interaction, and a one-time XP/sword reward. Character saves
+and private snapshots include quest progress; old saves default to unstarted.
+The client provides a procedural NPC, marker, HUD progress, and E/MCP interaction.
+All 39 client and 66 shared tests passed; strict workspace Clippy passed.
+The isolated two-client native scenario verified acceptance and progress retention
+through reconnect and server restart. Full kill/turn-in and reward idempotency
+have simulation regression coverage, not native quest-completion evidence.
+See the [quest contract](plans/2026-09-17-meadow-quest.md) and
+[validation review](reviews/2026-09-17-meadow-quest.md).
+
 ### Client character milestone
 
 **Current status (2026-09-17):** World and arena render the imported hero and

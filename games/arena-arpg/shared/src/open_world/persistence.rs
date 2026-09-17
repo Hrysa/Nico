@@ -82,6 +82,10 @@ mod tests {
         assert!(store.load("../escape").is_err());
         let mut record = CharacterRecord::new("hero".into(), 80);
         record.experience = 30;
+        record.quest = super::super::quest::QuestProgress {
+            stage: super::super::quest::QuestStage::Active,
+            kills: 2,
+        };
         record.inventory.push(super::super::ITEM_SWORD.into());
         record.equipped = Some(super::super::ITEM_SWORD.into());
         store.save(&record).unwrap();

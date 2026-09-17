@@ -2,21 +2,26 @@ schema_version = 1
 id = "meadow"
 half_extent_m = 64.0
 settlement = { x = 0.0, z = -20.0 }
+quest = { warden = { x = 3.0, z = -18.0 }, camp = { x = 0.0, z = 9.0 }, camp_radius_m = 12.0 }
 
 # Settlement houses flank the path north to the monster camp.
 [[obstacles]]
+id = "house-west"
 center = [-9.0, 2.0, -22.0]
 size = [6.0, 4.0, 7.0]
 color = [0.65, 0.46, 0.28, 1.0]
 [[obstacles]]
+id = "house-east"
 center = [9.0, 2.0, -22.0]
 size = [6.0, 4.0, 7.0]
 color = [0.55, 0.4, 0.3, 1.0]
 [[obstacles]]
+id = "rock-west"
 center = [-15.0, 1.5, 5.0]
 size = [4.0, 3.0, 5.0]
 color = [0.4, 0.44, 0.4, 1.0]
 [[obstacles]]
+id = "rock-east"
 center = [16.0, 2.0, 14.0]
 size = [5.0, 4.0, 6.0]
 color = [0.4, 0.44, 0.4, 1.0]
@@ -30,3 +35,66 @@ position = { x = 0.0, z = 12.0 }
 [[monsters]]
 kind = "brute"
 position = { x = 7.0, z = 7.0 }
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-0"
+center = [-20.0, 1.4, -30.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-1"
+center = [20.0, 1.4, -30.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-2"
+center = [-19.0, 1.4, -9.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-3"
+center = [19.0, 1.4, -9.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-4"
+center = [-25.0, 1.4, 7.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-5"
+center = [25.0, 1.4, 7.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-6"
+center = [-20.0, 1.4, 27.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-7"
+center = [20.0, 1.4, 27.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]
+
+# Conservative trunk collider; canopy is client-only.
+[[obstacles]]
+id = "tree-8"
+center = [0.0, 1.4, 34.0]
+size = [1.0, 2.8, 1.0]
+color = [0.35, 0.25, 0.15, 1.0]

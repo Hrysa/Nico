@@ -1,0 +1,317 @@
+schema_version = 1
+zone = "meadow"
+
+[models]
+tree = "nature/CommonTree_1.glb"
+pine = "nature/Pine_1.glb"
+rock = "nature/Rock_Medium_1.glb"
+rock2 = "nature/Rock_Medium_2.glb"
+bush = "nature/Bush_Common.glb"
+grass = "nature/Grass_Common_Short.glb"
+flowers = "nature/Flower_3_Group.glb"
+
+# Rocks fit the server's full box; trees share the trunk's ground anchor.
+[obstacles.rock-west]
+model = "rock"
+[obstacles.rock-east]
+model = "rock2"
+
+[obstacles.tree-0]
+model = "pine"
+height_m = 6.4
+
+[obstacles.tree-1]
+model = "tree"
+height_m = 7.1
+
+[obstacles.tree-2]
+model = "tree"
+height_m = 7.8
+
+[obstacles.tree-3]
+model = "pine"
+height_m = 6.4
+
+[obstacles.tree-4]
+model = "tree"
+height_m = 7.1
+
+[obstacles.tree-5]
+model = "tree"
+height_m = 7.8
+
+[obstacles.tree-6]
+model = "pine"
+height_m = 6.4
+
+[obstacles.tree-7]
+model = "tree"
+height_m = 7.1
+
+[obstacles.tree-8]
+model = "tree"
+height_m = 7.8
+
+[[decorations]]
+model = "grass"
+position = [-4.0, 0.0, -32.0]
+height_m = 0.45
+yaw_radians = 0.00
+
+[[decorations]]
+model = "flowers"
+position = [-4.7, 0.0, -30.2]
+height_m = 0.55
+yaw_radians = 0.00
+
+[[decorations]]
+model = "grass"
+position = [-4.8, 0.0, -26.0]
+height_m = 0.45
+yaw_radians = 0.40
+
+[[decorations]]
+model = "flowers"
+position = [-5.2, 0.0, -24.2]
+height_m = 0.55
+yaw_radians = 0.70
+
+[[decorations]]
+model = "grass"
+position = [-4.0, 0.0, -15.0]
+height_m = 0.45
+yaw_radians = 0.80
+
+[[decorations]]
+model = "flowers"
+position = [-4.7, 0.0, -13.2]
+height_m = 0.55
+yaw_radians = 1.40
+
+[[decorations]]
+model = "grass"
+position = [-4.8, 0.0, -8.0]
+height_m = 0.45
+yaw_radians = 1.20
+
+[[decorations]]
+model = "flowers"
+position = [-5.2, 0.0, -6.2]
+height_m = 0.55
+yaw_radians = 2.10
+
+[[decorations]]
+model = "grass"
+position = [-4.0, 0.0, -1.0]
+height_m = 0.45
+yaw_radians = 1.60
+
+[[decorations]]
+model = "flowers"
+position = [-4.7, 0.0, 0.8]
+height_m = 0.55
+yaw_radians = 2.80
+
+[[decorations]]
+model = "bush"
+position = [-15.0, 0.0, -33.0]
+height_m = 1.1
+yaw_radians = 0.00
+
+[[decorations]]
+model = "grass"
+position = [-16.5, 0.0, -32.0]
+height_m = 0.65
+yaw_radians = 0.00
+
+[[decorations]]
+model = "bush"
+position = [-16.0, 0.0, -15.0]
+height_m = 1.1
+yaw_radians = 0.30
+
+[[decorations]]
+model = "grass"
+position = [-17.5, 0.0, -14.0]
+height_m = 0.65
+yaw_radians = 0.50
+
+[[decorations]]
+model = "bush"
+position = [-22.0, 0.0, -2.0]
+height_m = 1.1
+yaw_radians = 0.60
+
+[[decorations]]
+model = "grass"
+position = [-23.5, 0.0, -1.0]
+height_m = 0.65
+yaw_radians = 1.00
+
+[[decorations]]
+model = "bush"
+position = [-23.0, 0.0, 16.0]
+height_m = 1.1
+yaw_radians = 0.90
+
+[[decorations]]
+model = "grass"
+position = [-24.5, 0.0, 17.0]
+height_m = 0.65
+yaw_radians = 1.50
+
+[[decorations]]
+model = "bush"
+position = [-15.0, 0.0, 25.0]
+height_m = 1.1
+yaw_radians = 1.20
+
+[[decorations]]
+model = "grass"
+position = [-16.5, 0.0, 26.0]
+height_m = 0.65
+yaw_radians = 2.00
+
+[[decorations]]
+model = "bush"
+position = [-6.0, 0.0, 29.0]
+height_m = 1.1
+yaw_radians = 1.50
+
+[[decorations]]
+model = "grass"
+position = [-7.5, 0.0, 30.0]
+height_m = 0.65
+yaw_radians = 2.50
+
+[[decorations]]
+model = "grass"
+position = [4.0, 0.0, -32.0]
+height_m = 0.45
+yaw_radians = 0.00
+
+[[decorations]]
+model = "flowers"
+position = [4.7, 0.0, -30.2]
+height_m = 0.55
+yaw_radians = 0.00
+
+[[decorations]]
+model = "grass"
+position = [4.8, 0.0, -26.0]
+height_m = 0.45
+yaw_radians = 0.40
+
+[[decorations]]
+model = "flowers"
+position = [5.2, 0.0, -24.2]
+height_m = 0.55
+yaw_radians = 0.70
+
+[[decorations]]
+model = "grass"
+position = [4.0, 0.0, -15.0]
+height_m = 0.45
+yaw_radians = 0.80
+
+[[decorations]]
+model = "flowers"
+position = [4.7, 0.0, -13.2]
+height_m = 0.55
+yaw_radians = 1.40
+
+[[decorations]]
+model = "grass"
+position = [4.8, 0.0, -8.0]
+height_m = 0.45
+yaw_radians = 1.20
+
+[[decorations]]
+model = "flowers"
+position = [5.2, 0.0, -6.2]
+height_m = 0.55
+yaw_radians = 2.10
+
+[[decorations]]
+model = "grass"
+position = [4.0, 0.0, -1.0]
+height_m = 0.45
+yaw_radians = 1.60
+
+[[decorations]]
+model = "flowers"
+position = [4.7, 0.0, 0.8]
+height_m = 0.55
+yaw_radians = 2.80
+
+[[decorations]]
+model = "bush"
+position = [15.0, 0.0, -33.0]
+height_m = 1.1
+yaw_radians = 0.00
+
+[[decorations]]
+model = "grass"
+position = [16.5, 0.0, -32.0]
+height_m = 0.65
+yaw_radians = 0.00
+
+[[decorations]]
+model = "bush"
+position = [16.0, 0.0, -15.0]
+height_m = 1.1
+yaw_radians = 0.30
+
+[[decorations]]
+model = "grass"
+position = [17.5, 0.0, -14.0]
+height_m = 0.65
+yaw_radians = 0.50
+
+[[decorations]]
+model = "bush"
+position = [22.0, 0.0, -2.0]
+height_m = 1.1
+yaw_radians = 0.60
+
+[[decorations]]
+model = "grass"
+position = [23.5, 0.0, -1.0]
+height_m = 0.65
+yaw_radians = 1.00
+
+[[decorations]]
+model = "bush"
+position = [23.0, 0.0, 16.0]
+height_m = 1.1
+yaw_radians = 0.90
+
+[[decorations]]
+model = "grass"
+position = [24.5, 0.0, 17.0]
+height_m = 0.65
+yaw_radians = 1.50
+
+[[decorations]]
+model = "bush"
+position = [15.0, 0.0, 25.0]
+height_m = 1.1
+yaw_radians = 1.20
+
+[[decorations]]
+model = "grass"
+position = [16.5, 0.0, 26.0]
+height_m = 0.65
+yaw_radians = 2.00
+
+[[decorations]]
+model = "bush"
+position = [6.0, 0.0, 29.0]
+height_m = 1.1
+yaw_radians = 1.50
+
+[[decorations]]
+model = "grass"
+position = [7.5, 0.0, 30.0]
+height_m = 0.65
+yaw_radians = 2.50
