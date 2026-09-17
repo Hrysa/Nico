@@ -26,14 +26,21 @@ pub struct Quad {
     pub texture: Option<Arc<Texture>>,
 }
 
-/// Game-published render snapshot. World quads draw in list order, then HUD quads.
-/// HUD units are logical pixels, with X right and Y down from the viewport top-left.
-/// This is a drawing boundary, not a UI layout or interaction system.
+/// Camera-dependent 2D world snapshot. Extraction order is painter order;
+/// callers sort world layers before publication. Units are world units, Y up.
 #[derive(Clone, Debug, Default)]
 pub struct Scene2d {
     pub camera: Camera2d,
     pub world: Vec<Quad>,
-    pub hud: Vec<Quad>,
+}
+
+/// Screen-space UI/HUD snapshot, drawn after world scenes without depth writes.
+/// Coordinates are logical pixels, X right and Y down from the viewport top-left.
+/// Extraction order is painter order. Layout, DPI policy, and interaction belong
+/// to the caller; world-anchored widgets project into these coordinates.
+#[derive(Clone, Debug, Default)]
+pub struct UiScene {
+    pub quads: Vec<Quad>,
 }
 
 /// Right-handed perspective camera with local -Z forward and +Y up.
@@ -119,6 +126,12 @@ impl Default for Camera3d {
 /// Orientation is a finite unit quaternion. Scale must be positive.
 #[derive(Clone, Debug)]
 pub struct MeshInstance {
+    /// Reverse front-face winding for a reflected model/node transform. Importers
+    /// derive this from the node's global determinant, not individual joint bends.
+    /// Also controls front/back normal selection for double-sided materials.
+    pub mirrored: bool,
+    /// None uses the legacy texture/tint as a rough dielectric material.
+    pub material: Option<Arc<nico_assets::PbrMaterial>>,
     pub mesh: Option<Arc<Mesh>>,
     /// Model-space joint matrices, then instance transform. Required for skinned
     /// geometry; absent for static geometry. Immutable snapshots own their data.
@@ -130,9 +143,40 @@ pub struct MeshInstance {
     pub color: [f32; 4],
 }
 
-/// Immutable 3D draw snapshot. The host draws Scene2d after this scene for HUD use.
+/// Immutable 3D draw snapshot. The host draws Scene2d and then UiScene after it.
 #[derive(Clone, Debug, Default)]
 pub struct Scene3d {
+    pub lighting: SceneLighting,
     pub camera: Camera3d,
     pub meshes: Vec<MeshInstance>,
+}
+
+/// One directional light plus diffuse ambient illumination, in linear RGB.
+/// Direction points from the surface toward the light and must be a unit vector.
+#[derive(Clone, Copy, Debug)]
+pub struct SceneLighting {
+    pub direction: [f32; 3],
+    pub radiance: [f32; 3],
+    pub ambient: [f32; 3],
+}
+impl Default for SceneLighting {
+    fn default() -> Self {
+        Self {
+            direction: [0., 1., 0.],
+            radiance: [2.; 3],
+            ambient: [0.15; 3],
+        }
+    }
+}
+impl SceneLighting {
+    pub fn is_valid(&self) -> bool {
+        let direction = glam::Vec3::from(self.direction);
+        direction.is_finite()
+            && (direction.length_squared() - 1.).abs() < 1e-3
+            && self
+                .radiance
+                .iter()
+                .chain(&self.ambient)
+                .all(|v| v.is_finite() && *v >= 0.)
+    }
 }

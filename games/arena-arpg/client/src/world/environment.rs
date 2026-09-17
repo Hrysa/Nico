@@ -111,13 +111,13 @@ impl Environment {
                     .data()
                     .materials
                     .iter()
-                    .any(|m| m.base_color_texture == Some(index))
+                    .any(|m| m.texture_indices().contains(&Some(index)))
                 {
                     textures.push(None);
                     continue;
                 }
                 let image = &model.data().images[texture.image];
-                let remaining = (128 * 1024 * 1024usize).saturating_sub(decoded_bytes);
+                let remaining = (256 * 1024 * 1024usize).saturating_sub(decoded_bytes);
                 let mut context = ImportContext::new(
                     &image.bytes,
                     ImportBudget {

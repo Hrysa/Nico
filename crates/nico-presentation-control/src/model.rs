@@ -1,7 +1,10 @@
 //! Shared model geometry and immutable presentation extraction.
 //! Loading and animation policy stay with the caller. Node matrices are model-space.
 use glam::{Mat4, Vec3};
-use nico_assets::{Mesh, MeshVertex, SkinWeights, Texture, model::Model};
+use nico_assets::{
+    MaterialTexture, Mesh, MeshVertex, PbrMaterial, SkinWeights, Texture,
+    model::{Filter, Model},
+};
 use nico_presentation::MeshInstance;
 use std::sync::Arc;
 
@@ -98,8 +101,8 @@ fn include(bounds: &mut Option<ModelBounds>, point: Vec3) {
 pub struct ModelVisual {
     model: Arc<Model>,
     geometry: Vec<Geometry>,
-    textures: Vec<Option<Arc<Texture>>>,
-    white: Arc<Texture>,
+    materials: Vec<Arc<PbrMaterial>>,
+    default_material: Arc<PbrMaterial>,
 }
 impl ModelVisual {
     /// Texture slots use the model texture indices; None selects opaque white.
@@ -110,11 +113,50 @@ impl ModelVisual {
         if textures.len() != model.data().textures.len() {
             return Err(ModelVisualError("texture slot count does not match model"));
         }
+        let texture = |slot: Option<usize>| {
+            slot.and_then(|index| {
+                let image = textures[index].clone()?;
+                let sampler = &model.data().textures[index];
+                Some(MaterialTexture {
+                    image,
+                    wrap_s: sampler.wrap_s,
+                    wrap_t: sampler.wrap_t,
+                    min_filter: sampler.min_filter.unwrap_or(Filter::Linear),
+                    mag_filter: sampler.mag_filter.unwrap_or(Filter::Linear),
+                })
+            })
+        };
+        let materials = model
+            .data()
+            .materials
+            .iter()
+            .map(|m| {
+                Arc::new(PbrMaterial {
+                    base_color: m.base_color,
+                    metallic: m.metallic,
+                    roughness: m.roughness,
+                    base_color_texture: texture(m.base_color_texture),
+                    metallic_roughness_texture: texture(m.metallic_roughness_texture),
+                    normal_texture: texture(m.normal_texture),
+                    normal_scale: m.normal_scale,
+                    occlusion_texture: texture(m.occlusion_texture),
+                    occlusion_strength: m.occlusion_strength,
+                    emissive_texture: texture(m.emissive_texture),
+                    emissive: m.emissive,
+                    alpha: m.alpha,
+                    alpha_cutoff: m.alpha_cutoff,
+                    double_sided: m.double_sided,
+                })
+            })
+            .collect();
         Ok(Self {
             geometry: geometry(&model)?,
             model,
-            textures,
-            white: Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap()),
+            materials,
+            default_material: Arc::new(PbrMaterial {
+                metallic: 1.,
+                ..Default::default()
+            }),
         })
     }
     pub fn model(&self) -> &Arc<Model> {
@@ -178,7 +220,10 @@ impl ModelVisual {
     /// Caller must supply this model's node order. Full affine matrices preserve
     /// hierarchy scale/shear; instance placement can be applied to returned draws.
     pub fn meshes(&self, globals: &[Mat4]) -> Result<Vec<MeshInstance>, ModelVisualError> {
-        if globals.len() != self.model.data().nodes.len() || globals.iter().any(|m| !m.is_finite())
+        if globals.len() != self.model.data().nodes.len()
+            || globals
+                .iter()
+                .any(|m| !m.is_finite() || m.row(3) != glam::Vec4::W)
         {
             return Err(ModelVisualError("invalid model node matrices"));
         }
@@ -207,19 +252,19 @@ impl ModelVisual {
             if palette.iter().flatten().flatten().any(|v| !v.is_finite()) {
                 return Err(ModelVisualError("skin palette overflow"));
             }
-            let material = binding.material.map(|m| &data.materials[m]);
-            let texture = material
-                .and_then(|m| m.base_color_texture)
-                .and_then(|t| self.textures[t].clone())
-                .unwrap_or_else(|| self.white.clone());
+            let material = binding
+                .material
+                .map_or(&self.default_material, |i| &self.materials[i]);
             output.push(MeshInstance {
+                mirrored: globals[binding.node].as_dmat4().determinant() < 0.,
+                material: Some(material.clone()),
                 mesh: Some(binding.mesh.clone()),
                 skin_palette: Some(palette.clone()),
-                texture: Some(texture),
+                texture: None,
                 position: [0.; 3],
                 orientation: glam::Quat::IDENTITY,
                 scale: 1.,
-                color: material.map_or([1.; 4], |m| m.base_color),
+                color: [1.; 4],
             });
         }
         Ok(output)
@@ -309,13 +354,18 @@ fn geometry(model: &Model) -> std::result::Result<Vec<Geometry>, ModelVisualErro
                     }
                 }
             }
+            let mut mesh =
+                Mesh::skinned_triangles(vertices, primitive.indices.clone(), skin, joint_count)
+                    .ok_or(ModelVisualError("invalid skin geometry"))?;
+            if primitive.has_normals {
+                mesh = mesh
+                    .with_normals(primitive.vertices.iter().map(|v| v.normal).collect())
+                    .ok_or(ModelVisualError("invalid mesh normals"))?;
+            }
             output.push(Geometry {
                 node: node_index,
                 skinned: primitive.skinned,
-                mesh: Arc::new(
-                    Mesh::skinned_triangles(vertices, primitive.indices.clone(), skin, joint_count)
-                        .ok_or(ModelVisualError("invalid skin geometry"))?,
-                ),
+                mesh: Arc::new(mesh),
                 material: primitive.material,
                 influence_bounds,
             });
@@ -398,6 +448,114 @@ mod tests {
             ..Default::default()
         };
         Arc::new(Model::new(data).unwrap())
+    }
+    #[test]
+    fn mirrored_winding_follows_the_mesh_node_global_transform() {
+        let visual = ModelVisual::new(fixture(), vec![]).unwrap();
+        let mut globals = [Mat4::IDENTITY; 3];
+        // A reflected joint alone does not redefine the mesh node's front face.
+        globals[1] = Mat4::from_scale(Vec3::new(-1., 1., 1.));
+        assert!(!visual.meshes(&globals).unwrap()[0].mirrored);
+        globals[0] = globals[1];
+        assert!(visual.meshes(&globals).unwrap()[0].mirrored);
+        globals[0] = Mat4::from_scale(Vec3::new(-1., -1., 1.));
+        assert!(!visual.meshes(&globals).unwrap()[0].mirrored);
+        globals[0] = Mat4::from_scale(Vec3::new(-f32::MAX, f32::MAX, f32::MAX));
+        assert!(visual.meshes(&globals).unwrap()[0].mirrored);
+        globals[0].x_axis.w = 1.;
+        assert!(visual.meshes(&globals).is_err());
+    }
+    #[test]
+    fn model_preparation_preserves_shared_pbr_materials_and_all_texture_slots() {
+        let mut data = fixture().data().clone();
+        data.images.push(ModelImage {
+            name: String::new(),
+            encoding: ImageEncoding::Png,
+            bytes: vec![1],
+        });
+        data.textures.push(ModelTexture {
+            image: 0,
+            wrap_s: WrapMode::Mirror,
+            wrap_t: WrapMode::Clamp,
+            min_filter: Some(Filter::Nearest),
+            mag_filter: Some(Filter::Linear),
+        });
+        data.materials.push(Material {
+            name: "pbr".into(),
+            base_color: [0.2, 0.3, 0.4, 0.5],
+            metallic: 0.7,
+            roughness: 0.25,
+            base_color_texture: Some(0),
+            metallic_roughness_texture: Some(0),
+            normal_texture: Some(0),
+            normal_scale: 0.8,
+            occlusion_texture: Some(0),
+            occlusion_strength: 0.6,
+            emissive_texture: Some(0),
+            emissive: [0.1, 0.2, 0.3],
+            alpha: AlphaMode::Blend,
+            alpha_cutoff: 0.4,
+            double_sided: true,
+        });
+        data.meshes[0].primitives[0].material = Some(0);
+        let image = Arc::new(Texture::rgba8(1, 1, vec![128; 4]).unwrap());
+        let visual = ModelVisual::new(
+            Arc::new(Model::new(data).unwrap()),
+            vec![Some(image.clone())],
+        )
+        .unwrap();
+        let first = visual.meshes(&[Mat4::IDENTITY; 3]).unwrap();
+        let second = visual.meshes(&[Mat4::IDENTITY; 3]).unwrap();
+        let m = first[0].material.as_ref().unwrap();
+        assert!(Arc::ptr_eq(m, second[0].material.as_ref().unwrap()));
+        assert_eq!(m.base_color, [0.2, 0.3, 0.4, 0.5]);
+        assert_eq!(
+            (
+                m.metallic,
+                m.roughness,
+                m.normal_scale,
+                m.occlusion_strength
+            ),
+            (0.7, 0.25, 0.8, 0.6)
+        );
+        assert_eq!(m.emissive, [0.1, 0.2, 0.3]);
+        assert_eq!(m.alpha, AlphaMode::Blend);
+        assert_eq!(m.alpha_cutoff, 0.4);
+        assert!(m.double_sided);
+        for slot in m.textures() {
+            let slot = slot.unwrap();
+            assert!(Arc::ptr_eq(&slot.image, &image));
+            assert_eq!(
+                (slot.wrap_s, slot.wrap_t),
+                (WrapMode::Mirror, WrapMode::Clamp)
+            );
+            assert_eq!(
+                (slot.min_filter, slot.mag_filter),
+                (Filter::Nearest, Filter::Linear)
+            );
+        }
+        assert_eq!(
+            first[0].color, [1.; 4],
+            "material factor must not be applied twice"
+        );
+    }
+    #[test]
+    fn model_preparation_preserves_authored_normals() {
+        let mut data = fixture().data().clone();
+        for vertex in &mut data.meshes[0].primitives[0].vertices {
+            vertex.normal = [1., 0., 0.];
+        }
+        let visual = ModelVisual::new(Arc::new(Model::new(data).unwrap()), vec![]).unwrap();
+        let meshes = visual.meshes(&[Mat4::IDENTITY; 3]).unwrap();
+        assert!(
+            meshes[0]
+                .mesh
+                .as_ref()
+                .unwrap()
+                .normals()
+                .iter()
+                .all(|n| *n == [1., 0., 0.])
+        );
     }
     #[test]
     fn immutable_instances_share_geometry_but_keep_palettes_independent() {

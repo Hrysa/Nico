@@ -1,6 +1,6 @@
 use crate::{DEFAULT_CLEAR_COLOR, RenderStatus, acquired_frame};
 use nico_assets::Texture;
-use nico_presentation::{Quad, Scene2d};
+use nico_presentation::{Quad, Scene2d, UiScene};
 use nico_rhi::*;
 use std::{
     ops::Range,
@@ -102,18 +102,21 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
     }
 
     /// Logical viewport dimensions include DPI scaling supplied by the host.
+    #[allow(clippy::too_many_arguments)]
     pub fn render<Q: RhiQueue<D>, S: RhiSurface<D, Q>>(
         &mut self,
         device: &D,
         queue: &Q,
         surface: &mut S,
         scene: &Scene2d,
+        ui: &UiScene,
         viewport: [f32; 2],
     ) -> Result<RenderStatus, RhiError> {
         if viewport.iter().any(|v| *v <= 0.0 || !v.is_finite()) {
             return Ok(RenderStatus::ZeroSized);
         }
-        geometry(scene, viewport)?;
+        geometry(scene, ui, viewport)?;
+        validate_resources(device, scene, ui)?;
         let (frame, view) = match acquired_frame(surface.acquire(device)?) {
             Ok(frame) => frame,
             Err(status) => return Ok(status),
@@ -121,7 +124,7 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
         let sources: Vec<_> = scene
             .world
             .iter()
-            .chain(&scene.hud)
+            .chain(&ui.quads)
             .filter_map(|q| q.texture.clone())
             .collect();
         self.retain_sources(&sources);
@@ -131,6 +134,7 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
             &view,
             surface.format(),
             scene,
+            ui,
             viewport,
             LoadOp::Clear(DEFAULT_CLEAR_COLOR),
         )?;
@@ -164,13 +168,6 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
             .push(upload(device, queue, &self.layout, &self.sampler, source)?);
         Ok(self.textures.len() - 1)
     }
-    pub(crate) fn texture_layout(&self) -> &D::BindGroupLayout {
-        &self.layout
-    }
-    pub(crate) fn texture_binding(&self, slot: usize) -> &D::BindGroup {
-        &self.textures[slot].binding
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_into<Q: RhiQueue<D>>(
         &mut self,
@@ -179,10 +176,11 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
         view: &D::TextureView,
         format: TextureFormat,
         scene: &Scene2d,
+        ui: &UiScene,
         viewport: [f32; 2],
         load: LoadOp<Color>,
     ) -> Result<(), RhiError> {
-        let geometry = geometry(scene, viewport)?;
+        let geometry = geometry(scene, ui, viewport)?;
         if format != self.format {
             self.pipeline = pipeline(
                 device,
@@ -195,10 +193,11 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
             self.format = format;
         }
         let mut draws: Vec<(usize, Range<u32>)> = Vec::new();
-        for (index, quad) in scene.world.iter().chain(&scene.hud).enumerate() {
+        for (index, quad) in scene.world.iter().chain(&ui.quads).enumerate() {
             let slot = self.texture_slot(device, queue, quad.texture.as_ref())?;
             let start = index as u32 * 6;
             if let Some((last_slot, range)) = draws.last_mut()
+                && index != scene.world.len()
                 && *last_slot == slot
             {
                 range.end = start + 6;
@@ -209,18 +208,19 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
         if !geometry.is_empty() {
             queue.write_buffer(&self.vertices, 0, &geometry);
         }
-        let attachments = [Some(RenderPassColorAttachment {
-            view,
-            resolve_target: None,
-            operations: Operations {
-                load,
-                store: StoreOp::Store,
-            },
-        })];
-        let mut encoder = device.create_command_encoder(Some("quad encoder"));
-        {
+        let mut encoder = device.create_command_encoder(Some("canvas encoder"));
+        let boundary = scene.world.len() as u32 * 6;
+        for ui_pass in [false, true] {
+            let attachments = [Some(RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                operations: Operations {
+                    load: if ui_pass { LoadOp::Load } else { load },
+                    store: StoreOp::Store,
+                },
+            })];
             let mut pass = encoder.begin_render_pass(RenderPassDescriptor {
-                label: Some("world and HUD quads"),
+                label: Some(if ui_pass { "UI and HUD" } else { "Scene2D" }),
                 color_attachments: &attachments,
                 depth_stencil_attachment: None,
             });
@@ -228,14 +228,33 @@ impl<D: RhiDevice> QuadRenderPipeline<D> {
             if !geometry.is_empty() {
                 pass.set_vertex_buffer(0, &self.vertices, 0..geometry.len() as u64);
             }
-            for (slot, range) in draws {
-                pass.set_bind_group(0, &self.textures[slot].binding, &[]);
-                pass.draw(range, 0..1);
+            for (slot, range) in &draws {
+                if (range.start >= boundary) != ui_pass {
+                    continue;
+                }
+                pass.set_bind_group(0, &self.textures[*slot].binding, &[]);
+                pass.draw(range.clone(), 0..1);
             }
         }
         queue.submit(vec![encoder.finish()]);
         Ok(())
     }
+}
+
+pub(crate) fn validate_resources<D: RhiDevice>(
+    device: &D,
+    scene: &Scene2d,
+    ui: &UiScene,
+) -> Result<(), RhiError> {
+    for texture in scene
+        .world
+        .iter()
+        .chain(&ui.quads)
+        .filter_map(|q| q.texture.as_deref())
+    {
+        crate::validate_texture(device, texture)?;
+    }
+    Ok(())
 }
 
 fn upload<D: RhiDevice, Q: RhiQueue<D>>(
@@ -245,10 +264,7 @@ fn upload<D: RhiDevice, Q: RhiQueue<D>>(
     sampler: &D::Sampler,
     source: &Arc<Texture>,
 ) -> Result<Uploaded<D>, RhiError> {
-    let limit = device.capabilities().limits.max_texture_dimension_2d;
-    if source.width() > limit || source.height() > limit {
-        return Err(invalid("texture exceeds adapter dimension limit"));
-    }
+    crate::validate_texture(device, source)?;
     let extent = Extent3d::surface(source.width(), source.height());
     let texture = device.create_texture(TextureDescriptor {
         label: Some("quad sRGB texture"),
@@ -366,14 +382,19 @@ fn invalid(message: &str) -> RhiError {
     RhiError::new(RhiErrorKind::InvalidDescriptor, message)
 }
 
-fn geometry(scene: &Scene2d, viewport: [f32; 2]) -> Result<Vec<u8>, RhiError> {
-    let count = scene.world.len().saturating_add(scene.hud.len());
+pub(crate) fn geometry(
+    scene: &Scene2d,
+    ui: &UiScene,
+    viewport: [f32; 2],
+) -> Result<Vec<u8>, RhiError> {
+    let count = scene.world.len().saturating_add(ui.quads.len());
     if count > MAX_QUADS {
         return Err(invalid("quad limit exceeded"));
     }
-    if !scene.camera.pixels_per_unit.is_finite()
-        || scene.camera.pixels_per_unit <= 0.0
-        || scene.camera.center.iter().any(|v| !v.is_finite())
+    if !scene.world.is_empty()
+        && (!scene.camera.pixels_per_unit.is_finite()
+            || scene.camera.pixels_per_unit <= 0.0
+            || scene.camera.center.iter().any(|v| !v.is_finite()))
     {
         return Err(invalid("invalid 2D camera"));
     }
@@ -382,7 +403,7 @@ fn geometry(scene: &Scene2d, viewport: [f32; 2]) -> Result<Vec<u8>, RhiError> {
         .world
         .iter()
         .map(|q| (q, true))
-        .chain(scene.hud.iter().map(|q| (q, false)))
+        .chain(ui.quads.iter().map(|q| (q, false)))
     {
         append_quad(&mut bytes, quad, scene, viewport, world)?;
     }
@@ -465,19 +486,51 @@ mod tests {
         f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
     #[test]
+    fn ui_only_geometry_does_not_depend_on_an_unused_world_camera() {
+        let mut scene = Scene2d::default();
+        let ui = UiScene {
+            quads: vec![quad()],
+        };
+        let expected = geometry(&scene, &ui, [100.; 2]).unwrap();
+        scene.camera.pixels_per_unit = f32::NAN;
+        scene.camera.center = [f32::INFINITY; 2];
+        assert_eq!(geometry(&scene, &ui, [100.; 2]).unwrap(), expected);
+        scene.world.push(quad());
+        assert!(geometry(&scene, &ui, [100.; 2]).is_err());
+        let invalid = UiScene {
+            quads: vec![Quad {
+                size: [-1.; 2],
+                ..quad()
+            }],
+        };
+        assert!(geometry(&Scene2d::default(), &invalid, [100.; 2]).is_err());
+        assert!(
+            geometry(
+                &Scene2d::default(),
+                &UiScene {
+                    quads: vec![quad(); MAX_QUADS + 1]
+                },
+                [100.; 2]
+            )
+            .is_err()
+        );
+    }
+    #[test]
     fn world_camera_moves_sprites_but_not_hud() {
         let mut scene = Scene2d {
             world: vec![quad()],
-            hud: vec![Quad {
+            ..Scene2d::default()
+        };
+        let ui = UiScene {
+            quads: vec![Quad {
                 center: [48.0, 48.0],
                 size: [48.0, 48.0],
                 ..quad()
             }],
-            ..Scene2d::default()
         };
-        let first = geometry(&scene, [1280.0, 720.0]).unwrap();
+        let first = geometry(&scene, &ui, [1280.0, 720.0]).unwrap();
         scene.camera.center[0] = 1.0;
-        let second = geometry(&scene, [1280.0, 720.0]).unwrap();
+        let second = geometry(&scene, &ui, [1280.0, 720.0]).unwrap();
         assert!((float(&second, 0) - float(&first, 0) + 0.2).abs() < 0.00001);
         assert_eq!(&first[192..], &second[192..]);
         assert_eq!(float(&first, 8), 0.0);
@@ -489,9 +542,18 @@ mod tests {
             world: vec![quad()],
             ..Scene2d::default()
         };
-        assert_eq!(geometry(&scene, [100.0, 100.0]).unwrap().len(), 192);
+        assert_eq!(
+            geometry(&scene, &UiScene::default(), [100.0, 100.0])
+                .unwrap()
+                .len(),
+            192
+        );
         scene.world.clear();
-        assert!(geometry(&scene, [100.0, 100.0]).unwrap().is_empty());
+        assert!(
+            geometry(&scene, &UiScene::default(), [100.0, 100.0])
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn invalid_geometry_and_excessive_draws_are_rejected() {
@@ -500,8 +562,8 @@ mod tests {
             ..Scene2d::default()
         };
         scene.world[0].center[0] = f32::NAN;
-        assert!(geometry(&scene, [100.0, 100.0]).is_err());
+        assert!(geometry(&scene, &UiScene::default(), [100.0, 100.0]).is_err());
         scene.world = vec![quad(); MAX_QUADS + 1];
-        assert!(geometry(&scene, [100.0, 100.0]).is_err());
+        assert!(geometry(&scene, &UiScene::default(), [100.0, 100.0]).is_err());
     }
 }

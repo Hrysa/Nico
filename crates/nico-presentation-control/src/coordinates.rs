@@ -2,6 +2,34 @@
 use glam::{DQuat, DVec3, Mat3, Vec3};
 use nico_presentation::Quaternion;
 
+/// Projects an on-screen world anchor into logical UI pixels using the 3D camera.
+/// Rejects invalid views and points outside the clip volume (including behind the
+/// camera). The caller applies widget offsets/size; this performs no occlusion test.
+pub fn project_world_to_ui(
+    camera: nico_presentation::Camera3d,
+    viewport: [f32; 2],
+    point: [f32; 3],
+) -> Option<[f32; 2]> {
+    if viewport.iter().any(|v| !v.is_finite() || *v <= 0.) {
+        return None;
+    }
+    let clip = camera.view_projection(viewport[0] / viewport[1])? * Vec3::from(point).extend(1.);
+    if !clip.is_finite()
+        || clip.w <= 0.
+        || clip.z < 0.
+        || clip.z > clip.w
+        || clip.x.abs() > clip.w
+        || clip.y.abs() > clip.w
+    {
+        return None;
+    }
+    let screen = [
+        (clip.x / clip.w + 1.) * viewport[0] * 0.5,
+        (1. - clip.y / clip.w) * viewport[1] * 0.5,
+    ];
+    screen.iter().all(|v| v.is_finite()).then_some(screen)
+}
+
 /// Scale in local axes, rotate by a unit quaternion, then translate into world space.
 pub fn transform_point(
     position: [f32; 3],
@@ -42,6 +70,32 @@ pub fn cylindrical_billboard(camera: Quaternion, up: [f32; 3]) -> Option<Quatern
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn world_anchors_use_logical_pixels_and_clip_behind_camera() {
+        let mut camera = nico_presentation::Camera3d {
+            position: [0., 0., 3.],
+            orientation: Quaternion::IDENTITY,
+            ..Default::default()
+        };
+        assert_eq!(
+            project_world_to_ui(camera, [800., 600.], [0.; 3]),
+            Some([400., 300.])
+        );
+        let above = project_world_to_ui(camera, [800., 600.], [0., 1., 0.]).unwrap();
+        assert!(above[1] < 300.);
+        camera.position[0] = 1.;
+        assert!(project_world_to_ui(camera, [800., 600.], [0.; 3]).unwrap()[0] < 400.);
+        for point in [
+            [0., 0., 4.],
+            [0., 0., 3.],
+            [1000., 0., 0.],
+            [f32::NAN, 0., 0.],
+            [0., 0., -200.],
+        ] {
+            assert!(project_world_to_ui(camera, [800., 600.], point).is_none());
+        }
+        assert!(project_world_to_ui(camera, [0., 600.], [0.; 3]).is_none());
+    }
     #[test]
     fn local_scale_rotation_translation_and_floor_direction_preserve_conventions() {
         let point = transform_point(

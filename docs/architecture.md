@@ -157,17 +157,23 @@ Presentation may read the authoritative world immutably. It does not own or muta
 gameplay state. Direct queries are allowed; extraction and caching require a
 demonstrated need.
 
-Games publish `nico-presentation::Scene2d` and `Scene3d` as runtime resources after
+Games publish `nico-presentation::Scene2d`, `Scene3d`, and `UiScene` as runtime resources after
 game updates. `Presentation` copies these snapshots through immutable world access;
 it never gives the renderer world access. Immutable `Arc<Texture>` and `Arc<Mesh>`
 values retain CPU content after store entries are released. Absent scenes produce
-empty snapshots. Shutdown releases both retained snapshots.
+empty snapshots. Shutdown releases all retained snapshots.
 
 `nico-render` consumes presentation contracts with default features disabled, keeping
 its own dependency path free of runtime. `nico-presentation`'s default `runtime` feature
 adds world extraction and lifecycle; its drawing contracts need only `nico-assets`.
-World quads use an explicit 2D camera; HUD quads use logical viewport coordinates.
-The same quad pipeline draws both. Shared/headless game logic does not depend on assets or presentation.
+`Scene2d` contains only world quads with an explicit 2D camera; `UiScene` contains
+screen-space quads in logical viewport coordinates. Both use extraction order as
+painter order. The shared canvas implementation records distinct Scene2D and UI
+passes, with UI last and no depth writes. It uploads one frame vertex buffer and
+shares texture residency across the passes; batching cannot cross their boundary.
+The host supplies logical dimensions after DPI conversion. `project_world_to_ui`
+in presentation-control projects visible world anchors into UI coordinates;
+widgets choose their own pixel offsets and sizes, with no implied occlusion test. Shared/headless game logic does not depend on assets or presentation.
 The native client maps shared positions to visuals in its game-owned extraction system.
 
 `nico-rhi` defines associated provider resource types for capabilities, buffers,
@@ -196,9 +202,46 @@ and roll do not require a fixed world-up vector. Invalid/non-unit orientations a
 rejected. `Camera3d::looking_at` is an optional targeting helper and rejects coincident
 targets or an up vector parallel to the view; these constraints do not apply to
 explicit quaternion poses.
-`MeshRenderPipeline` owns depth, vertex/index caches, per-instance transform uniforms,
-and a shared quad renderer for HUD drawing and texture reuse. The mesh pass clears
-and depth-tests; the HUD pass loads its color target before one presentation.
+`MeshRenderPipeline` owns depth and persistent vertex/index, material, and texture
+caches. Material images are cached by immutable image identity and color-space
+interpretation; bindings and factors are cached by immutable material identity.
+Per-frame camera/light, instance transform/tint, and skin palette buffers have
+separate ownership. `SceneLighting` supplies a directional light and diffuse
+ambient term. Lighting uses linear RGB with sRGB material color inputs and output. PBR surface
+formats are currently restricted to RGBA8/BGRA8 sRGB; unsupported formats fail
+explicitly. Frame preparation checks camera/light/material values, transforms,
+skin bindings, geometry limits, target extents, and all used texture dimensions
+before acquiring the surface. Failed validation does not submit or present a frame.
+Opaque/masked draws write depth before back-to-front blended draws that only test
+depth. Each pass selects static/skinned, single/double-sided, and mirrored-winding
+material variants. Model extraction derives winding from the mesh node's global
+transform determinant (glTF instantiation semantics); individual joint bends do
+not redefine the mesh node's front face. Winding also controls back-face normal
+selection when culling is disabled.
+The transparency key is camera-space depth of the indexed-vertex centroid,
+including instance placement and the current skin pose. Mesh assets cache per-joint
+homogeneous weighted centroids so sorting does not re-skin every vertex. This is
+per-draw sorting; intersecting geometry and overlapping depth ranges can still
+require geometry splitting or a future order-independent transparency technique.
+
+Immutable `Mesh` assets retain unit object-space normals. Model preparation
+preserves authored normals; missing normals use area-weighted triangle accumulation.
+Shared vertices smooth adjoining faces, so hard edges require split vertices.
+Degenerate and unused vertices receive +Y. Both GPU geometry variants consume these
+normals; skin normals use the inverse transpose of the blended affine transform.
+The singularity check removes common scale so asset units do not change normal
+handling; inverse scale is restored before interpolation. Singular blends fall
+back to transforming the input normal.
+Normal maps use a derivative tangent frame, with an unperturbed-normal fallback
+for degenerate UVs. Double-sided back faces reverse the complete mapped normal,
+including its tangent components. A shared fragment shader implements metallic/roughness GGX,
+Schlick Fresnel, and height-correlated Smith visibility. Roughness is clamped to
+0.045 for numerical stability. Ambient light is a diffuse approximation; IBL,
+shadows, HDR post-processing, and extended glTF material lobes are not implemented.
+
+The canvas draws Scene2D then UI after 3D. Remaining material and native
+acceptance work is tracked in the
+[PBR implementation plan](plans/2026-09-17-pbr-render-pipeline.md).
 
 The smoke frame limit counts client-session frames, even when GPU acquisition skips
 presentation. It is bounded lifecycle coverage, not a successful-GPU-frame counter.
@@ -251,7 +294,7 @@ headless runtime and physics integration. Detailed rules belong in the
 `arena-arpg-client` maps frame input into fixed-step intent before `ArenaPlugin`,
 retaining movement through catch-up ticks while consuming action edges once. Run
 reset and wave transitions suppress held movement until release. Game-owned camera tuning and procedural
-visual extraction publish `Scene3d`/`Scene2d` after simulation. Camera boom collision
+visual extraction publish `Scene3d`/`UiScene` after simulation. Camera boom collision
 uses the perimeter geometry; text, health, attack telegraphs, and poses use existing
 mesh/quad contracts. The client adds bounded camera commands and an owned
 view snapshot. The server composes the same shared rules at 60 Hz; neither host

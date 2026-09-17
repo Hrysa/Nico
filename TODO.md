@@ -30,8 +30,6 @@ Acceptance: [roadmap phase 7 character milestone](docs/roadmap.md#client-charact
 
 Acceptance: [roadmap phase 7](docs/roadmap.md#7-complete-the-player-experience).
 
-- [ ] Add the material and lighting support needed by the selected character,
-      starting with base color, normals, and a simple lit scene.
 - [ ] Add grounded shadows and combat feedback: weapon trails, impact effects,
       hit flashes, and attack/hit/dodge audio with bounded lifetimes.
 - [ ] Add client settings for camera sensitivity, audio volume, and input rebinding,

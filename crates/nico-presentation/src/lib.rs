@@ -5,7 +5,7 @@
 pub use glam::Quat as Quaternion;
 
 mod scene;
-pub use scene::{Camera2d, Camera3d, MeshInstance, Quad, Scene2d, Scene3d};
+pub use scene::{Camera2d, Camera3d, MeshInstance, Quad, Scene2d, Scene3d, SceneLighting, UiScene};
 
 #[cfg(feature = "runtime")]
 mod lifecycle;

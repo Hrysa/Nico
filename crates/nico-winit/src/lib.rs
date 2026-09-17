@@ -946,6 +946,7 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                             surface,
                             self.session.presentation.scene3d(),
                             self.session.presentation.scene(),
+                            self.session.presentation.ui(),
                             viewport,
                             Extent3d::surface(self.size.width, self.size.height),
                         ),
@@ -954,6 +955,7 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                             queue,
                             surface,
                             self.session.presentation.scene(),
+                            self.session.presentation.ui(),
                             viewport,
                         ),
                     };

@@ -1,4 +1,5 @@
-/// CPU texture: tightly packed RGBA8, sRGB color, straight alpha, one mip level.
+/// CPU texture: tightly packed RGBA8, straight alpha, one mip level. Canvas
+/// interprets RGB as sRGB; PBR material slots choose sRGB color or linear data.
 #[derive(Debug)]
 pub struct Texture {
     pub(crate) width: u32,

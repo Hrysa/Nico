@@ -1,4 +1,4 @@
-const positions_0 : array<vec4<f32>, i32(3)> = array<vec4<f32>, i32(3)>( vec4<f32>(0.0f, 0.55000001192092896f, 0.0f, 2.0f), vec4<f32>(-0.5f, -0.44999998807907104f, 0.0f, 1.0f), vec4<f32>(0.5f, -0.44999998807907104f, 0.0f, 1.0f) );
+var<private> positions_0 : array<vec4<f32>, i32(3)> = array<vec4<f32>, i32(3)>( vec4<f32>(0.0f, 0.55000001192092896f, 0.0f, 2.0f), vec4<f32>(-0.5f, -0.44999998807907104f, 0.0f, 1.0f), vec4<f32>(0.5f, -0.44999998807907104f, 0.0f, 1.0f) );
 struct VertexOutput_0
 {
     @builtin(position) position_0 : vec4<f32>,

@@ -168,6 +168,18 @@ pub struct Material {
     pub alpha_cutoff: f32,
     pub double_sided: bool,
 }
+impl Material {
+    /// Base color, metallic/roughness, normal, occlusion, and emissive slots.
+    pub fn texture_indices(&self) -> [Option<usize>; 5] {
+        [
+            self.base_color_texture,
+            self.metallic_roughness_texture,
+            self.normal_texture,
+            self.occlusion_texture,
+            self.emissive_texture,
+        ]
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Scene {
     pub name: String,

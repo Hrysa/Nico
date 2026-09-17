@@ -9,7 +9,7 @@ use nico_ops::{
     mcp::{CallToolResult, Tool, ToolExtensions},
     publication::Publication,
 };
-use nico_presentation::{Camera2d, Camera3d, MeshInstance, Quad, Scene2d, Scene3d};
+use nico_presentation::{Camera2d, Camera3d, MeshInstance, Quad, Scene2d, Scene3d, UiScene};
 use nico_runtime::{AppBuilder, Plugin, RuntimeError, RuntimeResult, Stage};
 use serde_json::{Map, Value, json};
 use std::{
@@ -228,6 +228,7 @@ impl Plugin for SamplePlugin {
             error: None,
         });
         builder.insert_resource(Scene2d::default());
+        builder.insert_resource(UiScene::default());
         builder.insert_resource(Scene3d::default());
         builder.add_system(Stage::Startup, "sample::load", |context| {
             let lease = context
@@ -327,8 +328,8 @@ impl Plugin for SamplePlugin {
             };
             let positions: Vec<_> = context.world.query::<&Position>().iter().map(|p| [p.x(),p.y()]).collect();
             let world = if sample.visible && !sample.mode3d { positions.iter().map(|&center| Quad { center, size: [1.0,1.0], color: [1.0;4], texture: texture.clone() }).collect() } else { Vec::new() };
-            let scene = Scene2d { camera: sample.camera, world,
-                hud: vec![Quad { center: [48.0,48.0], size: [48.0,48.0], color: [1.0;4], texture }] };
+            let scene = Scene2d { camera: sample.camera, world };
+            let ui = UiScene { quads: vec![Quad { center: [48.0,48.0], size: [48.0,48.0], color: [1.0;4], texture }] };
             let mesh_store = context.world.resource::<MeshStore>().ok();
             let (mesh_state, mesh, mesh_error) = if !sample.mode3d { ("unused",None,None) } else if sample.mesh_lease.is_none() { ("disabled",None,None) } else {
                 match mesh_store.and_then(|s| s.state(MESH)) {
@@ -337,8 +338,8 @@ impl Plugin for SamplePlugin {
                     _ => ("loading",None,None),
                 }
             };
-            let scene3d = Scene3d { camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
-                positions.iter().map(|p| MeshInstance { skin_palette: None, position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
+            let scene3d = Scene3d { lighting: Default::default(), camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
+                positions.iter().map(|p| MeshInstance { mirrored: false, material: None, skin_palette: None, position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
                     color: [1.0;4], mesh: mesh.clone(), texture: checker.clone() }).collect()
             } else { Vec::new() } };
             let value = json!({"frame":context.time.frame_number(),"last_applied_command":sample.applied,"command_error":sample.error,
@@ -350,8 +351,9 @@ impl Plugin for SamplePlugin {
                 "checker_state":checker_state,"checker_error":checker_error,"checker_resident":store.state(CHECKER).is_some(),
                 "texture_state":texture_state,"texture_error":texture_error,"texture_resident":store.state(TEXTURE).is_some(),
                 "positions":positions,"camera_center":scene.camera.center,"pixels_per_unit":scene.camera.pixels_per_unit,
-                "world_quads":scene.world.len(),"hud_quads":scene.hud.len(),"hud_center":[48,48],"hud_size":[48,48]});
+                "world_quads":scene.world.len(),"hud_quads":ui.quads.len(),"hud_center":[48,48],"hud_size":[48,48]});
             *context.world.resource_mut::<Scene2d>()? = scene;
+            *context.world.resource_mut::<UiScene>()? = ui;
             *context.world.resource_mut::<Scene3d>()? = scene3d;
             snapshot.lock().unwrap().publish(value);
             Ok(())
@@ -381,6 +383,7 @@ impl Plugin for SamplePlugin {
             context.world.resource_mut::<Sample>()?.mesh_lease = None;
             context.world.resource_mut::<Sample>()?.checker_lease = None;
             *context.world.resource_mut::<Scene2d>()? = Scene2d::default();
+            *context.world.resource_mut::<UiScene>()? = UiScene::default();
             *context.world.resource_mut::<Scene3d>()? = Scene3d::default();
             Ok(())
         });
@@ -423,11 +426,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         let scene = app.world().resource::<Scene2d>().unwrap();
+        let ui = app.world().resource::<UiScene>().unwrap();
         assert!(scene.world[0].center[1] > 0.0);
-        assert_eq!(scene.hud[0].center, [48.0, 48.0]);
+        assert_eq!(ui.quads[0].center, [48.0, 48.0]);
         assert!(Arc::ptr_eq(
             scene.world[0].texture.as_ref().unwrap(),
-            scene.hud[0].texture.as_ref().unwrap()
+            ui.quads[0].texture.as_ref().unwrap()
         ));
         let entity = app.world().entities().iter().next().unwrap().entity();
         app.world_mut().despawn(entity).unwrap();
@@ -440,7 +444,7 @@ mod tests {
             [2.0, 3.0]
         );
         app.shutdown().unwrap();
-        assert!(app.world().resource::<Scene2d>().unwrap().hud.is_empty());
+        assert!(app.world().resource::<UiScene>().unwrap().quads.is_empty());
     }
     #[test]
     fn sample_commands_reject_unknown_fields_and_out_of_range_values() {
@@ -501,13 +505,13 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         let scene = app.world().resource::<Scene3d>().unwrap();
-        let hud = app.world().resource::<Scene2d>().unwrap();
+        let hud = app.world().resource::<UiScene>().unwrap();
         assert!(scene.meshes[0].position[1] > 0.0);
         assert_eq!(scene.meshes[0].mesh.as_ref().unwrap().vertices().len(), 24);
-        assert!(hud.world.is_empty());
+        assert!(app.world().resource::<Scene2d>().unwrap().world.is_empty());
         assert!(!Arc::ptr_eq(
             scene.meshes[0].texture.as_ref().unwrap(),
-            hud.hud[0].texture.as_ref().unwrap()
+            hud.quads[0].texture.as_ref().unwrap()
         ));
         assert!(
             scene.meshes[0]
@@ -515,16 +519,20 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .pixels()
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|p| p[3] == 255)
         );
         assert!(
-            hud.hud[0]
+            hud.quads[0]
                 .texture
                 .as_ref()
                 .unwrap()
                 .pixels()
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|p| p[3] == 0)
         );
         let entity = app.world().entities().iter().next().unwrap().entity();
@@ -539,7 +547,7 @@ mod tests {
         );
         app.shutdown().unwrap();
         assert!(app.world().resource::<Scene3d>().unwrap().meshes.is_empty());
-        assert!(app.world().resource::<Scene2d>().unwrap().hud.is_empty());
+        assert!(app.world().resource::<UiScene>().unwrap().quads.is_empty());
     }
 
     #[test]
@@ -682,7 +690,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(
-            app.world().resource::<Scene2d>().unwrap().hud[0]
+            app.world().resource::<UiScene>().unwrap().quads[0]
                 .texture
                 .is_none()
         );

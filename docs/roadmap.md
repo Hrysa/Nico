@@ -606,6 +606,38 @@ This does not establish GPU skinning, complete animation quality, PBR fidelity,
 physical input coverage, or performance. Usage belongs in the
 [README](../README.md#native-character-preview).
 
+**Forward PBR implementation (2026-09-17, macOS 26.6.2, Apple M4/Metal):**
+The renderer now consumes core metallic/roughness material factors and five texture
+slots, directional/diffuse ambient lighting, inverse-transpose static/skinned
+normals, and opaque/masked then transparent passes. Separate Scene2D and UiScene
+snapshots feed two canvas passes after 3D. Transparent ordering uses posed geometry
+centroids. Model extraction preserves
+shared materials and loaders decode all referenced PNG material slots within
+revised explicit budgets. The [architecture](architecture.md#presentation-and-graphics)
+owns the contract and current limitations.
+
+Workspace tests and strict all-target Clippy passed. Slang 2026.18 generated-artifact
+verification passed. Eight opt-in GPU tests passed, including material response,
+normal mapping, sRGB round-trip, alpha behavior, lit affine skinning against CPU
+geometry, posed transparent sort centers, and 3D/Scene2D/UI ordering with independent
+UI coordinates. Mirrored winding, material-channel color spaces, pre-acquisition
+rejection, recovery after failed/skipped acquisition, and source replacement/removal
+also have readback coverage.
+Two review regressions compare back-facing normal maps with reversed authored
+normals for static/skinned geometry, and nonuniform skin transforms with CPU
+inverse-transpose geometry at asset-unit scales 0.0001, 1, and 10000. Both pass on
+Apple M4/Metal after correcting tangent-frame reversal and scale-dependent
+singularity handling. Strict provider all-target Clippy and shader checks passed.
+Rough/smooth/metal/blend/skinned, mirrored, and combined-layer readbacks were
+inspected. These are 64-by-64 offscreen fixtures.
+Native acceptance additionally inspected 2560-by-1440 bridge captures from the
+user-launched arena client (PID 28028): textured hero, weapon, arena, and HUD rendered
+after focus recovered an occluded surface. A close camera view followed a run
+restart; the original camera was restored. This establishes native rendered output,
+not desktop visibility or user-observed approval. The scoped
+[PBR plan](plans/2026-09-17-pbr-render-pipeline.md) acceptance is complete; production
+art quality, HDR tone mapping, and image-based lighting remain outside that scope.
+
 **Preview frame inspection (2026-09-16):** The HUD and `preview_state.frame_timing`
 now report wall-clock Update cadence over windows of at least one second, including
 average/minimum/maximum intervals and sample count. Two deterministic tests cover

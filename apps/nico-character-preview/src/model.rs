@@ -151,18 +151,18 @@ impl CharacterAssets {
                 .data()
                 .materials
                 .iter()
-                .any(|m| m.base_color_texture == Some(index))
+                .any(|m| m.texture_indices().contains(&Some(index)))
             {
                 textures.push(None);
                 continue;
             }
             let image = &model.data().images[texture.image];
             if image.encoding != ImageEncoding::Png {
-                return Err("preview currently supports PNG base-color images only".into());
+                return Err("preview currently supports PNG material images only".into());
             }
-            let remaining = (128usize * 1024 * 1024).saturating_sub(decoded);
+            let remaining = (256usize * 1024 * 1024).saturating_sub(decoded);
             if remaining == 0 {
-                return Err("preview base-color texture budget exceeded".into());
+                return Err("preview material texture budget exceeded".into());
             }
             let mut ctx = ImportContext::new(
                 &image.bytes,

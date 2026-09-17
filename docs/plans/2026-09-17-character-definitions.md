@@ -216,3 +216,12 @@ in the [migration review](../reviews/2026-09-17-character-definitions.md) and
 [composition review](../reviews/2026-09-17-character-composition.md). Composition
 regressions also cover independent engine-core decoding, strict ownership of
 fields, arbitrary clip-library names, unused clips and missing action bindings.
+
+
+### 2026-09-17 PBR implementation update
+
+Model and animation source/import limits are unchanged. Material texture loading
+now includes every referenced core PBR slot. The decoded RGBA texture budget is
+256 MiB per character/preview model and 256 MiB across world decorations; the
+selected hero alone contains four 4096-by-4096 images totaling 256 MiB. These limits
+cover resident decoded pixels, not decoder temporary memory or GPU allocations.

@@ -70,3 +70,13 @@ perspective uniforms, depth testing, and unlit alpha-cutoff textures. It owns a 
 `QuadRenderPipeline` for texture uploads and the final HUD pass. Provider contracts
 remain backend-neutral; runtime ownership stays outside the renderer. The bounded
 asset subset is documented in the [mesh design](../plans/2026-09-14-mesh-assets.md).
+
+
+## 2026-09-17 implementation update: separate scene and UI passes
+
+`Scene2d` now owns only camera-dependent world quads; `UiScene` independently owns
+screen-space HUD/UI quads. Games publish both through the existing immutable
+presentation boundary. The shared canvas records separate Scene2D and UI passes,
+sharing its texture cache and per-frame vertex buffer. PBR opaque/masked and
+transparent scene passes precede them. The current ownership and limitations live
+in the [architecture](../architecture.md#presentation-and-graphics).

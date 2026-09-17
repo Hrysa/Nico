@@ -1,6 +1,6 @@
 use arena_arpg_shared::{Action, RunState, Snapshot};
 use nico_assets::{Mesh, Texture};
-use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d};
+use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::sync::Arc;
 
@@ -125,6 +125,8 @@ impl Visuals {
         color: [f32; 4],
     ) -> MeshInstance {
         MeshInstance {
+            mirrored: false,
+            material: None,
             skin_palette: None,
             mesh: Some(mesh.clone()),
             texture: Some(self.shade.clone()),
@@ -141,7 +143,7 @@ impl Visuals {
         size: [f32; 2],
         captured: bool,
         dt: f32,
-    ) -> (Scene3d, Scene2d) {
+    ) -> (Scene3d, UiScene) {
         if self.last_run != state.run_id || self.last_wave != state.wave {
             self.last_run = state.run_id;
             self.last_wave = state.wave;
@@ -156,6 +158,7 @@ impl Visuals {
         }
         self.last_tick = state.tick;
         let mut scene = Scene3d {
+            lighting: Default::default(),
             camera,
             meshes: Vec::new(),
         };
@@ -450,7 +453,7 @@ impl Visuals {
                 }
             }
         }
-        let mut hud = Scene2d::default();
+        let mut hud = UiScene::default();
         // Keep a readable authored layout at small native window sizes.
         let hud_scale = (size[0] / 480.0).min(size[1] / 360.0).clamp(0.01, 1.0);
         let width = size[0] / hud_scale;
@@ -631,17 +634,17 @@ impl Visuals {
                 [0.8, 0.88, 0.95, 1.0],
             );
         }
-        for quad in &mut hud.hud {
+        for quad in &mut hud.quads {
             quad.center = quad.center.map(|v| v * hud_scale);
             quad.size = quad.size.map(|v| v * hud_scale);
         }
         (scene, hud)
     }
-    fn rect(&self, hud: &mut Scene2d, p: [f32; 2], size: [f32; 2], color: [f32; 4]) {
+    fn rect(&self, hud: &mut UiScene, p: [f32; 2], size: [f32; 2], color: [f32; 4]) {
         rectangle(hud, p, size, color, self.white.clone());
     }
-    fn text(&mut self, hud: &mut Scene2d, text: &str, p: [f32; 2], scale: f32, color: [f32; 4]) {
-        self.font.draw(&mut hud.hud, text, p, scale, color);
+    fn text(&mut self, hud: &mut UiScene, text: &str, p: [f32; 2], scale: f32, color: [f32; 4]) {
+        self.font.draw(&mut hud.quads, text, p, scale, color);
     }
 }
 pub(crate) fn box_mesh(size: [f32; 3]) -> Arc<Mesh> {
@@ -668,7 +671,7 @@ mod tests {
             state.state = outcome;
             let (_, hud) =
                 visuals.render(&state, Camera3d::default(), [320.0, 240.0], false, 0.016);
-            for quad in &hud.hud {
+            for quad in &hud.quads {
                 for i in 0..2 {
                     assert!(quad.center[i] - quad.size[i] / 2.0 >= -0.01);
                     assert!(quad.center[i] + quad.size[i] / 2.0 <= [320.0, 240.0][i] + 0.01);
@@ -834,7 +837,7 @@ mod tests {
                     .any(|mesh| mesh.position == wall.center.map(|v| v as f32))
             );
         }
-        assert!(!hud.hud.is_empty());
+        assert!(!hud.quads.is_empty());
         assert!(
             scene
                 .meshes
@@ -847,6 +850,6 @@ mod tests {
         lost.actors[0].health = 0;
         let (_, terminal) =
             visuals.render(&lost, Camera3d::default(), [1280.0, 720.0], true, 0.016);
-        assert!(terminal.hud.len() > hud.hud.len());
+        assert!(terminal.quads.len() > hud.quads.len());
     }
 }

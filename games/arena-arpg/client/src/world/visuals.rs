@@ -6,7 +6,7 @@ use arena_arpg_shared::{
 };
 use glam::{Quat, Vec3};
 use nico_assets::{Mesh, Texture};
-use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d};
+use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 pub struct Visuals {
@@ -47,6 +47,8 @@ fn draw(
     color: [f32; 4],
 ) -> MeshInstance {
     MeshInstance {
+        mirrored: false,
+        material: None,
         mesh: Some(mesh),
         texture: Some(texture),
         position,
@@ -112,7 +114,7 @@ impl Visuals {
         size: [f32; 2],
         captured: bool,
         dt: Duration,
-    ) -> Result<(Scene3d, Scene2d), String> {
+    ) -> Result<(Scene3d, UiScene), String> {
         if self.epoch != client.epoch {
             self.environment
                 .bind(&client.zone)
@@ -146,7 +148,7 @@ impl Visuals {
             camera,
             ..Default::default()
         };
-        let mut hud = Scene2d::default();
+        let mut hud = UiScene::default();
         scene.meshes.push(draw(
             self.ground.clone(),
             self.white.clone(),
@@ -417,7 +419,7 @@ impl Visuals {
         );
         let title = format!("MEADOW / {} / {}", client.name, client.status);
         self.font.draw(
-            &mut hud.hud,
+            &mut hud.quads,
             &title,
             [margin + 8., margin + 8.],
             scale,
@@ -446,7 +448,7 @@ impl Visuals {
                 }
             );
             self.font.draw(
-                &mut hud.hud,
+                &mut hud.quads,
                 &info,
                 [margin + 8., margin + 22. * scale],
                 scale,
@@ -454,7 +456,7 @@ impl Visuals {
             );
         } else {
             self.font.draw(
-                &mut hud.hud,
+                &mut hud.quads,
                 "WAITING FOR WORLD SERVER",
                 [margin + 8., margin + 28. * scale],
                 scale,
@@ -492,7 +494,7 @@ impl Visuals {
                 self.white.clone(),
             );
             self.font.draw(
-                &mut hud.hud,
+                &mut hud.quads,
                 &format!("{text}\nOBJECTIVE {distance:.0}M\n{hint}"),
                 [margin + 8., 108. * scale],
                 scale,
@@ -508,7 +510,7 @@ impl Visuals {
             self.white.clone(),
         );
         self.font.draw(
-            &mut hud.hud,
+            &mut hud.quads,
             help,
             [margin + 8., (size[1] - 32. * scale).max(0.)],
             scale,
@@ -516,7 +518,7 @@ impl Visuals {
         );
         if !captured {
             self.font.draw(
-                &mut hud.hud,
+                &mut hud.quads,
                 "CLICK TO CONTROL",
                 [(size[0] - 96. * scale) / 2., 16.],
                 scale,
@@ -525,7 +527,7 @@ impl Visuals {
         }
         if client.error.is_some() {
             self.font.draw(
-                &mut hud.hud,
+                &mut hud.quads,
                 "CONNECTION LOST / RETRYING",
                 [margin + 8., 160. * scale],
                 scale,

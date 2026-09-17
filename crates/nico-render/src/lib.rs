@@ -2,6 +2,7 @@
 
 mod quads;
 pub use quads::QuadRenderPipeline;
+mod materials;
 mod meshes;
 pub use meshes::MeshRenderPipeline;
 
@@ -12,6 +13,20 @@ use nico_rhi::{
     RhiDevice, RhiError, RhiQueue, RhiRenderPass, RhiSurface, StoreOp, SurfaceAcquire,
     TextureFormat, VertexState,
 };
+
+fn validate_texture<D: RhiDevice>(
+    device: &D,
+    source: &nico_assets::Texture,
+) -> Result<(), RhiError> {
+    let limit = device.capabilities().limits.max_texture_dimension_2d;
+    if source.width() > limit || source.height() > limit {
+        return Err(RhiError::new(
+            nico_rhi::RhiErrorKind::InvalidDescriptor,
+            "texture exceeds adapter dimension limit",
+        ));
+    }
+    Ok(())
+}
 
 const DEFAULT_CLEAR_COLOR: Color = Color::new(0.055, 0.065, 0.085, 1.0);
 

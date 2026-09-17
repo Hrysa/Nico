@@ -10,7 +10,7 @@ use nico_launch::{
     client::{ClientArgs, ClientHost},
     init_logging,
 };
-use nico_presentation::{Camera3d, Scene2d, Scene3d};
+use nico_presentation::{Camera3d, Scene3d, UiScene};
 use nico_presentation_control::text::BitmapFont;
 use nico_runtime::{AppBuilder, RuntimeError, Stage, events::EventReader};
 use nico_winit::NativeClientConfig;
@@ -70,7 +70,7 @@ fn main() -> Result<()> {
     let tools = controls::register(queue.clone(), publication.clone())?;
     let mut builder = AppBuilder::new();
     builder.insert_resource(Scene3d::default());
-    builder.insert_resource(Scene2d::default());
+    builder.insert_resource(UiScene::default());
     let initial_bind = args.bind_pose;
     let play_mode = if args.once {
         nico_animation::playback::PlayMode::Once
@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         let camera_changed = last_camera != Some(camera_key);
         last_camera = Some(camera_key);
         let position = camera.target + Vec3::new(camera.yaw.sin() * camera.pitch.cos(), camera.pitch.sin(), camera.yaw.cos() * camera.pitch.cos()) * camera.distance;
-        let mut scene = Scene3d {
+        let mut scene = Scene3d { lighting: Default::default(),
             camera: Camera3d::looking_at(position.to_array(), camera.target.to_array(), [0., 1., 0.]).ok_or_else(|| runtime_error("invalid preview camera"))?,
             meshes: Vec::new(),
         };
@@ -183,7 +183,7 @@ fn main() -> Result<()> {
         let bounds = character.bounds().map_err(runtime_error)?;
         let visible = instances[selected]["visible"].as_bool().unwrap();
         let name = character.player.clip().and_then(|i| character.assets.clips().get(i)).map_or("REFERENCE", |c| c.name());
-        let mut hud = Scene2d::default();
+        let mut hud = UiScene::default();
         let heading = format!(
             "GPU SKIN PREVIEW  {}\n{}\nSPACE PLAY PAUSE   R RESTART\nARROWS ORBIT   W S ZOOM   A D CLIP\n{}  CLIP {}  TIME {:.0} / {:.0} MS",
             if !character.player.paused() { "PLAY" } else { "PAUSE" },
@@ -192,7 +192,7 @@ fn main() -> Result<()> {
             character.player.clip().unwrap_or(0), character.player.time() * 1000., character.duration() * 1000.,
         );
         let heading = format!("{heading}\nCHAR {} OF {}   VISIBLE {}   EVALUATED {}", selected + 1, count, visible_count, evaluated);
-        font.draw(&mut hud.hud, &heading, [16., 16.], 2., [1.; 4]);
+        font.draw(&mut hud.quads, &heading, [16., 16.], 2., [1.; 4]);
         let clips: Vec<_> = character.assets.clips().iter().enumerate()
             .map(|(i,c)| json!({"index": i, "name": c.name(), "duration": c.duration()})).collect();
         let value = json!({
@@ -226,7 +226,7 @@ fn main() -> Result<()> {
         drop(characters);
         drop(query);
         *ctx.world.resource_mut::<Scene3d>()? = scene;
-        *ctx.world.resource_mut::<Scene2d>()? = hud;
+        *ctx.world.resource_mut::<UiScene>()? = hud;
         p.lock().unwrap().publish(value);
         Ok(())
     });
@@ -252,7 +252,7 @@ fn main() -> Result<()> {
             ctx.world.despawn(e).map_err(runtime_error)?;
         }
         *ctx.world.resource_mut::<Scene3d>()? = Scene3d::default();
-        *ctx.world.resource_mut::<Scene2d>()? = Scene2d::default();
+        *ctx.world.resource_mut::<UiScene>()? = UiScene::default();
         Ok(())
     });
     let config = NativeClientConfig::new(

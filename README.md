@@ -650,8 +650,9 @@ owns socket, rig, timing, and loading rules. See the [hero provenance](games/are
 and [monster content notice](games/arena-arpg/assets/presentation/characters/monsters/README.md)
 for selected files, reproduction commands, licenses, and limitations. Imported
 source packs live under [quaternius](games/arena-arpg/assets/presentation/quaternius/README.md).
-The renderer uses base-color textures; full material fidelity and foot/weapon-contact
-polish remain unfinished.
+The renderer consumes core metallic/roughness materials and their PNG texture slots;
+see the [rendering contract](docs/architecture.md#presentation-and-graphics). Broader material fidelity
+and foot/weapon-contact polish remain unfinished.
 
 Through the bridge, `client_characters.resolved` inspects all three loaded types.
 `client_state.animation` (arena) and `world_client_state.animation` (world) report
@@ -726,9 +727,9 @@ the vertex shader deforms the geometry. Mesh/index GPU buffers remain resident w
 referenced by the scene. Preview and imported arena hero rendering use conservative
 pose bounds to skip offscreen draws. Pose evaluation defaults to every Update. The preview can cap its frequency
 per instance as described below. The current renderer supports up to 256 joints per palette
-and 256 draws per scene, with PNG base-color textures and unlit core material colors.
-This inspection tool does not implement PBR, GLB sampler/alpha-mode fidelity, skeleton
-overlays, or a timeline widget. Loading is bounded and happens before the host
+and 256 draws per scene, with PNG PBR textures, material factors, alpha modes, and
+mip-zero sampler wrapping/filtering. Skeleton overlays and a timeline widget are
+not implemented. Loading is bounded and happens before the host
 starts; load errors exit with a diagnostic. Assets remain at their supplied paths.
 The ECS spawn function shares immutable assets while keeping playback state per
 instance; a serialized prefab format is not introduced.
@@ -764,6 +765,11 @@ Ready CPU pixels are pinned with an `Arc` in immutable presentation snapshots. S
 [texture design](docs/plans/2026-09-14-texture-assets.md) for lifecycle details.
 
 ## 2D world and HUD sample
+
+Games publish camera-dependent `Scene2d` and screen-space `UiScene` separately.
+The canvas shares resources but records Scene2D first and UI last; HUD coordinates
+are logical pixels and do not move with either scene camera. World-anchored UI can
+use `nico_presentation_control::coordinates::project_world_to_ui`.
 
 The native client loads `textures/sample.png` from
 `games/minimal-game/assets/presentation`; `--asset-root PATH` overrides that directory.
@@ -813,9 +819,10 @@ The default `--sample 2d` draws a sprite; `3d` loads `meshes/cube.glb`, mapping
 shared positions to world XY at Z=0. The perspective camera looks toward the origin.
 The cube uses an opaque 128x128 UV checker (`textures/uv-checker.png`), with A1–D4
 labels and colored corners. The HUD keeps the transparent 2x2 PNG. Meshes use depth
-testing and an unlit texture with alpha cutoff 0.5. The fixed HUD
-shares the quad renderer and texture cache; it draws after meshes without depth testing.
-Missing meshes use a tetrahedron, and missing textures use the checkerboard.
+testing and a rough dielectric material with alpha cutoff 0.5. The fixed HUD
+uses the quad renderer; it draws after meshes without depth testing. Missing
+meshes use a tetrahedron; missing mesh material textures use neutral defaults.
+Canvas textures retain their checkerboard fallback.
 
 `MeshStore` and `TextureStore` specialize the same `AssetStore<T>` lifecycle.
 Mesh-only GLB accepts one indexed triangle primitive with float positions and UVs,

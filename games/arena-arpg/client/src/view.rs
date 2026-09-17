@@ -4,7 +4,7 @@ use nico_ops::{
     mcp::{CallToolResult, Tool, ToolExtensions},
     publication::Publication,
 };
-use nico_presentation::{Scene2d, Scene3d};
+use nico_presentation::{Scene3d, UiScene};
 use nico_runtime::{AppBuilder, Plugin, RuntimeResult, Stage};
 use nico_winit::NativeWindowState;
 use serde_json::{Value, json};
@@ -112,7 +112,7 @@ fn error(code: &str) -> CallToolResult {
 }
 impl Plugin for ViewPlugin {
     fn build(&self, builder: &mut AppBuilder) -> RuntimeResult<()> {
-        builder.insert_resource(Scene2d::default());
+        builder.insert_resource(UiScene::default());
         builder.insert_resource(Scene3d::default());
         let ops = self.0.clone();
         let mut visuals = Visuals::configured(self.2.clone(), &self.3);
@@ -154,8 +154,8 @@ impl Plugin for ViewPlugin {
                 "focused":window.focused,"pointer_captured":window.pointer_captured,"capture_error":window.capture_error,
                 "animation":characters[0].as_ref().map(crate::character::Character::state),
                 "actor_animations":characters.iter().map(|c|c.as_ref().map(crate::character::Character::state)).collect::<Vec<_>>(),
-                "logical_size":window.logical_size,"mesh_draws":scene.meshes.len(),"hud_quads":hud.hud.len()}));
-            *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<Scene2d>()?=hud;Ok(())
+                "logical_size":window.logical_size,"mesh_draws":scene.meshes.len(),"hud_quads":hud.quads.len()}));
+            *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<UiScene>()?=hud;Ok(())
         });
         let ops = self.0.clone();
         builder.add_system(Stage::Shutdown, "arena_client::close", move |ctx| {
@@ -169,7 +169,7 @@ impl Plugin for ViewPlugin {
             }
             ops.snapshot.close();
             *ctx.world.resource_mut::<Scene3d>()? = Scene3d::default();
-            *ctx.world.resource_mut::<Scene2d>()? = Scene2d::default();
+            *ctx.world.resource_mut::<UiScene>()? = UiScene::default();
             Ok(())
         });
         Ok(())

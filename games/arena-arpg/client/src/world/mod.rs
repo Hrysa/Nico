@@ -20,7 +20,7 @@ use nico_ops::{
     mcp::{CallToolResult, Tool, ToolExtensions},
     publication::Publication,
 };
-use nico_presentation::{Scene2d, Scene3d};
+use nico_presentation::{Scene3d, UiScene};
 use nico_runtime::{AppBuilder, RuntimeError, Stage, events::EventReader};
 use nico_winit::{NativeWindowState, WindowFocusLost, keyboard, pointer};
 use serde::Deserialize;
@@ -162,7 +162,7 @@ pub fn register(
     builder.insert_resource(client);
     builder.insert_resource(Camera::default());
     builder.insert_resource(Scene3d::default());
-    builder.insert_resource(Scene2d::default());
+    builder.insert_resource(UiScene::default());
     let mut frames = EventReader::<FrameInput>::new();
     let mut focus = EventReader::<WindowFocusLost>::new();
     let mut held = FixedInput::<2, 2, 6>::default();
@@ -227,7 +227,7 @@ pub fn register(
         let (scene,hud)=visuals.render(client,view,window.logical_size,window.pointer_captured,dt).map_err(|message|RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message})?;
         if scene.meshes.len()>256{return Err(RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message:"world draw budget exceeded".into()});}
         let mut ops=read.lock().unwrap();let state=json!({"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"environment":visuals.environment.inspection,"rendered_meshes":scene.meshes.len(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);
-        *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<Scene2d>()?=hud;Ok(())
+        *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<UiScene>()?=hud;Ok(())
     });
     builder.add_system(Stage::Shutdown, "world_client::close", move |ctx| {
         ctx.world.resource_mut::<WorldClient>()?.close();

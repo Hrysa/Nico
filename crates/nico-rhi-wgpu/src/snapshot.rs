@@ -78,7 +78,7 @@ pub(super) fn readback(
         .map_err(|e| e.to_string())?;
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for row in mapped.chunks_exact(stride as usize) {
-        for pixel in row[..(width * 4) as usize].chunks_exact(4) {
+        for pixel in row[..(width * 4) as usize].as_chunks::<4>().0 {
             if bgra {
                 rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
             } else {

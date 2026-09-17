@@ -161,18 +161,18 @@ impl CharacterAssets {
                 .data()
                 .materials
                 .iter()
-                .any(|m| m.base_color_texture == Some(index))
+                .any(|m| m.texture_indices().contains(&Some(index)))
             {
                 textures.push(None);
                 continue;
             }
             let image = &model.data().images[texture.image];
             if image.encoding != ImageEncoding::Png {
-                return Err("arena currently supports PNG base-color images only".into());
+                return Err("arena currently supports PNG material images only".into());
             }
-            let remaining = (128usize * 1024 * 1024).saturating_sub(decoded);
+            let remaining = (256usize * 1024 * 1024).saturating_sub(decoded);
             if remaining == 0 {
-                return Err("arena base-color texture budget exceeded".into());
+                return Err("arena material texture budget exceeded".into());
             }
             let mut ctx = ImportContext::new(
                 &image.bytes,
@@ -560,6 +560,8 @@ impl Character {
                 }
             }
             meshes.push(MeshInstance {
+                mirrored: false,
+                material: None,
                 mesh: Some(equipped.blade.clone()),
                 skin_palette: Some(Arc::new(vec![weapon.to_cols_array_2d()])),
                 texture: Some(equipped.weapon_texture.clone()),

@@ -7,6 +7,8 @@ pub mod character;
 
 mod texture;
 pub use texture::Texture;
+mod material;
+pub use material::{MaterialTexture, PbrMaterial};
 mod mesh;
 pub use mesh::{Mesh, MeshVertex, SkinWeights};
 

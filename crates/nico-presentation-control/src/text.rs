@@ -1,7 +1,7 @@
 //! Bootstrap bitmap text layout and cached glyph textures. Outputs ordinary quads.
 //! Coordinates use a top-left origin. This is an ASCII 5x7 font, not a shaping engine.
 use nico_assets::Texture;
-use nico_presentation::{Quad, Scene2d};
+use nico_presentation::{Quad, UiScene};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Default)]
@@ -68,13 +68,13 @@ impl BitmapFont {
 }
 /// Add a solid HUD rectangle using a caller-owned white texture.
 pub fn rectangle(
-    scene: &mut Scene2d,
+    scene: &mut UiScene,
     origin: [f32; 2],
     size: [f32; 2],
     color: [f32; 4],
     white: Arc<Texture>,
 ) {
-    scene.hud.push(Quad {
+    scene.quads.push(Quad {
         center: [origin[0] + size[0] / 2.0, origin[1] + size[1] / 2.0],
         size,
         color,
