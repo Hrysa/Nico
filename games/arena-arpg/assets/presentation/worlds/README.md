@@ -1,10 +1,31 @@
 # Meadow scenery
 
 `meadow.world-vis.toml` is client-only content, selected with `--visual-world`.
-It loads seven prepared Nature models. Two rocks replace the former obstacle
-boxes, nine trees surround the settlement/camp, and 44 grass, flower, and bush
-placements leave the main path and combat area open. Settlement houses retain
-their existing placeholder geometry.
+The current layout takes the Nature pack's `Preview_1.jpg` as its art reference:
+bright green planting in the west, warm autumn foliage in the east, rocky
+landmarks, flowers, ferns, and mushrooms along a winding dirt route. It loads 13
+prepared Nature models, maps all 13 authoritative obstacles to rock/tree visuals,
+and adds 86 non-colliding placements. The former house boxes now look like rocky
+outcrops while keeping the same server-owned collision volumes.
+
+The client builds a mottled flat meadow floor with static obstacle contact shading,
+using smooth hashed noise at resolved spatial scales to avoid repeating road bands,
+distant rolling hills outside the
+playable square, a camera-centered sky with cloud wisps, and 64 grass patches at
+zone bind time. Each patch combines many blades into one mesh, is frustum culled,
+and uses only the remaining draw capacity. Curved grass blades vary in height and
+green/gold color while leaving the path and solid obstacle footprints open.
+The world camera uses a 200-metre far
+plane for the background. Directional sunlight and diffuse ambient lighting are
+configured only for this world; the standalone arena keeps its existing lighting.
+
+Walkable ground remains flat, matching authoritative movement and prediction.
+The hills are background scenery, not walkable terrain. Clouds and grass are
+static; dynamic shadows, wind, foliage translucency, and the publisher's exact
+lighting/post-processing are not implemented. Native GPU captures have been
+inspected; user-observed approval and visual parity with the reference are not
+claimed. Tested build and scenario evidence belongs in the
+[roadmap](../../../../../docs/roadmap.md#meadow-scenery-milestone).
 
 `models` maps local names to GLB paths relative to the visual definition.
 `obstacles.<id>` selects a model for a named obstacle in the server-provided
@@ -13,33 +34,31 @@ With `height_m`, a tree is grounded at the trunk collider's X/Z centre and botto
 Y, scaled uniformly to the authored canopy height. The logic file owns all solid
 positions and collider dimensions; the client never creates gameplay colliders.
 Unnamed/unmapped obstacles retain box visuals. A different zone ID disables this
-definition's imported scenery.
+definition's imported scenery and procedural landscape.
 
 `decorations` contains non-colliding model placements with `position`,
-`height_m`, and optional `yaw_radians`. Small plants are decorative; solid tree
-trunks use conservative box colliders. Tree canopies and irregular rock surfaces
-do not use mesh-accurate collision. Camera collision uses the same server obstacle
-boxes as movement prediction and authoritative movement.
+`height_m`, and optional `yaw_radians`. Both obstacle bindings and decorations
+accept `autumn = true`: only materials named with `leaves` receive a warm RGB
+multiplier; bark, alpha cutouts, and normal maps are retained. Background decorative
+trees have no collision; solid trunks use the server's conservative boxes.
+Camera collision uses the same server obstacle boxes as authoritative movement.
 
-Static geometry and palettes are shared and prepared at load/bind time. Frustum
-queries cull whole placements. Decorations use the draw budget remaining after
-actors and solid scenery, preserving the 256-draw scene limit. The world MCP
-state's `environment` field reports loaded model, solid placement, decoration,
-and submitted decorative draw counts.
+Static geometry and palettes are shared and prepared at load/bind time. Identical
+encoded images across models share one decoded texture and GPU image identity,
+within the existing 256 MiB decoded-image budget. Decorations use the draw budget
+remaining after actors and solid scenery, preserving the 256-draw scene limit.
+The world MCP state's `environment` field reports loaded models, solid placements,
+imported decorations, and submitted decorative draws (including grass patches).
 
 Reproduce runtime GLBs from the preserved source pack:
 
-```powershell
-python games/arena-arpg/tools/prepare_nature.py
+```sh
+python3 games/arena-arpg/tools/prepare_nature.py
 ```
 
 The converter embeds adjacent buffers and PNGs and removes unsupported vertex
 color bindings. Geometry, primary UVs, and texture bytes remain intact. Rendering
-currently uses base-color textures and the existing 0.5 alpha cutoff, rather
-than the source foliage material's 0.2 cutoff. Normal maps, lighting, shadows,
-and the publisher's stylized shaders are not implemented by this import.
-
-These assets are from Quaternius's Stylized Nature MegaKit Standard, under CC0.
-The notice is retained in [nature/License.txt](nature/License.txt); the original
-archive hash and source inventory remain in
-[../quaternius/import-manifest.json](../quaternius/import-manifest.json).
+uses core metallic/roughness PBR textures and material alpha cutoffs. These assets
+are from Quaternius's Stylized Nature MegaKit Standard, under CC0. The notice is
+retained in [nature/License.txt](nature/License.txt); the original archive hash and
+source inventory remain in [../quaternius/import-manifest.json](../quaternius/import-manifest.json).

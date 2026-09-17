@@ -8,7 +8,9 @@ source = root / 'quaternius/nature'
 destination = root / 'worlds/nature'
 destination.mkdir(parents=True, exist_ok=True)
 names = ['CommonTree_1', 'Pine_1', 'Rock_Medium_1', 'Rock_Medium_2',
-         'Bush_Common', 'Grass_Common_Short', 'Flower_3_Group']
+         'Bush_Common', 'Grass_Common_Short', 'Flower_3_Group', 'CommonTree_3',
+         'TwistedTree_1', 'Fern_1', 'Mushroom_Common', 'Flower_4_Group',
+         'Bush_Common_Flowers']
 for name in names:
     data = json.loads((source / f'{name}.gltf').read_text(encoding='utf-8'))
     assert len(data['buffers']) == 1 and not data.get('extensionsRequired')
@@ -24,7 +26,7 @@ for name in names:
         image['bufferView'] = len(data['bufferViews'])
         data['bufferViews'].append({'buffer': 0, 'byteOffset': len(blob), 'byteLength': len(raw)})
         blob.extend(raw)
-    # The renderer uses base-color textures and UV0, without vertex-color modulation.
+    # The renderer uses core PBR textures and UV0, without vertex-color modulation.
     for mesh in data['meshes']:
         for primitive in mesh['primitives']:
             for key in list(primitive['attributes']):

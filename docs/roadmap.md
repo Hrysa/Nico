@@ -442,12 +442,36 @@ disconnect, and focus loss leave input, sound, and UI in a valid state.
 
 ### Meadow scenery milestone
 
-**Status (2026-09-17):** Meadow uses seven imported Nature models for two rocks,
-nine trees, and 44 decorative plants. Server-owned obstacle IDs connect solid
-visuals to authoritative box collision; scenery definitions remain client-only.
-Focused tests and the two-client native world scenario passed. The
-[Nature review](reviews/2026-09-17-nature.md) records rendered evidence and the
-remaining material, collision, and art-acceptance limits.
+**Status (2026-09-18):** The reference-driven meadow redesign uses 13 imported
+Nature models, 13 solid obstacle bindings, and 86 decorative placements. Green
+and autumn planting surrounds a winding dirt path, with curved grass grouped into
+64 cullable patches, textured ground, a clouded sky, and distant rolling hills.
+The former house boxes have rock visuals. Server-owned obstacle IDs still connect
+solid visuals to authoritative box collision; walkable ground stays flat and hills
+remain outside the playable square. Identical source images share decoded texture
+residency within the existing memory budget.
+
+On macOS/Apple M4, all 41 client tests passed, including ground/hill seams,
+grass/path separation, draw bounds, shared image identity, and autumn leaf tint
+preserving bark. Strict client all-target Clippy and formatting pass. Native
+captures of the first revision (PID 30171) exposed sparse grass and a ground-edge
+gap, both corrected in the revised build. The user-launched revised client
+(PID 30295, bridge instance `24210-18d61c3b86506230-8`) produced a 2560-by-1440
+GPU capture after an observed focus request recovered occlusion. The inspected
+image shows the denser curved grass, textured path, planted scenery and HUD;
+it is retained locally at `/tmp/nico-meadow-captures/revised.png`. A separately
+sampled state reported 154 draws; this is not same-frame metadata. Automated
+control stopped and the client remained open. User-observed visual acceptance is
+pending. Dynamic shadows, walkable slopes, wind, and reference-image visual parity
+are not claimed.
+Following user feedback about repeated road bands, ground texturing now uses
+low-contrast hashed value noise instead of layered periodic waves. The revised
+client builds and passes its landscape regression and strict all-target Clippy;
+this texture correction has not yet been inspected in a restarted native client.
+The [scenery guide](../games/arena-arpg/assets/presentation/worlds/README.md) owns
+configuration and limitations. The earlier Windows/two-client
+[Nature review](reviews/2026-09-17-nature.md) remains historical evidence for the
+previous layout.
 
 ### Meadow quest milestone
 

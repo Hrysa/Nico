@@ -9,6 +9,17 @@ rock2 = "nature/Rock_Medium_2.glb"
 bush = "nature/Bush_Common.glb"
 grass = "nature/Grass_Common_Short.glb"
 flowers = "nature/Flower_3_Group.glb"
+flowers2 = "nature/Flower_4_Group.glb"
+canopy = "nature/CommonTree_3.glb"
+twisted = "nature/TwistedTree_1.glb"
+fern = "nature/Fern_1.glb"
+mushroom = "nature/Mushroom_Common.glb"
+flowerbush = "nature/Bush_Common_Flowers.glb"
+
+[obstacles.house-west]
+model = "rock2"
+[obstacles.house-east]
+model = "rock"
 
 # Rocks fit the server's full box; trees share the trunk's ground anchor.
 [obstacles.rock-west]
@@ -23,14 +34,16 @@ height_m = 6.4
 [obstacles.tree-1]
 model = "tree"
 height_m = 7.1
+autumn = true
 
 [obstacles.tree-2]
 model = "tree"
 height_m = 7.8
 
 [obstacles.tree-3]
-model = "pine"
+model = "canopy"
 height_m = 6.4
+autumn = true
 
 [obstacles.tree-4]
 model = "tree"
@@ -39,6 +52,7 @@ height_m = 7.1
 [obstacles.tree-5]
 model = "tree"
 height_m = 7.8
+autumn = true
 
 [obstacles.tree-6]
 model = "pine"
@@ -47,271 +61,611 @@ height_m = 6.4
 [obstacles.tree-7]
 model = "tree"
 height_m = 7.1
+autumn = true
 
 [obstacles.tree-8]
 model = "tree"
 height_m = 7.8
 
+
 [[decorations]]
-model = "grass"
-position = [-4.0, 0.0, -32.0]
-height_m = 0.45
-yaw_radians = 0.00
+model = "twisted"
+position = [-27.994, 0.0, -43.000]
+height_m = 8.655
+yaw_radians = 1.122
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-35.885, 0.0, -33.000]
+height_m = 8.379
+yaw_radians = 3.661
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-38.514, 0.0, -12.000]
+height_m = 8.677
+yaw_radians = 2.713
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-32.022, 0.0, 0.000]
+height_m = 10.733
+yaw_radians = 5.421
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-29.133, 0.0, 19.000]
+height_m = 7.003
+yaw_radians = 0.301
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-28.476, 0.0, 32.000]
+height_m = 10.897
+yaw_radians = 2.557
+autumn = false
+
+[[decorations]]
+model = "twisted"
+position = [-34.960, 0.0, 43.000]
+height_m = 9.841
+yaw_radians = 1.381
+autumn = false
+
+[[decorations]]
+model = "canopy"
+position = [36.310, 0.0, -43.000]
+height_m = 9.300
+yaw_radians = 3.397
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [26.457, 0.0, -33.000]
+height_m = 8.558
+yaw_radians = 6.251
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [36.039, 0.0, -12.000]
+height_m = 9.224
+yaw_radians = 3.385
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [34.228, 0.0, 0.000]
+height_m = 7.037
+yaw_radians = 2.932
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [28.128, 0.0, 19.000]
+height_m = 10.459
+yaw_radians = 1.012
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [38.095, 0.0, 32.000]
+height_m = 7.508
+yaw_radians = 4.746
+autumn = true
+
+[[decorations]]
+model = "canopy"
+position = [34.332, 0.0, 43.000]
+height_m = 7.951
+yaw_radians = 5.681
+autumn = true
+
+[[decorations]]
+model = "fern"
+position = [-4.658, 0.0, 31.089]
+height_m = 1.225
+yaw_radians = 1.224
+autumn = false
 
 [[decorations]]
 model = "flowers"
-position = [-4.7, 0.0, -30.2]
-height_m = 0.55
-yaw_radians = 0.00
+position = [14.150, 0.0, -32.631]
+height_m = 0.611
+yaw_radians = 5.759
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [-4.8, 0.0, -26.0]
-height_m = 0.45
-yaw_radians = 0.40
+model = "flowers2"
+position = [-7.508, 0.0, -38.925]
+height_m = 0.902
+yaw_radians = 3.620
+autumn = false
 
 [[decorations]]
-model = "flowers"
-position = [-5.2, 0.0, -24.2]
-height_m = 0.55
-yaw_radians = 0.70
+model = "flowerbush"
+position = [9.367, 0.0, -34.450]
+height_m = 1.298
+yaw_radians = 0.063
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [-4.0, 0.0, -15.0]
-height_m = 0.45
-yaw_radians = 0.80
+model = "mushroom"
+position = [-6.064, 0.0, 20.743]
+height_m = 0.589
+yaw_radians = 6.067
+autumn = false
 
 [[decorations]]
-model = "flowers"
-position = [-4.7, 0.0, -13.2]
-height_m = 0.55
-yaw_radians = 1.40
+model = "rock2"
+position = [18.557, 0.0, 35.694]
+height_m = 0.658
+yaw_radians = 3.684
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [-4.8, 0.0, -8.0]
-height_m = 0.45
-yaw_radians = 1.20
-
-[[decorations]]
-model = "flowers"
-position = [-5.2, 0.0, -6.2]
-height_m = 0.55
-yaw_radians = 2.10
-
-[[decorations]]
-model = "grass"
-position = [-4.0, 0.0, -1.0]
-height_m = 0.45
-yaw_radians = 1.60
+model = "fern"
+position = [-13.867, 0.0, 29.295]
+height_m = 0.791
+yaw_radians = 4.186
+autumn = false
 
 [[decorations]]
 model = "flowers"
-position = [-4.7, 0.0, 0.8]
-height_m = 0.55
-yaw_radians = 2.80
+position = [9.327, 0.0, 10.083]
+height_m = 0.731
+yaw_radians = 1.894
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [-15.0, 0.0, -33.0]
-height_m = 1.1
-yaw_radians = 0.00
+model = "flowers2"
+position = [-21.267, 0.0, 15.797]
+height_m = 0.780
+yaw_radians = 0.011
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [-16.5, 0.0, -32.0]
-height_m = 0.65
-yaw_radians = 0.00
+model = "flowerbush"
+position = [14.623, 0.0, -37.601]
+height_m = 1.124
+yaw_radians = 1.547
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [-16.0, 0.0, -15.0]
-height_m = 1.1
-yaw_radians = 0.30
+model = "mushroom"
+position = [-20.473, 0.0, -4.909]
+height_m = 0.602
+yaw_radians = 0.853
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [-17.5, 0.0, -14.0]
-height_m = 0.65
-yaw_radians = 0.50
+model = "rock2"
+position = [8.537, 0.0, -14.526]
+height_m = 0.640
+yaw_radians = 1.012
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [-22.0, 0.0, -2.0]
-height_m = 1.1
-yaw_radians = 0.60
-
-[[decorations]]
-model = "grass"
-position = [-23.5, 0.0, -1.0]
-height_m = 0.65
-yaw_radians = 1.00
-
-[[decorations]]
-model = "bush"
-position = [-23.0, 0.0, 16.0]
-height_m = 1.1
-yaw_radians = 0.90
-
-[[decorations]]
-model = "grass"
-position = [-24.5, 0.0, 17.0]
-height_m = 0.65
-yaw_radians = 1.50
-
-[[decorations]]
-model = "bush"
-position = [-15.0, 0.0, 25.0]
-height_m = 1.1
-yaw_radians = 1.20
-
-[[decorations]]
-model = "grass"
-position = [-16.5, 0.0, 26.0]
-height_m = 0.65
-yaw_radians = 2.00
-
-[[decorations]]
-model = "bush"
-position = [-6.0, 0.0, 29.0]
-height_m = 1.1
-yaw_radians = 1.50
-
-[[decorations]]
-model = "grass"
-position = [-7.5, 0.0, 30.0]
-height_m = 0.65
-yaw_radians = 2.50
-
-[[decorations]]
-model = "grass"
-position = [4.0, 0.0, -32.0]
-height_m = 0.45
-yaw_radians = 0.00
+model = "fern"
+position = [-20.147, 0.0, 30.435]
+height_m = 0.778
+yaw_radians = 1.677
+autumn = false
 
 [[decorations]]
 model = "flowers"
-position = [4.7, 0.0, -30.2]
-height_m = 0.55
-yaw_radians = 0.00
+position = [7.111, 0.0, 4.332]
+height_m = 0.497
+yaw_radians = 0.609
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [4.8, 0.0, -26.0]
-height_m = 0.45
-yaw_radians = 0.40
+model = "flowers2"
+position = [-7.987, 0.0, -14.572]
+height_m = 0.853
+yaw_radians = 1.529
+autumn = false
 
 [[decorations]]
-model = "flowers"
-position = [5.2, 0.0, -24.2]
-height_m = 0.55
-yaw_radians = 0.70
+model = "flowerbush"
+position = [20.030, 0.0, 10.634]
+height_m = 1.596
+yaw_radians = 1.755
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [4.0, 0.0, -15.0]
-height_m = 0.45
-yaw_radians = 0.80
+model = "mushroom"
+position = [-5.344, 0.0, -9.469]
+height_m = 0.709
+yaw_radians = 3.966
+autumn = false
 
 [[decorations]]
-model = "flowers"
-position = [4.7, 0.0, -13.2]
-height_m = 0.55
-yaw_radians = 1.40
+model = "rock2"
+position = [7.052, 0.0, -33.305]
+height_m = 0.759
+yaw_radians = 4.260
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [4.8, 0.0, -8.0]
-height_m = 0.45
-yaw_radians = 1.20
-
-[[decorations]]
-model = "flowers"
-position = [5.2, 0.0, -6.2]
-height_m = 0.55
-yaw_radians = 2.10
-
-[[decorations]]
-model = "grass"
-position = [4.0, 0.0, -1.0]
-height_m = 0.45
-yaw_radians = 1.60
+model = "fern"
+position = [-13.208, 0.0, 35.942]
+height_m = 1.036
+yaw_radians = 5.305
+autumn = false
 
 [[decorations]]
 model = "flowers"
-position = [4.7, 0.0, 0.8]
-height_m = 0.55
-yaw_radians = 2.80
+position = [6.798, 0.0, -9.201]
+height_m = 0.789
+yaw_radians = 5.744
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [15.0, 0.0, -33.0]
-height_m = 1.1
-yaw_radians = 0.00
+model = "flowers2"
+position = [-12.642, 0.0, -10.334]
+height_m = 0.679
+yaw_radians = 2.548
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [16.5, 0.0, -32.0]
-height_m = 0.65
-yaw_radians = 0.00
+model = "flowerbush"
+position = [22.542, 0.0, -23.861]
+height_m = 1.780
+yaw_radians = 5.179
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [16.0, 0.0, -15.0]
-height_m = 1.1
-yaw_radians = 0.30
+model = "mushroom"
+position = [-19.828, 0.0, -24.729]
+height_m = 0.634
+yaw_radians = 3.858
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [17.5, 0.0, -14.0]
-height_m = 0.65
-yaw_radians = 0.50
+model = "rock2"
+position = [14.641, 0.0, 37.611]
+height_m = 0.680
+yaw_radians = 5.449
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [22.0, 0.0, -2.0]
-height_m = 1.1
-yaw_radians = 0.60
+model = "fern"
+position = [-17.874, 0.0, 36.538]
+height_m = 1.291
+yaw_radians = 3.322
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [23.5, 0.0, -1.0]
-height_m = 0.65
-yaw_radians = 1.00
+model = "flowers"
+position = [6.754, 0.0, -14.892]
+height_m = 0.675
+yaw_radians = 2.838
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [23.0, 0.0, 16.0]
-height_m = 1.1
-yaw_radians = 0.90
+model = "flowers2"
+position = [-15.380, 0.0, -30.198]
+height_m = 0.729
+yaw_radians = 2.074
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [24.5, 0.0, 17.0]
-height_m = 0.65
-yaw_radians = 1.50
+model = "flowerbush"
+position = [10.861, 0.0, -13.112]
+height_m = 1.196
+yaw_radians = 3.774
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [15.0, 0.0, 25.0]
-height_m = 1.1
-yaw_radians = 1.20
+model = "mushroom"
+position = [-19.419, 0.0, -21.174]
+height_m = 0.479
+yaw_radians = 5.496
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [16.5, 0.0, 26.0]
-height_m = 0.65
-yaw_radians = 2.00
+model = "rock2"
+position = [22.302, 0.0, -41.650]
+height_m = 0.826
+yaw_radians = 1.303
+autumn = false
 
 [[decorations]]
-model = "bush"
-position = [6.0, 0.0, 29.0]
-height_m = 1.1
-yaw_radians = 1.50
+model = "fern"
+position = [-17.783, 0.0, -0.978]
+height_m = 0.838
+yaw_radians = 0.215
+autumn = false
 
 [[decorations]]
-model = "grass"
-position = [7.5, 0.0, 30.0]
-height_m = 0.65
-yaw_radians = 2.50
+model = "flowers"
+position = [7.858, 0.0, -40.828]
+height_m = 0.666
+yaw_radians = 2.352
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-13.633, 0.0, -0.546]
+height_m = 0.625
+yaw_radians = 2.606
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [16.029, 0.0, 11.048]
+height_m = 1.254
+yaw_radians = 3.096
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-16.571, 0.0, -1.403]
+height_m = 0.442
+yaw_radians = 0.147
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [15.624, 0.0, 24.446]
+height_m = 0.783
+yaw_radians = 4.641
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-5.399, 0.0, 3.033]
+height_m = 1.035
+yaw_radians = 4.503
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [12.105, 0.0, -35.989]
+height_m = 0.492
+yaw_radians = 2.287
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-16.953, 0.0, -25.280]
+height_m = 0.696
+yaw_radians = 5.854
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [12.263, 0.0, 1.636]
+height_m = 1.423
+yaw_radians = 2.853
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-22.200, 0.0, 33.311]
+height_m = 0.449
+yaw_radians = 4.443
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [11.695, 0.0, -8.192]
+height_m = 0.894
+yaw_radians = 6.110
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-14.381, 0.0, -34.235]
+height_m = 1.092
+yaw_radians = 2.562
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [15.646, 0.0, 26.075]
+height_m = 0.726
+yaw_radians = 4.609
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-15.398, 0.0, -14.302]
+height_m = 0.586
+yaw_radians = 3.609
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [15.418, 0.0, -37.889]
+height_m = 1.073
+yaw_radians = 3.383
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-22.487, 0.0, -20.672]
+height_m = 0.524
+yaw_radians = 1.372
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [19.809, 0.0, -0.211]
+height_m = 0.853
+yaw_radians = 4.053
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-12.816, 0.0, 22.389]
+height_m = 1.121
+yaw_radians = 6.066
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [15.084, 0.0, -27.743]
+height_m = 0.792
+yaw_radians = 0.668
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-4.825, 0.0, -38.495]
+height_m = 0.879
+yaw_radians = 4.020
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [5.677, 0.0, 29.310]
+height_m = 1.634
+yaw_radians = 1.720
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-11.604, 0.0, -15.499]
+height_m = 0.537
+yaw_radians = 0.518
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [13.004, 0.0, -1.661]
+height_m = 0.739
+yaw_radians = 3.876
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-5.023, 0.0, 3.425]
+height_m = 1.040
+yaw_radians = 2.316
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [14.865, 0.0, -5.868]
+height_m = 0.624
+yaw_radians = 3.418
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-17.787, 0.0, -27.737]
+height_m = 0.648
+yaw_radians = 6.114
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [15.598, 0.0, 28.878]
+height_m = 1.621
+yaw_radians = 1.905
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-18.785, 0.0, -21.467]
+height_m = 0.643
+yaw_radians = 1.242
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [6.999, 0.0, 24.563]
+height_m = 0.672
+yaw_radians = 2.481
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-9.160, 0.0, -39.681]
+height_m = 1.053
+yaw_radians = 6.052
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [20.894, 0.0, 11.675]
+height_m = 0.718
+yaw_radians = 3.207
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-18.445, 0.0, -11.137]
+height_m = 0.716
+yaw_radians = 5.343
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [10.821, 0.0, 19.802]
+height_m = 1.358
+yaw_radians = 4.476
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-17.410, 0.0, -15.022]
+height_m = 0.701
+yaw_radians = 1.449
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [12.245, 0.0, 11.404]
+height_m = 0.667
+yaw_radians = 3.175
+autumn = false
+
+[[decorations]]
+model = "fern"
+position = [-11.122, 0.0, -3.429]
+height_m = 1.213
+yaw_radians = 4.718
+autumn = false
+
+[[decorations]]
+model = "flowers"
+position = [20.633, 0.0, -33.245]
+height_m = 0.756
+yaw_radians = 1.983
+autumn = false
+
+[[decorations]]
+model = "flowers2"
+position = [-8.130, 0.0, 21.297]
+height_m = 0.542
+yaw_radians = 3.203
+autumn = false
+
+[[decorations]]
+model = "flowerbush"
+position = [5.627, 0.0, 26.211]
+height_m = 1.807
+yaw_radians = 0.403
+autumn = false
+
+[[decorations]]
+model = "mushroom"
+position = [-21.858, 0.0, 8.674]
+height_m = 0.572
+yaw_radians = 1.298
+autumn = false
+
+[[decorations]]
+model = "rock2"
+position = [18.954, 0.0, -13.262]
+height_m = 0.886
+yaw_radians = 4.619
+autumn = false

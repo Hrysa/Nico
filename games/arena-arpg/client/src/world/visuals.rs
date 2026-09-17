@@ -149,22 +149,24 @@ impl Visuals {
             ..Default::default()
         };
         let mut hud = UiScene::default();
-        scene.meshes.push(draw(
-            self.ground.clone(),
-            self.white.clone(),
-            [0., -0.1, 0.],
-            Quat::IDENTITY,
-            client.zone.half_extent_m as f32 / 64.,
-            [0.24, 0.42, 0.24, 1.],
-        ));
-        scene.meshes.push(draw(
-            self.path.clone(),
-            self.white.clone(),
-            [0., 0., -8.],
-            Quat::IDENTITY,
-            1.,
-            [0.54, 0.48, 0.31, 1.],
-        ));
+        if !self.environment.backdrop(camera, &mut scene) {
+            scene.meshes.push(draw(
+                self.ground.clone(),
+                self.white.clone(),
+                [0., -0.1, 0.],
+                Quat::IDENTITY,
+                client.zone.half_extent_m as f32 / 64.,
+                [0.24, 0.42, 0.24, 1.],
+            ));
+            scene.meshes.push(draw(
+                self.path.clone(),
+                self.white.clone(),
+                [0., 0., -8.],
+                Quat::IDENTITY,
+                1.,
+                [0.54, 0.48, 0.31, 1.],
+            ));
+        }
         let projection = camera.view_projection(size[0] / size[1].max(1.));
         // A stationary, non-combatant warden uses the existing procedural body.
         if let Some(q) = &client.zone.quest {

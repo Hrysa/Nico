@@ -7,7 +7,7 @@ use nico_assets::{
     import::{AssetImporter, ImportBudget, ImportContext},
     importers::{PngImporter, PngSettings},
 };
-use nico_presentation::{MeshInstance, Scene3d};
+use nico_presentation::{Camera3d, MeshInstance, Scene3d};
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path, sync::Arc};
@@ -30,6 +30,8 @@ struct Solid {
     model: String,
     /// Omit to fit the whole rock into its collision box; trees specify canopy height.
     height_m: Option<f32>,
+    #[serde(default)]
+    autumn: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,11 +41,14 @@ struct Decoration {
     height_m: f32,
     #[serde(default)]
     yaw_radians: f32,
+    #[serde(default)]
+    autumn: bool,
 }
 struct Model {
     visual: ModelVisual,
     globals: Vec<Mat4>,
     bounds: ModelBounds,
+    foliage: Vec<Arc<Texture>>,
 }
 struct Placement {
     draws: Vec<MeshInstance>,
@@ -54,6 +59,7 @@ pub struct Environment {
     models: BTreeMap<String, Model>,
     solids: BTreeMap<usize, Placement>,
     decorations: Vec<Placement>,
+    landscape: Option<super::landscape::Landscape>,
     pub inspection: serde_json::Value,
 }
 fn height_valid(height: f32) -> bool {
@@ -92,6 +98,7 @@ impl Environment {
         let mut models = BTreeMap::new();
         let mut source_bytes = 0u64;
         let mut decoded_bytes = 0usize;
+        let mut images: BTreeMap<Vec<u8>, Arc<Texture>> = BTreeMap::new();
         for (name, asset) in &definition.models {
             let path = nico_assets::character::asset_path(
                 path.parent().ok_or("world asset directory")?,
@@ -117,6 +124,10 @@ impl Environment {
                     continue;
                 }
                 let image = &model.data().images[texture.image];
+                if let Some(texture) = images.get(&image.bytes) {
+                    textures.push(Some(texture.clone()));
+                    continue;
+                }
                 let remaining = (256 * 1024 * 1024usize).saturating_sub(decoded_bytes);
                 let mut context = ImportContext::new(
                     &image.bytes,
@@ -129,8 +140,17 @@ impl Environment {
                 let texture: Texture = PngImporter.import(&mut context, &PngSettings::default())?;
                 // All selected inputs are RGBA8; enforce the aggregate decoded budget.
                 decoded_bytes += texture.width() as usize * texture.height() as usize * 4;
-                textures.push(Some(Arc::new(texture)));
+                let texture = Arc::new(texture);
+                images.insert(image.bytes.clone(), texture.clone());
+                textures.push(Some(texture));
             }
+            let foliage = model
+                .data()
+                .materials
+                .iter()
+                .filter(|m| m.name.to_lowercase().contains("leaves"))
+                .filter_map(|m| m.base_color_texture.and_then(|i| textures[i].clone()))
+                .collect();
             let globals = Pose::rest(&model).globals()?;
             let visual = ModelVisual::new(model, textures)?;
             let bounds = visual.bounds(&globals, Mat4::IDENTITY)?;
@@ -143,6 +163,7 @@ impl Environment {
                     visual,
                     globals,
                     bounds,
+                    foliage,
                 },
             );
         }
@@ -151,6 +172,7 @@ impl Environment {
             models,
             solids: BTreeMap::new(),
             decorations: Vec::new(),
+            landscape: None,
             inspection: serde_json::Value::Null,
         })
     }
@@ -158,9 +180,11 @@ impl Environment {
     pub fn bind(&mut self, zone: &ZoneDefinition) -> Result<()> {
         self.solids.clear();
         self.decorations.clear();
+        self.landscape = None;
         if zone.id != self.definition.zone {
             return Ok(());
         }
+        self.landscape = Some(super::landscape::Landscape::new(zone));
         for (index, obstacle) in zone.obstacles.iter().enumerate() {
             if let Some(binding) = self.definition.obstacles.get(&obstacle.id) {
                 let model = &self.models[&binding.model];
@@ -175,7 +199,8 @@ impl Environment {
                         * Mat4::from_scale(size / (max - min))
                         * Mat4::from_translation(-(min + max) * 0.5)
                 };
-                self.solids.insert(index, model.place(transform)?);
+                self.solids
+                    .insert(index, model.place(transform, binding.autumn)?);
             }
         }
         for d in &self.definition.decorations {
@@ -186,13 +211,20 @@ impl Environment {
                 continue;
             }
             let model = &self.models[&d.model];
-            self.decorations.push(model.place(model.grounded(
-                d.position.into(),
-                d.height_m,
-                d.yaw_radians,
-            ))?);
+            self.decorations.push(model.place(
+                model.grounded(d.position.into(), d.height_m, d.yaw_radians),
+                d.autumn,
+            )?);
         }
         Ok(())
+    }
+    pub fn backdrop(&self, camera: Camera3d, scene: &mut Scene3d) -> bool {
+        if let Some(landscape) = &self.landscape {
+            landscape.backdrop(camera, scene);
+            true
+        } else {
+            false
+        }
     }
     pub fn obstacle(&self, index: usize, projection: Option<Mat4>, scene: &mut Scene3d) -> bool {
         let Some(placement) = self.solids.get(&index) else {
@@ -206,6 +238,9 @@ impl Environment {
         let before = scene.meshes.len();
         for placement in &self.decorations {
             placement.submit(projection, scene);
+        }
+        if let Some(landscape) = &self.landscape {
+            landscape.decorate(projection, scene);
         }
         self.inspection = serde_json::json!({"zone":self.definition.zone,"loaded_models":self.models.len(),"solid_models":self.solids.len(),"decorations":self.decorations.len(),"decoration_draws":scene.meshes.len()-before});
     }
@@ -224,9 +259,23 @@ impl Model {
             (min.z + max.z) * 0.5,
         ))
     }
-    fn place(&self, transform: Mat4) -> Result<Placement> {
+    fn place(&self, transform: Mat4, autumn: bool) -> Result<Placement> {
         let mut draws = self.visual.meshes(&self.globals)?;
         for draw in &mut draws {
+            // Retain foliage alpha/normal maps and bark color; warm only leaf draws.
+            if autumn
+                && draw
+                    .material
+                    .as_ref()
+                    .and_then(|m| m.base_color_texture.as_ref())
+                    .is_some_and(|t| {
+                        self.foliage
+                            .iter()
+                            .any(|image| Arc::ptr_eq(image, &t.image))
+                    })
+            {
+                draw.color = [6., 0.65, 0.045, 1.];
+            }
             let palette = draw
                 .skin_palette
                 .as_ref()
@@ -275,8 +324,11 @@ mod tests {
         let mut environment = environment();
         let mut zone = zone();
         environment.bind(&zone).unwrap();
-        assert_eq!(environment.solids.len(), 11);
-        assert_eq!(environment.decorations.len(), 44);
+        assert_eq!(environment.solids.len(), 13);
+        assert_eq!(
+            environment.decorations.len(),
+            environment.definition.decorations.len()
+        );
         for index in [2, 3] {
             let obstacle = &zone.obstacles[index];
             let bounds = environment.solids[&index].bounds;
@@ -310,6 +362,30 @@ mod tests {
         zone.id = "another-zone".into();
         environment.bind(&zone).unwrap();
         assert!(environment.solids.is_empty() && environment.decorations.is_empty());
+    }
+    #[test]
+    fn repeated_tree_images_are_shared_and_autumn_preserves_bark() {
+        let environment = environment();
+        let tree = &environment.models["tree"];
+        let canopy = &environment.models["canopy"];
+        assert!(Arc::ptr_eq(&tree.foliage[0], &canopy.foliage[0]));
+        let summer = canopy.place(Mat4::IDENTITY, false).unwrap();
+        let autumn = canopy.place(Mat4::IDENTITY, true).unwrap();
+        let mut leaves = 0;
+        let mut bark = 0;
+        for (summer, autumn) in summer.draws.iter().zip(&autumn.draws) {
+            assert!(Arc::ptr_eq(
+                summer.material.as_ref().unwrap(),
+                autumn.material.as_ref().unwrap()
+            ));
+            if autumn.color == summer.color {
+                bark += 1;
+            } else {
+                leaves += 1;
+                assert_eq!(autumn.color[3], 1.);
+            }
+        }
+        assert!(leaves > 0 && bark > 0);
     }
     #[test]
     fn decorative_draws_share_geometry_and_cannot_exceed_remaining_budget() {

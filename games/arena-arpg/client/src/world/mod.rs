@@ -1,4 +1,5 @@
 pub mod environment;
+mod landscape;
 pub mod network;
 mod prediction;
 mod visuals;
@@ -221,9 +222,10 @@ pub fn register(
         let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
         let client=ctx.world.resource::<WorldClient>()?;let position=client.prediction.as_ref().map(|p|p.actor.position).unwrap_or(client.zone.settlement);let obstacles=client.zone.obstacles.clone();let dt=ctx.time.delta();
         let camera=ctx.world.resource_mut::<Camera>()?;
-        let view=camera.rig.view([position.x as f32,1.2,position.z as f32],dt.as_secs_f32(),|sweep|obstacles.iter().filter_map(|o|sweep.cast_aabb(std::array::from_fn(|i|(o.center[i]-o.size[i]/2.)as f32),std::array::from_fn(|i|(o.center[i]+o.size[i]/2.)as f32))).reduce(f32::min));
+        let mut view=camera.rig.view([position.x as f32,1.2,position.z as f32],dt.as_secs_f32(),|sweep|obstacles.iter().filter_map(|o|sweep.cast_aabb(std::array::from_fn(|i|(o.center[i]-o.size[i]/2.)as f32),std::array::from_fn(|i|(o.center[i]+o.size[i]/2.)as f32))).reduce(f32::min));
         let camera_info=json!({"yaw":camera.rig.yaw(),"pitch":camera.rig.pitch(),"distance":camera.rig.distance(),"position":view.position});
         let client=ctx.world.resource::<WorldClient>()?;
+        view.far=200.;
         let (scene,hud)=visuals.render(client,view,window.logical_size,window.pointer_captured,dt).map_err(|message|RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message})?;
         if scene.meshes.len()>256{return Err(RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message:"world draw budget exceeded".into()});}
         let mut ops=read.lock().unwrap();let state=json!({"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"environment":visuals.environment.inspection,"rendered_meshes":scene.meshes.len(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);

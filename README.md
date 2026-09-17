@@ -42,7 +42,9 @@ not convert older commits; history migration is a separate operation that change
 commit IDs and requires coordinating any update to a shared remote branch.
 
 The default game is a shared outdoor world with a settlement and monster camp.
-Meadow uses imported Nature trees, rocks, bushes, grass, and flowers. Solid
+Meadow uses imported Nature trees, rocks, bushes, flowers, ferns, and mushrooms,
+with green/autumn planting, dense curved grass, a winding dirt path, and a sky
+and distant-hill backdrop. Walkable ground remains flat. Solid
 placements and trunk colliders come from the server's zone; small plants are
 decorative. The client option `--visual-world` selects its scenery TOML. See the
 [world scenery guide](games/arena-arpg/assets/presentation/worlds/README.md) for
