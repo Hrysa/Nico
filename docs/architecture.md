@@ -385,6 +385,14 @@ cooperative cancellation/output accounting, without world or GPU access. Worker
 loss fails pending entries; user code is not automatically restarted or sandboxed.
 Native publication and identity/lease semantics are unchanged.
 
+Development import caching belongs to runtime-free `nico-assets::cache`, enabled by
+`import-cache` and the built-in importer features. Debug file loaders compare metadata before reading source
+bytes; full content checks run only when metadata is changed or unavailable. They restore validated CPU assets from binary content-addressed objects in
+`assets/.nico`; runtime publication and GPU upload ownership remain unchanged.
+Custom importers explicitly opt in with versioned settings keys and binary codecs.
+The [cache contract](plans/2026-09-18-development-import-cache.md) owns persistence
+and invalidation rules.
+
 External dependency reads, a dependency scheduler, and packaging are not implemented.
 The static mesh GLB importer remains restricted; the separate `ModelGlbImporter`
 produces validated immutable bundles of scene nodes, geometry, skins, clips,
@@ -601,7 +609,7 @@ Capture excludes span timing and is not a profiler.
 - Keep protocol/provider types out of unrelated engine-facing APIs.
 
 Parallel scheduling, broader math APIs, advanced physics, audio, UI, production
-materials/render graphs, scene/prefab formats, and import caching remain deferred.
+materials/render graphs and scene/prefab formats remain deferred.
 Profiling implementation and broader visual development tools are deferred; phase status
 and priorities belong in the roadmap and TODO.
 

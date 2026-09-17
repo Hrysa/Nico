@@ -111,6 +111,54 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 mod tests {
     use super::*;
 
+    /// Measures CPU startup preparation only; never opens a window or connects a host.
+    #[test]
+    #[ignore = "manual startup elapsed-time measurement using local game assets"]
+    fn startup_asset_preparation_measurement() {
+        use std::time::Instant;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let args = Args::parse_from(["arena"]);
+        let start = Instant::now();
+        let logic = arena_arpg_shared::characters::CharacterCatalog::load(
+            &root.join(args.logic_characters),
+        )
+        .unwrap();
+        let visual_root = root.join(args.visual_characters);
+        let definitions = character::definition::load_visuals(&visual_root, &logic).unwrap();
+        let mut characters = Vec::new();
+        for definition in definitions {
+            if definition.core.model.is_some() {
+                let name = definition.core.character.clone();
+                let phase = Instant::now();
+                characters.push(
+                    character::CharacterAssets::load_definition(definition, &visual_root, None)
+                        .unwrap(),
+                );
+                eprintln!("startup measurement: {name} {:?}", phase.elapsed());
+            }
+        }
+        let phase = Instant::now();
+        let mut environment =
+            world::environment::Environment::load(&root.join(args.visual_world)).unwrap();
+        eprintln!(
+            "startup measurement: environment assets {:?}",
+            phase.elapsed()
+        );
+        let zone = arena_arpg_shared::open_world::content::ZoneDefinition::load(
+            &root.join("games/arena-arpg/assets/logic/worlds/meadow.world.toml"),
+        )
+        .unwrap();
+        let phase = Instant::now();
+        environment.bind(&zone).unwrap();
+        eprintln!(
+            "startup measurement: scenery preparation {:?}; total {:?}; cache {:?}",
+            phase.elapsed(),
+            start.elapsed(),
+            nico_assets::cache::stats()
+        );
+        assert_eq!(characters.len(), 3);
+    }
+
     #[test]
     fn default_hero_uses_game_presentation_assets() {
         let args = Args::try_parse_from(["arena"]).unwrap();

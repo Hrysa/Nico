@@ -9,13 +9,13 @@ use nico_animation::{
 };
 use nico_assets::{
     Mesh, SkinWeights, Texture,
-    import::{AssetImporter, ImportBudget, ImportContext},
+    import::ImportBudget,
     importers::{ModelGlbImporter, ModelGlbSettings, PngImporter, PngSettings},
     model::{ImageEncoding, Model, Transform},
 };
 use nico_presentation::MeshInstance;
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
-use std::{fs::File, io::Read, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub mod definition;
 mod grip;
@@ -96,7 +96,12 @@ impl CharacterAssets {
         definition.validate()?;
         let model_definition = definition.core.model.as_ref().ok_or("model required")?;
         let model_path = definition::asset_path(root, &model_definition.asset)?;
+        let progress = nico_assets::progress::ImportProgress::new(
+            format!("{} models", definition.core.character),
+            1 + definition::MOTIONS.len(),
+        )?;
         let model = load(overrides.map_or(model_path.as_path(), |v| v.0))?;
+        progress.complete_one();
         let target = Arc::new(HumanoidRig::from_reference(
             model.clone(),
             grip::authored_reference(&model, &definition.core.pose)?,
@@ -153,7 +158,22 @@ impl CharacterAssets {
                 index,
                 &animation.clip,
             )?);
+            progress.complete_one();
         }
+        progress.finish();
+        let texture_count = (0..model.data().textures.len())
+            .filter(|i| {
+                model
+                    .data()
+                    .materials
+                    .iter()
+                    .any(|m| m.texture_indices().contains(&Some(*i)))
+            })
+            .count();
+        let progress = nico_assets::progress::ImportProgress::new(
+            format!("{} textures", definition.core.character),
+            texture_count,
+        )?;
         let mut textures = Vec::new();
         let mut decoded = 0usize;
         for (index, texture) in model.data().textures.iter().enumerate() {
@@ -174,18 +194,23 @@ impl CharacterAssets {
             if remaining == 0 {
                 return Err("arena material texture budget exceeded".into());
             }
-            let mut ctx = ImportContext::new(
+            let texture = nico_assets::cache::load_bytes(
+                overrides.map_or(model_path.as_path(), |v| v.0),
+                &format!("image/{}", texture.image),
                 &image.bytes,
+                &PngImporter,
+                &PngSettings::default(),
                 ImportBudget {
                     max_input_bytes: 64 * 1024 * 1024,
                     max_decoded_bytes: remaining,
                 },
                 &|| false,
             )?;
-            let texture = PngImporter.import(&mut ctx, &PngSettings::default())?;
             decoded += texture.pixels().len();
             textures.push(Some(Arc::new(texture)));
+            progress.complete_one();
         }
+        progress.finish();
         let visual = ModelVisual::new(model.clone(), textures)?;
         // Reserve enough of the renderer's 256 draw slots for arena geometry and telegraphs.
         if visual.primitive_count() > 32 {
@@ -586,24 +611,18 @@ impl Character {
 }
 
 pub(crate) fn load(path: &Path) -> Result<Arc<Model>> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take(64 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    let mut ctx = ImportContext::new(
-        &bytes,
+    Ok(Arc::new(nico_assets::cache::load_file(
+        path,
+        &ModelGlbImporter,
+        &ModelGlbSettings {
+            allow_material_fallback: true,
+            ..Default::default()
+        },
         ImportBudget {
             max_input_bytes: 64 * 1024 * 1024,
             max_decoded_bytes: 128 * 1024 * 1024,
         },
         &|| false,
-    )?;
-    Ok(Arc::new(ModelGlbImporter.import(
-        &mut ctx,
-        &ModelGlbSettings {
-            allow_material_fallback: true,
-            ..Default::default()
-        },
     )?))
 }
 

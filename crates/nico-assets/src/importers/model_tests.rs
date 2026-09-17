@@ -217,3 +217,41 @@ fn retains_embedded_images_and_core_material_bindings() {
     doc["images"] = json!([{"uri":"external.png"}]);
     assert_eq!(decode(&doc, &blob).unwrap_err().code(), "external_image");
 }
+
+#[test]
+fn binary_cache_preserves_model_graph_skin_and_animation() {
+    let (doc, blob) = fixture();
+    let model = decode(&doc, &blob).unwrap();
+    let payload = ModelGlbImporter.cache_encode(&model).unwrap();
+    let cached = ModelGlbImporter
+        .cache_decode(&payload, &Default::default())
+        .unwrap();
+    assert_eq!(cached.parents(), model.parents());
+    assert_eq!(ModelGlbImporter.cache_encode(&cached).unwrap(), payload);
+    let mut data = cached.data().clone();
+    data.nodes[0].children.push(9999);
+    assert!(
+        ModelGlbImporter
+            .cache_decode(&crate::cache::encode(&data).unwrap(), &Default::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn cached_image_bulk_codec_preserves_existing_binary_layout() {
+    let image = ModelImage {
+        name: "test".into(),
+        encoding: ImageEncoding::Png,
+        bytes: vec![0, 1, 127, 128, 255],
+    };
+    let legacy = crate::cache::encode(&(&image.name, image.encoding, &image.bytes)).unwrap();
+    assert_eq!(crate::cache::encode(&image).unwrap(), legacy);
+    let restored: ModelImage = crate::cache::decode(&legacy).unwrap();
+    assert_eq!(restored.bytes, image.bytes);
+    let json = serde_json::to_vec(&image).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<ModelImage>(&json).unwrap().bytes,
+        image.bytes
+    );
+    assert!(crate::cache::decode::<ModelImage>(&legacy[..legacy.len() - 1]).is_err());
+}

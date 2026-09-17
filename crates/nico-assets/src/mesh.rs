@@ -1,4 +1,5 @@
 /// Static mesh vertex. Coordinates are right-handed, Y up; UV origin is top-left.
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshVertex {
     pub position: [f32; 3],
@@ -6,6 +7,7 @@ pub struct MeshVertex {
 }
 
 /// Four normalized joint influences per vertex. Indices address a draw's palette.
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct SkinWeights {
     pub joints: [u16; 4],

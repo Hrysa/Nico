@@ -8,6 +8,7 @@ use gltf::accessor::{DataType as D, Dimensions as Dim};
 #[path = "model_tests.rs"]
 mod tests;
 
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize))]
 #[derive(Clone, Debug)]
 pub struct ModelGlbSettings {
     pub max_nodes: usize,
@@ -82,6 +83,16 @@ fn count(total: &mut usize, n: usize, max: usize) -> Result<(), ImportError> {
 }
 
 impl AssetImporter for ModelGlbImporter {
+    fn cache_settings(&self, s: &Self::Settings) -> Result<Option<Vec<u8>>, ImportError> {
+        crate::cache::encode(&("model-v1", s)).map(Some)
+    }
+    fn cache_encode(&self, value: &Self::Output) -> Result<Vec<u8>, ImportError> {
+        crate::cache::encode(value.data())
+    }
+    fn cache_decode(&self, bytes: &[u8], _s: &Self::Settings) -> Result<Self::Output, ImportError> {
+        Model::new(crate::cache::decode(bytes)?).map_err(|_| malformed("cache_model"))
+    }
+
     type Output = Model;
     type Settings = ModelGlbSettings;
     fn descriptor(&self) -> ImporterDescriptor {

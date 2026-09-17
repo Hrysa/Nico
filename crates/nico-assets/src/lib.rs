@@ -14,6 +14,8 @@ pub use mesh::{Mesh, MeshVertex, SkinWeights};
 
 mod asset_error;
 pub use asset_error::{AssetError, AssetLimits};
+#[cfg(feature = "import-cache")]
+pub mod cache;
 pub mod import;
 pub mod importers;
 
@@ -117,3 +119,6 @@ pub mod procedural;
 
 /// Immutable generic model, skin, and animation data.
 pub mod model;
+
+#[cfg(feature = "import-cache")]
+pub mod progress;

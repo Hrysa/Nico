@@ -35,12 +35,12 @@ use std::{
 };
 
 use crate::{AssetId, asset_error::AssetError};
-#[cfg(any(feature = "runtime-loading", all(test, feature = "png-import")))]
+#[cfg(any(feature = "runtime-loading", feature = "import-cache"))]
 use std::path::Path;
-#[cfg(any(feature = "runtime-loading", all(test, feature = "png-import")))]
+#[cfg(any(feature = "runtime-loading", feature = "import-cache"))]
 use std::{fs::File, io::Read};
 
-/// Immutable provenance for a registered implementation. Versions are not cache keys.
+/// Immutable provenance for a registered implementation. Versions participate in development cache recipes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ImporterDescriptor {
     pub id: &'static str,
@@ -186,6 +186,10 @@ impl<'a> ImportContext<'a> {
     pub const fn budget(&self) -> ImportBudget {
         self.budget
     }
+    #[cfg(feature = "import-cache")]
+    pub(crate) fn claimed_bytes(&self) -> usize {
+        self.claimed
+    }
     pub fn check_cancelled(&self) -> Result<(), ImportError> {
         if (self.cancelled)() {
             Err(ImportError::new(
@@ -224,6 +228,29 @@ pub trait AssetImporter: Send + Sync + 'static {
     type Settings: Clone + Send + Sync + 'static;
 
     fn descriptor(&self) -> ImporterDescriptor;
+    /// Opt in to persistent caching. Include codec schema and every setting or
+    /// external dependency digest that changes output. None preserves uncached imports.
+    #[cfg(feature = "import-cache")]
+    fn cache_settings(&self, _: &Self::Settings) -> Result<Option<Vec<u8>>, ImportError> {
+        Ok(None)
+    }
+    #[cfg(feature = "import-cache")]
+    fn cache_encode(&self, _: &Self::Output) -> Result<Vec<u8>, ImportError> {
+        Err(ImportError::new(
+            ImportErrorKind::Unsupported,
+            "cache_codec",
+            "cache encoding not implemented",
+        ))
+    }
+    #[cfg(feature = "import-cache")]
+    fn cache_decode(&self, _: &[u8], _: &Self::Settings) -> Result<Self::Output, ImportError> {
+        Err(ImportError::new(
+            ImportErrorKind::Unsupported,
+            "cache_codec",
+            "cache decoding not implemented",
+        ))
+    }
+
     /// Called before catalog insertion, on the setup thread. Must not perform I/O.
     fn validate_settings(&self, _settings: &Self::Settings) -> Result<(), ImportError> {
         Ok(())
@@ -243,6 +270,13 @@ pub struct ImporterToken<I: AssetImporter> {
 }
 
 trait ImportJob<T>: Send + Sync {
+    #[cfg(all(feature = "runtime-loading", feature = "import-cache"))]
+    fn load(
+        &self,
+        path: &Path,
+        budget: ImportBudget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<T, ImportError>;
     fn run(&self, context: &mut ImportContext<'_>) -> Result<T, ImportError>;
 }
 struct Configured<I: AssetImporter> {
@@ -250,6 +284,21 @@ struct Configured<I: AssetImporter> {
     settings: I::Settings,
 }
 impl<I: AssetImporter> ImportJob<I::Output> for Configured<I> {
+    #[cfg(all(feature = "runtime-loading", feature = "import-cache"))]
+    fn load(
+        &self,
+        path: &Path,
+        budget: ImportBudget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<I::Output, ImportError> {
+        crate::cache::load_file(
+            path,
+            self.importer.as_ref(),
+            &self.settings,
+            budget,
+            cancelled,
+        )
+    }
     fn run(&self, context: &mut ImportContext<'_>) -> Result<I::Output, ImportError> {
         self.importer.import(context, &self.settings)
     }
@@ -296,9 +345,18 @@ impl<T> ImportEntry<T> {
     }
     #[cfg(feature = "runtime-loading")]
     pub(crate) fn load(&self, cancelled: &dyn Fn() -> bool) -> Result<T, AssetError> {
-        let bytes =
-            read_source(&self.path, self.budget, cancelled).map_err(|error| self.failure(error))?;
-        self.run(&bytes, cancelled)
+        #[cfg(feature = "import-cache")]
+        {
+            self.job
+                .load(&self.path, self.budget, cancelled)
+                .map_err(|e| self.failure(e))
+        }
+        #[cfg(not(feature = "import-cache"))]
+        {
+            let bytes = read_source(&self.path, self.budget, cancelled)
+                .map_err(|error| self.failure(error))?;
+            self.run(&bytes, cancelled)
+        }
     }
 }
 
@@ -444,7 +502,7 @@ impl<T: Send + Sync + 'static> ImportRegistry<T> {
 }
 
 /// Bounded primary-source reading, shared by all native importers.
-#[cfg(any(feature = "runtime-loading", all(test, feature = "png-import")))]
+#[cfg(any(feature = "runtime-loading", feature = "import-cache"))]
 pub(crate) fn read_source(
     path: &Path,
     budget: ImportBudget,

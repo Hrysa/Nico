@@ -541,6 +541,38 @@ general asset loader. Offline WGSL generation still leaves backend shader and pi
 preparation at runtime. The reported roughly one-second startup delay has not been
 profiled; its cause remains unconfirmed.
 
+## Development asset cache
+
+Debug builds automatically cache imported GLB models/animations, static meshes, and
+decoded PNGs in the nearest `assets/.nico/` directory. Arena startup, character
+preview, and the asynchronous asset stores use this path. File metadata is checked first; unchanged files skip source reads and content
+hashing. Changed or unavailable metadata triggers full verification; unchanged
+content still reuses binary CPU objects rather than running the source parser again. Settings, importer versions, and budgets invalidate reuse.
+Direct calls to `AssetImporter::import` remain explicit uncached imports.
+Startup prints `loading completed/total (phase; cache hits N, imported N, shared N)`
+at info level through the timestamped logger every three seconds and at phase
+completion. Models/animations and
+referenced textures have separate exact totals; shared counts textures reused in
+memory. Cache hits are loads, not source imports. The development profile optimizes
+SHA-256 verification while keeping engine/game code debuggable.
+
+`.nico/index.json` maps relative source/subresource identities to SHA-256 objects
+under `.nico/objects/`. The directory is ignored by Git and can be removed while
+loaders are stopped to force a rebuild. Source files remain required. GPU uploads,
+model validation, TOML definitions, and procedural geometry still run at startup.
+Release builds currently use source imports; shipping cooked content is deferred.
+Overrides outside an `assets` tree place `.nico` beside the source file.
+
+Headless inspection reports cumulative cache hit/import/rebuild counts as JSON:
+
+```sh
+cargo run -p nico-assets --features gltf-import --example inspect_model -- path/to/model.glb
+```
+
+Run twice to check persistence across processes. The
+[cache contract](docs/plans/2026-09-18-development-import-cache.md) describes
+invalidation, locking, extension codecs, and current limits.
+
 ## Extending asset import
 
 Game and external Rust crates can implement `nico_assets::import::AssetImporter`

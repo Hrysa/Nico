@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 desktop.ini
 .DS_Store
+
+# Rebuildable development import indexes and content-addressed objects.
+.nico/

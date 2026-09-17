@@ -9,14 +9,12 @@ use nico_animation::{
     playback::{AnimationClip, AnimationPlayer, AnimationSet, PlayMode},
 };
 use nico_assets::{
-    import::{AssetImporter, ImportBudget, ImportContext},
+    import::ImportBudget,
     importers::{ModelGlbImporter, ModelGlbSettings, PngImporter, PngSettings},
     model::{ImageEncoding, Model},
 };
 use nico_presentation::MeshInstance;
 use std::{
-    fs::File,
-    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -72,24 +70,18 @@ pub fn spawn_character(
 }
 
 fn load(path: &Path) -> Result<Arc<Model>> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take(64 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    let mut ctx = ImportContext::new(
-        &bytes,
+    Ok(Arc::new(nico_assets::cache::load_file(
+        path,
+        &ModelGlbImporter,
+        &ModelGlbSettings {
+            allow_material_fallback: true,
+            ..Default::default()
+        },
         ImportBudget {
             max_input_bytes: 64 * 1024 * 1024,
             max_decoded_bytes: 128 * 1024 * 1024,
         },
         &|| false,
-    )?;
-    Ok(Arc::new(ModelGlbImporter.import(
-        &mut ctx,
-        &ModelGlbSettings {
-            allow_material_fallback: true,
-            ..Default::default()
-        },
     )?))
 }
 fn validate_clip_labels(clips: &[AnimationClip]) -> Result<()> {
@@ -106,7 +98,11 @@ fn validate_clip_labels(clips: &[AnimationClip]) -> Result<()> {
 }
 impl CharacterAssets {
     pub fn load(model: &Path, sources: &[PathBuf]) -> Result<Self> {
+        let progress =
+            nico_assets::progress::ImportProgress::new("preview models", 1 + sources.len())?;
+        let model_path = model;
         let model = load(model)?;
+        progress.complete_one();
         if sources.len() > 64 {
             return Err("preview accepts at most 64 animation files".into());
         }
@@ -140,10 +136,23 @@ impl CharacterAssets {
                         name,
                     )?);
                 }
+                progress.complete_one();
             }
         }
         validate_clip_labels(&clips)?;
         let animations = Arc::new(AnimationSet::new(model.clone(), clips)?);
+        progress.finish();
+        let texture_count = (0..model.data().textures.len())
+            .filter(|i| {
+                model
+                    .data()
+                    .materials
+                    .iter()
+                    .any(|m| m.texture_indices().contains(&Some(*i)))
+            })
+            .count();
+        let progress =
+            nico_assets::progress::ImportProgress::new("preview textures", texture_count)?;
         let mut textures = Vec::new();
         let mut decoded = 0usize;
         for (index, texture) in model.data().textures.iter().enumerate() {
@@ -164,18 +173,23 @@ impl CharacterAssets {
             if remaining == 0 {
                 return Err("preview material texture budget exceeded".into());
             }
-            let mut ctx = ImportContext::new(
+            let texture = nico_assets::cache::load_bytes(
+                model_path,
+                &format!("image/{}", texture.image),
                 &image.bytes,
+                &PngImporter,
+                &PngSettings::default(),
                 ImportBudget {
                     max_input_bytes: 64 * 1024 * 1024,
                     max_decoded_bytes: remaining,
                 },
                 &|| false,
             )?;
-            let texture = PngImporter.import(&mut ctx, &PngSettings::default())?;
             decoded += texture.pixels().len();
             textures.push(Some(Arc::new(texture)));
+            progress.complete_one();
         }
+        progress.finish();
         let visual = nico_presentation_control::model::ModelVisual::new(model.clone(), textures)?;
         Ok(Self {
             visual,

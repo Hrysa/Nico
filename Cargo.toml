@@ -48,3 +48,8 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Development cache verification hashes large decoded texture objects. Keep the
+# hash implementation optimized while engine/game code remains debuggable.
+[profile.dev.package.sha2]
+opt-level = 3

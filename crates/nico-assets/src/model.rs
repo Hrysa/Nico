@@ -10,6 +10,7 @@ pub const IDENTITY: Matrix4 = [
 ];
 
 /// Right-handed, Y-up TRS; rotations are unit quaternions in XYZW order.
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {
     pub translation: [f32; 3],
@@ -37,6 +38,7 @@ fn unit(q: [f32; 4]) -> bool {
     q.iter().all(|v| v.is_finite()) && (q.iter().map(|v| v * v).sum::<f32>() - 1.).abs() < 1e-3
 }
 
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Node {
     pub name: String,
@@ -45,6 +47,7 @@ pub struct Node {
     pub mesh: Option<usize>,
     pub skin: Option<usize>,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct ModelVertex {
     pub position: [f32; 3],
@@ -53,6 +56,7 @@ pub struct ModelVertex {
     pub joints: [u16; 4],
     pub weights: [f32; 4],
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Primitive {
     pub vertices: Vec<ModelVertex>,
@@ -61,11 +65,13 @@ pub struct Primitive {
     pub skinned: bool,
     pub has_normals: bool,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct ModelMesh {
     pub name: String,
     pub primitives: Vec<Primitive>,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Skin {
     pub name: String,
@@ -73,17 +79,20 @@ pub struct Skin {
     pub inverse_bind: Vec<Matrix4>,
     pub skeleton: Option<usize>,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Interpolation {
     Step,
     Linear,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum TrackValues {
     Translation(Vec<[f32; 3]>),
     Rotation(Vec<[f32; 4]>),
     Scale(Vec<[f32; 3]>),
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Track {
     pub node: usize,
@@ -91,6 +100,7 @@ pub struct Track {
     pub values: TrackValues,
     pub interpolation: Interpolation,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Clip {
     pub name: String,
@@ -109,24 +119,29 @@ impl Clip {
             })
     }
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ImageEncoding {
     Png,
     Jpeg,
 }
 /// Encoded bytes, not decoded pixels. Image decoding may subsequently fail.
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct ModelImage {
     pub name: String,
     pub encoding: ImageEncoding,
+    #[cfg_attr(feature = "import-cache", serde(with = "crate::cache::byte_buffer"))]
     pub bytes: Vec<u8>,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WrapMode {
     Clamp,
     Mirror,
     Repeat,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Filter {
     Nearest,
@@ -136,6 +151,7 @@ pub enum Filter {
     NearestMipmapLinear,
     LinearMipmapLinear,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct ModelTexture {
     pub image: usize,
@@ -144,12 +160,14 @@ pub struct ModelTexture {
     pub min_filter: Option<Filter>,
     pub mag_filter: Option<Filter>,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AlphaMode {
     Opaque,
     Mask,
     Blend,
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Material {
     pub name: String,
@@ -180,12 +198,14 @@ impl Material {
         ]
     }
 }
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Scene {
     pub name: String,
     pub roots: Vec<usize>,
 }
 /// Public builder data lets userland importers construct the same validated bundle.
+#[cfg_attr(feature = "import-cache", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Default)]
 pub struct ModelData {
     pub nodes: Vec<Node>,

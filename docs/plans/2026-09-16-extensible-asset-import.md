@@ -1,5 +1,8 @@
 # Extensible asset import
 
+The [2026-09-18 implementation update](#implementation-update--2026-09-18) supersedes
+the original cache deferral below.
+
 Status: importer interface, registry, built-in migration, and runtime adapter
 implemented 2026-09-16. Model import and CPU humanoid consumers are implemented
 in the [model contract](2026-09-16-model-animation.md); GPU skinning is implemented; production playback and arena rendering are pending.
@@ -176,3 +179,11 @@ Implementation order is extensible importer/store integration, migrated built-in
 and external-consumer tests, generic character import, then canonical humanoid
 conversion and skinning. Concrete actions are maintained in
 [TODO](../../TODO.md#client-humanoid-models-and-animation).
+
+## Implementation update — 2026-09-18
+
+The [development cache contract](2026-09-18-development-import-cache.md) now defines
+source fingerprints, recipe/settings versions, binary CPU codecs, and atomic
+content-addressed publication. Importer ID/version now participate in that recipe;
+custom importers remain uncached unless they explicitly supply cache methods.
+External dependency discovery and shipping packaging remain deferred.

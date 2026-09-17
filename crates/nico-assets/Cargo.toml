@@ -9,10 +9,15 @@ default = []
 character = ["dep:serde"]
 loading = ["runtime-loading", "png-import", "gltf-import"]
 runtime-loading = ["dep:nico-runtime"]
-png-import = ["dep:png"]
-gltf-import = ["dep:gltf"]
+png-import = ["dep:png", "import-cache"]
+gltf-import = ["dep:gltf", "import-cache"]
+import-cache = ["dep:serde", "dep:serde_json", "dep:bincode", "dep:sha2", "dep:tracing"]
 
 [dependencies]
+tracing = { workspace = true, optional = true }
+bincode = { version = "1.3.3", optional = true }
+sha2 = { version = "0.10", optional = true }
+serde_json = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 nico-runtime = { path = "../nico-runtime", optional = true }
 png = { version = "0.18", optional = true }

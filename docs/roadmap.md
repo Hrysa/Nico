@@ -210,6 +210,18 @@ documentation link targets passed checks. The default CPU asset configuration al
 or visual sample behavior; phase 4 records rendering evidence. Non-Windows loader
 execution remains unverified.
 
+**Development import cache (2026-09-18, macOS):** Debug file loaders now reuse
+versioned binary CPU objects under `assets/.nico`, with source/settings invalidation,
+per-recipe locking, atomic index merges, and corruption recovery. Arena characters,
+scenery, character preview, and asset-store workers use the cache. Workspace tests,
+all-target Clippy, formatting, and both arena/preview builds passed. The headless
+inspector loaded the real Imp model in a fresh process with one cache hit and zero
+imports. Regression tests cover invalidation, recovery, concurrent writers, budgets,
+and model/PNG round trips. This establishes CPU loading behavior on the tested macOS
+build; native rendering was not revalidated. Source-independent shipping and cache
+garbage collection remain deferred. See the
+[cache contract](plans/2026-09-18-development-import-cache.md).
+
 ## 4. Display the game world
 
 **Result:** The screen reflects actual game entities and their positions.
