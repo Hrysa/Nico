@@ -4,43 +4,38 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Next: client humanoid models and animation
+## Client humanoid models and animation
 
 Acceptance: [roadmap phase 7 character milestone](docs/roadmap.md#client-character-milestone).
 
-- [ ] Finalize the supplied character selection: record the RPG animation GitHub
-      source/license and visually verify the candidate
-      idle, locomotion, melee, dodge, hit-reaction, and death clips; see the
-      [asset inspection](docs/plans/2026-09-16-character-assets.md).
+- [ ] Finalize the supplied character selection: verify the RPG animation upstream
+      source/license and finish visual acceptance of the currently bound clips; see the
+      [asset inspection](docs/plans/2026-09-16-character-assets.md) and
+      [first visual review](docs/reviews/2026-09-17-hero-clip-review.md).
 - [ ] Visually validate RPG clips retargeted onto Ch03, including reference-pose
-      alignment, root-motion policy, contacts, and proportions. Refine profiles and
-      add finger/twist handling when the observed poses require it.
+      alignment, root-motion policy, contacts, and proportions. Finish floor/foot
+      contact and native strike-frame checks with denser samples; the
+      [sword/grip review](docs/reviews/2026-09-17-sword-grip.md) records implemented
+      grip, sword selection and numerical contact/weapon-clearance coverage. Tune
+      alignment, playback and authored stride speed through the
+      [character definitions](docs/plans/2026-09-17-character-definitions.md). Refine profiles
+      and add twist handling only when observed poses require it.
 - [ ] Extend preview controls with skeleton visualization,
       and a timeline widget; validate native reference pose and more motion samples.
 - [ ] Broaden character-art acceptance across wave compositions and replacement
-      assets; engine lifecycle/failure validation is recorded in the production review.
+      assets, including Imp/Puglin stride and weapon-contact calibration; see the
+      [Bestiary review](docs/reviews/2026-09-17-bestiary.md).
 
 ## Following: client presentation
 
 Acceptance: [roadmap phase 7](docs/roadmap.md#7-complete-the-player-experience).
 
-- [ ] Reuse the character pipeline for grunt/brute visuals while preserving readable
-      silhouettes, attack telegraphs, and the existing collision/combat rules.
 - [ ] Add the material and lighting support needed by the selected character,
       starting with base color, normals, and a simple lit scene.
 - [ ] Add grounded shadows and combat feedback: weapon trails, impact effects,
       hit flashes, and attack/hit/dodge audio with bounded lifetimes.
 - [ ] Add client settings for camera sensitivity, audio volume, and input rebinding,
       plus readable loading/error states and restart controls with automation access.
-
-## Later: networked co-op design
-
-Acceptance: [roadmap phase 6](docs/roadmap.md#6-play-over-a-network).
-
-- [ ] Define player/session identity, authoritative input handling, state snapshots,
-      and disconnect/rejoin behavior for two-player arena co-op.
-- [ ] Choose interpolation/prediction and reconciliation requirements; assess Rapier
-      repeatability against the chosen model before assuming lockstep or rollback.
 
 ## Native host validation
 

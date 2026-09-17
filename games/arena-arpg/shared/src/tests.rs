@@ -87,7 +87,7 @@ fn mixed_monsters_schedule_strikes_at_least_thirty_ticks_apart() {
         a.step(TickInput::idle(1));
         for actor in &a.snapshot.actors[1..] {
             if matches!(actor.action, Action::Attack { elapsed: 1, .. }) {
-                let strike = a.snapshot.tick - 1 + u64::from(actor.kind.stats().windup);
+                let strike = a.snapshot.tick - 1 + u64::from(actor.stats().windup);
                 if let Some(last) = previous {
                     assert!(strike >= last + 30);
                 }
@@ -450,9 +450,9 @@ fn play_encounter(a: &mut Arena) {
         let mut input = TickInput::idle(a.snapshot.run_id);
         if hero.action == Action::Idle {
             let threats: Vec<_> = a.snapshot.actors[1..].iter().filter(|m| m.health > 0
-                && m.position.sub(hero.position).dot(m.position.sub(hero.position)) < (m.kind.stats().range + 0.8).powi(2)
-                && matches!(m.action, Action::Attack { elapsed, .. } if elapsed < m.kind.stats().windup)).collect();
-            if hero.dodge_cooldown == 0 && let Some(threat) = threats.iter().find(|m| matches!(m.action, Action::Attack { elapsed, .. } if elapsed >= m.kind.stats().windup - 12)) {
+                && m.position.sub(hero.position).dot(m.position.sub(hero.position)) < (m.stats().range + 0.8).powi(2)
+                && matches!(m.action, Action::Attack { elapsed, .. } if elapsed < m.stats().windup)).collect();
+            if hero.dodge_cooldown == 0 && let Some(threat) = threats.iter().find(|m| matches!(m.action, Action::Attack { elapsed, .. } if elapsed >= m.stats().windup - 12)) {
                 input.dodge = Some(Vec2::new(threat.facing.z, -threat.facing.x));
             } else if toward.dot(toward) <= 4.0 && threats.is_empty() {
                 input.attack_yaw = Some(toward.x.atan2(toward.z));

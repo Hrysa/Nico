@@ -206,15 +206,35 @@ impl PhysicsWorld {
                 collider.set_position(position);
             }
         }
-        self.collision_tree = rapier::parry::partitioning::Bvh::from_iter(
-            rapier::parry::partitioning::BvhBuildStrategy::Binned,
-            self.collision_geometry
+        // Parry 0.30's bulk builder indexes leaves 0/1 in its small-tree
+        // special case, which is invalid after collider removals leave sparse IDs.
+        // Incremental insertion preserves the actual collider indices in that case.
+        let enabled = self
+            .collision_geometry
+            .iter()
+            .filter(|(_, c)| c.is_enabled())
+            .count();
+        if enabled <= 2 {
+            self.collision_tree = rapier::parry::partitioning::Bvh::new();
+            for (handle, collider) in self
+                .collision_geometry
                 .iter()
                 .filter(|(_, c)| c.is_enabled())
-                .map(|(handle, collider)| {
-                    (handle.into_raw_parts().0 as usize, collider.compute_aabb())
-                }),
-        );
+            {
+                self.collision_tree
+                    .insert(collider.compute_aabb(), handle.into_raw_parts().0);
+            }
+        } else {
+            self.collision_tree = rapier::parry::partitioning::Bvh::from_iter(
+                rapier::parry::partitioning::BvhBuildStrategy::Binned,
+                self.collision_geometry
+                    .iter()
+                    .filter(|(_, c)| c.is_enabled())
+                    .map(|(handle, collider)| {
+                        (handle.into_raw_parts().0 as usize, collider.compute_aabb())
+                    }),
+            );
+        }
         self.dirty = false;
     }
     fn collision_lookup<'a>(&'a self, filter: r::QueryFilter<'a>) -> r::QueryPipeline<'a> {

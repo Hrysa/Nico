@@ -550,3 +550,25 @@ fn runtime_syncs_entities_edits_despawns_contacts_and_shutdown() -> nico_runtime
     assert!(app.world().resource::<PhysicsWorld>()?.is_closed());
     Ok(())
 }
+
+#[test]
+fn queries_support_one_and_two_remaining_sparse_collider_indices() {
+    let mut world = PhysicsWorld::new([0.; 3], 8).unwrap();
+    let first = world.insert(ball(BodyKind::Fixed, [-10., 0., 0.])).unwrap();
+    let second = world.insert(ball(BodyKind::Fixed, [-5., 0., 0.])).unwrap();
+    let target = world.insert(ball(BodyKind::Fixed, [3., 0., 0.])).unwrap();
+    let actor = world
+        .insert(ball(BodyKind::Kinematic, [0., 0., 0.]))
+        .unwrap();
+    world.remove(first).unwrap();
+    world.remove(second).unwrap();
+    let movement = world
+        .move_character(actor, [5., 0., 0.], DT, CharacterSettings::default())
+        .unwrap();
+    assert!(movement.translation[0] < 3.);
+    world.remove(target).unwrap();
+    let movement = world
+        .move_character(actor, [5., 0., 0.], DT, CharacterSettings::default())
+        .unwrap();
+    assert!((movement.translation[0] - 5.).abs() < 1e-6);
+}

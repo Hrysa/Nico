@@ -35,6 +35,63 @@ fn tick(app: &mut App, count: usize) {
     }
 }
 
+#[test]
+fn character_inspection_and_action_phases_use_the_published_catalog() {
+    let endpoint = Operations::default();
+    assert_eq!(
+        call(&endpoint, "game_characters", json!({}))["error"]["code"],
+        "not_ready"
+    );
+    let mut definitions = crate::characters::CharacterCatalog::builtin()
+        .definitions()
+        .clone();
+    definitions[0].arena.stats.max_health = 321;
+    definitions[0].arena.attacks.primary.windup_ticks = 3;
+    definitions[0].arena.attacks.primary.active_ticks = 2;
+    definitions[0].arena.dodge.duration_ticks = 6;
+    definitions[0].arena.dodge.invulnerable_ticks = 2;
+    let arena = Arena::with_characters(
+        crate::Level::default(),
+        crate::characters::CharacterCatalog::new(definitions).unwrap(),
+    )
+    .unwrap();
+    let mut snapshot = arena.snapshot().clone();
+    snapshot.actors[0].action = Action::Attack {
+        id: 1,
+        elapsed: 4,
+        hit_mask: 0,
+    };
+    endpoint.publish(&snapshot);
+    let state = call(&endpoint, "game_state", json!({}));
+    assert_eq!(state["actors"][0]["max_health"], 321);
+    assert_eq!(state["actors"][0]["action"]["phase"], "active");
+    assert_eq!(state["actors"][0]["action"]["phase_ticks_remaining"], 1);
+    let inspected = call(&endpoint, "game_characters", json!({}));
+    assert_eq!(
+        inspected["definitions"][0]["arena"]["stats"]["max_health"],
+        321
+    );
+    assert_eq!(inspected["closed"], false);
+    assert_eq!(
+        call(&endpoint, "game_characters", json!({"unexpected":1}))["error"]["code"],
+        "invalid_arguments"
+    );
+    snapshot.actors[0].action = Action::Dodge {
+        elapsed: 2,
+        direction: Vec2::new(1., 0.),
+    };
+    endpoint.publish(&snapshot);
+    assert_eq!(
+        call(&endpoint, "game_state", json!({}))["actors"][0]["action"]["phase_ticks_remaining"],
+        4
+    );
+    endpoint.close(&snapshot);
+    assert_eq!(
+        call(&endpoint, "game_characters", json!({}))["closed"],
+        true
+    );
+}
+
 fn hold(endpoint: &Operations, lease: u64, x: f64, z: f64, ticks: u16) -> u64 {
     call(
         endpoint,

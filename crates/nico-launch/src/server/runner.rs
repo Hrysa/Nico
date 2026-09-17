@@ -49,6 +49,8 @@ impl AppRunner for FixedRateServerRunner {
         }
         let mut execution = Ok(());
         let mut completed_steps = 0_u64;
+        let started = Instant::now();
+        let mut deadline = Duration::ZERO;
 
         while !app.exit_requested() {
             if self
@@ -59,7 +61,6 @@ impl AppRunner for FixedRateServerRunner {
                 app.request_exit();
                 break;
             }
-            let tick_started = Instant::now();
             if let Err(error) = app.tick(self.tick_interval) {
                 execution = Err(error);
                 break;
@@ -70,7 +71,7 @@ impl AppRunner for FixedRateServerRunner {
             }
 
             if !app.exit_requested() {
-                let remaining = self.tick_interval.saturating_sub(tick_started.elapsed());
+                let remaining = next_wait(&mut deadline, self.tick_interval, started.elapsed());
                 if let Some(operations) = &mut self.operations {
                     if operations.wait_for_stop(remaining) {
                         app.request_exit();
@@ -99,6 +100,16 @@ impl AppRunner for FixedRateServerRunner {
     }
 }
 
+// Deadline pacing absorbs timer oversleep rather than accumulating it into the
+// simulation rate. After a long suspension, limit catch-up to eight host ticks.
+fn next_wait(deadline: &mut Duration, interval: Duration, elapsed: Duration) -> Duration {
+    *deadline = deadline.saturating_add(interval);
+    if elapsed.saturating_sub(*deadline) > interval.saturating_mul(8) {
+        *deadline = elapsed;
+    }
+    deadline.saturating_sub(elapsed)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{sync::mpsc, thread, time::Duration};
@@ -111,6 +122,30 @@ mod tests {
     #[derive(Default)]
     struct Updates(u64);
 
+    #[test]
+    fn deadline_pacing_recovers_timer_oversleep_and_bounds_suspension_catchup() {
+        use super::next_wait;
+        let interval = Duration::from_millis(16);
+        let mut deadline = Duration::ZERO;
+        assert_eq!(next_wait(&mut deadline, interval, Duration::ZERO), interval);
+        // A coarse timer wakes at 31ms instead of the requested 16ms.
+        assert_eq!(
+            next_wait(&mut deadline, interval, Duration::from_millis(31)),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            next_wait(&mut deadline, interval, Duration::from_millis(47)),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            next_wait(&mut deadline, interval, Duration::from_secs(60)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            next_wait(&mut deadline, interval, Duration::from_secs(60)),
+            interval
+        );
+    }
     #[test]
     fn runner_ticks_until_a_system_requests_exit() -> RuntimeResult<()> {
         let mut builder = AppBuilder::new();

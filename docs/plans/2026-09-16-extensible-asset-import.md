@@ -175,4 +175,4 @@ humanoid work adds its own bounded import and visual retargeting evidence.
 Implementation order is extensible importer/store integration, migrated built-ins
 and external-consumer tests, generic character import, then canonical humanoid
 conversion and skinning. Concrete actions are maintained in
-[TODO](../../TODO.md#next-client-humanoid-models-and-animation).
+[TODO](../../TODO.md#client-humanoid-models-and-animation).

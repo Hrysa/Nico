@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-arena-arpg-shared = { path = "../shared", features = ["tools"] }
+arena-arpg-shared = { path = "../shared", features = ["tools", "network"] }
 clap.workspace = true
 nico-launch = { path = "../../../crates/nico-launch", features = ["server"] }
 nico-runtime = { path = "../../../crates/nico-runtime" }

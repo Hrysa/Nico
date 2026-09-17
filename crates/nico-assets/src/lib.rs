@@ -2,6 +2,9 @@
 
 use std::marker::PhantomData;
 
+#[cfg(feature = "character")]
+pub mod character;
+
 mod texture;
 pub use texture::Texture;
 mod mesh;

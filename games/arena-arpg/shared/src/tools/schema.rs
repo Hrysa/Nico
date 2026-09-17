@@ -2,6 +2,9 @@ use serde_json::{Value, json};
 
 pub(super) fn description(name: &str) -> &'static str {
     match name {
+        "game_characters" => {
+            "Inspect immutable authoritative character definitions loaded at startup, without model or animation data."
+        }
         "game_state" => {
             "Read an owned arena snapshot with age, run/tick, health, action phases and movement command ID. No live world access."
         }
@@ -42,7 +45,7 @@ fn nullable_integer() -> Value {
 pub(super) fn input(name: &str) -> Value {
     let axis = json!({"type":"number","minimum":-1,"maximum":1});
     object(match name {
-        "game_state" => json!({}),
+        "game_state" | "game_characters" => json!({}),
         "game_command" => json!({"command_id":integer(1)}),
         "game_restart" => json!({"run_id":integer(1)}),
         "game_attack" => {
@@ -61,6 +64,9 @@ pub(super) fn input(name: &str) -> Value {
 }
 pub(super) fn output(name: &str) -> Value {
     match name {
+        "game_characters" => object(
+            json!({"schema_version":{"const":1},"definitions":{"type":"array","minItems":3,"maxItems":3,"items":{"type":"object"}},"closed":{"type":"boolean"}}),
+        ),
         "game_state" => {
             let vector = object(json!({"x":{"type":"number"},"z":{"type":"number"}}));
             let action = object(

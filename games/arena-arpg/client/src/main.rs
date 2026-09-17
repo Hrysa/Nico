@@ -3,6 +3,7 @@ mod character;
 mod controls;
 mod view;
 mod visuals;
+mod world;
 use arena_arpg_shared::{ArenaPlugin, FIXED_STEP};
 use clap::Parser;
 use nico_launch::{
@@ -14,55 +15,75 @@ use nico_runtime::AppBuilder;
 use nico_winit::NativeClientConfig;
 use std::path::PathBuf;
 
-const HERO_ROOT: &str = "games/arena-arpg/assets/presentation/characters/hero";
 #[derive(Parser)]
-#[command(about = "Third-person arena ARPG combat prototype")]
+#[command(about = "Persistent multiplayer action RPG with an optional arena combat test")]
 struct Args {
     #[command(flatten)]
     common: CommonArgs,
+    /// Run the standalone arena combat test instead of the multiplayer world.
+    #[arg(long)]
+    arena: bool,
+    #[arg(long, default_value = "127.0.0.1:47640")]
+    server: std::net::SocketAddr,
+    #[arg(long, default_value = "hero")]
+    character: String,
     #[command(flatten)]
     host: ClientArgs,
-    /// Override the game hero model; requires the RPG animation directory.
+    /// Directory containing hero/grunt/brute .char.toml definitions.
+    #[arg(long, default_value = arena_arpg_shared::characters::DEFAULT_LOGIC_ROOT)]
+    logic_characters: PathBuf,
+    /// Directory containing matching .char-vis.toml definitions and relative assets.
+    #[arg(long, default_value = character::definition::DEFAULT_VISUAL_ROOT)]
+    visual_characters: PathBuf,
+    /// Override the hero model; requires the selected animation directory.
     #[arg(long, requires = "character_animations")]
     character_model: Option<PathBuf>,
     #[arg(long, requires = "character_model")]
     character_animations: Option<PathBuf>,
-    /// Use procedural hero visuals without loading character assets.
+    /// Use configured procedural hero visuals without importing the model or clips.
     #[arg(long, conflicts_with_all = ["character_model", "character_animations"])]
     procedural_hero: bool,
-}
-impl Args {
-    fn character_paths(&self) -> Option<(PathBuf, PathBuf)> {
-        if self.procedural_hero {
-            return None;
-        }
-        let root = PathBuf::from(HERO_ROOT);
-        Some((
-            self.character_model
-                .clone()
-                .unwrap_or_else(|| root.join("model.glb")),
-            self.character_animations
-                .clone()
-                .unwrap_or_else(|| root.join("animations")),
-        ))
-    }
 }
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
     init_logging(args.common.log_level)?;
-    let (builder, mut tools) = arena_arpg_shared::tools::register(
-        AppBuilder::new()
-            .with_fixed_step(FIXED_STEP)
-            .add_plugin(controls::ControlsPlugin)
-            .add_plugin(ArenaPlugin),
-    )?;
-    let character = args
-        .character_paths()
-        .map(|(model, animations)| character::CharacterAssets::load(&model, &animations))
-        .transpose()?;
-    let builder = view::register(builder, &mut tools, character)?;
+    let logic = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
+    let definitions = character::definition::load_visuals(&args.visual_characters, &logic)?;
+    let overrides = args
+        .character_model
+        .as_deref()
+        .zip(args.character_animations.as_deref());
+    let mut character = std::array::from_fn(|_| None);
+    for (index, definition) in definitions.iter().enumerate() {
+        if definition.core.model.is_some() && !(index == 0 && args.procedural_hero) {
+            character[index] = Some(character::CharacterAssets::load_definition(
+                definition.clone(),
+                &args.visual_characters,
+                if index == 0 { overrides } else { None },
+            )?);
+        }
+    }
+    let builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
+    let (builder, tools) = if !args.arena {
+        let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
+        world::register(builder, client, character, definitions)?
+    } else {
+        let (builder, mut tools) = arena_arpg_shared::tools::register(
+            builder
+                .add_plugin(controls::ControlsPlugin)
+                .add_plugin(ArenaPlugin::with_characters(logic.clone())),
+        )?;
+        (
+            view::register_configured(builder, &mut tools, character, definitions, logic)?,
+            tools,
+        )
+    };
     let config = NativeClientConfig::new(
-        "Nico | Arena",
+        if !args.arena {
+            "Nico | Meadow"
+        } else {
+            "Nico | Arena"
+        },
         "assets/presentation/shaders/generated/wgpu/bootstrap.wgsl",
     )
     .with_mesh_shaders(
@@ -71,10 +92,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .with_skin_shader("assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl")
     .with_pointer_capture();
-    ClientHost::new(args.host)
+    let host = ClientHost::new(args.host)
         .with_game_identity("arena_arpg", "1")
-        .with_mcp_tools(tools)
-        .run(builder.build()?, config, controls::map_input)?;
+        .with_mcp_tools(tools);
+    if !args.arena {
+        host.run(builder.build()?, config, world::map_input)?;
+    } else {
+        host.run(builder.build()?, config, controls::map_input)?;
+    }
     Ok(())
 }
 
@@ -85,12 +110,20 @@ mod tests {
     #[test]
     fn default_hero_uses_game_presentation_assets() {
         let args = Args::try_parse_from(["arena"]).unwrap();
+        assert!(!args.arena);
+        assert!(Args::try_parse_from(["game", "--arena"]).unwrap().arena);
         assert_eq!(
-            args.character_paths(),
-            Some((
-                PathBuf::from(HERO_ROOT).join("model.glb"),
-                PathBuf::from(HERO_ROOT).join("animations"),
-            ))
+            args.logic_characters,
+            PathBuf::from(arena_arpg_shared::characters::DEFAULT_LOGIC_ROOT)
+        );
+        assert_eq!(
+            args.visual_characters,
+            PathBuf::from(character::definition::DEFAULT_VISUAL_ROOT)
+        );
+        assert!(
+            args.character_model.is_none()
+                && args.character_animations.is_none()
+                && !args.procedural_hero
         );
     }
 
@@ -107,7 +140,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            args.character_paths(),
+            args.character_model.zip(args.character_animations),
             Some((PathBuf::from("hero.glb"), PathBuf::from("clips")))
         );
     }
@@ -115,7 +148,7 @@ mod tests {
     #[test]
     fn procedural_hero_skips_assets_and_rejects_overrides() {
         let args = Args::try_parse_from(["arena", "--procedural-hero"]).unwrap();
-        assert!(args.character_paths().is_none());
+        assert!(args.procedural_hero);
         assert!(
             Args::try_parse_from([
                 "arena",

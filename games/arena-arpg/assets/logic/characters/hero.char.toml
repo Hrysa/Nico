@@ -1,0 +1,30 @@
+# Authoritative arena character. Distances are metres; timing is at 60 Hz.
+schema_version = 1
+[core]
+id = "arena.hero"
+
+[arena.stats]
+max_health = 100
+
+[arena.movement]
+speed_mps = 4.0
+
+[core.collision]
+# Ball rests on the floor: centre Y equals radius; movement stays on X/Z.
+shape = "ball"
+radius_m = 0.4
+
+[arena.attacks.primary]
+damage = 25
+range_m = 2.0
+half_angle_degrees = 45.0
+windup_ticks = 12
+active_ticks = 6
+recovery_ticks = 18
+
+[arena.dodge]
+speed_mps = 8.0
+duration_ticks = 18
+invulnerable_ticks = 12
+cooldown_ticks = 48
+buffer_ticks = 9

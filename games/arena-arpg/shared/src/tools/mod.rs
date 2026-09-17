@@ -14,8 +14,9 @@ use std::{
 };
 
 const HISTORY: usize = 128;
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 9] = [
     "game_state",
+    "game_characters",
     "game_move",
     "game_move_hold",
     "game_move_release",
@@ -206,6 +207,18 @@ impl Operations {
     }
     fn call(&self, name: &str, args: Map<String, Value>) -> CallToolResult {
         // Parse outside the lock. Serialized state never contains world references.
+        if name == "game_characters" {
+            if !args.is_empty() {
+                return error("invalid_arguments");
+            }
+            let state = self.0.lock().expect("arena operations poisoned");
+            let Some(snapshot) = state.published.get() else {
+                return error("not_ready");
+            };
+            return CallToolResult::structured(
+                json!({"schema_version":1,"definitions":snapshot.actors[0].characters.definitions(),"closed":state.published.is_closed()}),
+            );
+        }
         if name == "game_state" {
             if !args.is_empty() {
                 return error("invalid_arguments");
@@ -490,16 +503,16 @@ fn snapshot_value(s: &Snapshot, sequence: u64, age: u64, active: Option<u64>) ->
     let actors: Vec<_> = s.actors.iter().map(|a| {
         let (kind, phase, id, elapsed, remaining) = match a.action {
             Action::Idle => ("idle","idle",None,0,0),
-            Action::Dodge {elapsed,..} => ("dodge","dodge",None,elapsed,18-elapsed),
+            Action::Dodge {elapsed,..} => ("dodge","dodge",None,elapsed,a.definition().arena.dodge.duration_ticks.saturating_sub(elapsed)),
             Action::Attack {id,elapsed,..} => {
-                let stats = a.kind.stats();
+                let stats = a.stats();
                 let windup = stats.windup;
                 let end = stats.windup + stats.active + stats.recovery;
-                let (phase,boundary) = if elapsed < windup {("windup",windup)} else if elapsed < windup+6 {("active",windup+6)} else {("recovery",end)};
+                let (phase,boundary) = if elapsed < windup {("windup",windup)} else if elapsed < windup+stats.active {("active",windup+stats.active)} else {("recovery",end)};
                 ("attack",phase,Some(id),elapsed,boundary-elapsed)
             }
         };
-        json!({"id":a.id,"kind":a.kind.name(),"max_health":a.kind.stats().max_health,"attack_range":a.kind.stats().range,"windup_ticks":a.kind.stats().windup,"position":vector(a.position),"facing":vector(a.facing),"health":a.health,"dodge_cooldown":a.dodge_cooldown,
+        json!({"id":a.id,"kind":a.kind.name(),"max_health":a.stats().max_health,"attack_range":a.stats().range,"windup_ticks":a.stats().windup,"position":vector(a.position),"facing":vector(a.facing),"health":a.health,"dodge_cooldown":a.dodge_cooldown,
             "action":{"kind":kind,"phase":phase,"id":id,"elapsed_ticks":elapsed,"phase_ticks_remaining":remaining}})
     }).collect();
     json!({"snapshot_sequence":sequence,"snapshot_age_ms":age,"run_id":s.run_id,"tick":s.tick,

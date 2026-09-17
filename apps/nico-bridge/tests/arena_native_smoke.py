@@ -30,14 +30,14 @@ def main():
             stdout=subprocess.PIPE if mcp else subprocess.DEVNULL,stderr=log,text=True,encoding='utf-8',
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)); processes.append(p); return p
     try:
-        server=start('arena-arpg-server','--bridge',address)
+        server=start('arena-arpg-server','--arena','--bridge',address)
         bridge=Mcp(start('nico-bridge','--listen',address,mcp=True)); sid=bridge.ready('server')
         character_arguments=[]
         if args.procedural_hero:
             character_arguments=['--procedural-hero']
         if args.character_model:
             character_arguments=['--character-model',str(args.character_model.resolve()),'--character-animations',str(args.character_animations.resolve())]
-        client=start('arena-arpg-client','--bridge',address,'--background',*character_arguments); cid=bridge.ready('client')
+        client=start('arena-arpg-client','--arena','--bridge',address,'--background',*character_arguments); cid=bridge.ready('client')
         instances=bridge.call('list_instances',{})['instances']
         for instance,p in ((sid,server),(cid,client)):
             registered=next(i for i in instances if i['instance_id']==instance)

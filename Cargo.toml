@@ -11,6 +11,7 @@ members = [
     "crates/nico-presentation-control",
     "crates/nico-ecs",
     "crates/nico-input",
+    "crates/nico-net",
     "crates/nico-launch",
     "crates/nico-ops",
     "crates/nico-presentation",

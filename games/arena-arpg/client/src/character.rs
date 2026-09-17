@@ -17,15 +17,19 @@ use nico_presentation::MeshInstance;
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
 use std::{fs::File, io::Read, path::Path, sync::Arc, time::Duration};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub mod definition;
+mod grip;
+use definition::SocketTransform;
 
-// Contact calibrated from the retargeted RPG right-hand clip: peak forward extension.
-const ATTACK_CONTACT: f64 = 49. / 120.;
-const CLIPS: [&str; 6] = [
-    "Idle",
+// Synthetic one-second fixture marker; real content uses contact_seconds in TOML.
+#[cfg(test)]
+const ATTACK_CONTACT: f64 = 0.296;
+#[cfg(test)]
+const CLIPS: [&str; 5] = [
+    "Sword_Idle",
     "Run-Forward",
-    "Attack-R1",
+    "Sword_Regular_C",
     "Roll-Forward",
-    "GetHit-F1",
     "Death1",
 ];
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,7 +38,6 @@ enum Motion {
     Run,
     Attack(u64),
     Dodge(u64),
-    Hit(u64),
     Death,
 }
 impl Motion {
@@ -44,41 +47,80 @@ impl Motion {
             Self::Run => 1,
             Self::Attack(_) => 2,
             Self::Dodge(_) => 3,
-            Self::Hit(_) => 4,
-            Self::Death => 5,
+            Self::Death => 4,
         }
     }
     fn name(self) -> &'static str {
-        ["idle", "run", "attack", "dodge", "hit", "death"][self.clip()]
-    }
-    fn mode(self) -> PlayMode {
-        if matches!(self, Self::Idle | Self::Run) {
-            PlayMode::Loop
-        } else {
-            PlayMode::Once
-        }
+        ["idle", "run", "attack", "dodge", "death"][self.clip()]
     }
 }
 
 pub struct CharacterAssets {
     set: Arc<AnimationSet>,
+    definition: Arc<definition::VisualDefinition>,
+    playback: Arc<PlaybackSettings>,
     visual: ModelVisual,
-    hand: Attachment,
     scale: f32,
     floor: f32,
+    weapon: Option<EquippedWeapon>,
+}
+struct EquippedWeapon {
+    hand: Attachment,
+    weapon_socket: Attachment,
     weapon_scale: f32,
     weapon_length: f32,
     blade: Arc<Mesh>,
-    white: Arc<Texture>,
+    weapon_texture: Arc<Texture>,
 }
 impl CharacterAssets {
+    /// Maximum submitted meshes, including optional attached equipment before culling.
+    pub fn draw_count(&self) -> usize {
+        self.visual.primitive_count() + usize::from(self.weapon.is_some())
+    }
+    pub fn inspection(&self) -> serde_json::Value {
+        serde_json::json!({"model_scale":self.scale,"model_floor_translation_m":-self.floor*self.scale,"weapon_bone_index":self.weapon.as_ref().map(|w| w.weapon_socket.node()),"weapon_scale":self.weapon.as_ref().map(|w| w.weapon_scale),"clips":self.set.clips().iter().enumerate().map(|(i,c)| serde_json::json!({"motion":definition::MOTIONS[i],"index":i,"name":c.name(),"duration_seconds":c.duration()})).collect::<Vec<_>>()})
+    }
+    #[cfg(test)]
     pub fn load(model_path: &Path, animations: &Path) -> Result<Arc<Self>> {
-        let model = load(model_path)?;
-        let target = Arc::new(HumanoidRig::new(model.clone(), HumanoidProfile::mixamo())?);
+        Self::load_definition(
+            definition::VisualDefinition::builtin(0),
+            Path::new("."),
+            Some((model_path, animations)),
+        )
+    }
+    pub fn load_definition(
+        definition: definition::VisualDefinition,
+        root: &Path,
+        overrides: Option<(&Path, &Path)>,
+    ) -> Result<Arc<Self>> {
+        definition.validate()?;
+        let model_definition = definition.core.model.as_ref().ok_or("model required")?;
+        let model_path = definition::asset_path(root, &model_definition.asset)?;
+        let model = load(overrides.map_or(model_path.as_path(), |v| v.0))?;
+        let target = Arc::new(HumanoidRig::from_reference(
+            model.clone(),
+            grip::authored_reference(&model, &definition.core.pose)?,
+            definition.profile(&model_definition.profile)?,
+        )?);
+        // Validate even sockets which are currently unused by equipment.
+        for (name, socket) in &definition.core.sockets {
+            Attachment::new(model.clone(), &socket.bone, socket.transform())
+                .map_err(|e| format!("sockets.{name}.bone ({}): {e}", socket.bone))?;
+        }
         let mut clips = Vec::new();
         let mut total = 0u64;
-        for name in CLIPS {
-            let path = animations.join(format!("RPG-Character@Unarmed-{name}.glb"));
+        for name in definition::MOTIONS {
+            let binding = &definition.arena.animations[name];
+            let animation = &definition.core.animations[&binding.animation];
+            let path = if let Some((_, directory)) = overrides {
+                directory.join(
+                    Path::new(&animation.asset)
+                        .file_name()
+                        .ok_or("animation filename")?,
+                )
+            } else {
+                definition::asset_path(root, &animation.asset)?
+            };
             total = total
                 .checked_add(std::fs::metadata(&path)?.len())
                 .ok_or("animation input overflow")?;
@@ -86,11 +128,31 @@ impl CharacterAssets {
                 return Err("animation source budget exceeded".into());
             }
             let source = load(&path)?;
-            if source.data().clips.len() != 1 {
-                return Err(format!("{} must contain exactly one clip", path.display()).into());
+            let mut matching = source
+                .data()
+                .clips
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.name == animation.clip);
+            let index = matching
+                .next()
+                .ok_or_else(|| format!("{}: missing clip {}", path.display(), animation.clip))?
+                .0;
+            if matching.next().is_some() {
+                return Err(
+                    format!("{}: ambiguous clip {}", path.display(), animation.clip).into(),
+                );
             }
-            let rig = Arc::new(HumanoidRig::new(source, HumanoidProfile::rpg())?);
-            clips.push(AnimationClip::humanoid(rig, target.clone(), 0, name)?);
+            let rig = Arc::new(HumanoidRig::new(
+                source,
+                definition.profile(&animation.profile)?,
+            )?);
+            clips.push(AnimationClip::humanoid(
+                rig,
+                target.clone(),
+                index,
+                &animation.clip,
+            )?);
         }
         let mut textures = Vec::new();
         let mut decoded = 0usize;
@@ -154,97 +216,171 @@ impl CharacterAssets {
         if !height.is_finite() || height < 1e-5 {
             return Err("invalid character bounds".into());
         }
-        let scale = 1.8 / height;
-        let hand = Attachment::new(model.clone(), "mixamorig:RightHand", Transform::default())?;
-        let reference_hand =
-            hand.matrix(&Pose::rest(&model), Mat4::from_scale(Vec3::splat(scale)))?;
-        let weapon_scale = 1. / reference_hand.x_axis.truncate().length();
-        if !weapon_scale.is_finite() {
-            return Err("invalid hand socket scale".into());
-        }
+        let scale = model_definition.target_height_m / height;
+        let weapon = if let Some(weapon_definition) = &definition.arena.weapon {
+            let socket = &definition.core.sockets[&weapon_definition.socket];
+            let hand = Attachment::new(model.clone(), &socket.bone, Transform::default())?;
+            let weapon_socket = Attachment::new(model.clone(), &socket.bone, socket.transform())?;
+            let reference_hand =
+                hand.matrix(&Pose::rest(&model), Mat4::from_scale(Vec3::splat(scale)))?;
+            let weapon_scale = 1. / reference_hand.x_axis.truncate().length();
+            if !weapon_scale.is_finite() {
+                return Err("invalid hand socket scale".into());
+            }
+            Some(EquippedWeapon {
+                hand,
+                weapon_socket,
+                weapon_scale,
+                weapon_length: weapon_definition.tip_m,
+                blade: Arc::new(grip::weapon(&weapon_definition.parts)?),
+                weapon_texture: Arc::new(
+                    Texture::rgba8(
+                        weapon_definition.parts.len() as u32,
+                        1,
+                        weapon_definition
+                            .parts
+                            .iter()
+                            .flat_map(|p| p.color_rgba)
+                            .collect(),
+                    )
+                    .ok_or("weapon texture")?,
+                ),
+            })
+        } else {
+            None
+        };
         let set = Arc::new(AnimationSet::new(model.clone(), clips)?);
         if set.clips().iter().any(|clip| clip.duration() <= 0.) {
             return Err("arena clips must have positive duration".into());
         }
-        let mut contact = AnimationPlayer::new(set.clone());
-        contact.play(2, PlayMode::Once, Duration::ZERO)?;
-        contact.seek(contact.duration() * ATTACK_CONTACT)?;
-        let socket = hand.matrix(&contact.pose(), Mat4::from_scale(Vec3::splat(scale)))?;
-        let point = socket.w_axis.truncate();
-        let direction = socket.transform_vector3(Vec3::Y) * weapon_scale;
-        let a = direction.x * direction.x + direction.z * direction.z;
-        let b = point.x * direction.x + point.z * direction.z;
-        let reach = arena_arpg_shared::ActorKind::Hero.stats().range as f32;
-        let c = point.x * point.x + point.z * point.z - reach * reach;
-        let weapon_length = (-b + (b * b - a * c).sqrt()) / a;
-        if !weapon_length.is_finite() || !(0.1..=4.).contains(&weapon_length) {
-            return Err("attack socket cannot be calibrated to hero reach".into());
+        if definition.arena.animations["attack"]
+            .contact_seconds
+            .unwrap()
+            >= set.clips()[2].duration()
+        {
+            return Err("animations.attack.contact_seconds must be inside the clip".into());
         }
-        // Single-palette skinning preserves the full socket matrix, including hierarchy shear.
-        let blade = crate::visuals::box_mesh([0.08, 0.08, weapon_length]);
-        let blade = Arc::new(
-            Mesh::skinned_triangles(
-                blade.vertices().to_vec(),
-                blade.indices().to_vec(),
-                vec![
-                    SkinWeights {
-                        joints: [0; 4],
-                        weights: [1., 0., 0., 0.]
-                    };
-                    blade.vertices().len()
-                ],
-                1,
-            )
-            .ok_or("invalid weapon mesh")?,
-        );
+        let playback = Arc::new(PlaybackSettings::new(&definition, &set));
         Ok(Arc::new(Self {
             set,
+            playback,
             visual,
-            hand,
             scale,
-            floor: low.y,
-            weapon_scale,
-            weapon_length,
-            blade,
-            white: Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap()),
+            floor: low.y - model_definition.floor_offset_m / scale,
+            weapon,
+            definition: Arc::new(definition),
         }))
     }
 }
 
-/// Per-hero state driven exclusively by owned snapshots. Presentation never mutates Arena.
+/// Per-character state driven exclusively by owned snapshots. Presentation never mutates Arena.
+#[derive(Clone, Copy)]
+struct MotionParameters {
+    speed: f64,
+    blend: Duration,
+    mode: PlayMode,
+    authored_speed: Option<f64>,
+}
+struct PlaybackSettings {
+    motions: [MotionParameters; 5],
+    contact: f64,
+}
+impl PlaybackSettings {
+    fn new(definition: &definition::VisualDefinition, set: &AnimationSet) -> Self {
+        Self {
+            contact: definition.arena.animations["attack"]
+                .contact_seconds
+                .unwrap()
+                / set.clips()[2].duration(),
+            motions: std::array::from_fn(|i| {
+                let a = &definition.arena.animations[definition::MOTIONS[i]];
+                MotionParameters {
+                    speed: a.speed,
+                    blend: Duration::from_secs_f64(a.blend_seconds),
+                    mode: a.playback.mode(),
+                    authored_speed: a.authored_speed_mps,
+                }
+            }),
+        }
+    }
+}
+/// Per-entity presentation input, independent of arena actor slots.
+#[derive(Clone)]
+pub struct CharacterFrame {
+    pub epoch: u64,
+    pub tick: u64,
+    pub playing: bool,
+    pub position: arena_arpg_shared::Vec2,
+    pub facing: arena_arpg_shared::Vec2,
+    pub health: u16,
+    pub action: Action,
+    pub stats: arena_arpg_shared::CombatStats,
+    pub dodge_duration: u16,
+}
+impl CharacterFrame {
+    pub fn arena_actor(state: &Snapshot, index: usize) -> Self {
+        let actor = &state.actors[index];
+        Self {
+            epoch: state.run_id.wrapping_mul(4) + u64::from(state.wave),
+            tick: state.tick,
+            playing: state.state == RunState::Playing,
+            position: actor.position,
+            facing: actor.facing,
+            health: actor.health,
+            action: actor.action,
+            stats: actor.stats(),
+            dodge_duration: actor.definition().arena.dodge.duration_ticks,
+        }
+    }
+}
 struct Controller {
+    settings: Arc<PlaybackSettings>,
     player: AnimationPlayer,
     motion: Option<Motion>,
-    previous: Option<Snapshot>,
+    previous: Option<CharacterFrame>,
 }
 impl Controller {
-    fn new(set: Arc<AnimationSet>) -> Self {
+    fn configured(set: Arc<AnimationSet>, settings: Arc<PlaybackSettings>) -> Self {
         Self {
+            settings,
             player: AnimationPlayer::new(set),
             motion: None,
             previous: None,
         }
     }
+    #[cfg(test)]
     fn update(&mut self, state: &Snapshot, dt: Duration) -> Result<()> {
-        let actor = &state.actors[0];
-        let reset = self.previous.as_ref().is_none_or(|s| {
-            s.run_id != state.run_id || s.wave != state.wave || s.tick > state.tick
-        });
+        self.update_frame(&CharacterFrame::arena_actor(state, 0), dt)
+    }
+    fn update_frame(&mut self, state: &CharacterFrame, dt: Duration) -> Result<()> {
+        let actor = state;
+        let reset = self
+            .previous
+            .as_ref()
+            .is_none_or(|s| s.epoch != state.epoch || s.tick > state.tick);
         let delta_ticks = self
             .previous
             .as_ref()
             .filter(|_| !reset)
             .map_or(0, |s| state.tick - s.tick);
         let elapsed = Duration::from_secs_f64(delta_ticks as f64 / 60.);
+        if self.motion == Some(Motion::Run) && delta_ticks > 0 {
+            let animation = self.settings.motions[1];
+            if let Some(authored) = animation.authored_speed {
+                let previous = self.previous.as_ref().unwrap();
+                let distance = ((actor.position.x - previous.position.x).powi(2)
+                    + (actor.position.z - previous.position.z).powi(2))
+                .sqrt();
+                self.player.set_speed(
+                    (animation.speed * distance / elapsed.as_secs_f64() / authored).clamp(0., 10.),
+                )?;
+            }
+        }
         if reset {
             self.player.reference_pose();
             self.motion = None;
         } else {
-            let delta = if state.state != RunState::Playing {
-                dt
-            } else {
-                elapsed
-            };
+            let delta = if !state.playing { dt } else { elapsed };
             let current_action = match actor.action {
                 Action::Attack { id, .. } => Some(Motion::Attack(id)),
                 Action::Dodge { elapsed, .. } => {
@@ -253,29 +389,22 @@ impl Controller {
                 _ => None,
             };
             if current_action.is_some() && current_action == self.motion {
-                self.player
-                    .update_at(delta, action_position(actor, self.player.duration()))?;
+                self.player.update_at(
+                    delta,
+                    frame_action_position(actor, self.player.duration(), self.settings.contact),
+                )?;
             } else {
                 self.player.update(delta)?;
             }
         }
 
-        let hurt = !reset
-            && self
-                .previous
-                .as_ref()
-                .is_some_and(|s| actor.health < s.actors[0].health);
         let moving = !reset
             && self
                 .previous
                 .as_ref()
-                .is_some_and(|s| actor.position != s.actors[0].position);
+                .is_some_and(|s| actor.position != s.position);
         let desired = if actor.health == 0 {
             Motion::Death
-        } else if hurt {
-            Motion::Hit(state.tick)
-        } else if let Some(hit @ Motion::Hit(_)) = self.motion.filter(|_| !self.player.finished()) {
-            hit
         } else {
             match actor.action {
                 Action::Attack { id, .. } => Motion::Attack(id),
@@ -283,7 +412,7 @@ impl Controller {
                     Motion::Dodge(state.tick.saturating_sub(u64::from(elapsed)))
                 }
                 Action::Idle
-                    if state.state == RunState::Playing
+                    if state.playing
                         && (moving || delta_ticks == 0 && self.motion == Some(Motion::Run)) =>
                 {
                     Motion::Run
@@ -292,14 +421,15 @@ impl Controller {
             }
         };
         if self.motion != Some(desired) {
-            self.player.set_speed(1.)?;
+            let animation = self.settings.motions[desired.clip()];
+            self.player.set_speed(animation.speed)?;
             self.player.play(
                 desired.clip(),
-                desired.mode(),
+                animation.mode,
                 if reset {
                     Duration::ZERO
                 } else {
-                    Duration::from_millis(80)
+                    animation.blend
                 },
             )?;
             if matches!(desired, Motion::Attack(_) | Motion::Dodge(_)) {
@@ -310,7 +440,7 @@ impl Controller {
                         }
                         _ => 0.,
                     }),
-                    action_position(actor, self.player.duration()),
+                    frame_action_position(actor, self.player.duration(), self.settings.contact),
                 )?;
             }
             self.motion = Some(desired);
@@ -320,20 +450,22 @@ impl Controller {
     }
 }
 
-fn action_position(actor: &arena_arpg_shared::Actor, duration: f64) -> f64 {
+fn frame_action_position(actor: &CharacterFrame, duration: f64, contact: f64) -> f64 {
     match actor.action {
         Action::Attack { elapsed, .. } => {
-            let stats = actor.kind.stats();
+            let stats = actor.stats;
             let phase = if elapsed <= stats.windup {
-                ATTACK_CONTACT * f64::from(elapsed) / f64::from(stats.windup)
+                contact * f64::from(elapsed) / f64::from(stats.windup)
             } else {
-                ATTACK_CONTACT
-                    + (1. - ATTACK_CONTACT) * f64::from(elapsed - stats.windup)
+                contact
+                    + (1. - contact) * f64::from(elapsed - stats.windup)
                         / f64::from(stats.active + stats.recovery)
             };
             duration * phase.clamp(0., 1.)
         }
-        Action::Dodge { elapsed, .. } => duration * (f64::from(elapsed) / 18.).clamp(0., 1.),
+        Action::Dodge { elapsed, .. } => {
+            duration * (f64::from(elapsed) / f64::from(actor.dodge_duration)).clamp(0., 1.)
+        }
         _ => 0.,
     }
 }
@@ -350,7 +482,7 @@ pub struct Character {
 impl Character {
     pub fn new(assets: Arc<CharacterAssets>) -> Self {
         Self {
-            controller: Controller::new(assets.set.clone()),
+            controller: Controller::configured(assets.set.clone(), assets.playback.clone()),
             assets,
             globals: Vec::new(),
             hand_matrix: Mat4::IDENTITY,
@@ -359,14 +491,23 @@ impl Character {
             visible: true,
         }
     }
+    #[cfg(test)]
     pub fn render(
         &mut self,
         state: &Snapshot,
         dt: Duration,
         view_projection: Option<Mat4>,
     ) -> Result<Vec<MeshInstance>> {
-        self.controller.update(state, dt)?;
-        let actor = &state.actors[0];
+        self.render_frame(&CharacterFrame::arena_actor(state, 0), dt, view_projection)
+    }
+    pub fn render_frame(
+        &mut self,
+        state: &CharacterFrame,
+        dt: Duration,
+        view_projection: Option<Mat4>,
+    ) -> Result<Vec<MeshInstance>> {
+        self.controller.update_frame(state, dt)?;
+        let actor = state;
         let yaw = actor.facing.x.atan2(actor.facing.z) as f32;
         let rotation = Quat::from_rotation_y(yaw);
         let position = Vec3::new(
@@ -387,47 +528,47 @@ impl Character {
             mesh.orientation = rotation;
             mesh.scale = self.assets.scale;
         }
-        self.hand_matrix = self.assets.hand.matrix(&pose, placement)?;
-        // Blade dimensions are in world metres; preserve socket orientation/scale
-        // relative to the character's normalized model size.
-        let weapon = self.hand_matrix
-            * Mat4::from_scale(Vec3::splat(self.assets.weapon_scale))
-            * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
-            * Mat4::from_translation(Vec3::new(0., 0., self.assets.weapon_length * 0.5));
-        if !weapon.is_finite() {
-            return Err("weapon transform overflow".into());
-        }
-        self.weapon_matrix = weapon;
-        // A failed bound disables culling; it must never hide otherwise valid draws.
         self.render_bounds = self.assets.visual.bounds(&self.globals, placement).ok();
-        if let Some(bounds) = &mut self.render_bounds {
-            let mut low = Vec3::from(bounds.min);
-            let mut high = Vec3::from(bounds.max);
-            for vertex in self.assets.blade.vertices() {
-                let point = weapon.transform_point3(vertex.position.into());
-                low = low.min(point);
-                high = high.max(point);
+        if let Some(equipped) = &self.assets.weapon {
+            self.hand_matrix = equipped.hand.matrix(&pose, placement)?;
+            // Blade dimensions are in world metres; preserve socket orientation/scale
+            // relative to the character's normalized model size.
+            let weapon = equipped.weapon_socket.matrix(&pose, placement)?
+                * Mat4::from_scale(Vec3::splat(equipped.weapon_scale));
+            if !weapon.is_finite() {
+                return Err("weapon transform overflow".into());
             }
-            let margin = low.abs().max(high.abs()).max(Vec3::ONE) * 1e-4;
-            bounds.min = (low - margin).to_array();
-            bounds.max = (high + margin).to_array();
-            if !low.is_finite()
-                || !high.is_finite()
-                || !Vec3::from(bounds.min).is_finite()
-                || !Vec3::from(bounds.max).is_finite()
-            {
-                self.render_bounds = None;
+            self.weapon_matrix = weapon;
+            // A failed bound disables culling; it must never hide otherwise valid draws.
+            if let Some(bounds) = &mut self.render_bounds {
+                let mut low = Vec3::from(bounds.min);
+                let mut high = Vec3::from(bounds.max);
+                for vertex in equipped.blade.vertices() {
+                    let point = weapon.transform_point3(vertex.position.into());
+                    low = low.min(point);
+                    high = high.max(point);
+                }
+                let margin = low.abs().max(high.abs()).max(Vec3::ONE) * 1e-4;
+                bounds.min = (low - margin).to_array();
+                bounds.max = (high + margin).to_array();
+                if !low.is_finite()
+                    || !high.is_finite()
+                    || !Vec3::from(bounds.min).is_finite()
+                    || !Vec3::from(bounds.max).is_finite()
+                {
+                    self.render_bounds = None;
+                }
             }
+            meshes.push(MeshInstance {
+                mesh: Some(equipped.blade.clone()),
+                skin_palette: Some(Arc::new(vec![weapon.to_cols_array_2d()])),
+                texture: Some(equipped.weapon_texture.clone()),
+                position: [0.; 3],
+                orientation: Quat::IDENTITY,
+                scale: 1.,
+                color: [1.; 4],
+            });
         }
-        meshes.push(MeshInstance {
-            mesh: Some(self.assets.blade.clone()),
-            skin_palette: Some(Arc::new(vec![weapon.to_cols_array_2d()])),
-            texture: Some(self.assets.white.clone()),
-            position: [0.; 3],
-            orientation: Quat::IDENTITY,
-            scale: 1.,
-            color: [0.72, 0.91, 0.98, 1.],
-        });
         self.visible = self
             .render_bounds
             .zip(view_projection)
@@ -438,7 +579,7 @@ impl Character {
         Ok(meshes)
     }
     pub fn state(&self) -> serde_json::Value {
-        serde_json::json!({"motion":self.controller.motion.map(Motion::name), "clip":self.controller.player.clip(), "time":self.controller.player.time(), "duration":self.controller.player.duration(), "finished":self.controller.player.finished(), "fade_weight":self.controller.player.fade_weight(), "hand_matrix":self.hand_matrix.to_cols_array_2d(), "weapon_matrix":self.weapon_matrix.to_cols_array_2d(), "weapon_length":self.assets.weapon_length,"attack_contact_seconds":self.assets.set.clips()[2].duration()*ATTACK_CONTACT, "model_draws":self.assets.visual.primitive_count(), "visible":self.visible, "render_bounds":self.render_bounds.map(|b| serde_json::json!({"min":b.min,"max":b.max}))})
+        serde_json::json!({"motion":self.controller.motion.map(Motion::name), "clip":self.controller.player.clip(), "time":self.controller.player.time(), "duration":self.controller.player.duration(), "finished":self.controller.player.finished(), "fade_weight":self.controller.player.fade_weight(), "hand_matrix":self.hand_matrix.to_cols_array_2d(), "weapon_matrix":self.weapon_matrix.to_cols_array_2d(), "weapon_length":self.assets.weapon.as_ref().map_or(0., |w| w.weapon_length),"attack_contact_seconds":self.assets.definition.arena.animations["attack"].contact_seconds.unwrap(), "model_draws":self.assets.visual.primitive_count(), "visible":self.visible, "render_bounds":self.render_bounds.map(|b| serde_json::json!({"min":b.min,"max":b.max}))})
     }
 }
 
@@ -471,11 +612,11 @@ pub fn state_schema() -> serde_json::Value {
     json!({"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,
     "required":["motion","clip","time","duration","finished","fade_weight","hand_matrix","weapon_matrix","weapon_length","attack_contact_seconds","model_draws","render_bounds","visible"],
     "properties":{
-        "motion":{"enum":[null,"idle","run","attack","dodge","hit","death"]},
+        "motion":{"enum":[null,"idle","run","attack","dodge","death"]},
         "clip":{"type":["integer","null"],"minimum":0,"maximum":5},
         "time":{"type":"number","minimum":0}, "duration":{"type":"number","minimum":0},
         "finished":{"type":"boolean"}, "fade_weight":{"type":["number","null"],"minimum":0,"maximum":1},
-        "hand_matrix":matrix, "weapon_matrix":matrix, "weapon_length":{"type":"number","minimum":0.1,"maximum":4},"attack_contact_seconds":{"type":"number","minimum":0},
+        "hand_matrix":matrix, "weapon_matrix":matrix, "weapon_length":{"type":"number","minimum":0,"maximum":4},"attack_contact_seconds":{"type":"number","minimum":0},
             "visible":{"type":"boolean"},
             "render_bounds":{"anyOf":[{"type":"null"},{"type":"object","required":["min","max"],"additionalProperties":false,"properties":{"min":{"type":"array","minItems":3,"maxItems":3,"items":{"type":"number"}},"max":{"type":"array","minItems":3,"maxItems":3,"items":{"type":"number"}}}}]}, "model_draws":{"type":"integer","minimum":1,"maximum":32}
     }}]})
@@ -516,7 +657,19 @@ mod tests {
             .enumerate()
             .map(|(i, name)| AnimationClip::direct(model.clone(), i, *name).unwrap())
             .collect();
-        Controller::new(Arc::new(AnimationSet::new(model, clips).unwrap()))
+        {
+            let mut definition = definition::VisualDefinition::builtin(0);
+            // Synthetic fixture clips are one second long, unlike the real sword clip.
+            definition
+                .arena
+                .animations
+                .get_mut("attack")
+                .unwrap()
+                .contact_seconds = Some(ATTACK_CONTACT);
+            let set = Arc::new(AnimationSet::new(model, clips).unwrap());
+            let settings = Arc::new(PlaybackSettings::new(&definition, &set));
+            Controller::configured(set, settings)
+        }
     }
     fn state() -> Snapshot {
         arena_arpg_shared::Arena::default().snapshot().clone()
@@ -541,6 +694,34 @@ mod tests {
         s.tick += 1;
         update(&mut c, &s);
         assert_eq!(c.motion, Some(Motion::Idle));
+    }
+    #[test]
+    fn configured_speed_blend_and_stride_follow_observed_motion() {
+        let mut controller = controller();
+        let settings = Arc::get_mut(&mut controller.settings).unwrap();
+        settings.motions[0].speed = 2.;
+        settings.motions[1].authored_speed = Some(2.);
+        settings.motions[1].blend = Duration::from_millis(250);
+        let mut state = state();
+        update(&mut controller, &state);
+        state.tick += 6;
+        update(&mut controller, &state);
+        assert!((controller.player.time() - 0.2).abs() < 1e-9);
+        state.tick += 1;
+        state.actors[0].position.x += 0.1;
+        update(&mut controller, &state);
+        state.tick += 6;
+        state.actors[0].position.x += 0.2;
+        update(&mut controller, &state);
+        assert!((controller.player.time() - 0.1).abs() < 1e-9);
+        assert!((controller.player.fade_weight().unwrap() - 0.4).abs() < 1e-6);
+        state.tick += 6;
+        state.actors[0].position.x += 0.4;
+        update(&mut controller, &state);
+        assert!((controller.player.time() - 0.3).abs() < 1e-9);
+        let observed = controller.player.time();
+        update(&mut controller, &state);
+        assert_eq!(controller.player.time(), observed);
     }
     #[test]
     fn attack_phase_tracks_authoritative_elapsed_across_skipped_render_updates() {
@@ -597,14 +778,48 @@ mod tests {
         );
     }
     #[test]
-    fn wave_change_discards_old_hit_reaction() {
+    fn nonlethal_damage_does_not_interrupt_authoritative_actions_or_movement() {
+        for action in [
+            Action::Idle,
+            Action::Attack {
+                id: 7,
+                elapsed: 3,
+                hit_mask: 0,
+            },
+            Action::Dodge {
+                elapsed: 3,
+                direction: arena_arpg_shared::Vec2 { x: 1., z: 0. },
+            },
+        ] {
+            let mut damaged = controller();
+            let mut unchanged = controller();
+            let mut snapshot = state();
+            update(&mut damaged, &snapshot);
+            update(&mut unchanged, &snapshot);
+            snapshot.tick += 3;
+            snapshot.actors[0].action = action;
+            snapshot.actors[0].position.x += 0.1;
+            update(&mut unchanged, &snapshot);
+            snapshot.actors[0].health -= 20;
+            update(&mut damaged, &snapshot);
+            assert_eq!(damaged.motion, unchanged.motion);
+            assert_eq!(damaged.player.time(), unchanged.player.time());
+            assert_eq!(
+                damaged.player.pose().local(),
+                unchanged.player.pose().local()
+            );
+        }
+    }
+    #[test]
+    fn health_loss_keeps_idle_and_wave_change_resets_playback() {
         let mut c = controller();
         let mut s = state();
         update(&mut c, &s);
         s.tick += 1;
         s.actors[0].health -= 20;
         update(&mut c, &s);
-        assert!(matches!(c.motion, Some(Motion::Hit(_))));
+        assert_eq!(c.motion, Some(Motion::Idle));
+        assert!(c.player.time() > 0.);
         s.tick += 1;
         s.wave += 1;
         s.actors[0].health = 100;
@@ -613,7 +828,7 @@ mod tests {
         assert_eq!(c.player.time(), 0.);
     }
     #[test]
-    fn dodge_hit_death_and_restart_obey_snapshot_precedence() {
+    fn dodge_death_and_restart_obey_snapshot_precedence() {
         let mut c = controller();
         let mut s = state();
         update(&mut c, &s);
@@ -629,9 +844,9 @@ mod tests {
         s.actors[0].action = Action::Idle;
         s.actors[0].health -= 20;
         update(&mut c, &s);
-        assert_eq!(c.motion, Some(Motion::Hit(11)));
+        assert_eq!(c.motion, Some(Motion::Idle));
         update(&mut c, &s);
-        assert_eq!(c.player.time(), 0.); // Repeated snapshot does not restart or advance hit.
+        assert_eq!(c.player.time(), 0.); // Repeated snapshot does not restart or advance playback.
         s.tick += 61;
         update(&mut c, &s);
         assert_eq!(c.motion, Some(Motion::Idle));

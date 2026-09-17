@@ -85,6 +85,13 @@ impl OrbitCamera {
     pub fn distance(&self) -> f32 {
         self.distance
     }
+    /// Set the desired boom length. Invalid values are ignored. Collision still
+    /// shortens the boom immediately and outward restoration remains smoothed.
+    pub fn set_distance(&mut self, distance: f32) {
+        if distance.is_finite() && distance >= self.settings.minimum_distance {
+            self.settings.distance = distance;
+        }
+    }
     /// Nonfinite input is ignored. Finite angles are wrapped/clamped to the tuning.
     pub fn set_angles(&mut self, yaw: f32, pitch: f32) {
         if yaw.is_finite() && pitch.is_finite() {
@@ -163,6 +170,27 @@ mod tests {
             near: 0.05,
             far: 100.0,
         }
+    }
+    #[test]
+    fn zoom_keeps_collision_and_rejects_invalid_lengths() {
+        let mut camera = OrbitCamera::new(settings(), 0., 0.).unwrap();
+        camera.set_distance(2.);
+        camera.view([0.; 3], 0.016, |s| {
+            assert_eq!(s.distance, 2.);
+            None
+        });
+        assert_eq!(camera.distance(), 2.);
+        for value in [f32::NAN, f32::INFINITY, -1., 0.] {
+            camera.set_distance(value);
+        }
+        camera.view([0.; 3], 0.016, |s| {
+            assert_eq!(s.distance, 2.);
+            Some(1.)
+        });
+        assert!((camera.distance() - 0.98).abs() < 1e-6);
+        camera.set_distance(8.);
+        camera.view([0.; 3], 0.016, |_| None);
+        assert!(camera.distance() > 0.98 && camera.distance() < 8.);
     }
     #[test]
     fn controller_shortens_at_a_wall_and_restores_without_overshoot() {

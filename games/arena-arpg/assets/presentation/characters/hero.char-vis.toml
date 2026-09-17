@@ -1,0 +1,210 @@
+schema_version = 1
+[core]
+character = "arena.hero"
+
+[arena.procedural]
+body_scale = 1.0
+torso_scale = 1.0
+weapon_scale = 1.0
+color = [0.06, 0.65, 0.88, 1.0]
+head_color = [0.55, 0.82, 0.91, 1.0]
+horns = false
+walk_radians_per_tick = 0.22
+walk_amplitude_m = 0.12
+
+[arena.procedural.parts.body]
+size_m = [0.6, 0.7, 0.4]
+position_m = [0.0, 0.9, 0.0]
+
+[arena.procedural.parts.head]
+size_m = [0.4, 0.4, 0.4]
+position_m = [0.0, 1.47, 0.0]
+
+[arena.procedural.parts.leg]
+size_m = [0.18, 0.45, 0.2]
+position_m = [0.17, 0.32, 0.0]
+
+[arena.procedural.parts.arm]
+size_m = [0.18, 0.45, 0.2]
+position_m = [0.43, 0.94, 0.0]
+
+[arena.procedural.parts.horn]
+size_m = [0.12, 0.3, 0.12]
+position_m = [0.18, 1.77, 0.0]
+
+[arena.procedural.parts.weapon]
+size_m = [0.1, 0.12, 0.85]
+position_m = [0.43, 1.03, 0.5]
+
+[core.model]
+asset = "hero/model.glb"
+target_height_m = 1.8
+floor_offset_m = 0.0
+profile = "mixamo"
+
+[core.profiles.quaternius_2025]
+# Pinned 2025 DEF rig, canonical humanoid bone order.
+bones = ["DEF-hips", "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-neck", "DEF-head", "DEF-shoulder.L", "DEF-upper_arm.L", "DEF-forearm.L", "DEF-hand.L", "DEF-shoulder.R", "DEF-upper_arm.R", "DEF-forearm.R", "DEF-hand.R", "DEF-thigh.L", "DEF-shin.L", "DEF-foot.L", "DEF-toe.L", "DEF-thigh.R", "DEF-shin.R", "DEF-foot.R", "DEF-toe.R"]
+motion_root = "root"
+
+[core.profiles.ual2]
+# Library 2 Standard humanoid rig, canonical humanoid bone order.
+bones = ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "Head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r"]
+motion_root = "root"
+
+[[core.pose]]
+bone = "mixamorig:RightHandThumb1"
+parent = "mixamorig:RightHand"
+rotation_xyzw = [-0.322424, -0.426261, 0.390406, -0.749618]
+
+[[core.pose]]
+bone = "mixamorig:RightHandThumb2"
+parent = "mixamorig:RightHandThumb1"
+rotation_xyzw = [0.005230, 0.167879, 0.476095, 0.863205]
+
+[[core.pose]]
+bone = "mixamorig:RightHandThumb3"
+parent = "mixamorig:RightHandThumb2"
+rotation_xyzw = [0.022738, 0.121687, 0.403963, 0.906360]
+
+[[core.pose]]
+bone = "mixamorig:RightHandIndex1"
+parent = "mixamorig:RightHand"
+rotation_xyzw = [0.200995, 0.044997, -0.101500, 0.973280]
+
+[[core.pose]]
+bone = "mixamorig:RightHandIndex2"
+parent = "mixamorig:RightHandIndex1"
+rotation_xyzw = [0.763436, 0.072422, -0.081380, 0.636630]
+
+[[core.pose]]
+bone = "mixamorig:RightHandIndex3"
+parent = "mixamorig:RightHandIndex2"
+rotation_xyzw = [0.240787, 0.030007, -0.031182, 0.969613]
+
+[[core.pose]]
+bone = "mixamorig:RightHandMiddle1"
+parent = "mixamorig:RightHand"
+rotation_xyzw = [0.286948, -0.002332, -0.045308, 0.956871]
+
+[[core.pose]]
+bone = "mixamorig:RightHandMiddle2"
+parent = "mixamorig:RightHandMiddle1"
+rotation_xyzw = [0.778397, 0.002828, -0.077789, 0.622928]
+
+[[core.pose]]
+bone = "mixamorig:RightHandMiddle3"
+parent = "mixamorig:RightHandMiddle2"
+rotation_xyzw = [0.495912, -0.001809, -0.047228, 0.867086]
+
+[[core.pose]]
+bone = "mixamorig:RightHandRing1"
+parent = "mixamorig:RightHand"
+rotation_xyzw = [0.251854, -0.038157, 0.014273, 0.966907]
+
+[[core.pose]]
+bone = "mixamorig:RightHandRing2"
+parent = "mixamorig:RightHandRing1"
+rotation_xyzw = [0.767716, -0.033094, -0.078653, 0.635083]
+
+[[core.pose]]
+bone = "mixamorig:RightHandRing3"
+parent = "mixamorig:RightHandRing2"
+rotation_xyzw = [0.387020, -0.017006, -0.038992, 0.921090]
+
+[[core.pose]]
+bone = "mixamorig:RightHandPinky1"
+parent = "mixamorig:RightHand"
+rotation_xyzw = [0.329235, -0.021945, 0.002147, 0.943990]
+
+[[core.pose]]
+bone = "mixamorig:RightHandPinky2"
+parent = "mixamorig:RightHandPinky1"
+rotation_xyzw = [0.693074, -0.071500, -0.067998, 0.714082]
+
+[[core.pose]]
+bone = "mixamorig:RightHandPinky3"
+parent = "mixamorig:RightHandPinky2"
+rotation_xyzw = [0.215360, -0.030241, -0.031849, 0.975547]
+
+[core.sockets.sword]
+bone = "mixamorig:RightHand"
+# Bone-local source model units, before the armature and target-height scales.
+translation_model = [0.0, 9.0, 3.0]
+rotation_xyzw = [0.0, 0.70710678, 0.0, 0.70710678]
+
+[arena.weapon]
+socket = "sword"
+tip_m = 1.10
+
+[[arena.weapon.parts]]
+size_m = [0.08, 0.025, 1.0]
+center_m = [0.0, 0.0, 0.60]
+color_rgba = [184, 232, 250, 255]
+
+[[arena.weapon.parts]]
+size_m = [0.20, 0.035, 0.025]
+center_m = [0.0, 0.0, 0.085]
+color_rgba = [155, 99, 45, 255]
+
+[[arena.weapon.parts]]
+size_m = [0.035, 0.035, 0.15]
+center_m = [0.0, 0.0, 0.0]
+color_rgba = [55, 35, 25, 255]
+
+[core.animations.idle]
+asset = "hero/animations/Quaternius-Sword_Idle.glb"
+clip = "Sword_Idle"
+profile = "quaternius_2025"
+
+[arena.animations.idle]
+animation = "idle"
+playback = "loop"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.run]
+asset = "hero/animations/RPG-Character@Unarmed-Run-Forward.glb"
+clip = "Armature|Take 001|BaseLayer"
+profile = "rpg"
+
+[arena.animations.run]
+animation = "run"
+playback = "loop"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.attack]
+asset = "hero/animations/UAL2-Sword_Regular_C.glb"
+clip = "Sword_Regular_C"
+profile = "ual2"
+
+[arena.animations.attack]
+animation = "attack"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08
+# Calibrated against the equipped sword and unchanged two-metre combat range.
+contact_seconds = 0.686666667
+
+[core.animations.dodge]
+asset = "hero/animations/RPG-Character@Unarmed-Roll-Forward.glb"
+clip = "Armature|Take 001|BaseLayer"
+profile = "rpg"
+
+[arena.animations.dodge]
+animation = "dodge"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.death]
+asset = "hero/animations/RPG-Character@Unarmed-Death1.glb"
+clip = "Armature|Take 001|BaseLayer"
+profile = "rpg"
+
+[arena.animations.death]
+animation = "death"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08

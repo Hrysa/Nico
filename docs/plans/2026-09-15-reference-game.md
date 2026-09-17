@@ -5,7 +5,10 @@ implemented, including three waves and grunt/brute enemies. Initial human playte
 and balance approval are recorded; no tuning changes are requested. This replaces the earlier
 collect-and-escape proposal. Scope targets belong in
 [roadmap phase 5](../roadmap.md#5-make-a-playable-local-game); actions belong in
-[TODO](../../TODO.md#next-client-humanoid-models-and-animation).
+[TODO](../../TODO.md#client-humanoid-models-and-animation).
+
+The broader game direction is now the [open-world milestone](2026-09-17-open-world.md).
+This plan remains the contract for the explicit `--arena` combat mode.
 
 ## First playable encounter
 

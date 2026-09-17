@@ -1,3 +1,5 @@
+# Large model, geometry-buffer, source-art, and texture files use Git LFS.
+# Keep glTF JSON, materials, TOML, licenses, and manifests as ordinary text.
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
 *.blend filter=lfs diff=lfs merge=lfs -text
@@ -6,3 +8,10 @@
 *.png filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
 *.jpeg filter=lfs diff=lfs merge=lfs -text
+
+# Preserve publisher notices verbatim, including their original whitespace.
+games/arena-arpg/assets/presentation/quaternius/** -text whitespace=cr-at-eol
+games/arena-arpg/assets/presentation/quaternius/*.md text eol=lf
+games/arena-arpg/assets/presentation/quaternius/*.json text eol=lf
+games/arena-arpg/assets/presentation/quaternius/**/*.txt -text -whitespace
+games/arena-arpg/assets/presentation/characters/monsters/*-License.txt -text -whitespace

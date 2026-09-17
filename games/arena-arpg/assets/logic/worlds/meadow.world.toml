@@ -1,0 +1,32 @@
+schema_version = 1
+id = "meadow"
+half_extent_m = 64.0
+settlement = { x = 0.0, z = -20.0 }
+
+# Settlement houses flank the path north to the monster camp.
+[[obstacles]]
+center = [-9.0, 2.0, -22.0]
+size = [6.0, 4.0, 7.0]
+color = [0.65, 0.46, 0.28, 1.0]
+[[obstacles]]
+center = [9.0, 2.0, -22.0]
+size = [6.0, 4.0, 7.0]
+color = [0.55, 0.4, 0.3, 1.0]
+[[obstacles]]
+center = [-15.0, 1.5, 5.0]
+size = [4.0, 3.0, 5.0]
+color = [0.4, 0.44, 0.4, 1.0]
+[[obstacles]]
+center = [16.0, 2.0, 14.0]
+size = [5.0, 4.0, 6.0]
+color = [0.4, 0.44, 0.4, 1.0]
+
+[[monsters]]
+kind = "grunt"
+position = { x = -7.0, z = 7.0 }
+[[monsters]]
+kind = "grunt"
+position = { x = 0.0, z = 12.0 }
+[[monsters]]
+kind = "brute"
+position = { x = 7.0, z = 7.0 }

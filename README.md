@@ -1,7 +1,7 @@
 # Nico
 
 Nico is an experimental Rust 2024 game engine with a headless runtime, shared
-client/server gameplay, a third-person arena ARPG prototype, and textured 2D/3D
+client/server gameplay, a persistent multiplayer action RPG prototype, and textured 2D/3D
 rendering samples. Native clients use Winit and Nico's RHI with its wgpu backend.
 
 The core native client host implementation is complete. Automated Windows window
@@ -25,6 +25,76 @@ custom profiler is planned now.
 
 ## Run and validate
 
+Install Git LFS before checking out game assets. For a fresh clone or an existing
+checkout, run from the repository root:
+
+```sh
+git lfs install --local
+git lfs pull
+```
+
+[.gitattributes](.gitattributes) tracks models, geometry buffers, Blender sources,
+and textures through LFS. glTF JSON, material descriptions, TOML, manifests, and
+license notices remain ordinary Git files. `git add` stores matching assets as
+LFS pointers while keeping full files in the working tree; the LFS pre-push hook
+uploads their contents. The remote must support LFS. Installing LFS alone does
+not convert older commits; history migration is a separate operation that changes
+commit IDs and requires coordinating any update to a shared remote branch.
+
+The default game is a shared outdoor world with a settlement and monster camp.
+Run these commands in separate terminals from the repository root:
+
+```text
+cargo run -p arena-arpg-server
+cargo run -p arena-arpg-client -- --character alice
+cargo run -p arena-arpg-client -- --character bob
+```
+
+The server owns movement validation, combat, monsters, loot and progression.
+Clients predict local movement and receive nearby entities at 20 Hz. Each character
+name must be unique among active connections: use 1..32 lowercase ASCII letters,
+digits or underscores. This milestone uses local development identities and
+loopback networking, not Internet accounts or MMO-scale infrastructure.
+
+WASD moves, mouse motion aims the camera, left click attacks, Space dodges,
+E picks up nearby loot, F equips the iron sword, R respawns after death, and Q
+reconnects. Click to capture the pointer; Escape releases it. The server saves
+position, health, XP, inventory and equipment every five simulation seconds and
+on disconnect/orderly shutdown. Monster state is not persistent.
+
+The game endpoint defaults to `127.0.0.1:47640`: override it with server `--listen`
+and client `--server`. Server `--data-dir` defaults to `target/world-data`; choose
+a durable directory outside `target` to keep saves across build cleanup. One
+server owns each data directory. `--world-asset` and `--item-asset` select the
+authored zone and loot definitions. Both game modes require 60 Hz simulation.
+
+Through the bridge, discover the current instances and tool catalog. World servers
+expose `world_state` and queued `world_spawn`; clients expose `world_client_state`,
+`client_characters`, and queued `world_action` (movement, attack, dodge, pickup,
+equip, respawn, reconnect and camera). A submitted client command is not proof of
+server success: compare its epoch/sequence with the authoritative acknowledgement
+and resulting world state. `last_disconnect`, prediction backlog and snapshot age
+are reported separately. Built-in host/window tools remain available.
+
+See the [world milestone](docs/plans/2026-09-17-open-world.md) and
+[native checkpoint](docs/reviews/2026-09-17-open-world-native.md) for validation
+scope and remaining work.
+
+Run the isolated two-client scenario after building the binaries:
+
+```text
+cargo build -p arena-arpg-client -p arena-arpg-server -p nico-bridge --target-dir target/bridge-validation
+python apps/nico-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug
+```
+
+It opens two test windows, uses private bridge/game ports and temporary character
+saves, and stops only its own processes. Captures, logs and a JSON report go to
+`target/world-native-evidence` (override with `--output-dir`). It validates shared
+combat, dodge, loot/equipment, death/respawn, reconnect and server restart through
+MCP. GPU readbacks and separately sampled state do not establish desktop visibility.
+
+### Standalone arena combat test
+
 The arena ARPG prototype has a third-person native client and a headless server,
 with shared melee, dodge, monster pursuit, collision, and win/loss/restart rules.
 Its camera uses engine orbit and collision mechanics; the game supplies the hero
@@ -32,14 +102,14 @@ target, tuning, and arena geometry. Camera and mesh orientations use normalized
 quaternions; orbit controls retain yaw/pitch limits. See the
 [architecture](docs/architecture.md#assets-and-game-construction) for engine ownership.
 Clear three waves: three grunts, then two grunts and one brute, then one grunt and
-two brutes. Purple brutes move slowly and hit farther, with a longer windup.
+two brutes. Puglin brutes move slowly and hit farther, with a longer windup.
 Between waves, a three-second countdown resets positions and restores 40 health
 (up to 100). Clearing the final wave wins.
 Run from the repository root:
 
 ```text
-cargo run -p arena-arpg-client
-cargo run -p arena-arpg-server
+cargo run -p arena-arpg-client -- --arena
+cargo run -p arena-arpg-server -- --arena
 ```
 
 Click the viewport to capture the pointer. WASD moves relative to the camera,
@@ -49,13 +119,14 @@ releases the pointer. The capture click does not attack. Dodge can cancel sword 
 are spaced at least half a second apart. Pale-gold pulses and an overhead warning
 mark the final 200 ms of windup. The shared client option `--background` opens the
 window without requesting focus and is available to both arena and minimal clients.
-Focus loss releases input; simulation continues. Client and server run independent solo encounters;
-multiplayer synchronization is not implemented. The server requires 60 Hz.
+Focus loss releases input; simulation continues. In `--arena` mode, client and
+server run independent solo encounters; use the default world mode for multiplayer.
 
 Both hosts attempt the default bridge connection; `--no-bridge` disables it and
 `--bridge ADDRESS` overrides it. The client supports `--smoke-frames N`. Default
-visuals use the game-owned imported hero alongside procedural enemies, textures,
-and bitmap text. `--procedural-hero` skips character assets. Attack sectors show full reach with a growing windup
+visuals use the game-owned imported hero alongside animated Bestiary monsters,
+textures, and bitmap text. `--procedural-hero` skips only the hero's imported model
+and animation data. Attack sectors show full reach with a growing windup
 fill and a yellow active strike; the HUD shows dodge cooldown progress. Rendering
 uses the repository's generated shaders. The [imported hero](#imported-arena-hero)
 supports explicit asset-path overrides.
@@ -65,13 +136,17 @@ See [phase 5](docs/roadmap.md#5-make-a-playable-local-game) for validation limit
 
 With `arena-arpg-shared`'s `tools` feature enabled, call
 `arena_arpg_shared::tools::register(builder.add_plugin(ArenaPlugin))` and pass the
-returned `ToolExtensions` to the engine host. Use `FIXED_STEP` for the runtime.
+returned `ToolExtensions` to the engine host. This unit plugin uses the embedded
+catalog; native hosts use `ArenaPlugin::with_characters` with the disk-loaded
+catalog. Use `FIXED_STEP` for the runtime.
 Registration adds game handlers and snapshot publication; engine hosts own the bridge
-connection. Both arena hosts compose this adapter, registered as `arena_arpg`;
+connection. Both hosts compose this adapter in `--arena` mode, registered as `arena_arpg`;
 the minimal-game rendering samples keep their separate tools.
 
 | Tool | Purpose |
 | --- | --- |
+| `game_characters` | Inspect the loaded authoritative character catalog. |
+| `client_characters` (client only) | Inspect visual definitions and resolved hero model/clip/socket parameters. |
 | `game_state` | Read run/wave/countdown, actor type and combat stats, health, snapshot age, and action phases. |
 | `game_move` | Queue world-space movement for 1..120 simulation ticks; zero direction waits. |
 | `game_move_hold` | Start or renew continuous movement without a release gap; optionally change direction. |
@@ -81,7 +156,7 @@ the minimal-game rendering samples keep their separate tools.
 | `game_restart` | Reset the current run and cancel old actions. |
 | `game_command` | Poll acceptance/execution outcome by command ID. |
 | `client_state` (client only) | Read camera, draw counts, and window fields from the last published frame, with age and closed state. |
-| `client_control` (client only) | Queue `camera` with yaw/pitch. |
+| `client_control` (client only) | Queue `camera` with yaw/pitch and optional `distance` (0.5..12 metres); omitted distance preserves zoom. |
 
 For camera controls, poll `client_state.last_applied_command`. Pointer capture uses
 engine `window_control` with `{"action":"pointer_capture","value":true}`; poll
@@ -519,43 +594,65 @@ These paths refer to the selected files in the arena asset folder. The examples
 explicitly permit core-material fallback for optional specular/IOR extensions.
 CPU deformation checks do not establish native visual quality.
 
+### Character definitions
+
+Hero, grunt and brute each have a `<name>.char.toml` logic asset under
+`games/arena-arpg/assets/logic/characters/` and a `<name>.char-vis.toml` visual asset
+under `games/arena-arpg/assets/presentation/characters/`. Edit logic for health,
+movement, collision radius, attacks and dodge; edit visuals for model selection,
+rigs, grip, sockets, weapon geometry, animation timing and procedural body parts.
+Both files use explicit `[core]` and `[arena]` sections. Core descriptors come from
+`nico-assets::character`; arena rules remain game-owned. Visual
+`core.animations.<name>` entries select clips, and `arena.animations.<action>`
+bindings select a library entry and its playback/timing settings.
+Both hosts load logic; only the client loads presentation. Restart after editing.
+
+Use `--logic-characters <directory>` on either host and `--visual-characters
+<directory>` on the client to select another catalog. The three filenames remain
+`hero`, `grunt`, and `brute`; matching IDs link the files. Through the bridge,
+`game_characters` and `client_characters` inspect the loaded content. The
+[format specification](docs/plans/2026-09-17-character-definitions.md) defines units,
+validation, supported content and ECS ownership, with complete examples.
+
 ### Imported arena hero
 
-Run from the repository root with the game-owned model and six RPG clips:
+The default world and `--arena` combat mode load the imported hero and animated
+Bestiary monsters. `--procedural-hero` changes only the hero to procedural visuals.
+Paired `--character-model` and `--character-animations` overrides replace the hero
+files while retaining the selected definition's rig and clip settings.
 
-```sh
-cargo run -p arena-arpg-client
-```
+| Character | Model | Animation sources |
+| --- | --- | --- |
+| Hero | Ch03 | Library 2 sword attack, earlier Quaternius sword idle, RPG run/roll/death |
+| Grunt | Bestiary Imp | Library 2 idle/walk/attack, RPG death |
+| Brute | Bestiary Puglin | Library 2 idle/walk/attack, RPG death |
 
-The default hero lives under `games/arena-arpg/assets/presentation/characters/hero/`,
-with `model.glb` and an `animations/` directory. Use `--procedural-hero` for the
-original procedural visuals. Custom `--character-model` and `--character-animations`
-overrides remain available and must be supplied together; they conflict with
-`--procedural-hero`. Missing default assets produce a startup error.
-The directory must contain single-clip `RPG-Character@Unarmed-*.glb`
-files for `Idle`, `Run-Forward`, `Attack-R1`, `Roll-Forward`, `GetHit-F1`, and `Death1`.
-This is game-owned content selection; the engine player and importer remain generic.
-The selected files are copied into the game asset folder for local development;
-the larger experimental collection remains in `tmp/`. Source and redistribution
-status are recorded in the [hero provenance notice](games/arena-arpg/assets/presentation/characters/hero/LICENSE.md).
+The game binds five motions: `idle`, `run`, `attack`, `dodge`, and `death`. Monsters
+have a dodge binding for the shared format, but their logic does not dodge.
+Nonlethal damage does not interrupt animation: combat has no injury/stun state.
+Attack and dodge playback follow authoritative action timing; animation never
+controls damage, movement, or collision. Each entity owns its player and shares
+immutable model/clip assets with other instances of its type.
 
-The hero selects animation from owned arena snapshots. Attack and dodge duration
-follow authoritative action timing; hit reactions follow health decreases. Death
-finishes on presentation time after simulation stops. Run/wave resets clear transient
-playback. The blade follows `mixamorig:RightHand` through a full affine palette.
-The right-hand attack contact marker (49/120 of the source clip) maps to the
-authoritative active-phase start. The blade follows local hand +Y; its length is
-calibrated at loading so its contact tip reaches the hero's attack radius. These
-body-only clips retain reference finger poses; they are demonstration character
-content, not a claim of finished weapon/finger animation. Animation never drives damage or collision.
-Enemies retain their procedural visuals.
+The hero's sword uses an authored hand grip and socket; monsters use weapons
+already skinned into their models. The [format contract](docs/plans/2026-09-17-character-definitions.md)
+owns socket, rig, timing, and loading rules. See the [hero provenance](games/arena-arpg/assets/presentation/characters/hero/LICENSE.md)
+and [monster content notice](games/arena-arpg/assets/presentation/characters/monsters/README.md)
+for selected files, reproduction commands, licenses, and limitations. Imported
+source packs live under [quaternius](games/arena-arpg/assets/presentation/quaternius/README.md).
+The renderer uses base-color textures; full material fidelity and foot/weapon-contact
+polish remain unfinished.
 
-`client_state.animation` reports motion, clip time/completion, fade weight, model
-draw count, hand/weapon matrices, `render_bounds`, and `visible` (null animation
-with procedural visuals). Bounds include the attached blade. Existing
-`game_move`, `game_attack`, `game_dodge`, and `game_restart` exercise the integration.
-Loading happens before host startup and fails on missing/invalid content. The hero
-is limited to 32 primitives; the entire scene remains limited to 256 draws.
+Through the bridge, `client_characters.resolved` inspects all three loaded types.
+`client_state.animation` (arena) and `world_client_state.animation` (world) report
+the local hero's playback. Their `actor_animations` arrays expose individual
+players; world entries include stable object IDs. State includes motion, clip
+index/time/completion, fade weight, model draw count, bounds, and visibility.
+Attached-weapon fields are inactive for monsters with embedded weapons.
+
+Content loads before host startup; invalid or missing imported assets fail startup.
+The scene is limited to 256 draws. The [Bestiary review](docs/reviews/2026-09-17-bestiary.md)
+separates native capture evidence from the later removal of injury playback.
 
 ### Native character preview
 
@@ -825,7 +922,7 @@ See [physics ownership](docs/architecture.md#physics) and the
 | `apps/nico-shaderc` | Standalone offline shader compiler tool |
 | `assets/presentation/shaders` | Engine shader sources and committed WGSL artifacts |
 | `games/minimal-game` | Shared gameplay, client/server executables, and game asset roots |
-| `games/arena-arpg` | Shared arena combat and native client/server executables |
+| `games/arena-arpg` | Persistent multiplayer world, arena combat test, and native client/server executables |
 
 See [architecture](docs/architecture.md) for dependency direction and contracts, and
 [AGENTS.md](AGENTS.md) for contribution rules. Audio, UI, and broader devtools

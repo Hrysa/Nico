@@ -1,0 +1,5 @@
+schema_version = 1
+id = "iron_sword"
+name = "Iron sword"
+damage_bonus = 5
+color = [0.7, 0.8, 0.9, 1.0]

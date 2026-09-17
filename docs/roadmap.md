@@ -19,6 +19,19 @@ arena ARPG, with platform, player-count, and content targets described
 in phase 5. The reference game's scope does not narrow
 the engine's support to one dimension; focused samples validate both dimensions.
 
+The reference game now implements the
+[open-world multiplayer milestone](plans/2026-09-17-open-world.md), retaining the
+arena as an explicit combat test. The [completion audit](reviews/2026-09-17-open-world-native.md#final-implementation-and-completion-audit-2026-09-17)
+records the two-client native scenario, same-instance rendered captures, cooperative
+combat, dodge, death/respawn, loot/equipment and persistence across reconnect and
+server restart. Workspace tests, check, Clippy and formatting pass on the recorded
+Windows build. This establishes the local playable milestone, not MMO capacity.
+
+The 2026-09-17 [Bestiary integration review](reviews/2026-09-17-bestiary.md) records
+animated Imp/Puglin enemies in both modes, per-entity playback, optional attached
+equipment, 36 passing client tests, and the repeated two-client native scenario.
+Material fidelity and per-monster contact polish remain limited as documented there.
+
 ## The path at a glance
 
 | Phase | Capability gained | Status |
@@ -29,7 +42,7 @@ the engine's support to one dimension; focused samples validate both dimensions.
 | 3. Load game assets | Request usable game content by asset identity | Extensible PNG, static-mesh GLB, and model GLB import implemented |
 | 4. Display the game world | Show loaded content moving with game state | 2D and 3D samples with shared HUD implemented |
 | 5. Make a playable local game | Move, collide, complete an objective, and restart | Local arena and current balance accepted; Rapier integration validated on Windows |
-| 6. Play over a network | Two clients play together on one authoritative server | Planned |
+| 6. Play over a network | Two clients play together on one authoritative server | Local world milestone implemented; Internet conditions remain unvalidated |
 | 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Animation pipeline implemented; imported-hero encounter verified; broader experience pending |
 | 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Planned |
 | 9. Validate performance | Profile representative workloads and meet defined budgets | Deferred |
@@ -204,7 +217,7 @@ execution remains unverified.
 **Status:** Paired 2D and 3D rendering samples are implemented. They establish the
 rendering foundation; the reference game's initial scope is selected in phase 5,
 with scenario rules recorded in its design. Concrete next actions belong in
-[TODO](../TODO.md#next-client-humanoid-models-and-animation).
+[TODO](../TODO.md#client-humanoid-models-and-animation).
 
 **Scope delivered:** Both samples follow shared entity positions through immutable
 presentation snapshots. The 2D world sprite and fixed HUD icon share one transparent
@@ -255,7 +268,7 @@ MCP adapter, and native hosts are implemented. The user approved the engine
 extraction build while playing and subsequently accepted the current combat balance.
 No tuning changes are requested. Detailed encounter-duration measurements were not
 supplied; they are not a blocker for the accepted prototype. Next major scope is
-[client character presentation](../TODO.md#next-client-humanoid-models-and-animation).
+[client character presentation](../TODO.md#client-humanoid-models-and-animation).
 
 **Scope:** One hero with melee and dodge clears three waves of grunt/brute enemies
 in one compact 3D arena. The game has telegraphed attacks, health, intermissions,
@@ -394,8 +407,11 @@ the focused engine regressions exercise the two review failures.
 
 ## 6. Play over a network
 
-**Status (2026-09-16):** Planned after the client character and presentation work
-in phase 7, following the user's priority change.
+**Status (2026-09-17):** The local open-world milestone is implemented and validated.
+The [completion audit](reviews/2026-09-17-open-world-native.md#final-implementation-and-completion-audit-2026-09-17)
+records two-client cooperation, persistence and regression evidence. Simulated client
+clock mismatch, fragmented frames and bounded queues have coverage. Broader Internet
+latency/loss conditions and large populations remain unvalidated.
 
 **Result:** At least two clients play the reference scenario on one server that owns the
 authoritative game state.
@@ -426,6 +442,57 @@ disconnect, and focus loss leave input, sound, and UI in a valid state.
 
 ### Client character milestone
 
+**Current status (2026-09-17):** World and arena render the imported hero and
+Bestiary Imp/Puglin monsters with per-entity playback. The game binds idle,
+locomotion, attack, dodge, and death; nonlethal damage does not interrupt playback
+because combat has no injury/stun state. The correction passed 37 client tests,
+strict client Clippy, and formatting. Earlier Bestiary native validation passed
+the two-client world scenario; it predates removal of hit reactions. See the
+[Bestiary review](reviews/2026-09-17-bestiary.md) for evidence and limits and the
+[character contract](plans/2026-09-17-character-definitions.md) for current rules.
+
+The dated entries below retain milestone history. Their clip counts, content
+selection, and validation results describe those builds, not the current build.
+
+**Character composition (2026-09-17):** The six character files now explicitly
+compose engine `core` descriptors with typed `arena` rules. Engine clip libraries
+have no required game actions; arena bindings resolve them at startup. The
+Windows/Vulkan client completed all three waves at tick 3,221 with 80 health;
+the headless server completed them at tick 2,375 with 100 health. Both restarted
+and exited cleanly. Captures and validation limits are recorded in the
+[composition review](reviews/2026-09-17-character-composition.md).
+
+**Initial character definitions (2026-09-17):** Hero, grunt and brute now load versioned
+`.char.toml` logic and `.char-vis.toml` presentation definitions. An immutable
+catalog supplies combat/collision settings; the client resolves model, rig, socket,
+pose, weapon, clip and procedural-body content. Both hosts expose logic inspection;
+the client also exposes resolved visual content through MCP. The format and ownership
+are specified in the [contract](plans/2026-09-17-character-definitions.md).
+A Windows/Vulkan client cleared three waves at tick 3,065 with 80 health; the
+headless host cleared them at tick 2,700 with 100 health. Captures establish migrated
+rendering, not user-observed success or complete foot-contact acceptance. The
+[migration review](reviews/2026-09-17-character-definitions.md) records tests,
+instance identities, earlier automation limits and process exit evidence.
+
+**Sword grip and selection (2026-09-17):** The arena now uses CC0 Quaternius sword
+idle/attack clips, a game-owned Ch03 finger reference and palm-centred weapon with
+handle/guard. The 0.444-second strike marker maps to the existing active boundary;
+simulation timing and damage remain unchanged. Tests cover target-body contact
+and 241 sampled weapon-clearance poses per clip. All 82 focused client/shared/
+presentation-control tests and strict changed-package Clippy passed. Eight final
+Windows/GTX 1660 Vulkan captures show idle, swing, run, roll and combat; the client
+stopped through MCP and exited 0. The [review](reviews/2026-09-17-sword-grip.md)
+records the older source revision, validation bounds and remaining art acceptance.
+
+**Six-clip art review (2026-09-17):** Fresh Windows/GTX 1660 Vulkan development
+builds rendered the selected Ch03/RPG reference pose, all six actions, three
+crossfades, and arena weapon/movement/dodge samples. Twenty-eight GPU captures
+were inspected; both test processes stopped through MCP and exited 0. Open
+reference-pose fingers prevent a convincing weapon grip. Exact strike-frame
+contact, foot locking, floor clearance and full art acceptance remain open.
+The [review](reviews/2026-09-17-hero-clip-review.md) records instance identities,
+sample coverage and limits; this was not a user-confirmed demonstration.
+
 **Status (2026-09-16):** Generic GLB model/skin/clip import and CPU animation with
 humanoid conversion and a standalone GPU-skinned preview are implemented ahead of
 networking. Compiled mappings and reusable pose buffers remove per-frame geometry
@@ -453,7 +520,7 @@ handling adjustment. These results do not claim a user-watched demonstration.
 
 The dated investigation notes below retain their original chronology. Earlier MCP
 measurements and visual claims are historical, not fresh validation authority;
-the status paragraph above supersedes their implementation-status statements.
+the current-status paragraph above supersedes their implementation-status statements.
 
 **Asset inspection (2026-09-16):** The supplied Ch03 character and 64 RPG clip
 files were structurally inspected. The clips share a skinned mesh and skeleton,
@@ -465,7 +532,7 @@ acceptance is outstanding. Findings and candidate roles are recorded in the
 
 **Scope:** One rigged hero establishes reusable skeleton and clip assets, pose
 evaluation, skinned rendering, clip transitions, and weapon attachment. Idle,
-locomotion, melee, dodge, hit reaction, and death follow gameplay snapshots.
+locomotion, melee, dodge, and death follow gameplay snapshots.
 In-place clips preserve simulation-owned movement, collision, damage, and action
 timing; visual reactions must not introduce gameplay interruptions. The server
 continues to run without presentation assets. Engine layers own reusable animation
@@ -558,7 +625,7 @@ lighting, shadows, combat effects/audio, and settings needed by the arena. Advan
 inverse kinematics, ragdolls, and animation-driven root motion are outside the
 initial character milestone. Humanoid motion conversion is now included; further
 retargeting quality features follow demonstrated needs. Concrete actions belong in
-[TODO](../TODO.md#next-client-humanoid-models-and-animation).
+[TODO](../TODO.md#client-humanoid-models-and-animation).
 
 ## 8. Make development repeatable
 
@@ -640,7 +707,7 @@ the dependent phase approaches.
 | Phase 3 entry (selected) | Paired samples: texture loading, 2D sprite and HUD first, then a textured 3D mesh | Establishes the first consumers and implementation order for both dimensions |
 | Before expanding beyond paired samples (selected) | Third-person arena ARPG; Windows first; one arena; solo followed by two-player co-op | Bounds further content and rendering requirements |
 | Before phase 5 (selected) | Melee combat and dodge with kinematic floor movement; monster behavior, arena, and tests specified in the reference-game design | Gives gameplay a concrete completion test |
-| Before phase 6 | Two-player co-op selected; network conditions and synchronization model remain open | Determines replication and latency handling |
+| Phase 6 local milestone | Authoritative 60 Hz world, 20 Hz nearby snapshots, local prediction/reconciliation and remote interpolation over loopback TCP | Broader Internet conditions remain unvalidated |
 | Before phase 7 | Required media features, devices, languages, accessibility cases | Makes the player-experience scope finite |
 | Before phase 9 | Target hardware and measurable performance budgets | Makes performance acceptance testable |
 | Before phase 10 | Distribution channel and final support matrix | Determines packaging and release validation |

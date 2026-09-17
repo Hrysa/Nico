@@ -6,12 +6,14 @@ license.workspace = true
 
 [features]
 default = []
+character = ["dep:serde"]
 loading = ["runtime-loading", "png-import", "gltf-import"]
 runtime-loading = ["dep:nico-runtime"]
 png-import = ["dep:png"]
 gltf-import = ["dep:gltf"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
 nico-runtime = { path = "../nico-runtime", optional = true }
 png = { version = "0.18", optional = true }
 gltf = { version = "1.4", default-features = false, features = ["utils", "names"], optional = true }
@@ -25,6 +27,7 @@ name = "inspect_model"
 required-features = ["gltf-import"]
 
 [dev-dependencies]
+toml = "0.8"
 serde_json = "1"
 
 [lints]

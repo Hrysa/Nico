@@ -4,8 +4,30 @@ use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::sync::Arc;
 
+struct ProceduralMeshes {
+    body: Arc<Mesh>,
+    head: Arc<Mesh>,
+    leg: Arc<Mesh>,
+    arm: Arc<Mesh>,
+    weapon: Arc<Mesh>,
+    horn: Arc<Mesh>,
+}
+impl ProceduralMeshes {
+    fn new(parts: &crate::character::definition::ProceduralParts) -> Self {
+        Self {
+            body: box_mesh(parts.body.size_m),
+            head: box_mesh(parts.head.size_m),
+            leg: box_mesh(parts.leg.size_m),
+            arm: box_mesh(parts.arm.size_m),
+            weapon: box_mesh(parts.weapon.size_m),
+            horn: box_mesh(parts.horn.size_m),
+        }
+    }
+}
 pub struct Visuals {
-    pub imported_hero: bool,
+    character_meshes: [ProceduralMeshes; 3],
+    definitions: [crate::character::definition::VisualDefinition; 3],
+    pub imported: [bool; 3],
     white: Arc<Texture>,
     shade: Arc<Texture>,
     font: BitmapFont,
@@ -13,12 +35,11 @@ pub struct Visuals {
     walls: [Arc<Mesh>; 4],
     body: Arc<Mesh>,
     head: Arc<Mesh>,
-    limb: Arc<Mesh>,
-    blade: Arc<Mesh>,
-    horn: Arc<Mesh>,
+
+    warning: Arc<Mesh>,
     ring: Arc<Mesh>,
-    sector: Arc<Mesh>,
-    sector_fill: Arc<Mesh>,
+    sector: [Arc<Mesh>; 3],
+    sector_fill: [Arc<Mesh>; 3],
     bar: Arc<Mesh>,
     last_health: [u16; 4],
     flash: [f32; 4],
@@ -29,14 +50,28 @@ pub struct Visuals {
     moving: [bool; 4],
 }
 impl Visuals {
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::configured(
+            std::array::from_fn(crate::character::definition::VisualDefinition::builtin),
+            &arena_arpg_shared::characters::CharacterCatalog::builtin(),
+        )
+    }
+    pub fn configured(
+        definitions: [crate::character::definition::VisualDefinition; 3],
+        logic: &arena_arpg_shared::characters::CharacterCatalog,
+    ) -> Self {
         let white = Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap());
         let mut pixels = Vec::new();
         for v in [220, 165, 255, 115, 195, 145] {
             pixels.extend_from_slice(&[v, v, v, 255]);
         }
         Self {
-            imported_hero: false,
+            character_meshes: std::array::from_fn(|i| {
+                ProceduralMeshes::new(&definitions[i].arena.procedural.parts)
+            }),
+            definitions,
+            imported: [false; 3],
             white,
             shade: Arc::new(Texture::rgba8(6, 1, pixels).unwrap()),
             font: BitmapFont::default(),
@@ -45,14 +80,34 @@ impl Visuals {
                 .map(|wall| box_mesh(wall.size.map(|v| v as f32))),
             body: box_mesh([0.6, 0.7, 0.4]),
             head: box_mesh([0.4, 0.4, 0.4]),
-            limb: box_mesh([0.18, 0.45, 0.2]),
-            blade: box_mesh([0.10, 0.12, 0.85]),
-            horn: box_mesh([0.12, 0.3, 0.12]),
+
+            warning: box_mesh([0.12, 0.3, 0.12]),
             ring: arc_mesh(0.86, std::f32::consts::TAU),
-            sector: arc_mesh(0.94, std::f32::consts::FRAC_PI_2),
-            sector_fill: sector_mesh(),
+            sector: std::array::from_fn(|i| {
+                arc_mesh(
+                    0.94,
+                    (logic.definitions()[i]
+                        .arena
+                        .attacks
+                        .primary
+                        .half_angle_degrees
+                        * 2.)
+                        .to_radians() as f32,
+                )
+            }),
+            sector_fill: std::array::from_fn(|i| {
+                sector_mesh(
+                    (logic.definitions()[i]
+                        .arena
+                        .attacks
+                        .primary
+                        .half_angle_degrees
+                        * 2.)
+                        .to_radians() as f32,
+                )
+            }),
             bar: box_mesh([0.9, 0.08, 0.06]),
-            last_health: [100, 60, 60, 60],
+            last_health: [0; 4],
             flash: [0.0; 4],
             last_run: 0,
             last_wave: 0,
@@ -157,12 +212,18 @@ impl Visuals {
             let position = [actor.position.x as f32, 0.0, actor.position.z as f32];
             let yaw = (actor.facing.x.atan2(actor.facing.z)) as f32;
             let hero = i == 0;
-            let stats = actor.kind.stats();
-            let brute = actor.kind == arena_arpg_shared::ActorKind::Brute;
+            let stats = actor.stats();
+            let definition_index = match actor.kind {
+                arena_arpg_shared::ActorKind::Hero => 0,
+                arena_arpg_shared::ActorKind::Grunt => 1,
+                arena_arpg_shared::ActorKind::Brute => 2,
+            };
+            let visual = &self.definitions[definition_index].arena.procedural;
+            let character_meshes = &self.character_meshes[definition_index];
             let imminent = !hero
                 && state.state == RunState::Playing
                 && matches!(actor.action,
-                Action::Attack { elapsed, .. } if elapsed >= stats.windup - 12 && elapsed < stats.windup);
+                Action::Attack { elapsed, .. } if elapsed >= stats.windup.saturating_sub(12) && elapsed < stats.windup);
             let dead = actor.health == 0;
             let dodge = matches!(actor.action, Action::Dodge { .. });
             let color = if dead {
@@ -171,12 +232,8 @@ impl Visuals {
                 [1.0; 4]
             } else if dodge {
                 [0.4, 0.95, 1.0, 1.0]
-            } else if hero {
-                [0.06, 0.65, 0.88, 1.0]
-            } else if brute {
-                [0.62, 0.28, 0.82, 1.0]
             } else {
-                [0.8, 0.15, 0.09, 1.0]
+                visual.color
             };
             let height = if dead {
                 0.23
@@ -185,7 +242,7 @@ impl Visuals {
             } else {
                 1.0
             };
-            let body_scale = if brute { 1.3 } else { 1.0 };
+            let body_scale = visual.body_scale;
             let orientation = nico_presentation::Quaternion::from_rotation_y(yaw);
             let local = |x: f32, y: f32, z: f32| {
                 nico_presentation_control::coordinates::transform_point(
@@ -195,51 +252,76 @@ impl Visuals {
                     [x, y, z],
                 )
             };
-            if !hero || !self.imported_hero {
+            if !self.imported[definition_index] {
                 scene.meshes.push(self.instance(
-                    &self.body,
-                    local(0.0, 0.9, 0.0),
+                    &character_meshes.body,
+                    local(
+                        visual.parts.body.position_m[0],
+                        visual.parts.body.position_m[1],
+                        visual.parts.body.position_m[2],
+                    ),
                     yaw,
-                    if hero { 1.0 } else { 1.2 * body_scale },
+                    visual.torso_scale,
                     color,
                 ));
                 scene.meshes.push(self.instance(
-                    &self.head,
-                    local(0.0, 1.47, 0.0),
+                    &character_meshes.head,
+                    local(
+                        visual.parts.head.position_m[0],
+                        visual.parts.head.position_m[1],
+                        visual.parts.head.position_m[2],
+                    ),
                     yaw,
                     1.0,
-                    if hero { [0.55, 0.82, 0.91, 1.0] } else { color },
+                    if dead || self.flash[i] > 0. || dodge {
+                        color
+                    } else {
+                        visual.head_color
+                    },
                 ));
             }
             if !dead {
-                if !hero || !self.imported_hero {
+                if !self.imported[definition_index] {
                     let walk = if actor.action == Action::Idle
                         && self.moving[i]
                         && state.state == RunState::Playing
                     {
-                        (state.tick as f32 * 0.22 + i as f32).sin() * 0.12
+                        (state.tick as f32 * visual.walk_radians_per_tick + i as f32).sin()
+                            * visual.walk_amplitude_m
                     } else {
                         0.0
                     };
                     for sign in [-1.0, 1.0] {
                         scene.meshes.push(self.instance(
-                            &self.limb,
-                            local(sign * 0.17, 0.32, walk * sign),
+                            &character_meshes.leg,
+                            local(
+                                sign * visual.parts.leg.position_m[0],
+                                visual.parts.leg.position_m[1],
+                                visual.parts.leg.position_m[2] + walk * sign,
+                            ),
                             yaw,
                             1.0,
                             [0.1, 0.19, 0.24, 1.0],
                         ));
                         scene.meshes.push(self.instance(
-                            &self.limb,
-                            local(sign * 0.43, 0.94, 0.0),
+                            &character_meshes.arm,
+                            local(
+                                sign * visual.parts.arm.position_m[0],
+                                visual.parts.arm.position_m[1],
+                                visual.parts.arm.position_m[2],
+                            ),
                             yaw,
                             1.0,
                             color,
                         ));
-                        if !hero {
+                        if visual.horns {
                             scene.meshes.push(self.instance(
-                                &self.horn,
-                                local(sign * 0.18, 1.77, 0.0),
+                                &character_meshes.horn,
+                                local(
+                                    sign * visual.parts.horn.position_m[0],
+                                    visual.parts.horn.position_m[1],
+                                    visual.parts.horn.position_m[2],
+                                ),
                                 yaw,
                                 1.0,
                                 [0.85, 0.68, 0.38, 1.0],
@@ -252,20 +334,25 @@ impl Visuals {
                             let t = elapsed as f32;
                             if t < windup {
                                 -0.8 * t / windup
-                            } else if t < windup + 6.0 {
-                                (t - windup) / 6.0 * 1.6 - 0.8
+                            } else if t < windup + stats.active as f32 {
+                                (t - windup) / stats.active as f32 * 1.6 - 0.8
                             } else {
                                 let recovery = stats.recovery as f32;
-                                0.8 * (1.0 - (t - windup - 6.0) / recovery).clamp(0.0, 1.0)
+                                0.8 * (1.0 - (t - windup - stats.active as f32) / recovery)
+                                    .clamp(0.0, 1.0)
                             }
                         }
                         _ => 0.0,
                     };
                     scene.meshes.push(self.instance(
-                        &self.blade,
-                        local(0.43, 1.03, 0.5),
+                        &character_meshes.weapon,
+                        local(
+                            visual.parts.weapon.position_m[0],
+                            visual.parts.weapon.position_m[1],
+                            visual.parts.weapon.position_m[2],
+                        ),
                         yaw + swing,
-                        if hero { 1.0 } else { 0.7 },
+                        visual.weapon_scale,
                         if imminent {
                             [1.0, 0.95, 0.45, 1.0]
                         } else {
@@ -286,7 +373,7 @@ impl Visuals {
                 ));
                 if imminent {
                     scene.meshes.push(self.instance(
-                        &self.horn,
+                        &self.warning,
                         local(0.0, 2.65, 0.0),
                         yaw,
                         1.0,
@@ -302,7 +389,7 @@ impl Visuals {
                 }
                 if let Action::Attack { elapsed, .. } = actor.action {
                     let windup = stats.windup;
-                    if elapsed < windup + 6 && state.state == RunState::Playing {
+                    if elapsed < windup + stats.active && state.state == RunState::Playing {
                         let color = if elapsed >= windup {
                             [1.0, 0.86, 0.3, 1.0]
                         } else if imminent && (elapsed / 3) % 2 == 0 {
@@ -316,7 +403,7 @@ impl Visuals {
                         // The dim full sector always shows authoritative reach. The
                         // bright fill grows to the boundary when the strike activates.
                         scene.meshes.push(self.instance(
-                            &self.sector_fill,
+                            &self.sector_fill[definition_index],
                             [position[0], 0.03, position[2]],
                             yaw,
                             radius,
@@ -329,7 +416,7 @@ impl Visuals {
                         let progress = (elapsed as f32 / windup as f32).clamp(0.0, 1.0);
                         if progress > 0.0 {
                             scene.meshes.push(self.instance(
-                                &self.sector_fill,
+                                &self.sector_fill[definition_index],
                                 [position[0], 0.035, position[2]],
                                 yaw,
                                 radius * progress,
@@ -337,7 +424,7 @@ impl Visuals {
                             ));
                         }
                         scene.meshes.push(self.instance(
-                            &self.sector,
+                            &self.sector[definition_index],
                             [position[0], 0.04, position[2]],
                             yaw,
                             stats.range as f32,
@@ -387,7 +474,11 @@ impl Visuals {
         );
         self.text(
             &mut hud,
-            &format!("HEALTH {:03} / 100", state.actors[0].health),
+            &format!(
+                "HEALTH {:03} / {}",
+                state.actors[0].health,
+                state.actors[0].stats().max_health
+            ),
             [42.0, 67.0],
             1.6,
             [0.9, 0.95, 1.0, 1.0],
@@ -397,7 +488,11 @@ impl Visuals {
             self.rect(
                 &mut hud,
                 [42.0, 91.0],
-                [280.0 * state.actors[0].health as f32 / 100.0, 8.0],
+                [
+                    280.0 * state.actors[0].health as f32
+                        / state.actors[0].stats().max_health as f32,
+                    8.0,
+                ],
                 [0.04, 0.7, 0.85, 1.0],
             );
         }
@@ -422,7 +517,11 @@ impl Visuals {
             [280.0, 5.0],
             [0.1, 0.15, 0.19, 1.0],
         );
-        let ready = 1.0 - state.actors[0].dodge_cooldown.min(48) as f32 / 48.0;
+        let ready = 1.0
+            - state.actors[0]
+                .dodge_cooldown
+                .min(state.actors[0].definition().arena.dodge.cooldown_ticks) as f32
+                / state.actors[0].definition().arena.dodge.cooldown_ticks as f32;
         if ready > 0.0 {
             self.rect(
                 &mut hud,
@@ -463,9 +562,9 @@ impl Visuals {
         }
         let hero = &state.actors[0];
         let danger = state.state == RunState::Playing && hero.health > 0 && state.actors[1..].iter().any(|a| {
-            let stats = a.kind.stats();
+            let stats = a.stats();
             a.health > 0 && (a.position.x - hero.position.x).hypot(a.position.z - hero.position.z) <= stats.range + 0.4
-                && matches!(a.action, Action::Attack { elapsed, .. } if elapsed >= stats.windup - 12 && elapsed < stats.windup)
+                && matches!(a.action, Action::Attack { elapsed, .. } if elapsed >= stats.windup.saturating_sub(12) && elapsed < stats.windup)
         });
         if danger {
             self.text(
@@ -549,11 +648,8 @@ pub(crate) fn box_mesh(size: [f32; 3]) -> Arc<Mesh> {
     let uvs = std::array::from_fn(|face| [(face as f32 + 0.5) / 6.0, 0.5]);
     Arc::new(nico_assets::procedural::cuboid(size, uvs).expect("valid arena cuboid"))
 }
-fn sector_mesh() -> Arc<Mesh> {
-    Arc::new(
-        nico_assets::procedural::sector(std::f32::consts::FRAC_PI_2, 32, [0.4167, 0.5])
-            .expect("valid arena sector"),
-    )
+fn sector_mesh(angle: f32) -> Arc<Mesh> {
+    Arc::new(nico_assets::procedural::sector(angle, 32, [0.4167, 0.5]).expect("valid arena sector"))
 }
 fn arc_mesh(inner: f32, angle: f32) -> Arc<Mesh> {
     Arc::new(
@@ -601,9 +697,12 @@ mod tests {
             .meshes
             .iter()
             .find(|m| {
-                m.mesh
-                    .as_ref()
-                    .is_some_and(|mesh| Arc::ptr_eq(mesh, &visuals.sector))
+                m.mesh.as_ref().is_some_and(|mesh| {
+                    visuals
+                        .sector
+                        .iter()
+                        .any(|candidate| Arc::ptr_eq(mesh, candidate))
+                })
             })
             .unwrap();
         assert_eq!(sector.scale, 1.8);
@@ -625,9 +724,12 @@ mod tests {
             .meshes
             .iter()
             .filter(|m| {
-                m.mesh
-                    .as_ref()
-                    .is_some_and(|mesh| Arc::ptr_eq(mesh, &visuals.sector_fill))
+                m.mesh.as_ref().is_some_and(|mesh| {
+                    visuals
+                        .sector_fill
+                        .iter()
+                        .any(|candidate| Arc::ptr_eq(mesh, candidate))
+                })
             })
             .collect();
         assert_eq!(fills.len(), 2);
@@ -656,9 +758,12 @@ mod tests {
                 .meshes
                 .iter()
                 .filter(|m| {
-                    m.mesh
-                        .as_ref()
-                        .is_some_and(|mesh| Arc::ptr_eq(mesh, &visuals.sector_fill))
+                    m.mesh.as_ref().is_some_and(|mesh| {
+                        visuals
+                            .sector_fill
+                            .iter()
+                            .any(|candidate| Arc::ptr_eq(mesh, candidate))
+                    })
                 })
                 .collect();
             assert_eq!(fills.iter().map(|m| m.scale).collect::<Vec<_>>(), expected);
@@ -679,13 +784,14 @@ mod tests {
             !scene
                 .meshes
                 .iter()
-                .any(|m| m.mesh.as_ref().is_some_and(|mesh| Arc::ptr_eq(
-                    mesh,
-                    &visuals.sector_fill
-                ) || Arc::ptr_eq(
-                    mesh,
-                    &visuals.sector
-                )))
+                .any(|m| m.mesh.as_ref().is_some_and(|mesh| visuals
+                    .sector_fill
+                    .iter()
+                    .any(|candidate| Arc::ptr_eq(mesh, candidate))
+                    || visuals
+                        .sector
+                        .iter()
+                        .any(|candidate| Arc::ptr_eq(mesh, candidate))))
         );
     }
 

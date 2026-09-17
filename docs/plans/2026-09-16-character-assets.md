@@ -1,18 +1,23 @@
 # First character asset selection
 
-Status: source assets inspected and CPU body retargeting implemented. Native visual
-suitability and exact animation provenance remain unresolved. This document owns
-supplied asset selection and provenance; the
-[model/animation contract](2026-09-16-model-animation.md) owns implemented engine
-support. Acceptance belongs to the
-[character milestone](../roadmap.md#client-character-milestone); remaining actions
-belong in [TODO](../../TODO.md#next-client-humanoid-models-and-animation).
+This is the original Ch03/RPG asset investigation and provenance record. Its
+selection tables describe that inspection. Current bindings are defined by the
+[character contract](2026-09-17-character-definitions.md) and the
+[hero notice](../../games/arena-arpg/assets/presentation/characters/hero/LICENSE.md);
+Bestiary additions are documented in the
+[monster notice](../../games/arena-arpg/assets/presentation/characters/monsters/README.md).
+
+The [model/animation contract](2026-09-16-model-animation.md) owns engine support;
+the [character milestone](../roadmap.md#client-character-milestone) owns acceptance.
+Original RPG source/license verification and visual polish remain in
+[TODO](../../TODO.md#client-humanoid-models-and-animation).
 
 ## Supplied assets and provenance
 
 On 2026-09-16 the user supplied `tmp/Ch03_nonPBR.glb` and 64 animation GLBs under
 `tmp/animations/`, together with importer `.meta` sidecars. No license files were
-included. The original files remain unchanged in the staging directory.
+included. The initial inspection used that staging directory; runtime copies now live under
+the game's presentation assets.
 
 The user identifies Ch03 as a Mixamo character and the animations as coming from
 a GitHub user. The exact animation repository and its asset license are pending.
@@ -76,21 +81,26 @@ retargeting. It has not been visually inspected or selected as the playable hero
 
 ## Candidate clip mapping
 
-Paths below are relative to `tmp/animations/`. Durations are last minus first
+Current paths are relative to the game's hero `animations/` directory. Durations are last minus first
 sample time, rounded to three decimals; they are not gameplay action durations.
-These are filename-based candidates pending visual review.
+These candidates now have sampled visual evidence in the review linked above;
+selection remains provisional until the recorded art-acceptance gaps are closed.
 
 | Role | File | Duration (seconds) |
 | --- | --- | --- |
-| Idle | `RPG-Character@Unarmed-Idle.glb` | 1.667 |
+| Idle | `Quaternius-Sword_Idle.glb` | 1.667 |
 | Locomotion | `RPG-Character@Unarmed-Run-Forward.glb` | 0.800 |
-| Melee test | `RPG-Character@Unarmed-Attack-R1.glb` | 0.800 |
+| Melee | `Quaternius-Sword_Attack.glb` | 1.500 |
 | Dodge | `RPG-Character@Unarmed-Roll-Forward.glb` | 0.867 |
 | Hit reaction | `RPG-Character@Unarmed-GetHit-F1.glb` | 0.500 |
 | Death | `RPG-Character@Unarmed-Death1.glb` | 1.300 |
 
-The attack is an unarmed candidate; its suitability for the arena's weapon attack
-is unverified. Existing simulation timings and damage rules remain authoritative.
+The sword files were selected on 2026-09-17 from a pinned CC0 Quaternius mirror;
+their [notice](../../games/arena-arpg/assets/presentation/characters/hero/LICENSE.md#previous-quaternius-sword-selection-2026-09-17)
+records exact provenance, conversion and revision limitations. They replace the
+original RPG idle/attack selection at runtime; those two original files remain
+for comparison. The game supplies an explicit DEF-rig profile and Ch03 equipment
+finger reference. Existing simulation timings and damage rules remain authoritative.
 
 ## Import implications
 
@@ -122,8 +132,9 @@ exact supported subset, budgets, mapping policies, and limitations.
 
 The original mismatch still matters: clips cannot be copied directly onto Ch03.
 The implementation performs explicit conversion and keeps unmapped finger/helper
-nodes at their reference local poses. Native rendering, clip visual acceptance,
-and gameplay synchronization remain outstanding.
+nodes at their reference local poses. Native rendering and gameplay integration
+are recorded in the roadmap. Full clip visual acceptance remains outstanding as
+detailed in the review linked above.
 
 ## Validation evidence
 

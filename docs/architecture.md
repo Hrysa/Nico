@@ -45,8 +45,53 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | `nico-physics` | Rapier body/collider ownership, queries, character movement, and optional fixed-step ECS adapter |
 | `nico-launch` | Native CLI, diagnostics, and client/server transport composition |
 | `nico-ops` | Host control, command bookkeeping, owned publication; optional tool catalogs and bridge transport |
+| `nico-net` | Bounded framed native game transport, connection attempts and peer lifetime; no gameplay or runtime dependencies |
 | `apps/nico-shaderc` | Offline shader compilation outside the Rust build graph |
 | `apps/nico-bridge` | CLI entry point for the independent-game MCP bridge |
+
+## Multiplayer world ownership
+
+The reference game's default native mode is a persistent outdoor world; `--arena`
+selects the independent combat test. `nico-net` owns nonblocking TCP framing and
+bounded I/O/queues. A short-lived engine connection worker avoids blocking the
+client while joining; the game polls established connections at fixed boundaries.
+Game transport is independent of MCP. `nico-ops` and `nico-launch` continue to own
+bridge transport and host lifecycle; losing the bridge does not stop simulation.
+
+`arena-arpg-shared::open_world` owns a hecs-backed world with independent identity,
+position, combat, player, monster and loot components. Stable object IDs map to
+generational ECS entities; reconnect creates a new object ID. Immutable character
+definitions are shared by reference. The game owns action/dodge rules, AI, loot,
+inventory, progression, session protocol and persistence; these are not engine
+components or inheritance hierarchies.
+
+The authoritative server simulates at 60 Hz and consumes at most one sequenced
+input per player per tick. Movement is bounded and collision constrained. Each
+input describes one tick; missing inputs do not renew movement. Queues are bounded
+to 64 inputs. The native client limits its lead to eight unacknowledged inputs,
+retaining unsent button edges and queued tool actions under backpressure.
+
+At 20 Hz the server publishes a full nearby-object snapshot for each player, using
+a 32-metre distance filter. Inventory and XP are sent only to their owner. Clients
+replace their interest set from each snapshot, reconcile predicted local movement
+against acknowledged input, and interpolate continuous remote samples. Respawns,
+teleports and action boundaries use the newest complete state. Clients never
+determine authoritative damage, loot ownership, health or progression.
+
+The current bounded zone supports at most 16 sessions and 256 objects; these are
+resource bounds, not measured population-capacity claims. The protocol is versioned,
+strict JSON over framed TCP and restricted to loopback. Local character names are
+development identities, not authentication. The character store holds one exclusive
+directory lock and replaces synced temporary records on save. Failed loads reject
+that character's join without overwriting data; failed saves are surfaced and retain
+the authoritative record for retry. The runtime saves on periodic fixed boundaries,
+disconnect and orderly shutdown. Monsters are not persisted.
+
+World tools enqueue bounded commands or read owned publications. `world_state`
+includes entities, sessions, per-player interest views and spawn results.
+`world_client_state` separates connection state, prediction, acknowledgement,
+snapshot age and command history. `submitted` means queued to transport, not a
+successful server action. Final shutdown publications cancel pending commands.
 
 ## Runtime and ECS
 
@@ -164,7 +209,18 @@ presentation; the server remains headless.
 
 `arena-arpg-shared` owns a bounded four-actor combat simulation as a runtime resource.
 Actor slots are reused across three waves; identity includes run and wave. Shared
-`ActorKind` stats drive authoritative attacks, presentation reach, and tool timing.
+`CharacterCatalog` definitions drive authoritative attacks, presentation reach, and
+tool timing. Actor roles index a shared immutable catalog; mutable instance state
+remains separate. Native hosts load `.char.toml` assets at startup, while the client
+also resolves `.char-vis.toml` models, sockets, poses, animation settings and procedural
+parts. Both schemas compose engine `core` and game `arena` sections.
+`nico-assets::character` (optional `character` feature) owns runtime-free identity,
+collision, model, profile, pose, socket and named clip descriptors. The game owns
+health/movement/combat rules, procedural body/equipment composition and action
+bindings. Core validation does not require arena actions; the client resolves
+bindings into indexed playback settings before use. Serde composition introduces
+no inheritance, field flattening, type registry or automatic ECS spawning.
+See the [character definition contract](plans/2026-09-17-character-definitions.md).
 Intermissions, roster replacement, position reset, and health recovery run at fixed
 boundaries; run time persists through wave transitions.
 `ArenaPlugin` consumes game-owned `TickInput` events only at fixed boundaries and
@@ -204,7 +260,8 @@ collision filtering through a query callback; the arena wrapper selects the hero
 pivot and perimeter. Expanded-box sweeps are conservative at corners, and a configured
 minimum boom distance can overlap nearby geometry. Shared game-authored wall dimensions
 drive mesh construction, camera queries, and authoritative collision; actor centers
-stop one actor radius inside the wall inner face (11.4 units from arena center). Orbit yaw/pitch
+stop their configured collision radius inside the wall inner face (11.4 units with
+the shipped 0.4-metre radius). Orbit yaw/pitch
 remain input coordinates for game limits; the controller derives a normalized
 quaternion for its boom and published camera, with no independent mutable Euler pose.
 The arena's planar actor-facing angles remain gameplay data and are converted to
@@ -302,7 +359,7 @@ a named node once and computes its evaluated affine socket transform.
 assembly and produces independent palette snapshots from model-space node matrices.
 Callers provide matrices in that exact model node order; this raw matrix boundary
 does not validate model identity. Loading, animation selection, and instance placement
-remain caller policy. The arena client optionally loads a local Mixamo hero and RPG
+remain caller policy. The arena client loads a local Mixamo hero and RPG/Quaternius
 clips, selects motion from owned snapshots, and publishes animation observations
 through `client_state`. Its named hand attachment uses a one-joint palette to retain
 affine transforms; gameplay collision and damage remain unchanged. The [model/animation contract](plans/2026-09-16-model-animation.md)
@@ -571,6 +628,18 @@ it does not change physics, gameplay collision, or camera obstruction geometry.
 
 Arena attack timing uses `AnimationPlayer::update_at` to map snapshot phases to
 an authored source contact marker without cancelling crossfades. The same snapshot
-continues to own hit tests and movement. The local RPG right-hand preset calibrates
-weapon direction and length at load time; invalid reach calibration is a content
-error, not a reason to alter authoritative combat rules.
+continues to own hit tests and movement. The game owns the Ch03 right-finger grip
+reference, explicit Quaternius sword profile, palm socket, weapon geometry and
+contact marker. `HumanoidRig::from_reference` preserves the equipment finger pose
+through body retargeting without changing engine presets. Content regressions
+check the authored sword against target-body reach and sampled floor clearance;
+these checks never change authoritative combat rules.
+
+World and arena presentation share the same character asset loader and playback
+controller. Immutable assets are shared per character type; each visible actor
+owns mutable playback state. Models may contain their own skinned weapons or
+use an optional attached weapon. The game binds idle, movement, attack, dodge,
+and death to owned simulation state. Health loss alone does not create an injury
+state or interrupt playback. The [character contract](plans/2026-09-17-character-definitions.md)
+owns the schema and inspection fields; source selection and licenses belong in
+the game asset notices.

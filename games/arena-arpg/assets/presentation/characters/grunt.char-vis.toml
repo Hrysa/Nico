@@ -1,0 +1,105 @@
+schema_version = 1
+[core]
+character = "arena.grunt"
+
+[arena.procedural]
+body_scale = 1.0
+torso_scale = 1.2
+weapon_scale = 0.7
+color = [0.8, 0.15, 0.09, 1.0]
+head_color = [0.8, 0.15, 0.09, 1.0]
+horns = true
+walk_radians_per_tick = 0.22
+walk_amplitude_m = 0.12
+
+[arena.procedural.parts.body]
+size_m = [0.6, 0.7, 0.4]
+position_m = [0.0, 0.9, 0.0]
+
+[arena.procedural.parts.head]
+size_m = [0.4, 0.4, 0.4]
+position_m = [0.0, 1.47, 0.0]
+
+[arena.procedural.parts.leg]
+size_m = [0.18, 0.45, 0.2]
+position_m = [0.17, 0.32, 0.0]
+
+[arena.procedural.parts.arm]
+size_m = [0.18, 0.45, 0.2]
+position_m = [0.43, 0.94, 0.0]
+
+[arena.procedural.parts.horn]
+size_m = [0.12, 0.3, 0.12]
+position_m = [0.18, 1.77, 0.0]
+
+[arena.procedural.parts.weapon]
+size_m = [0.1, 0.12, 0.85]
+position_m = [0.43, 1.03, 0.5]
+
+[core.model]
+asset = "monsters/Imp.glb"
+target_height_m = 1.65
+floor_offset_m = 0.0
+profile = "ual2"
+
+[core.profiles.ual2]
+# Library 2 Standard humanoid rig, canonical humanoid bone order.
+bones = ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "Head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r"]
+motion_root = "root"
+
+
+[core.animations.idle]
+asset = "monsters/UAL2-Zombie_Idle_Loop.glb"
+clip = "Zombie_Idle_Loop"
+profile = "ual2"
+
+[arena.animations.idle]
+animation = "idle"
+playback = "loop"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.run]
+asset = "monsters/UAL2-Zombie_Walk_Fwd_Loop.glb"
+clip = "Zombie_Walk_Fwd_Loop"
+profile = "ual2"
+
+[arena.animations.run]
+animation = "run"
+playback = "loop"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.attack]
+asset = "monsters/UAL2-Sword_Regular_C.glb"
+clip = "Sword_Regular_C"
+profile = "ual2"
+
+[arena.animations.attack]
+animation = "attack"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08
+contact_seconds = 0.686666667
+
+[core.animations.dodge]
+asset = "hero/animations/RPG-Character@Unarmed-Roll-Forward.glb"
+clip = "Armature|Take 001|BaseLayer"
+profile = "rpg"
+
+[arena.animations.dodge]
+animation = "dodge"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08
+
+[core.animations.death]
+asset = "hero/animations/RPG-Character@Unarmed-Death1.glb"
+clip = "Armature|Take 001|BaseLayer"
+profile = "rpg"
+
+[arena.animations.death]
+animation = "death"
+playback = "once"
+speed = 1.0
+blend_seconds = 0.08

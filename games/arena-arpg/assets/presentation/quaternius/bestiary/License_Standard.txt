@@ -1,0 +1,64 @@
+This is the standard FREE version of the Bestiary - Dungeon Monsters Kit, which only contains a portion of the models. 
+You can buy the SOURCE version which has all 7 monsters and color variations from the website https://quaternius.com
+
+-------------------------------------------------------
+Models by @Quaternius
+Consider supporting me on Patreon!
+
+https://www.patreon.com/quaternius
+
+-------------------------------------------------------
+Join the Discord Server:
+
+https://discord.gg/vJqnRUYRfT
+-------------------------------------------------------
+License:
+Quaternius Asset License (QAL) v1.0 (https://quaternius.com/license.html) Last updated: 8/28/2026
+In short
+
+You can use these assets, free of charge, in personal, educational, and commercial games and other projects, with no credit required. You just can't resell or redistribute the assets themselves as assets.
+The full terms below govern if there's ever a dispute; the summary above is just a plain-English guide.
+
+Full Terms
+
+This License is between you (the "Licensee," "you," or "your") and Quaternius (the "Licensor," "we," "us," or "our"), and governs your use of the digital content (the "Assets") released by Quaternius under this License.
+
+1. Definitions
+"Assets" means the 3D models, animations, textures, source files, and other digital content made available by Quaternius under this License, regardless of the specific site or platform through which they were obtained.
+"Product" means any game, application, film, video, artwork, render, or other work created using or incorporating the Assets.
+2. Grant of License
+
+Subject to the restrictions in Section 3, we grant you a worldwide, royalty-free, non-exclusive, perpetual license, for personal, educational, or commercial purposes, to:
+
+Use, copy, and modify the Assets;
+Incorporate the Assets (in original or modified form) into a Product;
+Publish, distribute, sell, sublicense, and otherwise commercially exploit that Product, without owing us any fee, royalty, or credit; and
+Authorize contractors and collaborators to do the above on your behalf, solely for the purpose of working on your Product.
+
+No attribution is required.
+
+3. Restrictions
+
+You may not:
+
+a) Resell or redistribute the Assets themselves. You may not extract, repackage, sublicense, sell, or otherwise redistribute the Assets (in original or modified form) as a standalone asset, asset pack, stock file, template, or similar product, whether for free or for payment, and whether alone or bundled with other assets. This restriction applies regardless of how much the Assets have been modified. It does not restrict distributing a completed Product that merely incorporates the Assets (see Section 2).
+
+b) Misrepresent authorship. You may not falsely claim that you created or own the Assets, or falsely represent that Quaternius is affiliated with, endorses, or collaborated on your Product.
+
+4. Ownership
+We retain all intellectual property rights in the Assets. This License grants you permission to use them as described above; it does not transfer ownership of the Assets to you.
+
+5. Termination
+This License is perpetual and cannot be revoked, except that it will automatically terminate if you materially breach Section 3 and do not cure that breach within 30 days of receiving written notice from us. Termination does not affect Products already distributed prior to the breach, other than requiring you to cease further distribution and cure or remove the infringing use going forward.
+
+6. No Warranty
+The Assets are provided "as is," without warranty of any kind, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement. To the maximum extent permitted by law, we are not liable for any damages arising from your use of the Assets.
+
+7. Changes to This License
+We may publish updated versions of this License for future Asset releases. Changes will not apply retroactively to Assets you've already obtained under an earlier version; the version in effect at the time you obtained the Assets governs your use of them.
+
+8. Severability
+If any provision of this License is found to be invalid or unenforceable, that provision shall be enforced to the maximum extent permitted by law, and the remaining provisions shall remain in full force and effect.
+
+9. Entire Agreement
+This License constitutes the entire agreement between the Licensee and Licensor concerning the Assets, and supersedes any prior or contemporaneous understandings concerning their use.

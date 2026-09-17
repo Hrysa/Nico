@@ -21,7 +21,7 @@ fn main() {
                     .min_by(|a, b| distance(a.position).total_cmp(&distance(b.position)))
                     .unwrap();
                 let threat = state.actors[1..].iter().find(|a| {
-                    let stats = a.kind.stats();
+                    let stats = a.stats();
                     a.health > 0 && distance(a.position) < stats.range + 0.8
                         && matches!(a.action, Action::Attack { elapsed, .. } if elapsed >= stats.windup - 12 && elapsed < stats.windup)
                 });
@@ -41,8 +41,8 @@ fn main() {
                         let waiting = policy == "reactive"
                             && state.actors[1..].iter().any(|a| {
                                 a.health > 0
-                                    && distance(a.position) < a.kind.stats().range + 0.8
-                                    && matches!(a.action, Action::Attack { elapsed, .. } if elapsed < a.kind.stats().windup)
+                                    && distance(a.position) < a.stats().range + 0.8
+                                    && matches!(a.action, Action::Attack { elapsed, .. } if elapsed < a.stats().windup)
                             });
                         if !waiting {
                             input.attack_yaw = Some(dx.atan2(dz));

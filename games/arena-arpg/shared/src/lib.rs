@@ -1,6 +1,10 @@
 //! Headless arena combat. Hosts submit input at fixed runtime boundaries and read
 //! immutable snapshots. No presentation, transport, or platform dependencies.
+pub mod characters;
 mod collision;
+pub mod open_world;
+use characters::CharacterCatalog;
+use std::sync::Arc;
 pub mod geometry;
 mod runtime;
 pub use runtime::{ArenaPlugin, FIXED_STEP, InputFocusLost};
@@ -8,7 +12,8 @@ pub use runtime::{ArenaPlugin, FIXED_STEP, InputFocusLost};
 pub mod tools;
 
 /// Floor-plane world coordinates (X/Z), also used for directions.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Vec2 {
     pub x: f64,
     pub z: f64,
@@ -71,14 +76,29 @@ pub enum LevelError {
 }
 impl Level {
     pub fn validate(&self) -> Result<(), LevelError> {
+        self.validate_with(&CharacterCatalog::builtin())
+    }
+    pub fn validate_with(&self, characters: &CharacterCatalog) -> Result<(), LevelError> {
+        // Slots 1..3 can become brutes in later waves; validate every possible spawn.
+        let radius = |i| {
+            if i == 0 {
+                characters.get(ActorKind::Hero).core.collision.radius_m
+            } else {
+                characters
+                    .get(ActorKind::Grunt)
+                    .core
+                    .collision
+                    .radius_m
+                    .max(characters.get(ActorKind::Brute).core.collision.radius_m)
+            }
+        };
         for (i, p) in self.spawns.iter().enumerate() {
-            if !collision::valid_position(*p) {
+            if !collision::valid_position_with_radius(*p, radius(i)) {
                 return Err(LevelError::OutOfBounds);
             }
-            if self.spawns[..i]
-                .iter()
-                .any(|other| p.sub(*other).dot(p.sub(*other)) < 0.8_f64.powi(2))
-            {
+            if self.spawns[..i].iter().enumerate().any(|(j, other)| {
+                p.sub(*other).dot(p.sub(*other)) < (radius(i) + radius(j)).powi(2)
+            }) {
                 return Err(LevelError::OverlappingSpawns);
             }
         }
@@ -119,36 +139,9 @@ pub struct CombatStats {
 }
 impl ActorKind {
     pub fn stats(self) -> CombatStats {
-        match self {
-            Self::Hero => CombatStats {
-                max_health: 100,
-                speed: 4.0,
-                windup: 12,
-                active: 6,
-                recovery: 18,
-                range: 2.0,
-                damage: 25,
-            },
-            Self::Grunt => CombatStats {
-                max_health: 60,
-                speed: 2.0,
-                windup: 30,
-                active: 6,
-                recovery: 36,
-                range: 1.8,
-                damage: 20,
-            },
-            Self::Brute => CombatStats {
-                max_health: 100,
-                speed: 1.4,
-                windup: 48,
-                active: 6,
-                recovery: 48,
-                range: 2.4,
-                damage: 30,
-            },
-        }
+        CharacterCatalog::builtin().get(self).combat_stats()
     }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Hero => "hero",
@@ -163,6 +156,7 @@ pub const INTERMISSION_TICKS: u16 = 180;
 #[derive(Clone, Debug, PartialEq)]
 /// Owned actor data; mutating a cloned snapshot never changes the simulation.
 pub struct Actor {
+    pub(crate) characters: Arc<CharacterCatalog>,
     pub id: u8,
     pub kind: ActorKind,
     pub position: Vec2,
@@ -170,6 +164,14 @@ pub struct Actor {
     pub health: u16,
     pub action: Action,
     pub dodge_cooldown: u16,
+}
+impl Actor {
+    pub fn definition(&self) -> &characters::CharacterDefinition {
+        self.characters.get(self.kind)
+    }
+    pub fn stats(&self) -> CombatStats {
+        self.definition().combat_stats()
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 /// Authoritative state after a complete fixed boundary. Actor IDs are stable.
@@ -243,6 +245,7 @@ pub struct StepReport {
 #[derive(Debug)]
 pub struct Arena {
     level: Level,
+    characters: Arc<CharacterCatalog>,
     snapshot: Snapshot,
     next_attack: u64,
     collision: collision::CollisionWorld,
@@ -251,6 +254,7 @@ impl Clone for Arena {
     fn clone(&self) -> Self {
         Self {
             level: self.level.clone(),
+            characters: self.characters.clone(),
             snapshot: self.snapshot.clone(),
             next_attack: self.next_attack,
             collision: collision::CollisionWorld::default(),
@@ -264,16 +268,23 @@ impl Default for Arena {
 }
 impl Arena {
     pub fn new(level: Level) -> Result<Self, LevelError> {
-        level.validate()?;
-        let snapshot = Self::initial(&level, 1);
+        Self::with_characters(level, CharacterCatalog::builtin())
+    }
+    pub fn with_characters(
+        level: Level,
+        characters: Arc<CharacterCatalog>,
+    ) -> Result<Self, LevelError> {
+        level.validate_with(&characters)?;
+        let snapshot = Self::initial(&level, 1, &characters);
         Ok(Self {
             level,
+            characters,
             snapshot,
             next_attack: 1,
             collision: collision::CollisionWorld::default(),
         })
     }
-    fn initial(level: &Level, run_id: u64) -> Snapshot {
+    fn initial(level: &Level, run_id: u64, characters: &Arc<CharacterCatalog>) -> Snapshot {
         Snapshot {
             run_id,
             tick: 0,
@@ -284,6 +295,7 @@ impl Arena {
             buffered_dodge: None,
             next_monster_strike_tick: 0,
             actors: std::array::from_fn(|i| Actor {
+                characters: characters.clone(),
                 id: i as u8,
                 kind: if i == 0 {
                     ActorKind::Hero
@@ -292,17 +304,28 @@ impl Arena {
                 },
                 position: level.spawns[i],
                 facing: Vec2::new(0.0, if i == 0 { 1.0 } else { -1.0 }),
-                health: if i == 0 { 100 } else { 60 },
+                health: characters
+                    .get(if i == 0 {
+                        ActorKind::Hero
+                    } else {
+                        ActorKind::Grunt
+                    })
+                    .arena
+                    .stats
+                    .max_health,
                 action: Action::Idle,
                 dodge_cooldown: 0,
             }),
         }
     }
     fn next_wave(&mut self) {
-        let health = self.snapshot.actors[0].health.saturating_add(40).min(100);
+        let health = self.snapshot.actors[0]
+            .health
+            .saturating_add(40)
+            .min(self.characters.get(ActorKind::Hero).arena.stats.max_health);
         let wave = self.snapshot.wave + 1;
         let tick = self.snapshot.tick;
-        self.snapshot = Self::initial(&self.level, self.snapshot.run_id);
+        self.snapshot = Self::initial(&self.level, self.snapshot.run_id, &self.characters);
         self.snapshot.tick = tick;
         self.snapshot.wave = wave;
         self.snapshot.actors[0].health = health;
@@ -310,7 +333,7 @@ impl Arena {
         for i in (5 - wave as usize)..4 {
             let actor = &mut self.snapshot.actors[i];
             actor.kind = ActorKind::Brute;
-            actor.health = actor.kind.stats().max_health;
+            actor.health = actor.stats().max_health;
         }
     }
     /// Clear unexecuted input at a runtime-owned focus/takeover/shutdown boundary.
@@ -322,9 +345,14 @@ impl Arena {
         let action_wait = match hero.action {
             Action::Idle => 0,
             Action::Attack { elapsed, .. } => {
-                (hero.kind.stats().windup + hero.kind.stats().active).saturating_sub(elapsed)
+                (hero.stats().windup + hero.stats().active).saturating_sub(elapsed)
             }
-            Action::Dodge { elapsed, .. } => 18 - elapsed,
+            Action::Dodge { elapsed, .. } => hero
+                .definition()
+                .arena
+                .dodge
+                .duration_ticks
+                .saturating_sub(elapsed),
         };
         action_wait.max(hero.dodge_cooldown)
     }
@@ -355,7 +383,7 @@ impl Arena {
             input = TickInput::idle(self.snapshot.run_id);
         }
         if input.restart {
-            self.snapshot = Self::initial(&self.level, self.snapshot.run_id + 1);
+            self.snapshot = Self::initial(&self.level, self.snapshot.run_id + 1, &self.characters);
             report.restarted = true;
             return report;
         }
@@ -386,7 +414,14 @@ impl Arena {
         if let Some(direction) = input.dodge {
             let wait = self.dodge_wait();
             self.snapshot.buffered_dodge = None;
-            if wait <= 9 {
+            if wait
+                <= self
+                    .characters
+                    .get(ActorKind::Hero)
+                    .arena
+                    .dodge
+                    .buffer_ticks
+            {
                 self.snapshot.buffered_dodge = Some(direction.unit());
             } else {
                 report.rejection = Some(if self.snapshot.actors[0].action == Action::Idle {
@@ -412,7 +447,7 @@ impl Arena {
                     elapsed: 0,
                     direction,
                 };
-                hero.dodge_cooldown = 48;
+                hero.dodge_cooldown = hero.definition().arena.dodge.cooldown_ticks;
                 self.clear_buffered_input();
                 report.dodge_started = true;
             } else {
@@ -421,14 +456,21 @@ impl Arena {
         }
         // AI decisions read beginning-of-tick positions, then stable IDs move in order.
         let mut intents = [Vec2::default(); 4];
-        intents[0] = input.movement.limited().scale(4.0 / 60.0);
+        intents[0] = input.movement.limited().scale(
+            self.characters
+                .get(ActorKind::Hero)
+                .arena
+                .movement
+                .speed_mps
+                / 60.0,
+        );
         for (i, intent) in intents.iter_mut().enumerate().skip(1) {
             let actor = &self.snapshot.actors[i];
             if actor.health == 0 || actor.action != Action::Idle || self.snapshot.wave_tick < 60 {
                 continue;
             }
             let toward = self.snapshot.actors[0].position.sub(actor.position);
-            let stats = actor.kind.stats();
+            let stats = actor.stats();
             if toward.dot(toward) <= (stats.range - 0.2).powi(2) {
                 let strike = self.snapshot.tick + u64::from(stats.windup);
                 if strike >= self.snapshot.next_monster_strike_tick {
@@ -447,7 +489,9 @@ impl Arena {
             let actor = &self.snapshot.actors[i];
             let delta = match actor.action {
                 Action::Idle => intent,
-                Action::Dodge { direction, .. } => direction.scale(8.0 / 60.0),
+                Action::Dodge { direction, .. } => {
+                    direction.scale(actor.definition().arena.dodge.speed_mps / 60.0)
+                }
                 Action::Attack { .. } => Vec2::default(),
             };
             let position = self.collision.slide(i, actor.position, delta);
@@ -473,7 +517,7 @@ impl Arena {
             report.dodge_buffered = false;
         }
         for actor in &mut self.snapshot.actors {
-            let stats = actor.kind.stats();
+            let stats = actor.stats();
             actor.dodge_cooldown = actor.dodge_cooldown.saturating_sub(1);
             actor.action = if actor.health == 0 {
                 Action::Idle
@@ -490,10 +534,14 @@ impl Arena {
                             hit_mask,
                         }
                     }
-                    Action::Dodge { elapsed, direction } if elapsed + 1 < 18 => Action::Dodge {
-                        elapsed: elapsed + 1,
-                        direction,
-                    },
+                    Action::Dodge { elapsed, direction }
+                        if elapsed + 1 < actor.definition().arena.dodge.duration_ticks =>
+                    {
+                        Action::Dodge {
+                            elapsed: elapsed + 1,
+                            direction,
+                        }
+                    }
                     _ => Action::Idle,
                 }
             };
@@ -517,7 +565,7 @@ impl Arena {
             else {
                 continue;
             };
-            let stats = actor.kind.stats();
+            let stats = actor.stats();
             if !(stats.windup..stats.windup + stats.active).contains(&elapsed) {
                 continue;
             }
@@ -529,13 +577,22 @@ impl Arena {
                 let range = stats.range;
                 if delta.dot(delta) > range * range
                     || actor.facing.dot(delta) + 1e-12
-                        < delta.dot(delta).sqrt() * std::f64::consts::FRAC_1_SQRT_2
+                        < delta.dot(delta).sqrt()
+                            * actor
+                                .definition()
+                                .arena
+                                .attacks
+                                .primary
+                                .half_angle_degrees
+                                .to_radians()
+                                .cos()
                 {
                     continue;
                 }
                 // A dodged strike is consumed too: the same swing cannot hit later.
                 hit_mask |= 1 << j;
-                if !matches!(target.action, Action::Dodge { elapsed: 0..12, .. }) {
+                if !matches!(target.action, Action::Dodge { elapsed, .. } if elapsed < target.definition().arena.dodge.invulnerable_ticks)
+                {
                     damage[j] += stats.damage;
                 }
             }

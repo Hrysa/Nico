@@ -79,6 +79,9 @@ pub mod keyboard {
     pub const SPACE: InputControlId = InputControlId::new(9);
     pub const R: InputControlId = InputControlId::new(10);
     pub const ESCAPE: InputControlId = InputControlId::new(11);
+    pub const E: InputControlId = InputControlId::new(12);
+    pub const F: InputControlId = InputControlId::new(13);
+    pub const Q: InputControlId = InputControlId::new(14);
 }
 
 /// Configuration owned by the concrete native host.
@@ -606,6 +609,9 @@ fn keyboard_control(key: PhysicalKey) -> Option<InputControlId> {
         PhysicalKey::Code(KeyCode::ArrowRight) => Some(keyboard::RIGHT),
         PhysicalKey::Code(KeyCode::Space) => Some(keyboard::SPACE),
         PhysicalKey::Code(KeyCode::KeyR) => Some(keyboard::R),
+        PhysicalKey::Code(KeyCode::KeyE) => Some(keyboard::E),
+        PhysicalKey::Code(KeyCode::KeyF) => Some(keyboard::F),
+        PhysicalKey::Code(KeyCode::KeyQ) => Some(keyboard::Q),
         PhysicalKey::Code(KeyCode::Escape) => Some(keyboard::ESCAPE),
         _ => None,
     }
