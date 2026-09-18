@@ -4,6 +4,7 @@ mod core;
 mod document;
 mod loading;
 mod operations;
+mod play;
 mod ui;
 use clap::Parser;
 use nico_launch::{

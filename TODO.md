@@ -8,8 +8,15 @@ validation evidence belong in the [roadmap](docs/roadmap.md); the
 
 Acceptance: [roadmap phase 8](docs/roadmap.md#8-make-development-repeatable).
 
-- [ ] Define gameplay-component registration and an explicit editor Play workflow
-      on top of the shared scene contract.
+- [ ] Specify separate-process debug RPC and editor access to bridge routing, including
+      per-instance capabilities, command outcomes, and access grants; see the
+      [boundary redesign](docs/plans/2026-09-18-editor-client-boundary.md).
+- [ ] Implement attach/inspection and explicit release-build debug opt-in; validate
+      remote attach, authorization, revocation, and disconnect survival.
+- [ ] Add client/server play profiles with content revision verification, isolated
+      persistence, readiness, and session-owned cleanup.
+- [ ] Extend Arena authoring to encounters/spawns/colliders, followed by validated
+      reload and separation of generic editor code from game adapter registration.
 - [ ] Add source-reference relinking for renamed assets and project import settings
       when extending the initial PNG/embedded-GLB workflow.
 

@@ -42,6 +42,8 @@ pub enum Action {
     Save,
     Reload,
     Refresh,
+    Play,
+    Stop,
     Undo,
     Redo,
 }
@@ -55,15 +57,15 @@ fn error(message: impl ToString) -> CallToolResult {
 }
 pub fn register(queue: SharedQueue, state: Published) -> std::io::Result<ToolExtensions> {
     let mut tools = ToolExtensions::default();
-    tools.register(Tool::new("editor_state", "Inspect project sources, successful import revisions, errors, scene objects and command outcomes. Rendering and snapshot age are separate from host presentation counts.",
+    tools.register(Tool::new("editor_state", "Inspect project sources, successful import revisions, errors, scene objects, the launched client process state and command outcomes. Rendering and snapshot age are separate from host presentation counts.",
         json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
         if !args.is_empty() { return error("no arguments accepted"); }
         state.lock().unwrap().json().map(CallToolResult::structured).unwrap_or_else(|| error("not_ready"))
     })?;
     let vector = json!({"type":"array","minItems":3,"maxItems":3,"items":{"type":"number","minimum":-10000,"maximum":10000}});
-    tools.register(Tool::new("editor_command", "Queue an editor operation for its runtime update boundary. Assets are project-relative PNG/GLB paths. Save/reload use the manifest default scene, or scene.nico.json for loose content. Read editor_state for terminal command outcomes; acceptance is not completion.",
+    tools.register(Tool::new("editor_command", "Queue an editor operation for its runtime update boundary. Assets are project-relative PNG/GLB paths. Save/reload use the manifest default scene, or scene.nico.json for loose content. play builds and runs the manifest client target as a separate process; stop terminates that process tree. Read editor_state for terminal command outcomes; acceptance is not completion.",
         json!({"type":"object","oneOf":[
-            {"properties":{"action":{"enum":["save","reload","refresh","undo","redo"]}},"required":["action"],"additionalProperties":false},
+            {"properties":{"action":{"enum":["save","reload","refresh","undo","redo","play","stop"]}},"required":["action"],"additionalProperties":false},
             {"properties":{"action":{"enum":["add","inspect"]},"asset":{"type":"string","maxLength":1024}},"required":["action","asset"],"additionalProperties":false},
             {"properties":{"action":{"enum":["remove","select"]},"id":{"type":"integer","minimum":1}},"required":["action","id"],"additionalProperties":false},
             {"properties":{"action":{"const":"transform"},"id":{"type":"integer","minimum":1},"position":vector,"rotation":vector,"scale":{"type":"number","minimum":0.001,"maximum":1000}},"required":["action","id","position","rotation","scale"],"additionalProperties":false},

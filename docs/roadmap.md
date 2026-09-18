@@ -752,6 +752,13 @@ retargeting quality features follow demonstrated needs. Concrete actions belong 
 
 **Result:** Developers and AI tools can reliably change content and test the game.
 
+**Selected editor direction (2026-09-18; implementation pending):** The
+[editor/client boundary redesign](plans/2026-09-18-editor-client-boundary.md)
+uses separate game processes with a shared debug RPC contract for editor and AI
+operations, including explicitly enabled release-build remote debugging. Authoring
+state stays in the editor; runtime authority stays in clients/servers. Protocol,
+remote access, and migration details remain proposed and unimplemented.
+
 **Scope:** Reproducible imports, dependency diagnostics, selective rebuilds, and useful
 content reload form a documented authoring workflow. Reload failures have defined
 behavior, and caching requires measurement. Owned state inspection, controlled game
@@ -847,7 +854,16 @@ evidence, not user-confirmed desktop or physical mouse validation. The editor wa
 left open after automated observation stopped. Capture and state were sampled
 separately. Workspace tests and Clippy with all features, formatting, and whitespace
 checks passed; ignored GPU/measurement tests remained disabled.
-The full phase-8 fresh-checkout and running-game authoring workflow is not complete.
+
+**Editor play/stop (2026-09-18):** The editor can build and run a declared project's
+`[targets] client` with `cargo run -p NAME` and terminate that process tree. Launch is
+refused without a declared manifest, a client target, or a clean saved document, and
+the child runs from the Cargo workspace root. Process ownership stays in the editor
+application; `editor_state` and `editor_command` expose `playing`, `play_error`, and
+`play`/`stop`. Unit tests cover request gating, workspace-root selection, and
+start/stop of a real child process. Native run-and-stop observation and in-process
+gameplay simulation remain unvalidated. The full phase-8 fresh-checkout and
+running-game authoring workflow is not complete.
 
 **Editor import cache correction (2026-09-18):** The watched catalog now caches
 decoded embedded GLB textures as well as model data. Previously reopening a project

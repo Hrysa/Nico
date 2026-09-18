@@ -69,6 +69,9 @@ source inventory remain in [../quaternius/import-manifest.json](../quaternius/im
 Arena's registered authoring adapter. It shares the client environment/landscape
 code and previews the static world without a server. Obstacle and decoration
 transforms use the rules shown in the Inspector; Save updates the original world
-sources. Spawn and quest data remain inspectable without being simulated. See the
+sources. Spawn and quest data remain inspectable without being simulated. The
+editor's Play control builds and runs the declared client target as a separate
+process, which for the multiplayer world still expects its server; Stop terminates
+the launched client. See the
 [editor workflow](../../../../../README.md#game-code-and-authored-scenes) for save,
 reload, asset refresh, and formatting limits.

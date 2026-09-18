@@ -25,6 +25,9 @@ pub struct Core {
     pub camera: [f32; 3],
     pub camera_pan: [f32; 3],
     pub error: Option<String>,
+    pub play_requested: Option<bool>,
+    pub playing: bool,
+    pub play_error: Option<String>,
     pub queue: SharedQueue,
     pub publication: Published,
     draws: BTreeMap<PathBuf, (u64, Vec<MeshInstance>)>,
@@ -82,6 +85,9 @@ impl Core {
             camera,
             camera_pan: [0.; 3],
             error: None,
+            play_requested: None,
+            playing: false,
+            play_error: None,
             queue,
             publication,
             draws: BTreeMap::new(),
@@ -146,6 +152,23 @@ impl Core {
                     adapter.refresh_assets().map_err(|e| e.to_string())?;
                 }
                 self.project.refresh();
+            }
+            Action::Play => {
+                if !self.definition.is_declared() {
+                    return Err("loose content folders declare no game targets".into());
+                }
+                if self.definition.manifest.targets.client.is_none() {
+                    return Err("project declares no client target".into());
+                }
+                if self.dirty() {
+                    return Err("unsaved edits; save before playing".into());
+                }
+                self.play_requested = Some(true);
+                self.play_error = None;
+            }
+            Action::Stop => {
+                self.play_requested = Some(false);
+                self.play_error = None;
             }
             Action::Undo => self.history.undo(&mut self.document),
             Action::Redo => self.history.redo(&mut self.document),
@@ -347,6 +370,7 @@ impl Core {
             "authoring":self.adapter.as_ref().map(|a| a.inspect()),
             "project":self.project.root(), "manifest":self.definition.manifest, "dirty":self.dirty(), "objects":self.document.objects,
             "selected":self.selected,"inspected_asset":self.inspected_asset,"camera":self.camera,"camera_pan":self.camera_pan,"draws":scene.meshes.len(),"error":self.error,
+            "playing":self.playing,"play_requested":self.play_requested,"play_error":self.play_error,
             "imports":{"current":catalog.importing,"pending":catalog.assets.values().filter(|a| a.value.is_none() && a.error.is_none() && !a.missing).count(),"scans":catalog.scans,"attempts":catalog.imports,"notifications":catalog.notifications,"error":catalog.error},
             "assets":catalog.assets.values().map(|e| json!({"path":e.path,"revision":e.revision,"ready":e.value.is_some(),"missing":e.missing,"error":e.error})).collect::<Vec<_>>(),
             "command_results":self.queue.lock().unwrap().history()
@@ -431,7 +455,52 @@ mod tests {
     }
 
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+    };
+    fn declared_project() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("assets")).unwrap();
+        fs::write(
+            root.path().join("nico.project.toml"),
+            "version = 1\nname = 'Demo'\nasset_roots = ['assets']\ndefault_scene = 'assets/main.nico.json'\n[targets]\nclient = 'demo-client'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("assets/main.nico.json"),
+            "{\"version\":1,\"objects\":[]}",
+        )
+        .unwrap();
+        root
+    }
+    #[test]
+    fn play_requires_a_declared_clean_project_and_requests_client_launch() {
+        let queue = Arc::new(Mutex::new(crate::operations::Queue::new(32)));
+        let published = Arc::new(Mutex::new(nico_ops::publication::Publication::default()));
+        let loose = tempfile::tempdir().unwrap();
+        let mut core = Core::new(loose.path(), queue.clone(), published.clone()).unwrap();
+        assert!(core.apply(Action::Play).is_err());
+        assert_eq!(core.play_requested, None);
+
+        let root = declared_project();
+        let mut core = Core::new(root.path(), queue, published).unwrap();
+        core.apply(Action::Play).unwrap();
+        assert_eq!(core.play_requested, Some(true));
+        core.apply(Action::Stop).unwrap();
+        assert_eq!(core.play_requested, Some(false));
+        core.play_requested = None;
+        core.document.objects.push(Object {
+            id: 1,
+            asset: "assets/missing.glb".into(),
+            name: "Object".into(),
+            position: [0.; 3],
+            rotation: [0.; 3],
+            scale: 1.,
+        });
+        assert!(core.apply(Action::Play).is_err());
+        assert_eq!(core.play_requested, None);
+    }
     #[test]
     fn queued_edits_are_atomic_undoable_and_shutdown_finalizes_work() {
         let root = tempfile::tempdir().unwrap();

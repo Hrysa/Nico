@@ -578,6 +578,15 @@ retain `scene.nico.json` in the root. Undo/redo retains 64 document
 edits. The close button offers save/discard/cancel for unsaved changes; explicit
 MCP `stop` remains an unconditional orderly stop.
 
+**Play** builds and runs the declared project's `[targets] client` with
+`cargo run -p NAME` from the Cargo workspace root, so game-relative asset defaults
+resolve. It requires a declared project with a client target and a clean saved
+document. **Stop** terminates that process tree. The launched game is an ordinary
+separate client: it reads saved sources at startup, connects to the bridge when
+enabled, and is not updated by later editor edits. The target runs with its own
+default arguments, so a game whose default mode needs an explicit `--project`
+argument must set that default. Closing the editor stops the process it launched.
+
 The shell presents its first UI frame before project import begins. Project and
 adapter loading run on a joined worker with a modal phase/count display. The Assets
 panel uses expandable folders with filename filtering; discovered paths appear
@@ -601,14 +610,16 @@ visited entries, and 512 MiB of accounted retained CPU content. Each source uses
 the built-in import budgets; GLBs must embed their buffers and supported PNG
 material images. Scenes allow 128 objects and 256 rendered primitives. Renaming
 an asset does not rewrite saved scene references. Animation playback, gizmos,
-material authoring, external glTF dependencies, and game play mode are future work.
+material authoring, external glTF dependencies, and in-process gameplay simulation
+are future work.
 
 The usual `--bridge`, `--no-bridge`, `--background`, and `--smoke-frames` options
 apply. Discover the `nico-editor` client through the bridge; `editor_state` reports
 asset revisions/errors, scene state and command results. `editor_command` supports
 `inspect`, `add`, `select`, `transform`, `remove`, `camera`, `pan`, `save`, `reload`,
-`refresh`, `undo`, and `redo`. UI and MCP edits apply at the embedded runtime's
-Update boundary. Built-in `status`, `stop`, `diagnostics`, and `window_snapshot`
+`refresh`, `play`, `stop`, `undo`, and `redo`. `editor_state` reports `playing` and
+`play_error` for the launched client process. UI and MCP edits apply at the embedded
+runtime's Update boundary. Built-in `status`, `stop`, `diagnostics`, and `window_snapshot`
 remain available. During startup, `editor_state` reports `loading`, phase/counts,
 discovered source count, and `first_ui_presented`. After adoption, `loading` is
 false and `imports.pending`/`imports.current` describe remaining asset imports.
@@ -663,8 +674,10 @@ rebuild this adapter. Restart the game/server to load saved world changes.
 See the [Arena authoring plan](docs/plans/2026-09-18-arena-authoring.md).
 
 The scene contract currently describes model instances and transforms. Arbitrary
-gameplay components, embedded game code, and an editor Play button remain future work.
-Declared paths must remain inside the project; missing declared scenes fail explicitly.
+gameplay components and embedded game code remain future work. The editor's Play/Stop
+controls launch and terminate the declared client process; they do not simulate
+gameplay inside the editor. Declared paths must remain inside the project; missing
+declared scenes fail explicitly.
 
 ## Development asset cache
 
