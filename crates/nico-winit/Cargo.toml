@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+editor = ["dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:wgpu"]
+
 [dependencies]
+egui = { version = "0.36.2", optional = true }
+egui-winit = { version = "0.36.2", optional = true }
+egui-wgpu = { version = "0.36.2", default-features = false, optional = true }
+wgpu = { workspace = true, optional = true }
 nico-input = { path = "../nico-input" }
 nico-ops = { path = "../nico-ops" }
 nico-presentation = { path = "../nico-presentation" }

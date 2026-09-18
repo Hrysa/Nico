@@ -1,0 +1,11 @@
+[package]
+name = "nico-authoring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+nico-scene = { path = "../nico-scene" }
+nico-presentation = { path = "../nico-presentation" }
+serde_json = "1"
+[lints]
+workspace = true

@@ -1,4 +1,5 @@
 mod controls;
+mod project_scene;
 mod sample;
 
 use std::error::Error;
@@ -17,6 +18,9 @@ use nico_winit::NativeClientConfig;
     about = "Runs the minimal Nico game client"
 )]
 struct GameArgs {
+    /// Game project containing nico.project.toml and its authored scene.
+    #[arg(long, conflicts_with_all = ["sample", "asset_root"])]
+    project: Option<std::path::PathBuf>,
     #[command(flatten)]
     common: CommonArgs,
 
@@ -47,8 +51,13 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         (builder, None)
     };
     let mut sample_tools = tools.take().unwrap_or_default();
-    let mode3d = args.sample == "3d";
-    let builder = sample::register(builder, &mut sample_tools, args.asset_root, mode3d)?;
+    let mode3d = args.project.is_some() || args.sample == "3d";
+    let authored = args.project.is_some();
+    let builder = if let Some(root) = args.project {
+        project_scene::register(builder, &mut sample_tools, root)?
+    } else {
+        sample::register(builder, &mut sample_tools, args.asset_root, mode3d)?
+    };
     if args.host.bridge_address().is_some() {
         tools = Some(sample_tools);
     }
@@ -63,6 +72,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
             "assets/presentation/shaders/generated/wgpu/quads.wgsl",
         )
+    } else {
+        config
+    };
+    let config = if authored {
+        config.with_skin_shader("assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl")
     } else {
         config
     };
@@ -92,6 +106,17 @@ mod tests {
 
     use super::GameArgs;
 
+    #[test]
+    fn project_mode_excludes_explicit_sample_configuration() {
+        assert!(GameArgs::try_parse_from(["client", "--project", "game"]).is_ok());
+        assert!(
+            GameArgs::try_parse_from(["client", "--project", "game", "--sample", "3d"]).is_err()
+        );
+        assert!(
+            GameArgs::try_parse_from(["client", "--project", "game", "--asset-root", "assets"])
+                .is_err()
+        );
+    }
     #[test]
     fn smoke_frame_limit_is_optional_and_must_be_positive() {
         assert_eq!(

@@ -1,5 +1,8 @@
 //! Winit-owned native client host for Nico applications.
 
+#[cfg(feature = "editor")]
+pub mod editor;
+
 use std::{
     collections::HashMap,
     error::Error,

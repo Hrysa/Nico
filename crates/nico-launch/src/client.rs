@@ -51,6 +51,40 @@ pub struct ClientHost {
 }
 
 impl ClientHost {
+    /// Compose the editor with the same engine-owned bridge lifecycle and captures.
+    #[cfg(feature = "editor")]
+    pub fn run_editor<A: nico_winit::editor::EditorApplication + 'static>(
+        self,
+        app: A,
+        title: String,
+    ) -> NativeClientResult<()> {
+        let (control, endpoint) = control_channel();
+        control.snapshots().enable();
+        let tools = crate::snapshot::register(self.tools, control.clone())?;
+        let tools = crate::diagnostics::register(tools)?;
+        let _bridge = if let Some(address) = self.args.bridge_address() {
+            let (game, version) = self
+                .identity
+                .ok_or_else(|| io::Error::other("bridge mode requires an editor identity"))?;
+            Some(BridgeClient::start(
+                address,
+                GameRegistration::new(game, GameRole::Client, version),
+                control,
+                tools,
+            )?)
+        } else {
+            None
+        };
+        nico_winit::editor::run(
+            app,
+            nico_winit::editor::EditorConfig {
+                title,
+                smoke_frames: self.args.smoke_frames,
+                background: self.args.background,
+            },
+            endpoint,
+        )
+    }
     pub fn new(args: ClientArgs) -> Self {
         Self {
             args,

@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+scene = ["dep:nico-scene", "dep:nico-animation", "nico-assets/png-import", "nico-assets/gltf-import"]
+
 [dependencies]
+nico-scene = { path = "../nico-scene", optional = true }
+nico-animation = { path = "../nico-animation", optional = true }
 glam = "0.30"
 nico-spatial = { path = "../nico-spatial" }
 nico-assets = { path = "../nico-assets" }

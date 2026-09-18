@@ -563,6 +563,106 @@ general asset loader. Offline WGSL generation still leaves backend shader and pi
 preparation at runtime. The reported roughly one-second startup delay has not been
 profiled; its cause remains unconfirmed.
 
+## Integrated editor
+
+Run `cargo run -p nico-editor -- --project PATH` to open a project directory.
+The editor embeds Nico rendering in a dockable egui workspace with Scene,
+Hierarchy, Assets, and Inspector panels. In Assets, select a PNG to inspect it,
+or double-click a GLB (or choose **Add to scene**) to place a model. Select a scene
+object, edit its position/rotation/uniform scale, and choose **Apply transform**.
+Left-drag in the viewport to orbit; middle-drag or Shift+left-drag to pan;
+scroll to zoom. Selecting an object recenters the orbit target. A game project uses
+`nico.project.toml` to select its asset roots and default scene. Save writes that
+scene; subsequent launches reopen it. Loose content directories without a manifest
+retain `scene.nico.json` in the root. Undo/redo retains 64 document
+edits. The close button offers save/discard/cancel for unsaved changes; explicit
+MCP `stop` remains an unconditional orderly stop.
+
+The shell presents its first UI frame before project import begins. Project and
+adapter loading run on a joined worker with a modal phase/count display. The Assets
+panel uses expandable folders with filename filtering; discovered paths appear
+before decoding, with queued/importing/failed states and individual completion
+updates. Import failures remain visible instead of leaving the progress dialog open.
+
+The editor watches PNG/GLB sources recursively. File notifications are debounced,
+then stat checks skip unchanged files; a two-second reconciliation handles missed
+notifications. Imports and embedded PNG decoding run on a joined worker. A failed
+or removed source reports an error while the current session retains its last-good
+content. Successful replacements appear without restarting the editor. `.nico`,
+`.git`, `target`, `node_modules`, metadata sidecars, and source symlinks are excluded.
+Generated `.nico` cache data is disposable; sources and the scene are authoritative.
+Editor imports use the project cache in both debug and release builds.
+
+Use a focused project directory: the initial catalog allows 1,024 assets, 16,384
+visited entries, and 512 MiB of accounted retained CPU content. Each source uses
+the built-in import budgets; GLBs must embed their buffers and supported PNG
+material images. Scenes allow 128 objects and 256 rendered primitives. Renaming
+an asset does not rewrite saved scene references. Animation playback, gizmos,
+material authoring, external glTF dependencies, and game play mode are future work.
+
+The usual `--bridge`, `--no-bridge`, `--background`, and `--smoke-frames` options
+apply. Discover the `nico-editor` client through the bridge; `editor_state` reports
+asset revisions/errors, scene state and command results. `editor_command` supports
+`inspect`, `add`, `select`, `transform`, `remove`, `camera`, `pan`, `save`, `reload`,
+`refresh`, `undo`, and `redo`. UI and MCP edits apply at the embedded runtime's
+Update boundary. Built-in `status`, `stop`, `diagnostics`, and `window_snapshot`
+remain available. During startup, `editor_state` reports `loading`, phase/counts,
+discovered source count, and `first_ui_presented`. After adoption, `loading` is
+false and `imports.pending`/`imports.current` describe remaining asset imports.
+Host readiness means the UI has stepped, not that the project has finished loading.
+See the [editor plan](docs/plans/2026-09-18-editor.md).
+
+### Game code and authored scenes
+
+The game directory contains its Rust crates, assets, and `nico.project.toml`.
+The minimal game's manifest provides a working example:
+
+```toml
+version = 1
+name = "Minimal Game"
+asset_roots = ["assets/presentation"]
+default_scene = "assets/presentation/scenes/main.nico.json"
+
+[targets]
+client = "minimal-game-client"
+server = "minimal-game-server"
+```
+
+Open it with `cargo run -p nico-editor -- --project games/minimal-game`.
+After saving, run `cargo run -p minimal-game-client -- --project games/minimal-game`.
+The client loads models at startup, instantiates authored objects in its ECS world,
+and extracts their current transforms every Update. `scene_state` exposes authored
+objects, asset failures, and CPU draw readiness through the bridge. Changes saved
+later require restarting this client. Existing `--sample 2d|3d` modes remain available;
+`--project` cannot be combined with explicit sample or asset-root options.
+
+Cargo target names are metadata; opening a project does not build or execute code.
+`games/arena-arpg` registers a game-provided adapter for its real meadow files:
+
+```powershell
+cargo run -p nico-editor -- --project .\games\arena-arpg
+```
+
+The meadow preview shares the game's environment loader, terrain, sky, foliage and
+obstacle placement code. The hierarchy shows obstacles and decorations. Select an
+object to center the camera and read its transform rules in the Inspector:
+decoration Scale means height in metres, and only Y rotation is supported;
+obstacle Scale multiplies its original collider size. Game zone validation applies.
+The Inspector's **Game data** and MCP `editor_state.authoring` include the logic
+zone, monster spawns, quest data and environment draw counts. Gameplay is not run.
+
+Save writes the existing logic/visual TOML sources, not a separate editor scene.
+Decoration-only edits preserve the logic file. Changed TOML files are reformatted
+and lose comments; unrelated semantic data is retained. External edits block Save.
+Reload requires a clean document and clears history. **Refresh assets** rebuilds
+Arena's model preview while retaining edits; catalog changes do not automatically
+rebuild this adapter. Restart the game/server to load saved world changes.
+See the [Arena authoring plan](docs/plans/2026-09-18-arena-authoring.md).
+
+The scene contract currently describes model instances and transforms. Arbitrary
+gameplay components, embedded game code, and an editor Play button remain future work.
+Declared paths must remain inside the project; missing declared scenes fail explicitly.
+
 ## Development asset cache
 
 Debug builds automatically cache imported GLB models/animations, static meshes, and

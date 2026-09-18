@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+nico-scene = { path = "../../../crates/nico-scene" }
+nico-presentation-control = { path = "../../../crates/nico-presentation-control", features = ["scene"] }
 nico-assets = { path = "../../../crates/nico-assets", features = ["loading"] }
 nico-presentation = { path = "../../../crates/nico-presentation" }
 nico-ops = { path = "../../../crates/nico-ops", features = ["mcp"] }

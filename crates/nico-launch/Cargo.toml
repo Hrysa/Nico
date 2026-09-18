@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 default = []
+editor = ["client", "nico-winit/editor"]
 server = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime"]
 client = ["dep:png","dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
 

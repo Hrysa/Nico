@@ -9,40 +9,40 @@ use nico_assets::{
 };
 use nico_presentation::{Camera3d, MeshInstance, Scene3d};
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 pub const DEFAULT_VISUAL_WORLD: &str =
     "games/arena-arpg/assets/presentation/worlds/meadow.world-vis.toml";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Definition {
-    schema_version: u32,
-    zone: String,
-    models: BTreeMap<String, String>,
-    obstacles: BTreeMap<String, Solid>,
-    decorations: Vec<Decoration>,
+pub(crate) struct Definition {
+    pub(crate) schema_version: u32,
+    pub(crate) zone: String,
+    pub(crate) models: BTreeMap<String, String>,
+    pub(crate) obstacles: BTreeMap<String, Solid>,
+    pub(crate) decorations: Vec<Decoration>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Solid {
-    model: String,
+pub(crate) struct Solid {
+    pub(crate) model: String,
     /// Omit to fit the whole rock into its collision box; trees specify canopy height.
-    height_m: Option<f32>,
+    pub(crate) height_m: Option<f32>,
     #[serde(default)]
-    autumn: bool,
+    pub(crate) autumn: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Decoration {
-    model: String,
-    position: [f32; 3],
-    height_m: f32,
+pub(crate) struct Decoration {
+    pub(crate) model: String,
+    pub(crate) position: [f32; 3],
+    pub(crate) height_m: f32,
     #[serde(default)]
-    yaw_radians: f32,
+    pub(crate) yaw_radians: f32,
     #[serde(default)]
-    autumn: bool,
+    pub(crate) autumn: bool,
 }
 struct Model {
     visual: ModelVisual,
@@ -55,7 +55,7 @@ struct Placement {
     bounds: ModelBounds,
 }
 pub struct Environment {
-    definition: Definition,
+    pub(crate) definition: Definition,
     models: BTreeMap<String, Model>,
     solids: BTreeMap<usize, Placement>,
     decorations: Vec<Placement>,
@@ -113,7 +113,7 @@ impl Environment {
             if source_bytes > 128 * 1024 * 1024 {
                 return Err("world model budget exceeded".into());
             }
-            let model = crate::character::load(&path)?;
+            let model = crate::load_model(&path)?;
             if !model.data().skins.is_empty() || !model.data().clips.is_empty() {
                 return Err("world decorations must be static".into());
             }
@@ -210,13 +210,15 @@ impl Environment {
     }
     /// Rebuild cached static palettes only when the server supplies a new zone/epoch.
     pub fn bind(&mut self, zone: &ZoneDefinition) -> Result<()> {
-        self.solids.clear();
-        self.decorations.clear();
-        self.landscape = None;
+        let mut solids = BTreeMap::new();
+        let mut decorations = Vec::new();
         if zone.id != self.definition.zone {
+            self.solids.clear();
+            self.decorations.clear();
+            self.landscape = None;
             return Ok(());
         }
-        self.landscape = Some(super::landscape::Landscape::new(zone));
+        let landscape = Some(super::landscape::Landscape::new(zone));
         for (index, obstacle) in zone.obstacles.iter().enumerate() {
             if let Some(binding) = self.definition.obstacles.get(&obstacle.id) {
                 let model = &self.models[&binding.model];
@@ -231,8 +233,7 @@ impl Environment {
                         * Mat4::from_scale(size / (max - min))
                         * Mat4::from_translation(-(min + max) * 0.5)
                 };
-                self.solids
-                    .insert(index, model.place(transform, binding.autumn)?);
+                solids.insert(index, model.place(transform, binding.autumn)?);
             }
         }
         for d in &self.definition.decorations {
@@ -243,11 +244,14 @@ impl Environment {
                 continue;
             }
             let model = &self.models[&d.model];
-            self.decorations.push(model.place(
+            decorations.push(model.place(
                 model.grounded(d.position.into(), d.height_m, d.yaw_radians),
                 d.autumn,
             )?);
         }
+        self.solids = solids;
+        self.decorations = decorations;
+        self.landscape = landscape;
         Ok(())
     }
     pub fn backdrop(&self, camera: Camera3d, scene: &mut Scene3d) -> bool {

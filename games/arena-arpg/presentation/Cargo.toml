@@ -1,0 +1,27 @@
+[package]
+name = "arena-arpg-presentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+authoring = ["dep:nico-authoring", "dep:nico-scene"]
+
+[dependencies]
+arena-arpg-shared = { path = "../shared" }
+nico-assets = { path = "../../../crates/nico-assets", features = ["gltf-import", "png-import", "character"] }
+nico-animation = { path = "../../../crates/nico-animation" }
+nico-presentation = { path = "../../../crates/nico-presentation" }
+nico-presentation-control = { path = "../../../crates/nico-presentation-control" }
+nico-authoring = { path = "../../../crates/nico-authoring", optional = true }
+nico-scene = { path = "../../../crates/nico-scene", optional = true }
+glam = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -96,7 +96,7 @@ struct Entry {
 /// Metadata fast path. Unix change time and identity detect timestamp-preserving
 /// edits and file replacement; missing timestamps always require a full check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct FileStamp {
+pub(crate) struct FileStamp {
     len: u64,
     modified: (u64, u32),
     created: Option<(u64, u32)>,
@@ -125,7 +125,7 @@ impl FileStamp {
             identity,
         })
     }
-    fn path(path: &Path) -> Option<Self> {
+    pub(crate) fn path(path: &Path) -> Option<Self> {
         Self::metadata(&fs::metadata(path).ok()?)
     }
 }
@@ -247,6 +247,17 @@ fn publish(path: &Path, bytes: &[u8]) -> Result<(), ImportError> {
     result.map_err(|e| error("cache_publish", e))
 }
 impl ImportCache {
+    /// Explicit project-cache loading, including in release editor builds.
+    pub fn load<I: AssetImporter>(
+        &self,
+        path: &Path,
+        importer: &I,
+        settings: &I::Settings,
+        budget: ImportBudget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<I::Output, ImportError> {
+        self.import_input(path, "", Input::File, importer, settings, budget, cancelled)
+    }
     /// Select an asset root explicitly. `.nico` is always a child of this root.
     pub fn new(root: impl AsRef<Path>) -> Result<Self, ImportError> {
         let root = root

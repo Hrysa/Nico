@@ -12,8 +12,10 @@ runtime-loading = ["dep:nico-runtime"]
 png-import = ["dep:png", "import-cache"]
 gltf-import = ["dep:gltf", "import-cache"]
 import-cache = ["dep:serde", "dep:serde_json", "dep:bincode", "dep:sha2", "dep:tracing"]
+watch = ["png-import", "gltf-import", "dep:notify"]
 
 [dependencies]
+notify = { version = "8.2", optional = true }
 tracing = { workspace = true, optional = true }
 bincode = { version = "1.3.3", optional = true }
 sha2 = { version = "0.10", optional = true }

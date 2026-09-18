@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "objects": [{
+    "id": 1,
+    "asset": "assets/presentation/meshes/cube.glb",
+    "name": "Cube",
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0],
+    "scale": 1
+  }]
+}

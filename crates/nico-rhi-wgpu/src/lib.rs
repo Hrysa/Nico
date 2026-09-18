@@ -3,7 +3,9 @@
 #[cfg(test)]
 mod quad_tests;
 
+mod offscreen;
 mod snapshot;
+pub use offscreen::WgpuOffscreen;
 pub use snapshot::CapturedPixels;
 
 use std::{
@@ -80,6 +82,23 @@ pub struct WgpuSurfaceFrame {
 
 pub struct WgpuRenderPass<'pass>(wgpu::RenderPass<'pass>);
 pub struct WgpuComputePass<'pass>(wgpu::ComputePass<'pass>);
+
+// Provider-specific interop stays here, never in engine-facing RHI contracts.
+impl WgpuDevice {
+    pub fn raw(&self) -> &wgpu::Device {
+        &self.inner
+    }
+}
+impl WgpuQueue {
+    pub fn raw(&self) -> &wgpu::Queue {
+        &self.inner
+    }
+}
+impl WgpuTextureView {
+    pub fn raw(&self) -> &wgpu::TextureView {
+        &self.0
+    }
+}
 
 #[derive(Clone)]
 struct BackendFailure {

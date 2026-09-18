@@ -1,6 +1,6 @@
-pub mod environment;
+pub use arena_arpg_presentation::environment;
 mod frame_rate;
-mod landscape;
+
 pub mod network;
 mod prediction;
 mod visuals;

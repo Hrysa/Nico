@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+arena-arpg-presentation = { path = "../presentation" }
 nico-net = { path = "../../../crates/nico-net" }
 nico-physics = { path = "../../../crates/nico-physics", default-features = false }
 serde = { version = "1", features = ["derive"] }

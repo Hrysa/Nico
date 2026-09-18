@@ -609,6 +609,59 @@ Capture excludes span timing and is not a profiler.
 
 ## Extension rules
 
+### Integrated editor
+
+`nico-scene` owns runtime-free project manifests, validated scene serialization,
+project-relative references, and ECS instantiation. `nico-presentation-control/scene`
+owns shared rest-pose model extraction and authored transform application.
+`apps/nico-editor` owns selection, bounded document history, and editor tools. It embeds `nico-runtime`;
+queued UI/bridge changes apply in Update and produce immutable `Scene3d` snapshots.
+The optional `nico-winit/editor` host owns egui input, event-loop lifecycle, and GPU
+composition. `nico-rhi-wgpu::WgpuOffscreen` supplies a sampled scene target on the
+same device as the UI. Raw wgpu interop remains provider-specific; no egui or native
+graphics types enter the headless runtime or immutable presentation contracts.
+`nico-launch` composes the normal independent bridge connection, built-in lifecycle,
+diagnostics, and rendered capture operations for the editor.
+
+The editor shell presents a frame before starting its joined project-load worker.
+That worker prepares owned authoring state; the runtime adopts it at Update.
+`nico-assets::progress` offers scoped thread-local progress observation for the UI,
+without sharing a world or introducing a UI dependency. Startup publications remain
+available through the bridge. Host readiness and project/import readiness differ.
+The shell joins the loader at shutdown; an in-flight bounded decoder may delay exit.
+
+The optional `nico-assets/watch` catalog owns recursive native notifications,
+debouncing, periodic stat reconciliation, and one joined import worker. It publishes
+owned catalog snapshots containing shared immutable model/texture values. Source
+identities are published after discovery, before decoding; every completed import
+is published independently with the current source identity. A consumer
+adopts successful revisions at its update boundary; failure and deletion preserve
+last-good content for that session. Notifications request checks rather than mutate
+worlds. Cache writes are excluded from watching. The project cache remains generated
+data, distinct from authored `scene.nico.json` and source content. Catalog limits and
+usage are documented in [README](../README.md#integrated-editor).
+
+The minimal client consumes this scene contract with `--project`, instantiates
+`nico-scene::Object` components at Startup, and extracts their live ECS transforms
+in Update. Source loading occurs before the host starts; failures are retained in
+the owned `scene_state` publication. Manifest Cargo targets are metadata only.
+Custom gameplay-component registration, prefab composition, game play mode, material
+editing, and animation authoring remain future work.
+
+`nico-authoring` defines the game-provided session and explicit adapter registry.
+Its callbacks run at editor runtime boundaries and exchange owned documents,
+immutable presentation and structured observations. It has no game, UI, launch or
+transport dependency. The editor application registers Arena's adapter at build
+time; an unknown manifest adapter is an error rather than an empty fallback scene.
+`arena-arpg-presentation` owns the shared environment/landscape implementation used
+by Arena's native client and authoring adapter. Its optional authoring feature owns
+game format interpretation and save validation. The app remains responsible for
+history and operational queues. Source TOML is authoritative; editor transforms
+are adapter-defined views of that content. See the
+[Arena authoring plan](plans/2026-09-18-arena-authoring.md) for persistence limits.
+
+### Future extensions
+
 - Keep public contracts small and document lifecycle, ownership, and failure.
 - Add crates for demonstrated ownership/dependency boundaries, not placeholders.
 - Keep stable asset/player/network identities distinct from generational ECS IDs.

@@ -11,3 +11,6 @@ pub mod text;
 pub mod coordinates;
 
 pub mod model;
+
+#[cfg(feature = "scene")]
+pub mod scene;

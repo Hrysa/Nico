@@ -23,6 +23,11 @@ the executable entry point. Audio, UI, and broader devtools have no placeholder 
 Runtime must not depend on presentation, providers, or launch policy, and `nico-ecs`
 must not depend on runtime.
 
+`nico-scene` owns project manifests and the simple authored scene contract.
+`nico-authoring` owns the UI-free game adapter contract and registry. Arena shares
+its environment rendering between client and editor through
+`games/arena-arpg/presentation`; game formats stay outside engine crates.
+
 Executable development tools belong in `apps/` when a concrete tool justifies a
 standalone package. Games live in `games/<game>/` with `shared`, `client`, and `server`
 packages. Put authoritative assets in `assets/logic` and client-only content in

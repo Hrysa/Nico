@@ -44,7 +44,7 @@ Material fidelity and per-monster contact polish remain limited as documented th
 | 5. Make a playable local game | Move, collide, complete an objective, and restart | Local arena and current balance accepted; Rapier integration validated on Windows |
 | 6. Play over a network | Two clients play together on one authoritative server | Local world milestone implemented; Internet conditions remain unvalidated |
 | 7. Complete the player experience | Add the required visuals, sound, menus, and settings | Animation pipeline implemented; imported-hero encounter verified; broader experience pending |
-| 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Planned |
+| 8. Make development repeatable | Rebuild content, inspect state, and automate playtests | Initial editor and watched project imports implemented; broader workflow remains |
 | 9. Validate performance | Profile representative workloads and meet defined budgets | Deferred |
 | 10. Ship the game | Run release packages on supported machines | Planned |
 
@@ -762,8 +762,92 @@ clean up test processes. Fresh-checkout prerequisites and commands are documente
 content change reaches the running game through a documented workflow, and failures
 identify the affected content or operation.
 
-A visual editor or scene format is a separate decision based on actual authoring needs.
-Engine tools grow from the workflows above.
+**Integrated editor (2026-09-18):** The initial egui editor embeds Nico's runtime and
+renderer with dockable Scene, Hierarchy, Assets and Inspector panels. It supports
+GLB placement, transforms, bounded undo/redo, versioned scene save/reopen, and PNG
+inspection. UI and discoverable bridge edits share the runtime update boundary.
+The optional watched asset catalog combines native notifications with debounced
+stat checks and periodic reconciliation, background imports, project caching, and
+last-good retention after failed replacements. The
+[editor plan](plans/2026-09-18-editor.md) records scope; the
+[README](../README.md#integrated-editor) owns usage and limits.
+
+Windows/GTX 1660/Vulkan validation observed model import and placement, transform
+application and scene save through MCP, unchanged import counts across repeated
+stat scans, and a failed GLB replacement retaining its rendered model. Atomic
+replacement with a valid blue material advanced revision 1 to 2 and updated the
+rendered viewport. Same-instance captures from PID 14944 were inspected separately
+from state samples. The session stopped through MCP and exited 0. This establishes
+rendered output, not desktop visibility or user-observed acceptance. The initial
+texture-delta integration panic was fixed before these checks. A rebuilt instance
+(`2632-18d6564fa795d5a8-3`, PID 5352) reopened both saved objects with their transforms
+intact; its capture showed the scene and PNG inspector. Replacing the inspected PNG
+advanced its revision without restarting. Workspace all-feature tests and strict
+all-target/all-feature Clippy passed, followed by passing final changed-package
+tests and formatting. Nine opt-in provider GPU tests were not run by that default
+test invocation; native viewport/capture evidence is separate. Physical close-dialog
+interaction and non-Windows editor operation remain unverified.
+
+**Game project integration (2026-09-18):** `nico.project.toml` now selects content
+roots, a default scene, and descriptive Cargo target names. `nico-scene` owns the
+shared document and ECS instantiation contract. The minimal client consumes saved
+editor scenes with `--project`, while both consumers use shared model/transform
+extraction. Custom gameplay-component registration, prefab composition, Play mode,
+and animation/material authoring remain future work.
+
+On Windows/Vulkan with a GTX 1660, editor PID 30752 applied and saved object 1 at
+position `[0.5, 0, 0]`, XYZ rotation `[15, 30, 0]` degrees and scale `1.5` to the
+manifest-selected scene in an isolated fixture. Minimal clients PID 32332 and
+18248 loaded exactly those values, reported one draw and no import errors. GPU
+captures from editor 30752 and game 18248 showed the cube; their cameras and host
+presentation differ, so this is not pixel equivalence. The snapshots were sampled
+separately. The first client exited normally before its capture completed; the
+second completed capture and exited successfully after bridge stop. The editor
+was left open with subsequent unsaved UI edits. No user-observed success is claimed.
+
+Workspace tests and Clippy with all features passed; ignored GPU/measurement tests
+were not enabled. Focused tests cover manifest versions and containment, ECS
+instantiation, live transform extraction, and declared-root import filtering.
+The standalone minimal client dependency tree contains neither egui nor notify.
+**Arena authoring adapter (2026-09-18):** The editor application now registers a
+game-provided adapter through `nico-authoring`. Arena's client and editor share
+`arena-arpg-presentation`, including the existing meadow environment and procedural
+landscape. Opening `games/arena-arpg` loads its actual logic and visual TOML rather
+than a blank loose scene. The adapter exposes obstacle/decorative transforms and
+saves them back to those game sources. Spawn/quest data is inspectable; simulation,
+network sessions, and arbitrary gameplay-component editing are not implemented.
+[README](../README.md#game-code-and-authored-scenes) owns usage; the
+[Arena authoring plan](plans/2026-09-18-arena-authoring.md) owns persistence limits.
+
+Windows/Vulkan validation on GTX 1660 used editor instance
+`2632-18d6564fa795d5a8-11`, PID 37356. Its publication reported 13 imported models,
+13 solids, 86 decorations, 99 hierarchy objects and 225 draws with no import errors.
+A GPU capture from that same instance showed meadow terrain, grass, foliage, rocks,
+and the hierarchy. Capture and state were sampled separately; no desktop visibility
+or user-observed approval is claimed. Automated observation stopped and the editor
+was left open. Validation did not modify the repository's world source files.
+
+Real-content tests verify invalid-edit rejection, decoration save/reload, bytewise
+preservation of logic during decoration edits, obstacle changes accepted by the game
+loader, second-file save failure rollback, and external-edit conflicts. Existing
+scenery/landscape tests pass after extraction. Workspace tests and Clippy with all
+features passed; ignored GPU/measurement tests stayed disabled. The standalone
+Arena client dependency tree contains neither egui nor `nico-authoring`.
+**Editor startup/navigation correction (2026-09-18):** Project loading is deferred
+until a shell frame is presented and runs on a joined worker. The import dialog
+shows phase/counts; the asset tree receives all discovered identities before decoding
+and individual completion updates. Horizontal orbit is corrected; middle-drag and
+Shift+left-drag pan around a movable target. Tests exercise real egui pointer events,
+startup gating/failure publication, discovery-before-decoding, scoped progress events,
+and folder/filter identity. Native editor instance `2632-18d6564fa795d5a8-15`, PID
+23200, published 13 discovered assets with four pending; its GPU capture showed
+Importing assets at 9/13 with the Pine source filename. Later state reported all 13
+ready with no errors. The source world was not changed. This is rendered-output
+evidence, not user-confirmed desktop or physical mouse validation. The editor was
+left open after automated observation stopped. Capture and state were sampled
+separately. Workspace tests and Clippy with all features, formatting, and whitespace
+checks passed; ignored GPU/measurement tests remained disabled.
+The full phase-8 fresh-checkout and running-game authoring workflow is not complete.
 
 ## 9. Validate performance
 

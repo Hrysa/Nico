@@ -4,6 +4,15 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
+## Following: editor authoring
+
+Acceptance: [roadmap phase 8](docs/roadmap.md#8-make-development-repeatable).
+
+- [ ] Define gameplay-component registration and an explicit editor Play workflow
+      on top of the shared scene contract.
+- [ ] Add source-reference relinking for renamed assets and project import settings
+      when extending the initial PNG/embedded-GLB workflow.
+
 ## World camera stutter
 
 - [ ] Validate left/right camera rotation in the rebuilt world client, including

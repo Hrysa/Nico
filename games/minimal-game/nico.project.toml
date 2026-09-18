@@ -1,0 +1,8 @@
+version = 1
+name = "Minimal Game"
+asset_roots = ["assets/presentation"]
+default_scene = "assets/presentation/scenes/main.nico.json"
+
+[targets]
+client = "minimal-game-client"
+server = "minimal-game-server"

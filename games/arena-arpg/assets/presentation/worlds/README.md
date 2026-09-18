@@ -62,3 +62,13 @@ uses core metallic/roughness PBR textures and material alpha cutoffs. These asse
 are from Quaternius's Stylized Nature MegaKit Standard, under CC0. The notice is
 retained in [nature/License.txt](nature/License.txt); the original archive hash and
 source inventory remain in [../quaternius/import-manifest.json](../quaternius/import-manifest.json).
+
+## Editor authoring
+
+`cargo run -p nico-editor -- --project games/arena-arpg` opens this world through
+Arena's registered authoring adapter. It shares the client environment/landscape
+code and previews the static world without a server. Obstacle and decoration
+transforms use the rules shown in the Inspector; Save updates the original world
+sources. Spawn and quest data remain inspectable without being simulated. See the
+[editor workflow](../../../../../README.md#game-code-and-authored-scenes) for save,
+reload, asset refresh, and formatting limits.
