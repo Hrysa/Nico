@@ -104,9 +104,11 @@ where
     {
         let descriptor = wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
+            flags: native_instance_flags(),
             ..wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display))
         }
         .with_env();
+        let driver_validation = descriptor.flags.contains(wgpu::InstanceFlags::VALIDATION);
         let instance = wgpu::Instance::new(descriptor);
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::from_window_without_display(
@@ -180,7 +182,7 @@ where
             },
         };
         tracing::info!(adapter = %adapter_info.name, backend = ?adapter_info.backend,
-            device_type = ?adapter_info.device_type, "graphics device created");
+            device_type = ?adapter_info.device_type, driver_validation, "graphics device created");
 
         let config_extent = presentable_extent(extent);
         let configuration = surface_configuration(&surface, &adapter, config_extent)?;
@@ -887,6 +889,13 @@ impl<'pass> RhiComputePass<'pass> for WgpuComputePass<'pass> {
     }
 }
 
+// Driver debug layers are expensive during ordinary gameplay. The descriptor's
+// with_env() keeps WGPU_VALIDATION=1 available for graphics diagnostics. This does
+// not disable wgpu's API validation or Rust debug assertions.
+fn native_instance_flags() -> wgpu::InstanceFlags {
+    wgpu::InstanceFlags::from_build_config() - wgpu::InstanceFlags::VALIDATION
+}
+
 fn buffer_usages(value: BufferUsages) -> wgpu::BufferUsages {
     let mut result = wgpu::BufferUsages::empty();
     for (rhi, backend) in [
@@ -1375,6 +1384,14 @@ mod tests {
     use nico_rhi::{BufferUsages, ColorWrites, RhiErrorKind, TextureFormat};
     use std::sync::Mutex;
 
+    #[test]
+    fn native_play_defaults_only_remove_driver_validation() {
+        let expected = wgpu::InstanceFlags::from_build_config();
+        let actual = super::native_instance_flags();
+        assert!(!actual.contains(wgpu::InstanceFlags::VALIDATION));
+        assert_eq!(actual, expected - wgpu::InstanceFlags::VALIDATION);
+        assert!(actual.contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
+    }
     #[test]
     fn zero_surface_extent_has_safe_configuration_extent() {
         let extent = presentable_extent(nico_rhi::Extent3d::surface(0, 0));

@@ -26,6 +26,7 @@ pub struct Visuals {
     path: Arc<Mesh>,
     parts: Vec<Vec<Arc<Mesh>>>,
     font: BitmapFont,
+    pub frame_rate: super::frame_rate::FrameRate,
     pub animation: serde_json::Value,
     pub actor_animations: Vec<serde_json::Value>,
 }
@@ -103,6 +104,7 @@ impl Visuals {
             path: mesh([6., 0.02, 44.]),
             parts,
             font: BitmapFont::default(),
+            frame_rate: super::frame_rate::FrameRate::default(),
             animation: serde_json::Value::Null,
             actor_animations: Vec::new(),
         }
@@ -115,6 +117,7 @@ impl Visuals {
         captured: bool,
         dt: Duration,
     ) -> Result<(Scene3d, UiScene), String> {
+        self.frame_rate.observe(std::time::Instant::now());
         if self.epoch != client.epoch {
             self.environment
                 .bind(&client.zone)
@@ -536,6 +539,21 @@ impl Visuals {
                 [1., 0.5, 0.4, 1.],
             );
         }
+        let fps_origin = [(size[0] - 92. * scale - margin).max(0.), margin];
+        rectangle(
+            &mut hud,
+            fps_origin,
+            [92. * scale, 24. * scale],
+            [0.07, 0.1, 0.13, 0.9],
+            self.white.clone(),
+        );
+        self.font.draw(
+            &mut hud.quads,
+            &self.frame_rate.hud(),
+            [fps_origin[0] + 8. * scale, fps_origin[1] + 8. * scale],
+            scale,
+            [1.; 4],
+        );
         Ok((scene, hud))
     }
 }

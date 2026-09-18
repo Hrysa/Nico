@@ -76,36 +76,12 @@ impl<D: RhiDevice> Materials<D> {
             normal: Arc::new(Texture::rgba8(1, 1, vec![128, 128, 255, 255]).unwrap()),
         })
     }
-    pub fn retain(&mut self, draws: &[MeshInstance]) {
+    pub fn retain_live_sources(&mut self) {
         self.materials.retain(|m| {
-            draws.iter().any(|d| {
-                matches(&m.source, d.material.as_ref())
-                    && matches(
-                        &m.legacy,
-                        if d.material.is_none() {
-                            d.texture.as_ref()
-                        } else {
-                            None
-                        },
-                    )
-            })
+            m.source.as_ref().is_none_or(|s| s.strong_count() > 0)
+                && m.legacy.as_ref().is_none_or(|s| s.strong_count() > 0)
         });
-        self.images.retain(|image| {
-            image.source.ptr_eq(&Arc::downgrade(&self.white))
-                || image.source.ptr_eq(&Arc::downgrade(&self.normal))
-                || draws.iter().any(|d| {
-                    if let Some(m) = &d.material {
-                        m.textures()
-                            .into_iter()
-                            .flatten()
-                            .any(|t| image.source.ptr_eq(&Arc::downgrade(&t.image)))
-                    } else {
-                        d.texture
-                            .as_ref()
-                            .is_some_and(|t| image.source.ptr_eq(&Arc::downgrade(t)))
-                    }
-                })
-        });
+        self.images.retain(|image| image.source.strong_count() > 0);
     }
     pub fn binding(&self, slot: usize) -> &D::BindGroup {
         &self.materials[slot].binding

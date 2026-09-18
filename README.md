@@ -57,6 +57,23 @@ cargo run -p arena-arpg-client -- --character alice
 cargo run -p arena-arpg-client -- --character bob
 ```
 
+Normal debug builds optimize the `wgpu`, `wgpu-core`, and `wgpu-hal` dependencies
+while keeping Nico's engine/game code unoptimized and debuggable. Native graphics
+driver validation layers are opt-in because their per-draw overhead can dominate
+debug frame time. Nico descriptor checks, wgpu API validation, and Rust debug
+assertions remain enabled. To diagnose graphics issues in PowerShell:
+
+```powershell
+$env:WGPU_VALIDATION = '1'
+cargo run -p arena-arpg-client -- --character alice
+Remove-Item Env:WGPU_VALIDATION
+```
+
+The startup `graphics device created` diagnostic reports `driver_validation`.
+GPU correctness tests request driver validation by default; the opt-in
+`gpu_dense_scene_submission_measurement` test uses native play defaults and reports
+bounded render-call wall time, not CPU or GPU execution time.
+
 The server owns movement validation, combat, monsters, loot and progression.
 Clients predict local movement and receive nearby entities at 20 Hz. Each character
 name must be unique among active connections: use 1..32 lowercase ASCII letters,
@@ -87,6 +104,11 @@ equip, respawn, reconnect and camera). A submitted client command is not proof o
 server success: compare its epoch/sequence with the authoritative acknowledgement
 and resulting world state. `last_disconnect`, prediction backlog and snapshot age
 are reported separately. Built-in host/window tools remain available.
+
+The world HUD shows FPS in the top-right corner, refreshed about once per second.
+It measures wall-clock Update cadence, including stalls, rather than GPU execution
+or display scanout. `world_client_state.frame_timing` exposes the same FPS plus
+mean/minimum/maximum frame intervals; it is null during the initial warmup.
 
 See the [world milestone](docs/plans/2026-09-17-open-world.md) and
 [native checkpoint](docs/reviews/2026-09-17-open-world-native.md) for validation

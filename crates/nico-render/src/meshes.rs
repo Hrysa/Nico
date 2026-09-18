@@ -352,7 +352,7 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             .flat_map(f32::to_le_bytes)
             .collect();
         queue.write_buffer(&self.frame.buffer, 0, &frame_bytes);
-        self.materials.retain(&scene.meshes);
+        self.materials.retain_live_sources();
         let sources: Vec<_> = canvas_scene
             .world
             .iter()
@@ -360,13 +360,10 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             .filter_map(|q| q.texture.clone())
             .collect();
         self.canvas.retain_sources(&sources);
-        self.meshes.retain(|uploaded| {
-            scene.meshes.iter().any(|m| {
-                uploaded
-                    .source
-                    .ptr_eq(&Arc::downgrade(m.mesh.as_ref().unwrap_or(&self.fallback)))
-            })
-        });
+        // Visibility is not asset lifetime: culled scenery still owns its source.
+        // Weak references avoid pinning assets after a world is unloaded.
+        self.meshes
+            .retain(|uploaded| uploaded.source.strong_count() > 0);
         self.uniforms.truncate(scene.meshes.len());
         if let Some(skin) = &mut self.skin {
             skin.uniforms.resize_with(scene.meshes.len(), || None);

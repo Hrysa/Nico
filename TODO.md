@@ -4,6 +4,15 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
+## World camera stutter
+
+- [ ] Validate left/right camera rotation in the rebuilt world client, including
+      first visibility and repeated tree/rock reentry, with the updated debug
+      dependency optimization and native driver-validation defaults. The residency fix
+      eliminates repeated uploads in the GPU regression; native frame-time impact
+      and user-observed smoothness remain unverified. See
+      [phase 4 evidence](docs/roadmap.md#4-display-the-game-world).
+
 ## Client humanoid models and animation
 
 Acceptance: [roadmap phase 7 character milestone](docs/roadmap.md#client-character-milestone).

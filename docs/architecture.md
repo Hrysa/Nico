@@ -185,10 +185,19 @@ unrelated APIs.
 resize and recoverable surface outcomes, including zero-size, timeout, occlusion,
 outdated/lost surfaces, and suboptimal frames. Unrecoverable failures use RHI error
 categories.
+Native play defaults disable the optional driver validation layer, including in
+debug builds, while preserving wgpu API validation. The existing environment
+override `WGPU_VALIDATION=1` enables it; startup diagnostics publish the effective
+`driver_validation` flag. GPU correctness fixtures enable driver validation by
+default independently of native play policy.
 
 `nico-render` selects shaders and pipelines, uploads textures and meshes, records draw
-passes, submits commands, and presents. The texture cache identifies immutable allocations and
-retires unused entries on drawn frames, retaining its fallback; CPU references are weak.
+passes, submits commands, and presents. Texture caches identify immutable allocations;
+CPU references are weak. The canvas retires textures unused by the current drawn frame.
+The 3D mesh, material and image caches retain uploads while their CPU sources have
+owners, even when absent from the visible scene, and retire expired sources on drawn
+frames. Camera culling therefore does not repeatedly evict and reupload loaded scenery.
+GPU residency follows loaded asset lifetime, so loaded offscreen assets retain GPU memory.
 Providers retain resources referenced by recorded/submitted work when wrappers drop.
 The pipelines rebuild if the surface format changes. Native hosts select a pipeline
 and supply viewport/DPI values but do not define scene draw calls. The bootstrap

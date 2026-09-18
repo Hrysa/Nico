@@ -271,6 +271,37 @@ behavior, or physical display scanout. Interactive lifecycle checks remain in ph
 The initial 3D validation used the transparent PNG on the cube. The opaque checker
 replaced that fixture after visual review; alpha-cutoff support remains implemented.
 
+**Scenery visibility residency correction (2026-09-18, Windows, GTX 1660/Vulkan):**
+A GPU regression reproduced repeated uploads when a still-owned mesh/material left
+the scene and reentered. Eight hide/show cycles of a textured triangle reuploaded
+864 geometry bytes and 32 texture bytes before the fix, and zero of either after
+tying 3D residency to CPU source ownership. Readback pixels remained identical;
+source replacement and weak CPU ownership checks passed. All eight opt-in GPU
+tests, 15 portable renderer/provider tests, focused strict all-target Clippy and
+the debug arena client build passed. This measures upload churn in a small fixture,
+not world-map frame time or CPU/GPU execution time. Native camera smoothness remains
+unverified; the concrete follow-up is in [TODO](../TODO.md#world-camera-stutter).
+
+**Debug rendering CPU investigation (2026-09-18, Windows, GTX 1660/Vulkan):**
+Live world client PID 10620 reported 23.74 Update FPS (42.13 ms mean interval)
+with 137 meshes and four animated actors at 1920x1080. A bounded offscreen
+submission fixture separately measured 60 warm frames of 200 shared-geometry
+draws and 300 textured glyph quads. Mean render-call wall times were 35.12 ms with
+the original debug settings, 22.26 ms with only wgpu/wgpu-core/wgpu-hal optimized,
+14.54 ms with only driver validation disabled, and 6.76 ms with both changes.
+The explicit GPU wait after each call is excluded; these are elapsed call times,
+not CPU execution measurements, GPU timings or an expected native FPS result.
+The original client remained running during these fixture comparisons.
+
+Native play now makes driver validation opt-in through `WGPU_VALIDATION=1`, and
+development builds optimize those three dependencies while leaving workspace
+code unoptimized. API validation and debug assertions remain enabled. Graphics
+startup diagnostics report the driver-validation setting; GPU correctness tests
+request validation independently. Sixteen portable renderer/provider tests, eight
+GPU correctness tests with driver validation, the bounded submission test, strict
+provider/client all-target Clippy and formatting passed. Native post-change
+validation is pending; the inspected original-client capture still showed FPS 16.
+
 ## 5. Make a playable local game
 
 **Result:** A player can complete a small game loop on one machine.

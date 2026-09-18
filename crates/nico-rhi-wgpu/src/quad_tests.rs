@@ -12,7 +12,7 @@ struct Target {
     format: TextureFormat,
     texture: wgpu::Texture,
 }
-impl RhiSurface<WgpuDevice, WgpuQueue> for Target {
+impl<Q: RhiQueue<WgpuDevice>> RhiSurface<WgpuDevice, Q> for Target {
     type Frame = ();
     fn format(&self) -> TextureFormat {
         self.format
@@ -42,8 +42,48 @@ impl RhiSurface<WgpuDevice, WgpuQueue> for Target {
             ),
         })
     }
-    fn present(&mut self, _: &WgpuDevice, _: &WgpuQueue, _: ()) {
+    fn present(&mut self, _: &WgpuDevice, _: &Q, _: ()) {
         self.presented += 1;
+    }
+}
+
+/// Test-only measurement of uploads; frame uniforms are deliberately excluded.
+struct UploadQueue {
+    inner: WgpuQueue,
+    geometry_bytes: std::cell::Cell<usize>,
+    texture_bytes: std::cell::Cell<usize>,
+}
+impl std::ops::Deref for UploadQueue {
+    type Target = WgpuQueue;
+    fn deref(&self) -> &WgpuQueue {
+        &self.inner
+    }
+}
+impl RhiQueue<WgpuDevice> for UploadQueue {
+    fn write_buffer(&self, buffer: &WgpuBuffer, offset: u64, data: &[u8]) {
+        if buffer
+            .0
+            .usage()
+            .intersects(wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX)
+        {
+            self.geometry_bytes
+                .set(self.geometry_bytes.get() + data.len());
+        }
+        self.inner.write_buffer(buffer, offset, data);
+    }
+    fn write_texture(
+        &self,
+        destination: TextureCopy<'_, WgpuTexture>,
+        data: &[u8],
+        layout: TextureDataLayout,
+        extent: Extent3d,
+    ) {
+        self.texture_bytes
+            .set(self.texture_bytes.get() + data.len());
+        self.inner.write_texture(destination, data, layout, extent);
+    }
+    fn submit(&self, commands: Vec<WgpuCommandBuffer>) {
+        self.inner.submit(commands);
     }
 }
 
@@ -101,6 +141,91 @@ fn pixels(device: &WgpuDevice, queue: &WgpuQueue, target: &Target) -> Vec<u8> {
 }
 fn pixel(bytes: &[u8], x: usize, y: usize) -> &[u8] {
     &bytes[(y * 64 + x) * 4..(y * 64 + x + 1) * 4]
+}
+
+#[test]
+#[ignore = "bounded submission measurement; requires a real graphics adapter"]
+fn gpu_dense_scene_submission_measurement() {
+    use nico_presentation::{Camera3d, MeshInstance, Quaternion, Scene3d};
+    use nico_render::MeshRenderPipeline;
+    let (device, queue, mut target) = setup_with_flags(native_instance_flags());
+    let mut renderer = MeshRenderPipeline::new(
+        &device,
+        target.format,
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/meshes.wgsl"
+        )),
+        builtin_shaders::bootstrap_wgsl(include_bytes!(
+            "../../../assets/presentation/shaders/generated/wgpu/quads.wgsl"
+        )),
+    )
+    .unwrap();
+    let images: Vec<_> = (0..32)
+        .map(|i| Arc::new(Texture::rgba8(1, 1, vec![i * 8, 255, 255, 255]).unwrap()))
+        .collect();
+    let draws: Vec<_> = (0..200)
+        .map(|i| MeshInstance {
+            mirrored: false,
+            material: None,
+            mesh: None,
+            skin_palette: None,
+            texture: Some(images[i % images.len()].clone()),
+            position: [0., 0., -(i as f32) * 0.01],
+            orientation: Quaternion::IDENTITY,
+            scale: 1.,
+            color: [1.; 4],
+        })
+        .collect();
+    let glyphs: Vec<_> = (0..300)
+        .map(|i| Quad {
+            center: [(i % 30) as f32 * 2., (i / 30) as f32 * 2.],
+            size: [1.; 2],
+            color: [1.; 4],
+            texture: Some(images[i % images.len()].clone()),
+        })
+        .collect();
+    for (mesh_count, glyph_count) in [(0, 0), (200, 0), (0, 300), (200, 300)] {
+        let scene = Scene3d {
+            camera: Camera3d::looking_at([0., 0., 3.], [0.; 3], [0., 1., 0.]).unwrap(),
+            meshes: draws[..mesh_count].to_vec(),
+            ..Default::default()
+        };
+        let hud = UiScene {
+            quads: glyphs[..glyph_count].to_vec(),
+        };
+        let mut elapsed = std::time::Duration::ZERO;
+        for i in 0..70 {
+            let start = std::time::Instant::now();
+            renderer
+                .render(
+                    &device,
+                    &queue,
+                    &mut target,
+                    &scene,
+                    &Scene2d::default(),
+                    &hud,
+                    [64.; 2],
+                    Extent3d::surface(64, 64),
+                )
+                .unwrap();
+            let submitted = start.elapsed();
+            device
+                .inner
+                .poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .unwrap();
+            if i >= 10 {
+                elapsed += submitted;
+            }
+        }
+        eprintln!(
+            "{mesh_count} meshes / {glyph_count} glyphs: {:.3} ms mean render-call wall time (60 warm frames; explicit GPU wait excluded)",
+            elapsed.as_secs_f64() * 1000. / 60.
+        );
+    }
+    assert_eq!(target.presented, 280);
 }
 
 #[test]
@@ -203,9 +328,15 @@ fn gpu_quads_preserve_texture_orientation_alpha_camera_and_hud() {
 }
 
 fn setup() -> (WgpuDevice, WgpuQueue, Target) {
+    setup_with_flags(wgpu::InstanceFlags::debugging())
+}
+
+fn setup_with_flags(flags: wgpu::InstanceFlags) -> (WgpuDevice, WgpuQueue, Target) {
+    eprintln!("GPU instance flags: {:?}", flags.with_env());
     let instance = wgpu::Instance::new(
         wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
+            flags,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         }
         .with_env(),
@@ -1135,9 +1266,14 @@ fn gpu_pbr_rejects_invalid_frames_recovers_from_skips_and_retires_sources() {
     use nico_presentation::{Camera3d, MeshInstance, Quaternion, Scene3d, SceneLighting};
     use nico_render::{MeshRenderPipeline, RenderStatus};
     let (device, queue, mut target) = setup();
+    let queue = UploadQueue {
+        inner: queue,
+        geometry_bytes: Default::default(),
+        texture_bytes: Default::default(),
+    };
     let mut renderer = MeshRenderPipeline::new(
         &device,
-        target.format(),
+        target.format,
         builtin_shaders::bootstrap_wgsl(include_bytes!(
             "../../../assets/presentation/shaders/generated/wgpu/meshes.wgsl"
         )),
@@ -1210,6 +1346,39 @@ fn gpu_pbr_rejects_invalid_frames_recovers_from_skips_and_retires_sources() {
         .unwrap();
     let first = pixels(&device, &queue, &target);
     assert_eq!(pixel(&first, 32, 32), [255, 0, 0, 255]);
+    let geometry_before = queue.geometry_bytes.get();
+    let textures_before = queue.texture_bytes.get();
+    let hidden = Scene3d {
+        meshes: Vec::new(),
+        ..scene.clone()
+    };
+    for _ in 0..8 {
+        for frame in [&hidden, &scene] {
+            renderer
+                .render(
+                    &device,
+                    &queue,
+                    &mut target,
+                    frame,
+                    &canvas,
+                    &ui,
+                    [64.; 2],
+                    extent,
+                )
+                .unwrap();
+        }
+    }
+    let geometry_reuploaded = queue.geometry_bytes.get() - geometry_before;
+    let textures_reuploaded = queue.texture_bytes.get() - textures_before;
+    eprintln!(
+        "eight visibility reentries: {geometry_reuploaded} geometry bytes, {textures_reuploaded} texture bytes reuploaded"
+    );
+    assert_eq!(
+        (geometry_reuploaded, textures_reuploaded),
+        (0, 0),
+        "live assets must survive visibility changes"
+    );
+    assert_eq!(pixels(&device, &queue, &target), first);
     assert_eq!(
         Arc::strong_count(&mesh),
         2,

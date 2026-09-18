@@ -53,3 +53,12 @@ all = "warn"
 # hash implementation optimized while engine/game code remains debuggable.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# Keep native graphics submission usable during gameplay debugging. Workspace
+# crates retain normal debug optimization, symbols, assertions and overflow checks.
+[profile.dev.package.wgpu]
+opt-level = 3
+[profile.dev.package.wgpu-core]
+opt-level = 3
+[profile.dev.package.wgpu-hal]
+opt-level = 3
