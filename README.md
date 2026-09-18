@@ -592,6 +592,9 @@ content. Successful replacements appear without restarting the editor. `.nico`,
 `.git`, `target`, `node_modules`, metadata sidecars, and source symlinks are excluded.
 Generated `.nico` cache data is disposable; sources and the scene are authoritative.
 Editor imports use the project cache in both debug and release builds.
+Embedded GLB textures also use that cache, avoiding repeated PNG decoding when
+reopening a project. The first import still decodes and caches those textures;
+game-specific scene preparation is separate from asset import.
 
 Use a focused project directory: the initial catalog allows 1,024 assets, 16,384
 visited entries, and 512 MiB of accounted retained CPU content. Each source uses

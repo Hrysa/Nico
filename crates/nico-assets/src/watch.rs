@@ -5,7 +5,7 @@ use crate::{
     cache::{FileStamp, ImportCache},
     import::ImportBudget,
     importers::{ModelGlbImporter, ModelGlbSettings, PngImporter, PngSettings},
-    model_loading::{ImportedModel, model_bundle},
+    model_loading::{ImportedModel, cached_model_bundle},
 };
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
@@ -435,7 +435,7 @@ fn reconcile_roots(
                     budget,
                     &cancelled,
                 )
-                .and_then(|v| model_bundle(v, &cancelled))
+                .and_then(|v| cached_model_bundle(v, cache, &full, &cancelled))
                 .map(|v| ImportedAsset::Model(Arc::new(v)))
         };
         catalog.imports += 1;

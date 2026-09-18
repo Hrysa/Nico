@@ -365,6 +365,71 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "manual elapsed-time measurement using the real Arena project and import cache"]
+    fn arena_project_open_measurement() {
+        use std::time::{Duration, Instant};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../games/arena-arpg");
+        let definition = nico_scene::Project::open(&root).unwrap();
+        let start = Instant::now();
+        let catalog =
+            nico_assets::watch::WatchedProject::open_roots(&root, &definition.manifest.asset_roots)
+                .unwrap();
+        loop {
+            let snapshot = catalog.snapshot();
+            assert!(snapshot.error.is_none(), "{:?}", snapshot.error);
+            if snapshot.scans > 0
+                && snapshot.importing.is_none()
+                && snapshot.assets.len() == 13
+                && snapshot
+                    .assets
+                    .values()
+                    .all(|a| a.value.is_some() || a.error.is_some())
+            {
+                assert_eq!(snapshot.assets.len(), 13);
+                assert!(
+                    snapshot
+                        .assets
+                        .values()
+                        .all(|a| a.value.is_some() && a.error.is_none())
+                );
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(120));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        eprintln!("catalog elapsed: {:?}", start.elapsed());
+        drop(catalog);
+        let start = Instant::now();
+        let environment = arena_arpg_presentation::environment::Environment::load(
+            &root.join("assets/presentation/worlds/meadow.world-vis.toml"),
+        )
+        .unwrap();
+        eprintln!("environment load elapsed: {:?}", start.elapsed());
+        // Measure the real adapter separately, including zone/landscape preparation.
+        drop(environment);
+        let start = Instant::now();
+        let adapter = arena_arpg_presentation::authoring::open(&definition).unwrap();
+        eprintln!("authoring adapter elapsed: {:?}", start.elapsed());
+        assert_eq!(adapter.document().objects.len(), 99);
+        drop(adapter);
+        let start = Instant::now();
+        let mut registry = nico_authoring::Registry::default();
+        registry
+            .register(
+                arena_arpg_presentation::authoring::ADAPTER,
+                arena_arpg_presentation::authoring::open,
+            )
+            .unwrap();
+        let queue = std::sync::Arc::new(std::sync::Mutex::new(crate::operations::Queue::new(32)));
+        let publication = std::sync::Arc::new(std::sync::Mutex::new(
+            nico_ops::publication::Publication::default(),
+        ));
+        let core = super::Core::with_adapters(&root, queue, publication, &registry).unwrap();
+        eprintln!("project ready elapsed: {:?}", start.elapsed());
+        assert_eq!(core.document.objects.len(), 99);
+    }
+
     use super::*;
     use std::sync::{Arc, Mutex};
     #[test]

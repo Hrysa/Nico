@@ -849,6 +849,27 @@ separately. Workspace tests and Clippy with all features, formatting, and whites
 checks passed; ignored GPU/measurement tests remained disabled.
 The full phase-8 fresh-checkout and running-game authoring workflow is not complete.
 
+**Editor import cache correction (2026-09-18):** The watched catalog now caches
+decoded embedded GLB textures as well as model data. Previously reopening a project
+decoded its embedded PNGs again, even when the GLB itself was a cache hit. Source
+bytes, settings, budgets, and importer version remain part of cache validation;
+changed image bytes invalidate cached pixels. Tests cover warm reuse, shared image
+references, unused textures, replacement, malformed data, and cancellation.
+
+Windows debug headless measurements using the actual Arena project (13 assets,
+99 authored objects) measured catalog completion at 15.57 seconds before the fix
+and 1.15 seconds with the new texture cache populated. Initial population measured
+18.78 seconds; cold-import acceleration is not claimed. Environment loading was
+0.76 seconds and complete authoring preparation remained about 4.1 seconds. These
+are elapsed durations, not CPU execution time or native first-visible-frame timings.
+The opt-in `arena_project_open_measurement` editor test reproduces these scopes.
+Asset and editor tests plus changed-package all-feature/all-target Clippy passed.
+An isolated rebuilt Windows/Vulkan editor (GTX 1660, PID 38160, bridge instance
+`38672-18d65e29bdc05eac-4`) reported all 13 assets ready, zero pending imports,
+99 objects, and no import errors. MCP stop was followed by process exit 0;
+the user's existing editor/server were left running. This was a startup/state check,
+not a rendered-capture or user-observed visual acceptance test.
+
 ## 9. Validate performance
 
 **Result:** Performance is measured against explicit targets on known hardware.
