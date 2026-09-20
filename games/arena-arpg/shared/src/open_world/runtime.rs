@@ -32,14 +32,14 @@ fn runtime(error: impl std::fmt::Display) -> RuntimeError {
         message: error.to_string(),
     }
 }
-fn publish(server: &WorldServer, ops: &mut Operations) {
+fn publish(server: &WorldServer, ops: &mut Operations, ready: bool) {
     let players: Vec<_> = server
         .world
         .records()
         .iter()
         .filter_map(|(id, _)| server.world.snapshot(*id).ok())
         .collect();
-    ops.snapshot.publish(json!({"tick":server.world.tick(),"address":server.address().ok().map(|a|a.to_string()),"zone":server.world.zone,"item":server.world.item,"objects":server.world.objects(),"players":players,"sessions":server.sessions(),"last_save_tick":server.last_save_tick,"commands":ops.commands.history()}));
+    ops.snapshot.publish(json!({"ready":ready,"tick":server.world.tick(),"address":server.address().ok().map(|a|a.to_string()),"zone":server.world.zone,"item":server.world.item,"objects":server.world.objects(),"players":players,"sessions":server.sessions(),"last_save_tick":server.last_save_tick,"commands":ops.commands.history()}));
 }
 pub fn register(
     mut builder: AppBuilder,
@@ -49,13 +49,14 @@ pub fn register(
         commands: FifoCommands::new(128),
         snapshot: Publication::default(),
     }));
-    publish(&server, &mut ops.lock().unwrap());
+    publish(&server, &mut ops.lock().unwrap(), true);
     let mut tools = ToolExtensions::default();
     let reader = ops.clone();
     tools.register(Tool::new("world_state","Inspect published authoritative zone, sessions, entities, per-player interest views and command outcomes. Snapshot age and closed state are explicit.",json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()),move|args|{
         if !args.is_empty(){return error("invalid_arguments");}
         reader.lock().unwrap().snapshot.json().map(CallToolResult::structured).unwrap_or_else(||error("not_ready"))
     })?;
+    tools.set_access("world_state", nico_ops::mcp::ToolAccess::Inspect)?;
     let sender = ops.clone();
     tools.register(Tool::new("world_spawn","Queue a monster spawn at a fixed boundary. Poll world_state.commands for the command_id; acceptance does not mean spawn succeeded. Never blindly retry timeouts.",json!({"type":"object","properties":{"kind":{"enum":["grunt","brute"]},"x":{"type":"number","minimum":-60,"maximum":60},"z":{"type":"number","minimum":-60,"maximum":60}},"required":["kind","x","z"],"additionalProperties":false}).as_object().unwrap().clone()),move|args|{
         let Ok(request)=serde_json::from_value::<Spawn>(Value::Object(args)) else{return error("invalid_arguments");};
@@ -82,7 +83,7 @@ pub fn register(
             });
         }
         server.step().map_err(runtime)?;
-        publish(server, &mut ops);
+        publish(server, &mut ops, true);
         Ok(())
     });
     builder.add_system(Stage::Shutdown, "open_world::save", move |ctx| {
@@ -91,7 +92,7 @@ pub fn register(
         let mut ops = ops.lock().unwrap();
         ops.commands
             .close_with(|(id, _)| json!({"command_id":id,"state":"cancelled","error":"shutdown"}));
-        publish(server, &mut ops);
+        publish(server, &mut ops, false);
         ops.snapshot.close();
         result.map_err(|error| RuntimeError::System {
             stage: "Shutdown",

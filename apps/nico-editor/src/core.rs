@@ -26,6 +26,9 @@ pub struct Core {
     pub camera_pan: [f32; 3],
     pub error: Option<String>,
     pub play_requested: Option<bool>,
+    pub restart_requested: bool,
+    pub play_profile: nico_launch::play::PlayProfile,
+    pub play_state: serde_json::Value,
     pub playing: bool,
     pub play_error: Option<String>,
     pub queue: SharedQueue,
@@ -86,6 +89,9 @@ impl Core {
             camera_pan: [0.; 3],
             error: None,
             play_requested: None,
+            restart_requested: false,
+            play_profile: nico_launch::play::PlayProfile::for_project(root),
+            play_state: json!({"phase":"idle","active":false}),
             playing: false,
             play_error: None,
             queue,
@@ -153,12 +159,42 @@ impl Core {
                 }
                 self.project.refresh();
             }
+            Action::ConfigurePlay {
+                bridge,
+                editor_endpoint,
+                endpoint_token_file,
+                release,
+            } => {
+                if self.playing || self.play_requested.is_some() {
+                    return Err("stop the play session before changing its profile".into());
+                }
+                if !bridge.ip().is_loopback() || !editor_endpoint.ip().is_loopback() {
+                    return Err("play endpoints must be loopback addresses".into());
+                }
+                self.play_profile = nico_launch::play::PlayProfile {
+                    project: self.definition.root().to_path_buf(),
+                    bridge,
+                    editor_endpoint,
+                    endpoint_token_file,
+                    release,
+                };
+            }
+            Action::Restart | Action::SaveAndRestart => {
+                if matches!(action, Action::SaveAndRestart) {
+                    self.apply(Action::Save)?;
+                }
+                self.apply(Action::Play)?;
+                self.restart_requested = true;
+            }
             Action::Play => {
                 if !self.definition.is_declared() {
                     return Err("loose content folders declare no game targets".into());
                 }
                 if self.definition.manifest.targets.client.is_none() {
                     return Err("project declares no client target".into());
+                }
+                if self.definition.manifest.targets.server.is_none() {
+                    return Err("project declares no server target".into());
                 }
                 if self.dirty() {
                     return Err("unsaved edits; save before playing".into());
@@ -167,6 +203,7 @@ impl Core {
                 self.play_error = None;
             }
             Action::Stop => {
+                self.restart_requested = false;
                 self.play_requested = Some(false);
                 self.play_error = None;
             }
@@ -370,7 +407,7 @@ impl Core {
             "authoring":self.adapter.as_ref().map(|a| a.inspect()),
             "project":self.project.root(), "manifest":self.definition.manifest, "dirty":self.dirty(), "objects":self.document.objects,
             "selected":self.selected,"inspected_asset":self.inspected_asset,"camera":self.camera,"camera_pan":self.camera_pan,"draws":scene.meshes.len(),"error":self.error,
-            "playing":self.playing,"play_requested":self.play_requested,"play_error":self.play_error,
+            "playing":self.playing,"play_requested":self.play_requested,"play_error":self.play_error,"play_profile":self.play_profile,"play_session":self.play_state,
             "imports":{"current":catalog.importing,"pending":catalog.assets.values().filter(|a| a.value.is_none() && a.error.is_none() && !a.missing).count(),"scans":catalog.scans,"attempts":catalog.imports,"notifications":catalog.notifications,"error":catalog.error},
             "assets":catalog.assets.values().map(|e| json!({"path":e.path,"revision":e.revision,"ready":e.value.is_some(),"missing":e.missing,"error":e.error})).collect::<Vec<_>>(),
             "command_results":self.queue.lock().unwrap().history()
@@ -464,7 +501,7 @@ mod tests {
         fs::create_dir(root.path().join("assets")).unwrap();
         fs::write(
             root.path().join("nico.project.toml"),
-            "version = 1\nname = 'Demo'\nasset_roots = ['assets']\ndefault_scene = 'assets/main.nico.json'\n[targets]\nclient = 'demo-client'\n",
+            "version = 1\nname = 'Demo'\nasset_roots = ['assets']\ndefault_scene = 'assets/main.nico.json'\n[targets]\nclient = 'demo-client'\nserver = 'demo-server'\n",
         )
         .unwrap();
         fs::write(
@@ -474,6 +511,34 @@ mod tests {
         .unwrap();
         root
     }
+    #[test]
+    fn arena_adapter_allows_play_for_its_saved_project() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../games/arena-arpg");
+        let mut registry = nico_authoring::Registry::default();
+        registry
+            .register(
+                arena_arpg_presentation::authoring::ADAPTER,
+                arena_arpg_presentation::authoring::open,
+            )
+            .unwrap();
+        let mut core = Core::with_adapters(
+            &root,
+            Arc::new(Mutex::new(crate::operations::Queue::new(32))),
+            Arc::new(Mutex::new(nico_ops::publication::Publication::default())),
+            &registry,
+        )
+        .unwrap();
+        assert!(core.adapter.is_some());
+        assert!(!core.dirty());
+        core.apply(Action::Play).unwrap();
+        assert_eq!(core.play_requested, Some(true));
+        assert_eq!(
+            core.definition.manifest.play.client_tool,
+            "world_client_state"
+        );
+        core.close();
+    }
+
     #[test]
     fn play_requires_a_declared_clean_project_and_requests_client_launch() {
         let queue = Arc::new(Mutex::new(crate::operations::Queue::new(32)));

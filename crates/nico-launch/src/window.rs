@@ -79,6 +79,7 @@ pub(crate) fn register(
             Err(e) => CallToolResult::structured_error(json!({"error":e})),
         }
     })?;
+    tools.set_access("window_state", nico_ops::mcp::ToolAccess::Inspect)?;
     Ok(tools)
 }
 

@@ -65,6 +65,7 @@ pub fn register(
         if !args.is_empty() { return CallToolResult::structured_error(json!({"error":{"code":"invalid_arguments","message":"scene_state takes no arguments"}})); }
         observed.lock().unwrap().json().map(CallToolResult::structured).unwrap_or_else(|| CallToolResult::structured_error(json!({"error":{"code":"not_ready","message":"scene has not been extracted"}})))
     })?;
+    tools.set_access("scene_state", nico_ops::mcp::ToolAccess::Inspect)?;
     builder.add_system(Stage::Startup, "scene::instantiate", move |ctx| {
         nico_scene::instantiate(&document, ctx.world).expect("validated scene");
         Ok(())

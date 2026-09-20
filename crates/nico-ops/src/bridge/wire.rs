@@ -8,7 +8,7 @@ use crate::{
     mcp::{CallToolResult, Map, Tool, Value},
 };
 
-pub(super) const VERSION: u32 = 1;
+pub(super) const VERSION: u32 = 2;
 pub(super) const MAX_FRAME: usize = 256 * 1024;
 pub(super) const MAX_TOOLS: usize = 64;
 pub(super) const QUEUE: usize = 32;
@@ -42,6 +42,7 @@ pub(super) enum Message {
         role: GameRole,
         api_version: String,
         pid: u32,
+        identity: crate::identity::DebugIdentity,
         tools: Vec<Tool>,
         status: HostStatus,
     },
@@ -57,6 +58,7 @@ pub(super) enum Message {
     Ping,
     Call {
         id: u64,
+        origin: super::access::CallOrigin,
         name: String,
         arguments: Map<String, Value>,
     },
@@ -75,6 +77,12 @@ pub(super) fn identifier(value: &str) -> bool {
 }
 
 pub(super) async fn read_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<Message> {
+    read_json(reader).await
+}
+
+pub(super) async fn read_json<R: AsyncBufRead + Unpin, T: serde::de::DeserializeOwned>(
+    reader: &mut R,
+) -> io::Result<T> {
     let mut line = Vec::new();
     loop {
         let buffer = reader.fill_buf().await?;
@@ -95,7 +103,8 @@ pub(super) async fn read_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> io:
         line.extend_from_slice(&buffer[..count]);
         reader.consume(count);
         if end.is_some() {
-            return serde_json::from_slice(&line).map_err(io::Error::other);
+            return serde_json::from_slice(&line)
+                .map_err(|_| io::Error::other("invalid bridge frame"));
         }
     }
 }
@@ -103,6 +112,13 @@ pub(super) async fn read_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> io:
 pub(super) async fn write_message<W: AsyncWrite + Unpin>(
     writer: &mut W,
     message: &Message,
+) -> io::Result<()> {
+    write_json(writer, message).await
+}
+
+pub(super) async fn write_json<W: AsyncWrite + Unpin, T: Serialize>(
+    writer: &mut W,
+    message: &T,
 ) -> io::Result<()> {
     let mut bytes = serde_json::to_vec(message).map_err(io::Error::other)?;
     bytes.push(b'\n');

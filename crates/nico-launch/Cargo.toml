@@ -6,11 +6,18 @@ license.workspace = true
 
 [features]
 default = []
-editor = ["client", "nico-winit/editor"]
+editor = ["client", "nico-winit/editor", "play"]
+play = ["dep:nico-scene", "dep:nico-ops", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:uuid"]
 server = ["dep:serde_json", "dep:nico-ops", "dep:nico-runtime"]
-client = ["dep:png","dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
+client = ["dep:base64", "dep:sha2", "dep:png","dep:serde_json", "dep:nico-ops", "dep:nico-runtime", "dep:nico-winit", "dep:nico-input"]
 
 [dependencies]
+nico-scene = { path = "../nico-scene", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+tempfile = { version = "3", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+base64 = { version = "0.22", optional = true }
+sha2 = { version = "0.10", optional = true }
 png = { version = "0.18", optional = true }
 clap.workspace = true
 nico-ops = { path = "../nico-ops", features = ["bridge"], optional = true }

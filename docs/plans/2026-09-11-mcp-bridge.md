@@ -64,6 +64,32 @@ Five stable tools work independently of dynamic refresh: `bridge_status`,
 `list_instances`, `instance_status`, `list_game_tools`, and `call_game_tool`. The last
 two provide original schemas and invocation through a fixed MCP catalog.
 
+### Per-instance catalog update (2026-09-19)
+
+This supersedes the shared-catalog restriction above. Each retained instance owns its
+registration's API version and tool definitions. Differing builds may connect at the
+same time; routing validates against the selected instance, never a newer registration.
+`list_game_tools` accepts optional `instance_id` for exact discovery. Without it, the
+result includes all retained variants, each with `instance_ids` and
+`connected_instances`. Unknown IDs fail instead of falling back to another instance.
+
+The bridge retains the latest catalog for each game/role after instance eviction.
+Instance-specific catalogs follow the existing 128-instance retention bound; the
+32-game/role cache bound and per-registration frame/tool bounds remain. Dynamic names
+are drawn from the latest catalog and exposed only when every connected instance of
+that game/role advertises the same definition. Ambiguous names require fixed
+`call_game_tool` invocation. Catalog retention is process-local.
+
+### Editor routing and wire revision update (2026-09-19)
+
+Game registration now uses wire version 2 to carry a trusted call origin to the host.
+The bridge can concurrently serve an authenticated editor endpoint; host-side grants
+control editor calls and release debug access. Both endpoints remain loopback-only.
+Version 1 registrations are rejected, so rebuild bridge and hosts together. The
+[editor RPC contract](2026-09-19-editor-debug-rpc.md) owns this new endpoint's protocol,
+authorization, release defaults, and validation limits. Existing development MCP
+routing and built-in tool names remain available.
+
 ## Status and call semantics
 
 - Registration connectivity and last-seen age are separate from the latest host

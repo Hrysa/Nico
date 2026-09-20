@@ -10,7 +10,7 @@ nico-net = { path = "../../../crates/nico-net" }
 nico-physics = { path = "../../../crates/nico-physics", default-features = false }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-arena-arpg-shared = { path = "../shared", features = ["tools", "network"] }
+arena-arpg-shared = { path = "../shared", features = ["tools", "network", "project"] }
 clap.workspace = true
 nico-assets = { path = "../../../crates/nico-assets", features = ["gltf-import", "png-import", "character"] }
 nico-animation = { path = "../../../crates/nico-animation" }

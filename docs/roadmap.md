@@ -752,12 +752,14 @@ retargeting quality features follow demonstrated needs. Concrete actions belong 
 
 **Result:** Developers and AI tools can reliably change content and test the game.
 
-**Selected editor direction (2026-09-18; implementation pending):** The
+**Selected editor direction (2026-09-18; implementation updated 2026-09-19):** The
 [editor/client boundary redesign](plans/2026-09-18-editor-client-boundary.md)
 uses separate game processes with a shared debug RPC contract for editor and AI
 operations, including explicitly enabled release-build remote debugging. Authoring
-state stays in the editor; runtime authority stays in clients/servers. Protocol,
-remote access, and migration details remain proposed and unimplemented.
+state stays in the editor; runtime authority stays in clients/servers. Attachment,
+inspection, bounded capture, and same-machine SSH forwarding are implemented;
+paired minimal-game and Arena world play profiles are implemented; encounter authoring remains
+unfinished.
 
 **Scope:** Reproducible imports, dependency diagnostics, selective rebuilds, and useful
 content reload form a documented authoring workflow. Reload failures have defined
@@ -855,7 +857,7 @@ left open after automated observation stopped. Capture and state were sampled
 separately. Workspace tests and Clippy with all features, formatting, and whitespace
 checks passed; ignored GPU/measurement tests remained disabled.
 
-**Editor play/stop (2026-09-18):** The editor can build and run a declared project's
+**Editor play/stop (2026-09-18; superseded by paired profiles below):** The editor can build and run a declared project's
 `[targets] client` with `cargo run -p NAME` and terminate that process tree. Launch is
 refused without a declared manifest, a client target, or a clean saved document, and
 the child runs from the Cargo workspace root. Process ownership stays in the editor
@@ -885,6 +887,70 @@ An isolated rebuilt Windows/Vulkan editor (GTX 1660, PID 38160, bridge instance
 99 objects, and no import errors. MCP stop was followed by process exit 0;
 the user's existing editor/server were left running. This was a startup/state check,
 not a rendered-capture or user-observed visual acceptance test.
+
+**Editor debug attachment (2026-09-19):** The bridge supports per-instance catalogs
+and a concurrent, authenticated loopback editor endpoint. Engine hosts enforce
+inspection/capture/mutation/stop grants and reread private policy files for revocation.
+Release hosts require explicit debug opt-in; local release MCP is inspection-only.
+The editor has an Attach / Inspect panel and matching queued automation with bounded
+reply retention and paged lookup. See the [RPC contract](plans/2026-09-19-editor-debug-rpc.md)
+for process/build identity, bounded entity/property inspection, capture transfer,
+and deployment limits.
+
+On macOS, workspace all-feature tests and strict all-target/all-feature Clippy passed.
+The isolated release-server smoke test passed disabled defaults, explicit opt-in,
+inspection, denied stop, host revocation, detach survival, bridge restart with a new
+instance ID, stale-ID rejection, diagnostics, authorized stop/exit 0, and log credential
+redaction. Test-owned processes were cleaned up. This is headless process evidence;
+native editor/client and tunnel evidence follows.
+
+On macOS/Metal (Apple M4), editor PID 40276 stayed open while attaching to an opted-in
+release client, inspecting a pinned entity snapshot, and detaching without stopping
+it (presentations advanced 171 to 190). After a compatible client rebuild changed its
+executable fingerprint, the same editor attached to replacement PID 40307. Captures
+from that editor and both clients were inspected, showing the attach/entity panel and
+the minimal textured sample/HUD. Capture and state samples are separate; no physical
+UI or user-observed acceptance is claimed. Authorized stop was followed by exit 0 for
+all test-owned hosts. The [RPC evidence](plans/2026-09-19-editor-debug-rpc.md#validation-evidence-2026-09-19-macos)
+records exact instances and retained artifacts.
+
+Authenticated OpenSSH forwarding also passed with independently running release client
+and server on the same Mac: wrong-key rejection, host revocation, diagnostics, tunnel
+loss without host shutdown, reconnect, and bounded capture download with independently
+verified SHA-256. The editor/client GPU captures were inspected. Evidence is retained
+in `target/editor-attach-ssh/evidence.json`; exact process/frame identities and limits
+are recorded in the RPC contract. Separate-machine/WAN deployment and user-observed
+acceptance are unverified.
+
+**Paired play profiles (2026-09-19):** The editor now uses an engine-owned worker to
+snapshot saved content, build and directly launch a minimal-game server/client pair,
+verify matching revisions and readiness, and clean up only its owned children.
+Save/restart, isolated disposable server progress, partial startup/build failure,
+bridge reconnect survival, fallback termination after endpoint revocation, and
+editor-exit cleanup passed native macOS/Metal validation. An unrelated server stayed
+alive throughout. The inspected captures show the profile panel and authored cube;
+state and captures were sampled separately. The minimal hosts remain separate
+simulations, and Windows is unverified. Workspace all-feature tests passed. The
+[profile contract and evidence](plans/2026-09-19-editor-play-profiles.md#validation)
+record scope, bounds, and exact tested identities. Arena Play now also passes native
+macOS/Metal validation: the saved adapter project launches a server on its own port,
+connects its client, verifies content identity, and cleans up its isolated session.
+The engine uses manifest-declared arguments/readiness tools. Inspected captures show
+Meadow and the connected HUD; this establishes rendering, not smoothness or user
+acceptance. Encounter authoring remains unfinished; phase 8 is not complete.
+
+**Idle editor CPU (2026-09-19, macOS/Metal, Apple M4):** The development build with
+the Arena project previously used 15.57 CPU seconds over a 15.005-second idle sample
+(103.8%, PID 46160). Reusing unchanged viewport pixels and waiting between idle UI
+frames reduced this to 0.99 CPU seconds over 15.005 seconds (6.6%, PID 46391).
+These are OS process CPU-time deltas after loading and five seconds of warm-up,
+not scope timings or a CPU profile. Successful UI presentations fell from 818 to
+141 during those samples; the authored scene contained 225 draws. Both isolated
+editors accepted the same MCP camera command and produced identical PNG hashes;
+the captures were inspected, and both test windows exited through MCP stop.
+Evidence is retained in `target/editor-idle-evidence/{before,after}.json` and PNGs.
+Editor/native-host tests, formatting, and strict workspace Clippy passed. This
+validates idle behavior on this machine, not gameplay performance or Windows.
 
 ## 9. Validate performance
 

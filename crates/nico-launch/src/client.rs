@@ -13,8 +13,10 @@ use nico_winit::{
 };
 use std::{io, net::SocketAddr};
 
-#[derive(Args, Clone, Copy, Debug, Default)]
+#[derive(Args, Clone, Debug, Default)]
 pub struct ClientArgs {
+    #[command(flatten)]
+    pub debug: crate::DebugArgs,
     /// Open without requesting foreground focus.
     #[arg(long)]
     pub background: bool,
@@ -33,20 +35,14 @@ pub struct ClientArgs {
 impl ClientArgs {
     /// Effective address; absence of a bridge never prevents game execution.
     pub fn bridge_address(&self) -> Option<SocketAddr> {
-        if self.no_bridge {
-            None
-        } else {
-            Some(
-                self.bridge
-                    .unwrap_or_else(|| nico_ops::bridge::DEFAULT_ADDRESS.parse().unwrap()),
-            )
-        }
+        self.debug.address(self.bridge, self.no_bridge)
     }
 }
 
 pub struct ClientHost {
     args: ClientArgs,
     identity: Option<(String, String)>,
+    content_revision: Option<String>,
     tools: ToolExtensions,
 }
 
@@ -68,7 +64,11 @@ impl ClientHost {
                 .ok_or_else(|| io::Error::other("bridge mode requires an editor identity"))?;
             Some(BridgeClient::start(
                 address,
-                GameRegistration::new(game, GameRole::Client, version),
+                GameRegistration {
+                    access: self.args.debug.access(),
+                    content_revision: self.content_revision,
+                    ..GameRegistration::new(game, GameRole::Client, version)
+                },
                 control,
                 tools,
             )?)
@@ -89,8 +89,15 @@ impl ClientHost {
         Self {
             args,
             identity: None,
+            content_revision: None,
             tools: ToolExtensions::default(),
         }
+    }
+    /// Supply a revision of the content actually loaded; never a path or planned revision.
+    #[must_use]
+    pub fn with_content_revision(mut self, revision: impl Into<String>) -> Self {
+        self.content_revision = Some(revision.into());
+        self
     }
     #[must_use]
     pub fn with_game_identity(
@@ -132,7 +139,11 @@ impl ClientHost {
         let tools = crate::window::register(tools, control.clone())?;
         let _bridge = BridgeClient::start(
             address,
-            GameRegistration::new(game, GameRole::Client, version),
+            GameRegistration {
+                access: self.args.debug.access(),
+                content_revision: self.content_revision,
+                ..GameRegistration::new(game, GameRole::Client, version)
+            },
             control,
             crate::diagnostics::register(tools)?,
         )?;
@@ -161,14 +172,16 @@ mod tests {
                 .background
         );
         assert_eq!(
-            defaults.bridge_address().unwrap().to_string(),
-            nico_ops::bridge::DEFAULT_ADDRESS
+            defaults.bridge_address().map(|address| address.to_string()),
+            cfg!(debug_assertions).then(|| nico_ops::bridge::DEFAULT_ADDRESS.to_owned())
         );
         assert_eq!(
             defaults.bridge_address(),
             ClientArgs::default().bridge_address()
         );
-        let custom = TestArgs::parse_from(["client", "--bridge", "127.0.0.1:48000"]).client;
+        let custom =
+            TestArgs::parse_from(["client", "--enable-debug", "--bridge", "127.0.0.1:48000"])
+                .client;
         assert_eq!(custom.bridge_address().unwrap().port(), 48000);
         assert!(
             TestArgs::parse_from(["client", "--no-bridge"])

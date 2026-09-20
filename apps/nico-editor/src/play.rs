@@ -1,125 +1,151 @@
-//! Editor-owned client launch. The headless runtime never sees a child process;
-//! the editor reconciles this session at its update boundary.
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-    process::{Child, Command},
-};
+//! UI composition of the engine-owned play worker; no child processes live here.
+use crate::{core::Core, operations::Action};
+use nico_launch::play::{PlayProfile, PlaySession as Worker};
+use serde_json::{Value, json};
 
 #[derive(Default)]
 pub struct PlaySession {
-    child: Option<Child>,
+    worker: Option<Worker>,
+    restart: Option<PlayProfile>,
+    panel: bool,
+    bridge: String,
+    endpoint: String,
+    token_file: String,
+    release: bool,
+    error: Option<String>,
 }
-
 impl PlaySession {
-    pub fn start(&mut self, game_root: &Path, target: &str) -> io::Result<()> {
-        if self.poll() {
-            return Ok(());
-        }
-        let mut command = Command::new("cargo");
-        command
-            .args(["run", "-p", target])
-            .current_dir(working_directory(game_root));
-        self.spawn(&mut command)
-    }
-    pub fn stop(&mut self) -> io::Result<()> {
-        let Some(mut child) = self.child.take() else {
-            return Ok(());
-        };
-        let result = terminate(&mut child);
-        let _ = child.wait();
-        result
-    }
-    pub fn poll(&mut self) -> bool {
-        let Some(child) = &mut self.child else {
-            return false;
-        };
-        match child.try_wait() {
-            Ok(Some(_)) | Err(_) => {
-                self.child = None;
-                false
+    pub fn update(&mut self, core: &mut Core) {
+        if let Some(start) = core.play_requested.take() {
+            self.error = None;
+            if start {
+                self.panel = true;
+                self.bridge = core.play_profile.bridge.to_string();
+                self.endpoint = core.play_profile.editor_endpoint.to_string();
+                self.token_file = core.play_profile.endpoint_token_file.display().to_string();
+                self.release = core.play_profile.release;
+                if core.restart_requested {
+                    core.restart_requested = false;
+                    self.restart = Some(core.play_profile.clone());
+                    if let Some(worker) = &self.worker {
+                        worker.stop();
+                    }
+                } else if let Err(error) = self.start(core.play_profile.clone()) {
+                    self.error = Some(error.to_string());
+                }
+            } else {
+                self.restart = None;
+                if let Some(worker) = &self.worker {
+                    worker.stop();
+                }
             }
-            Ok(None) => true,
         }
+        let state = self.snapshot();
+        if state["active"] != true
+            && let Some(profile) = self.restart.take()
+            && let Err(error) = self.start(profile)
+        {
+            self.error = Some(error.to_string());
+        }
+        core.play_state = self.snapshot();
+        core.playing = core.play_state["active"] == true || self.restart.is_some();
+        core.play_error = self
+            .error
+            .clone()
+            .or_else(|| core.play_state["error"].as_str().map(str::to_owned));
     }
-    fn spawn(&mut self, command: &mut Command) -> io::Result<()> {
-        if self.poll() {
-            return Ok(());
+    fn start(&mut self, profile: PlayProfile) -> std::io::Result<()> {
+        if self.worker.is_none() {
+            self.worker = Some(Worker::new()?);
         }
-        self.child = Some(command.spawn()?);
+        self.worker.as_ref().unwrap().start(profile)?;
         Ok(())
     }
-}
-
-/// Game clients resolve shader and content defaults from the Cargo workspace root.
-fn working_directory(game_root: &Path) -> PathBuf {
-    game_root
-        .ancestors()
-        .find(|directory| {
-            fs::read_to_string(directory.join("Cargo.toml"))
-                .is_ok_and(|manifest| manifest.contains("[workspace]"))
-        })
-        .map_or_else(|| game_root.to_path_buf(), Path::to_path_buf)
-}
-
-#[cfg(windows)]
-fn terminate(child: &mut Child) -> io::Result<()> {
-    use std::process::Stdio;
-    let status = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        child.kill()
+    fn snapshot(&self) -> Value {
+        self.worker
+            .as_ref()
+            .map_or_else(|| json!({"phase":"idle","active":false}), Worker::snapshot)
     }
-}
-
-#[cfg(not(windows))]
-fn terminate(child: &mut Child) -> io::Result<()> {
-    child.kill()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-    #[test]
-    fn play_session_starts_and_stops_a_child_process() {
-        let mut session = PlaySession::default();
-        let mut command = if cfg!(windows) {
-            let mut command = Command::new("cmd");
-            command.args(["/C", "ping -n 30 127.0.0.1 > NUL"]);
-            command
-        } else {
-            let mut command = Command::new("sleep");
-            command.arg("30");
-            command
-        };
-        session.spawn(&mut command).unwrap();
-        assert!(session.poll());
-        session.stop().unwrap();
-        assert!(!session.poll());
-        assert!(session.stop().is_ok());
+    pub fn shutdown(&mut self) {
+        self.restart = None;
+        if let Some(worker) = &mut self.worker {
+            worker.shutdown();
+        }
     }
-    #[test]
-    fn working_directory_prefers_the_enclosing_workspace_root() {
-        let root = tempfile::tempdir().unwrap();
-        let workspace = root.path().join("outer");
-        let game = workspace.join("games").join("demo");
-        fs::create_dir_all(&game).unwrap();
-        fs::write(workspace.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-        fs::write(game.join("Cargo.toml"), "[package]\nname = 'demo'\n").unwrap();
-        assert_eq!(working_directory(&game), workspace);
-    }
-    #[test]
-    fn working_directory_falls_back_to_the_game_root() {
-        let root = tempfile::tempdir().unwrap();
-        let game = root.path().join("game");
-        fs::create_dir_all(&game).unwrap();
-        fs::write(game.join("Cargo.toml"), "[package]\nname = 'demo'\n").unwrap();
-        assert_eq!(working_directory(&game), game);
+    pub fn ui(&mut self, ui: &mut egui::Ui, core: &Core) {
+        if ui.button("Play profile").clicked() {
+            self.panel = true;
+            self.bridge = core.play_profile.bridge.to_string();
+            self.endpoint = core.play_profile.editor_endpoint.to_string();
+            self.token_file = core.play_profile.endpoint_token_file.display().to_string();
+            self.release = core.play_profile.release;
+        }
+        egui::Window::new("Client / Server Play")
+            .open(&mut self.panel)
+            .show(ui.ctx(), |ui| {
+                ui.label(format!(
+                    "{} • client/server profile",
+                    core.definition.manifest.name
+                ));
+                ui.add_enabled_ui(!core.playing, |ui| {
+                    ui.label("Game registration endpoint");
+                    ui.text_edit_singleline(&mut self.bridge);
+                    ui.label("Editor RPC endpoint");
+                    ui.text_edit_singleline(&mut self.endpoint);
+                    ui.label("Endpoint token file");
+                    ui.text_edit_singleline(&mut self.token_file);
+                    ui.checkbox(&mut self.release, "Release build");
+                    if ui.button("Apply profile").clicked() {
+                        match (self.bridge.parse(), self.endpoint.parse()) {
+                            (Ok(bridge), Ok(editor_endpoint)) => {
+                                let action = Action::ConfigurePlay {
+                                    bridge,
+                                    editor_endpoint,
+                                    endpoint_token_file: self.token_file.clone().into(),
+                                    release: self.release,
+                                };
+                                let _ = core.queue.lock().unwrap().submit(|id| (id, action));
+                                self.error = None;
+                            }
+                            _ => self.error = Some("Enter valid endpoint addresses".into()),
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    for (label, action) in [
+                        ("Restart saved", Action::Restart),
+                        ("Save and restart", Action::SaveAndRestart),
+                    ] {
+                        if ui.button(label).clicked() {
+                            let _ = core.queue.lock().unwrap().submit(|id| (id, action));
+                        }
+                    }
+                });
+                ui.label(format!(
+                    "Phase: {}",
+                    core.play_state["phase"].as_str().unwrap_or("idle")
+                ));
+                for role in ["server", "client"] {
+                    let host = &core.play_state[role];
+                    if host.is_object() {
+                        ui.label(format!(
+                            "{role}: PID {} • connected {} • ready {}",
+                            host["pid"], host["connected"], host["ready"]
+                        ));
+                        if let Some(id) = host["instance_id"].as_str() {
+                            ui.monospace(id);
+                        }
+                    }
+                }
+                for field in ["content_revision", "server_data"] {
+                    if let Some(value) = core.play_state[field].as_str() {
+                        ui.label(field);
+                        ui.monospace(value);
+                    }
+                }
+                if let Some(error) = &core.play_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+            });
     }
 }

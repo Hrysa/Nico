@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct Pixels {
+    /// Zero-based host session frame whose render target was copied.
+    /// This is not a simulation tick or a GPU/display completion counter.
+    pub frame_id: u64,
     pub width: u32,
     pub height: u32,
     /// Top-to-bottom RGBA8 color bytes from the render target.
@@ -108,6 +111,7 @@ mod tests {
         endpoint.snapshots().complete(
             id,
             Ok(Pixels {
+                frame_id: 7,
                 width: 1,
                 height: 1,
                 rgba: vec![1, 2, 3, 255],

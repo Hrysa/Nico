@@ -37,19 +37,22 @@ const MAX_CATALOGS: usize = 32;
 const MAX_INSTANCES: usize = 128;
 type CatalogKey = (String, GameRole);
 
+#[derive(Clone, PartialEq)]
 struct Catalog {
     version: String,
     tools: Vec<Tool>,
 }
 struct Command {
+    origin: super::access::CallOrigin,
     name: String,
     arguments: Map<String, Value>,
     reply: oneshot::Sender<CallToolResult>,
 }
 struct Instance {
     key: CatalogKey,
-    version: String,
+    catalog: Catalog,
     pid: u32,
+    identity: crate::identity::DebugIdentity,
     status: HostStatus,
     last_seen: Instant,
     sender: Option<mpsc::Sender<Command>>,
@@ -83,6 +86,7 @@ impl Registry {
             role,
             api_version,
             pid,
+            identity,
             tools,
             status,
         } = hello
@@ -92,7 +96,8 @@ impl Registry {
         if protocol != wire::VERSION {
             return Err(io::Error::other("unsupported protocol version"));
         }
-        if !wire::identifier(&game)
+        if !identity.valid()
+            || !wire::identifier(&game)
             || !wire::identifier(&api_version)
             || tools.len() > wire::MAX_TOOLS
         {
@@ -109,18 +114,6 @@ impl Registry {
         let key = (game, role);
         if !self.catalogs.contains_key(&key) && self.catalogs.len() >= MAX_CATALOGS {
             return Err(io::Error::other("bridge catalog capacity reached"));
-        }
-        if self
-            .instances
-            .values()
-            .any(|instance| instance.key == key && instance.sender.is_some())
-        {
-            let existing = &self.catalogs[&key];
-            if existing.version != api_version || existing.tools != tools {
-                return Err(io::Error::other(
-                    "API conflicts with a connected instance of the same game and role",
-                ));
-            }
         }
         if self.instances.len() >= MAX_INSTANCES {
             let oldest = self
@@ -141,15 +134,19 @@ impl Registry {
             key.clone(),
             Catalog {
                 version: api_version.clone(),
-                tools,
+                tools: tools.clone(),
             },
         );
         self.instances.insert(
             id.clone(),
             Instance {
                 key,
-                version: api_version,
+                catalog: Catalog {
+                    version: api_version,
+                    tools,
+                },
                 pid,
+                identity,
                 status,
                 last_seen: Instant::now(),
                 sender: Some(sender),
@@ -162,7 +159,7 @@ impl Registry {
     fn snapshot(&self, id: &str) -> Option<Value> {
         self.instances.get(id).map(|instance| json!({
             "instance_id": id, "game": instance.key.0, "role": instance.key.1,
-            "api_version": instance.version, "pid": instance.pid,
+            "api_version": instance.catalog.version, "pid": instance.pid, "identity":instance.identity,
             "connected": instance.sender.is_some(), "last_seen_ms": instance.last_seen.elapsed().as_millis() as u64,
             "host": instance.status, "ready": instance.sender.is_some() && instance.status.is_ready(),
             "disconnect_reason": instance.disconnect_reason,
@@ -170,7 +167,9 @@ impl Registry {
     }
 
     fn dynamic_tools(&self) -> Vec<Tool> {
-        self.catalogs.iter().flat_map(|((game, role), catalog)| catalog.tools.iter().map(move |tool| {
+        self.catalogs.iter().flat_map(|((game, role), catalog)| catalog.tools.iter().filter(move |tool| {
+            self.instances.values().filter(|instance| instance.key == (game.clone(), *role) && instance.sender.is_some()).all(|instance| instance.catalog.tools.iter().find(|candidate| candidate.name == tool.name) == Some(*tool))
+        }).map(move |tool| {
             let mut exposed = tool.clone();
             exposed.name = tool_name(game, *role, &tool.name).into();
             exposed.description = Some(format!("{} [{} {} API {}]. Requires a connected instance. Game arguments use the advertised schema; list_game_tools returns the original definition.", tool.description.as_deref().unwrap_or("Game operation"), game, role.name(), catalog.version).into());
@@ -199,11 +198,10 @@ impl Registry {
                 "tool belongs to another game or role",
             ));
         }
-        if !self.catalogs[&instance.key]
-            .tools
-            .iter()
-            .any(|tool| tool.name == name)
-        {
+        if instance.sender.is_none() {
+            return Err(failure("instance_unavailable", "game is disconnected"));
+        }
+        if !instance.catalog.tools.iter().any(|tool| tool.name == name) {
             return Err(failure("unknown_tool", "tool is not registered"));
         }
         instance
@@ -216,26 +214,55 @@ impl Registry {
 fn tool_name(game: &str, role: GameRole, name: &str) -> String {
     format!("{game}.{}.{name}", role.name())
 }
-fn failure(code: &str, message: &str) -> CallToolResult {
+pub(super) fn failure(code: &str, message: &str) -> CallToolResult {
     CallToolResult::structured_error(json!({"error":{"code":code,"message":message}}))
 }
 
 #[derive(Clone)]
-struct Bridge {
+pub(super) struct Bridge {
     registry: Arc<Mutex<Registry>>,
     revision: watch::Sender<u64>,
 }
 
 impl Bridge {
+    pub(super) fn identity(&self, id: &str) -> Option<crate::identity::DebugIdentity> {
+        self.registry
+            .lock()
+            .unwrap()
+            .instances
+            .get(id)
+            .map(|instance| instance.identity.clone())
+    }
+
+    pub(super) fn compatible(&self, id: &str, api_version: &str) -> bool {
+        self.registry
+            .lock()
+            .unwrap()
+            .instances
+            .get(id)
+            .is_some_and(|instance| {
+                instance.sender.is_some() && instance.catalog.version == api_version
+            })
+    }
     fn changed(&self) {
         self.revision
             .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
-    async fn invoke(&self, request: CallToolRequestParams) -> CallToolResult {
+    pub(super) async fn invoke(&self, request: CallToolRequestParams) -> CallToolResult {
+        self.invoke_as(request, super::access::CallOrigin::Local)
+            .await
+    }
+
+    pub(super) async fn invoke_as(
+        &self,
+        request: CallToolRequestParams,
+        origin: super::access::CallOrigin,
+    ) -> CallToolResult {
         let args = request.arguments.unwrap_or_default();
         let allowed: &[&str] = match request.name.as_ref() {
-            "bridge_status" | "list_instances" | "list_game_tools" => &[],
+            "bridge_status" | "list_instances" => &[],
+            "list_game_tools" => &["instance_id"],
             "instance_status" => &["instance_id"],
             "call_game_tool" => &["instance_id", "tool_name", "arguments"],
             _ => &["instance_id", "arguments"],
@@ -243,7 +270,8 @@ impl Bridge {
         if args.keys().any(|key| !allowed.contains(&key.as_str())) {
             return failure("invalid_arguments", "unexpected argument");
         }
-        if allowed.contains(&"instance_id")
+        if request.name != "list_game_tools"
+            && allowed.contains(&"instance_id")
             && args.get("instance_id").and_then(Value::as_str).is_none()
         {
             return failure("invalid_arguments", "instance_id string required");
@@ -274,12 +302,46 @@ impl Bridge {
             }
             "list_game_tools" => {
                 let registry = self.registry.lock().unwrap();
-                return CallToolResult::structured(
-                    json!({"catalogs":registry.catalogs.iter().map(|((game,role), catalog)| json!({
-                    "game":game,"role":role,"api_version":catalog.version,"tools":catalog.tools,
-                    "connected_instances":registry.instances.iter().filter(|(_, instance)| instance.key == (game.clone(), *role) && instance.sender.is_some()).map(|(id,_)|id).collect::<Vec<_>>()
-                })).collect::<Vec<_>>()}),
-                );
+                if let Some(id) = args.get("instance_id") {
+                    let Some(id) = id.as_str() else {
+                        return failure("invalid_arguments", "instance_id must be a string");
+                    };
+                    let Some(instance) = registry.instances.get(id) else {
+                        return failure("instance_unavailable", "unknown or expired instance ID");
+                    };
+                    return CallToolResult::structured(json!({"catalogs":[{
+                        "game":instance.key.0,"role":instance.key.1,
+                        "api_version":instance.catalog.version,"tools":instance.catalog.tools,
+                        "instance_ids":[id],
+                        "connected_instances":if instance.sender.is_some() { vec![id] } else { vec![] }
+                    }]}));
+                }
+                let mut catalogs = Vec::new();
+                for (key, latest) in &registry.catalogs {
+                    let mut variants = vec![latest];
+                    for instance in registry
+                        .instances
+                        .values()
+                        .filter(|instance| &instance.key == key)
+                    {
+                        if !variants.contains(&&instance.catalog) {
+                            variants.push(&instance.catalog);
+                        }
+                    }
+                    for catalog in variants {
+                        let matching = || {
+                            registry.instances.iter().filter(|(_, instance)| {
+                                &instance.key == key && &instance.catalog == catalog
+                            })
+                        };
+                        catalogs.push(json!({
+                            "game":key.0,"role":key.1,"api_version":catalog.version,"tools":catalog.tools,
+                            "instance_ids":matching().map(|(id,_)|id).collect::<Vec<_>>(),
+                            "connected_instances":matching().filter(|(_,instance)|instance.sender.is_some()).map(|(id,_)|id).collect::<Vec<_>>()
+                        }));
+                    }
+                }
+                return CallToolResult::structured(json!({"catalogs":catalogs}));
             }
             _ => {}
         }
@@ -300,6 +362,16 @@ impl Bridge {
                     .route(id, name, None)
                     .map(|sender| (sender, name.to_owned()))
             } else {
+                if !registry
+                    .dynamic_tools()
+                    .iter()
+                    .any(|tool| tool.name == request.name)
+                {
+                    return failure(
+                        "unknown_tool",
+                        "tool schema is unavailable or differs across instances; use list_game_tools and call_game_tool",
+                    );
+                }
                 let entry = registry.catalogs.iter().find_map(|(key, catalog)| {
                     catalog
                         .tools
@@ -324,6 +396,7 @@ impl Bridge {
         };
         let (reply, response) = oneshot::channel();
         if let Err(error) = sender.try_send(Command {
+            origin,
             name,
             arguments,
             reply,
@@ -399,7 +472,7 @@ fn management_tools() -> Vec<Tool> {
         ("bridge_status", "Read bridge connectivity and schema-cache counts. Never launches games.", json!({}), json!([])),
         ("list_instances", "List connected and retained disconnected game instances with reported host state and snapshot age.", json!({}), json!([])),
         ("instance_status", "Read cached status for one instance. connected and ready are distinct; this does not prove process exit or window activity.", json!({"instance_id":{"type":"string"}}), json!(["instance_id"])),
-        ("list_game_tools", "Discover cached game API descriptions and original input/output schemas, including offline games.", json!({}), json!([])),
+        ("list_game_tools", "Discover exact per-instance tool schemas, including retained offline instances. Optionally select instance_id; catalogs may differ for the same game and role.", json!({"instance_id":{"type":"string"}}), json!([])),
         ("call_game_tool", "Invoke a registered game tool by instance ID, original tool_name and arguments. Discover schemas with list_game_tools first. Mutations may execute even if the call times out.", json!({"instance_id":{"type":"string"},"tool_name":{"type":"string"},"arguments":{"type":"object"}}), json!(["instance_id","tool_name","arguments"])),
     ].into_iter().map(|(name, description, properties, required)| {
         Tool::new(name, description, json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}).as_object().unwrap().clone())
@@ -452,7 +525,7 @@ async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
                         continue;
                     }
                     next_id += 1;
-                    wire::write_message(&mut writer, &Message::Call {id:next_id,name:command.name,arguments:command.arguments}).await?;
+                    wire::write_message(&mut writer, &Message::Call {id:next_id,origin:command.origin,name:command.name,arguments:command.arguments}).await?;
                     pending.insert(next_id, command.reply);
                 }
                 message = incoming.recv() => {
@@ -492,7 +565,18 @@ async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
 /// Serves Codex on stdio and accepts independently launched games on loopback TCP.
 /// No game processes are spawned, terminated, or stopped on MCP disconnect.
 pub fn serve_stdio(address: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync>> {
+    serve_stdio_with_editor(address, None)
+}
+
+/// Serves local MCP and an optional authenticated editor endpoint concurrently.
+pub fn serve_stdio_with_editor(
+    address: SocketAddr,
+    editor: Option<super::editor::EditorEndpoint>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     check_address(address)?;
+    if let Some(endpoint) = &editor {
+        check_address(endpoint.address)?;
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -503,6 +587,37 @@ pub fn serve_stdio(address: SocketAddr) -> Result<(), Box<dyn Error + Send + Syn
         let bridge = Bridge {
             registry: Arc::new(Mutex::new(Registry::new())),
             revision,
+        };
+        let editor_accepting = if let Some(endpoint) = editor {
+            let listener = TcpListener::bind(endpoint.address).await?;
+            let editor_bridge = bridge.clone();
+            let session_prefix = bridge.registry.lock().unwrap().session.clone();
+            Some(tokio::spawn(async move {
+                let slots = Arc::new(Semaphore::new(8));
+                let mut next_session = 0_u64;
+                loop {
+                    let (stream, _) = listener.accept().await?;
+                    let Ok(slot) = slots.clone().try_acquire_owned() else {
+                        continue;
+                    };
+                    next_session = next_session
+                        .checked_add(1)
+                        .ok_or_else(|| io::Error::other("editor session IDs exhausted"))?;
+                    let session = format!("{session_prefix}-editor-{next_session}");
+                    let bridge = editor_bridge.clone();
+                    let endpoint = endpoint.clone();
+                    tokio::spawn(async move {
+                        let _slot = slot;
+                        // No request or credential content is logged on failure.
+                        let _ =
+                            super::editor::serve_editor(stream, bridge, endpoint, session).await;
+                    });
+                }
+                #[allow(unreachable_code)]
+                Ok::<(), io::Error>(())
+            }))
+        } else {
+            None
         };
         let accept_bridge = bridge.clone();
         let accepting = tokio::spawn(async move {
@@ -527,6 +642,9 @@ pub fn serve_stdio(address: SocketAddr) -> Result<(), Box<dyn Error + Send + Syn
         let service = bridge.serve(rmcp::transport::stdio()).await?;
         let result = service.waiting().await;
         accepting.abort();
+        if let Some(task) = editor_accepting {
+            task.abort();
+        }
         result?;
         Ok(())
     });
@@ -547,6 +665,11 @@ mod tests {
             role,
             api_version: "1".into(),
             pid: 123,
+            identity: crate::identity::DebugIdentity {
+                process_session: crate::identity::process_session_id().into(),
+                build_id: "a".repeat(64),
+                content_revision: None,
+            },
             tools: names
                 .iter()
                 .map(|name| {
@@ -579,20 +702,247 @@ mod tests {
             .to_owned()
     }
 
+    #[tokio::test]
+    async fn editor_endpoint_authenticates_attaches_revokes_and_never_owns_host_lifecycle() {
+        use super::super::{
+            BridgeClient, DebugAccess, EditorConnection, EditorEndpoint, EditorRequest,
+            GameRegistration,
+        };
+        use crate::mcp::{ToolAccess, ToolExtensions};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint_file = dir.path().join("endpoint-token");
+        let policy_file = dir.path().join("host-policy.json");
+        let endpoint_token = "a".repeat(64);
+        let host_token = "b".repeat(64);
+        std::fs::write(&endpoint_file, &endpoint_token).unwrap();
+        std::fs::write(
+            &policy_file,
+            json!({"grants":[{"credential":host_token}]}).to_string(),
+        )
+        .unwrap();
+        let bridge = bridge();
+        let game_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let game_address = game_listener.local_addr().unwrap();
+        let game_bridge = bridge.clone();
+        let game_task = tokio::spawn(async move {
+            let (stream, _) = game_listener.accept().await.unwrap();
+            serve_game(stream, game_bridge).await
+        });
+        let (control, _host_endpoint) = control_channel();
+        let mutations = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolExtensions::default();
+        tools
+            .register(Tool::new("inspect", "owned inspection", Map::new()), |_| {
+                CallToolResult::structured(json!({"revision":7}))
+            })
+            .unwrap();
+        tools.set_access("inspect", ToolAccess::Inspect).unwrap();
+        let count = mutations.clone();
+        tools
+            .register(Tool::new("mutate", "mutation", Map::new()), move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                CallToolResult::structured(json!({"accepted":true}))
+            })
+            .unwrap();
+        let registration = GameRegistration {
+            access: DebugAccess::for_build(false).with_policy_file(policy_file.clone()),
+            ..GameRegistration::new("demo", GameRole::Server, "1")
+        };
+        let host = BridgeClient::start(game_address, registration, control.clone(), tools).unwrap();
+        let id = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if let Some(id) = bridge
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .instances
+                    .keys()
+                    .next()
+                    .cloned()
+                {
+                    break id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let editor_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let editor_address = editor_listener.local_addr().unwrap();
+        let endpoint = EditorEndpoint {
+            address: editor_address,
+            token_file: endpoint_file.clone(),
+        };
+        let editor_bridge = bridge.clone();
+        let editor_task = tokio::spawn(async move {
+            for index in 0..3 {
+                let (stream, _) = editor_listener.accept().await.unwrap();
+                let bridge = editor_bridge.clone();
+                let endpoint = endpoint.clone();
+                tokio::spawn(async move {
+                    super::super::editor::serve_editor(
+                        stream,
+                        bridge,
+                        endpoint,
+                        format!("test-{index}"),
+                    )
+                    .await
+                });
+            }
+        });
+        let observation = control.clone();
+        tokio::task::spawn_blocking(move || {
+            use std::io::{BufRead, Write};
+            let mut unsupported = std::net::TcpStream::connect(editor_address).unwrap();
+            unsupported
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            writeln!(
+                unsupported,
+                "{}",
+                json!({"protocol":99,"token":endpoint_token})
+            )
+            .unwrap();
+            let mut response = String::new();
+            std::io::BufReader::new(unsupported)
+                .read_line(&mut response)
+                .unwrap();
+            assert_eq!(
+                error_code(serde_json::from_str(&response).unwrap()),
+                "authentication_failed"
+            );
+            assert!(EditorConnection::connect(editor_address, "c".repeat(64)).is_err());
+            let mut editor = EditorConnection::connect(editor_address, endpoint_token).unwrap();
+            assert_eq!(
+                editor
+                    .request(&EditorRequest::List)
+                    .unwrap()
+                    .structured_content
+                    .unwrap()["instances"][0]["instance_id"],
+                id
+            );
+            assert_eq!(
+                error_code(
+                    editor
+                        .request(&EditorRequest::Attach {
+                            instance_id: id.clone(),
+                            api_version: "2".into(),
+                            credential: host_token.clone()
+                        })
+                        .unwrap()
+                ),
+                "incompatible_instance"
+            );
+            assert_eq!(
+                error_code(
+                    editor
+                        .request(&EditorRequest::Attach {
+                            instance_id: id.clone(),
+                            api_version: "1".into(),
+                            credential: "c".repeat(64)
+                        })
+                        .unwrap()
+                ),
+                "access_denied"
+            );
+            let attach = || EditorRequest::Attach {
+                instance_id: id.clone(),
+                api_version: "1".into(),
+                credential: host_token.clone(),
+            };
+            assert_ne!(editor.request(&attach()).unwrap().is_error, Some(true));
+            assert_ne!(
+                editor.request(&EditorRequest::Catalog).unwrap().is_error,
+                Some(true)
+            );
+            let invoke = |name: &str| EditorRequest::Call {
+                tool_name: name.into(),
+                arguments: Map::new(),
+            };
+            assert_eq!(
+                editor
+                    .request(&invoke("inspect"))
+                    .unwrap()
+                    .structured_content
+                    .unwrap()["revision"],
+                7
+            );
+            for name in ["mutate", "stop"] {
+                assert_eq!(
+                    error_code(editor.request(&invoke(name)).unwrap()),
+                    "access_denied"
+                );
+            }
+            assert_eq!(mutations.load(Ordering::SeqCst), 0);
+            std::fs::write(
+                &policy_file,
+                json!({"grants":[{"credential":host_token,"permissions":["inspect","mutate"]}]})
+                    .to_string(),
+            )
+            .unwrap();
+            assert_ne!(
+                editor.request(&invoke("mutate")).unwrap().is_error,
+                Some(true)
+            );
+            assert_eq!(mutations.load(Ordering::SeqCst), 1);
+            std::fs::remove_file(&policy_file).unwrap();
+            assert_eq!(
+                error_code(editor.request(&invoke("inspect")).unwrap()),
+                "access_denied"
+            );
+            assert_eq!(
+                error_code(editor.request(&invoke("mutate")).unwrap()),
+                "access_denied"
+            );
+            assert_eq!(mutations.load(Ordering::SeqCst), 1);
+            assert_ne!(
+                editor.request(&EditorRequest::Detach).unwrap().is_error,
+                Some(true)
+            );
+            assert_eq!(
+                error_code(editor.request(&invoke("inspect")).unwrap()),
+                "not_attached"
+            );
+            std::fs::remove_file(&endpoint_file).unwrap();
+            assert_eq!(
+                error_code(editor.request(&EditorRequest::List).unwrap()),
+                "access_revoked"
+            );
+            drop(editor);
+            assert_eq!(observation.status().state, HostState::Starting);
+        })
+        .await
+        .unwrap();
+        editor_task.await.unwrap();
+        assert_eq!(control.status().state, HostState::Starting);
+        drop(host);
+        assert_eq!(
+            game_task.await.unwrap().unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+    }
+
     #[test]
-    fn registration_reconciles_offline_schemas_and_rejects_live_conflicts() {
+    fn registration_preserves_per_instance_schemas_across_live_builds_and_reconnects() {
         let mut registry = Registry::new();
         let (sender, _commands) = mpsc::channel(wire::QUEUE);
         let id = registry
             .register(hello("demo", GameRole::Server, &["old"]), sender.clone())
             .unwrap();
-        assert!(
-            registry
-                .register(hello("demo", GameRole::Server, &["new"]), sender.clone())
-                .is_err()
+        let concurrent = registry
+            .register(hello("demo", GameRole::Server, &["new"]), sender.clone())
+            .unwrap();
+        assert!(registry.route(&id, "old", None).is_ok());
+        assert!(registry.route(&concurrent, "new", None).is_ok());
+        assert_eq!(
+            error_code(registry.route(&id, "new", None).unwrap_err()),
+            "unknown_tool"
         );
+        assert!(registry.dynamic_tools().is_empty());
         registry.instances.get_mut(&id).unwrap().sender = None;
-        assert_eq!(registry.dynamic_tools()[0].name, "demo.server.old");
+        assert_eq!(registry.dynamic_tools()[0].name, "demo.server.new");
         let new_id = registry
             .register(hello("demo", GameRole::Server, &["new"]), sender.clone())
             .unwrap();
@@ -608,6 +958,106 @@ mod tests {
                 .is_ok()
         );
         assert_eq!(registry.dynamic_tools().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn discovery_selects_exact_instance_schema_and_hides_ambiguous_dynamic_tools() {
+        let bridge = bridge();
+        let (sender, mut commands) = mpsc::channel(wire::QUEUE);
+        let first = bridge
+            .registry
+            .lock()
+            .unwrap()
+            .register(
+                hello("demo", GameRole::Client, &["inspect"]),
+                sender.clone(),
+            )
+            .unwrap();
+        let mut second_hello = hello("demo", GameRole::Client, &["inspect"]);
+        if let Message::Register {
+            api_version, tools, ..
+        } = &mut second_hello
+        {
+            *api_version = "2".into();
+            tools[0].input_schema = Arc::new(json!({"type":"object","required":["entity"],"properties":{"entity":{"type":"integer"}}}).as_object().unwrap().clone());
+        }
+        let second = bridge
+            .registry
+            .lock()
+            .unwrap()
+            .register(second_hello, sender)
+            .unwrap();
+        for (id, version) in [(&first, "1"), (&second, "2")] {
+            let result = bridge
+                .invoke(request("list_game_tools", json!({"instance_id":id})))
+                .await;
+            let catalog = &result.structured_content.unwrap()["catalogs"][0];
+            assert_eq!(catalog["api_version"], version);
+            assert_eq!(catalog["connected_instances"], json!([id]));
+        }
+        let result = bridge.invoke(request("list_game_tools", json!({}))).await;
+        assert_eq!(
+            result.structured_content.unwrap()["catalogs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(bridge.registry.lock().unwrap().dynamic_tools().is_empty());
+        assert_eq!(
+            error_code(
+                bridge
+                    .invoke(request(
+                        "demo.client.inspect",
+                        json!({"instance_id":first,"arguments":{}})
+                    ))
+                    .await
+            ),
+            "unknown_tool"
+        );
+        assert!(commands.try_recv().is_err());
+        let routed = bridge.invoke(request(
+            "call_game_tool",
+            json!({"instance_id":second,"tool_name":"inspect","arguments":{"entity":7}}),
+        ));
+        let reply = async {
+            let command = commands.recv().await.unwrap();
+            assert_eq!(command.arguments["entity"], 7);
+            command
+                .reply
+                .send(CallToolResult::structured(json!({"entity":7})))
+                .unwrap();
+        };
+        let (result, ()) = tokio::join!(routed, reply);
+        assert_eq!(result.structured_content.unwrap()["entity"], 7);
+        bridge
+            .registry
+            .lock()
+            .unwrap()
+            .instances
+            .get_mut(&first)
+            .unwrap()
+            .sender = None;
+        assert_eq!(
+            bridge.registry.lock().unwrap().dynamic_tools()[0].name,
+            "demo.client.inspect"
+        );
+        assert_eq!(
+            error_code(
+                bridge
+                    .invoke(request("list_game_tools", json!({"instance_id":"expired"})))
+                    .await
+            ),
+            "instance_unavailable"
+        );
+        assert_eq!(
+            error_code(
+                bridge
+                    .invoke(request("list_game_tools", json!({"instance_id":3})))
+                    .await
+            ),
+            "invalid_arguments"
+        );
     }
 
     #[test]
@@ -683,6 +1133,7 @@ mod tests {
         let (reply, _response) = oneshot::channel();
         sender
             .try_send(Command {
+                origin: super::super::access::CallOrigin::Local,
                 name: "echo".into(),
                 arguments: Map::new(),
                 reply,

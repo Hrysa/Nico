@@ -1,6 +1,7 @@
 //! Integrated Nico authoring application; runtime and host stay engine-owned.
 mod assets_tree;
 mod core;
+mod debug;
 mod document;
 mod loading;
 mod operations;
@@ -31,14 +32,17 @@ fn main() -> nico_winit::NativeClientResult<()> {
     nico_launch::init_logging(args.common.log_level)?;
     let queue = Arc::new(Mutex::new(operations::Queue::new(32)));
     let published = Arc::new(Mutex::new(nico_ops::publication::Publication::default()));
-    let tools = operations::register(queue.clone(), published.clone())?;
+    let mut tools = operations::register(queue.clone(), published.clone())?;
+    let debug_session = nico_ops::bridge::EditorSession::start()?;
+    debug_session.register_tools(&mut tools)?;
     let mut adapters = nico_authoring::Registry::default();
     adapters.register(
         arena_arpg_presentation::authoring::ADAPTER,
         arena_arpg_presentation::authoring::open,
     )?;
     let title = format!("Nico Editor — {}", args.project.display());
-    let editor = loading::LoadingEditor::new(args.project, queue, published, adapters);
+    let editor = loading::LoadingEditor::new(args.project, queue, published, adapters)
+        .with_debug_session(debug_session);
     ClientHost::new(args.host)
         .with_game_identity("nico-editor", "1")
         .with_mcp_tools(tools)

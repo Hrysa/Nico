@@ -18,6 +18,32 @@ pub struct EditorDefinition {
     pub adapter: String,
     pub sources: std::collections::BTreeMap<String, PathBuf>,
 }
+/// Game-declared launch details. Arguments are passed directly, never through a shell.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlayDefinition {
+    pub content_roots: Vec<PathBuf>,
+    pub server_args: Vec<String>,
+    pub client_args: Vec<String>,
+    pub server_tool: String,
+    pub client_tool: String,
+    /// JSON pointer in the server tool result; substitutes the entire client arg
+    /// `{server_address}` only after the owned server reports readiness.
+    pub server_address: Option<String>,
+}
+impl Default for PlayDefinition {
+    fn default() -> Self {
+        Self {
+            content_roots: Vec::new(),
+            server_args: Vec::new(),
+            client_args: Vec::new(),
+            server_tool: "scene_state".into(),
+            client_tool: "scene_state".into(),
+            server_address: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectManifest {
@@ -27,6 +53,8 @@ pub struct ProjectManifest {
     pub default_scene: PathBuf,
     #[serde(default)]
     pub targets: Targets,
+    #[serde(default)]
+    pub play: PlayDefinition,
     #[serde(default)]
     pub editor: Option<EditorDefinition>,
 }
@@ -69,6 +97,7 @@ impl Project {
                 asset_roots: vec![PathBuf::from(".")],
                 default_scene: "scene.nico.json".into(),
                 targets: Targets::default(),
+                play: PlayDefinition::default(),
                 editor: None,
             }
         };
@@ -100,12 +129,40 @@ impl Project {
                 return Err(io::Error::other("game targets must be Cargo package names"));
             }
         }
+        let play = &manifest.play;
+        if play.content_roots.len() > 16
+            || play.content_roots.iter().any(|path| !relative(path))
+            || [&play.server_args, &play.client_args].iter().any(|args| {
+                args.len() > 32
+                    || args
+                        .iter()
+                        .any(|arg| arg.len() > 1024 || arg.contains('\0'))
+            })
+            || [&play.server_tool, &play.client_tool].iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 128
+                    || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+            })
+            || play
+                .server_address
+                .as_ref()
+                .is_some_and(|pointer| !pointer.starts_with('/') || pointer.len() > 128)
+            || (play.client_args.iter().any(|arg| arg == "{server_address}")
+                && play.server_address.is_none())
+        {
+            return Err(io::Error::other("invalid project play configuration"));
+        }
         let project = Self {
             root,
             manifest,
             declared,
         };
-        for directory in &project.manifest.asset_roots {
+        for directory in project
+            .manifest
+            .asset_roots
+            .iter()
+            .chain(&project.manifest.play.content_roots)
+        {
             let path = project.contained(directory)?;
             if !path.is_dir() {
                 return Err(io::Error::other("asset root must be a directory"));

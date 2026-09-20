@@ -14,8 +14,10 @@ mod runner;
 pub use runner::FixedRateServerRunner;
 
 /// Native server policy shared by game executables.
-#[derive(Args, Clone, Copy, Debug)]
+#[derive(Args, Clone, Debug)]
 pub struct ServerArgs {
+    #[command(flatten)]
+    pub debug: crate::DebugArgs,
     /// Authoritative simulation ticks per second.
     #[arg(long, default_value = "60")]
     pub tick_rate: NonZeroU32,
@@ -33,6 +35,7 @@ impl Default for ServerArgs {
     fn default() -> Self {
         Self {
             tick_rate: NonZeroU32::new(60).unwrap(),
+            debug: crate::DebugArgs::default(),
             bridge: None,
             no_bridge: false,
         }
@@ -42,14 +45,7 @@ impl Default for ServerArgs {
 impl ServerArgs {
     /// Explicit opt-out disables background bridge attempts.
     pub fn bridge_address(&self) -> Option<SocketAddr> {
-        if self.no_bridge {
-            None
-        } else {
-            Some(
-                self.bridge
-                    .unwrap_or_else(|| nico_ops::bridge::DEFAULT_ADDRESS.parse().unwrap()),
-            )
-        }
+        self.debug.address(self.bridge, self.no_bridge)
     }
 
     /// Fixed host step corresponding to the configured rate.
@@ -63,6 +59,7 @@ pub struct ServerHost {
     args: ServerArgs,
     tools: mcp::ToolExtensions,
     identity: Option<(String, String)>,
+    content_revision: Option<String>,
 }
 
 impl ServerHost {
@@ -71,6 +68,7 @@ impl ServerHost {
             args,
             tools: mcp::ToolExtensions::default(),
             identity: None,
+            content_revision: None,
         }
     }
 
@@ -83,6 +81,12 @@ impl ServerHost {
     }
 
     /// Stable game identity and API revision used when registering with a bridge.
+    /// Supply a revision of the content actually loaded; never a path or planned revision.
+    #[must_use]
+    pub fn with_content_revision(mut self, revision: impl Into<String>) -> Self {
+        self.content_revision = Some(revision.into());
+        self
+    }
     #[must_use]
     pub fn with_game_identity(
         mut self,
@@ -110,7 +114,11 @@ impl ServerHost {
             let (control, endpoint) = control_channel();
             let _bridge = BridgeClient::start(
                 address,
-                GameRegistration::new(game, GameRole::Server, version),
+                GameRegistration {
+                    access: self.args.debug.access(),
+                    content_revision: self.content_revision,
+                    ..GameRegistration::new(game, GameRole::Server, version)
+                },
                 control,
                 crate::diagnostics::register(self.tools)?,
             )?;
@@ -159,14 +167,16 @@ mod tests {
     fn bridge_defaults_allow_opt_out_and_custom_address() {
         let defaults = TestArgs::parse_from(["server"]).server;
         assert_eq!(
-            defaults.bridge_address().unwrap().to_string(),
-            nico_ops::bridge::DEFAULT_ADDRESS
+            defaults.bridge_address().map(|address| address.to_string()),
+            cfg!(debug_assertions).then(|| nico_ops::bridge::DEFAULT_ADDRESS.to_owned())
         );
         assert_eq!(
             defaults.bridge_address(),
             ServerArgs::default().bridge_address()
         );
-        let custom = TestArgs::parse_from(["server", "--bridge", "127.0.0.1:48000"]).server;
+        let custom =
+            TestArgs::parse_from(["server", "--enable-debug", "--bridge", "127.0.0.1:48000"])
+                .server;
         assert_eq!(custom.bridge_address().unwrap().port(), 48000);
         assert!(
             TestArgs::parse_from(["server", "--no-bridge"])

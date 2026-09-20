@@ -1,8 +1,9 @@
 //! Runtime-free project and authored scene contracts shared by games and editors.
+pub mod content;
 mod document;
 mod project;
 pub use document::{Document, Object, relative};
-pub use project::{EditorDefinition, Project, ProjectManifest, Targets};
+pub use project::{EditorDefinition, PlayDefinition, Project, ProjectManifest, Targets};
 
 /// Instantiates validated authored objects as ECS components. A caller performs
 /// this at its runtime-owned boundary; renderers and game systems consume Object.

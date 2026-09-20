@@ -5,9 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+persistence = ["dep:serde"]
 tools = ["dep:nico-ops", "dep:serde_json"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
 nico-runtime = { path = "../../../crates/nico-runtime" }
 nico-ops = { path = "../../../crates/nico-ops", features = ["mcp"], optional = true }
 serde_json = { version = "1", optional = true }

@@ -18,6 +18,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(about = "Persistent multiplayer action RPG with an optional arena combat test")]
 struct Args {
+    /// Saved Arena project; loads its world and character assets as one revision.
+    #[arg(long, conflicts_with_all = ["arena", "logic_characters", "visual_characters", "visual_world", "character_model", "character_animations"])]
+    project: Option<PathBuf>,
     #[command(flatten)]
     common: CommonArgs,
     /// Run the standalone arena combat test instead of the multiplayer world.
@@ -48,8 +51,18 @@ struct Args {
     procedural_hero: bool,
 }
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     init_logging(args.common.log_level)?;
+    let content = args
+        .project
+        .as_deref()
+        .map(arena_arpg_shared::project::ProjectContent::open)
+        .transpose()?;
+    if let Some(content) = &content {
+        args.logic_characters = content.asset("assets/logic/characters")?;
+        args.visual_characters = content.asset("assets/presentation/characters")?;
+        args.visual_world = content.source("visual")?;
+    }
     let logic = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
     let definitions = character::definition::load_visuals(&args.visual_characters, &logic)?;
     let overrides = args
@@ -96,9 +109,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .with_skin_shader("assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl")
     .with_pointer_capture();
-    let host = ClientHost::new(args.host)
+    let mut host = ClientHost::new(args.host)
         .with_game_identity("arena_arpg", "1")
         .with_mcp_tools(tools);
+    if let Some(content) = &content {
+        content.verify()?;
+        host = host.with_content_revision(content.revision.clone());
+    }
     if !args.arena {
         host.run(builder.build()?, config, world::map_input)?;
     } else {

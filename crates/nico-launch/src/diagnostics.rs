@@ -202,6 +202,7 @@ pub(crate) fn register(mut tools: ToolExtensions) -> io::Result<ToolExtensions> 
         a.open_world_hint = Some(false);
     }
     tools.register(tool, move |args| history.read(args))?;
+    tools.set_access("diagnostics", nico_ops::mcp::ToolAccess::Inspect)?;
     Ok(tools)
 }
 

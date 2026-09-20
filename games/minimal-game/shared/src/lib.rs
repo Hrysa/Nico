@@ -97,6 +97,18 @@ const INITIAL_STAMINA: u64 = 10;
 const MOVEMENT_QUEST_TARGET: u64 = 2;
 const MOVEMENT_QUEST_REWARD: u64 = 5;
 
+/// Durable game progress; host tick counters and transient movement are not saved.
+#[cfg(feature = "persistence")]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SavedProgress {
+    version: u32,
+    stamina: u64,
+    quest_progress: u64,
+    quest_completed: bool,
+    coins: u64,
+}
+
 /// Authoritative state shared by client and server.
 #[derive(Debug, Eq, PartialEq)]
 pub struct GameState {
@@ -124,6 +136,32 @@ impl Default for GameState {
 }
 
 impl GameState {
+    #[cfg(feature = "persistence")]
+    pub fn saved_progress(&self) -> SavedProgress {
+        SavedProgress {
+            version: 1,
+            stamina: self.stamina,
+            quest_progress: self.movement_quest_progress,
+            quest_completed: self.movement_quest_completed,
+            coins: self.coins,
+        }
+    }
+    #[cfg(feature = "persistence")]
+    pub fn restore_progress(&mut self, progress: SavedProgress) -> Result<(), &'static str> {
+        if progress.version != 1
+            || progress.stamina > INITIAL_STAMINA
+            || progress.quest_progress > MOVEMENT_QUEST_TARGET
+            || progress.quest_completed != (progress.quest_progress == MOVEMENT_QUEST_TARGET)
+        {
+            return Err("invalid saved minimal-game progress");
+        }
+        self.stamina = progress.stamina;
+        self.movement_quest_progress = progress.quest_progress;
+        self.movement_quest_completed = progress.quest_completed;
+        self.coins = progress.coins;
+        Ok(())
+    }
+
     /// Returns whether startup completed.
     #[must_use]
     pub const fn started(&self) -> bool {
@@ -344,6 +382,33 @@ mod tests {
     use nico_runtime::{AppBuilder, RuntimeResult};
 
     use super::{GameState, MinimalGamePlugin, MovementVector, PlayerCommand, Position};
+
+    #[cfg(feature = "persistence")]
+    #[test]
+    fn restored_progress_keeps_rewards_without_restoring_runtime_counters() -> RuntimeResult<()> {
+        let mut app = AppBuilder::new().add_plugin(MinimalGamePlugin).build()?;
+        app.start()?;
+        app.tick(Duration::from_nanos(33_333_334))?;
+        let saved = app.world().resource::<GameState>()?.saved_progress();
+        assert!(saved.quest_completed);
+        app.shutdown()?;
+        let mut restored = AppBuilder::new().add_plugin(MinimalGamePlugin).build()?;
+        let state = restored.world_mut().resource_mut::<GameState>()?;
+        state.restore_progress(saved.clone()).unwrap();
+        assert_eq!(state.fixed_updates(), 0);
+        let mut invalid = saved.clone();
+        invalid.version = 2;
+        assert!(state.restore_progress(invalid).is_err());
+        assert_eq!(state.saved_progress(), saved);
+        restored.start()?;
+        restored.tick(Duration::from_nanos(16_666_667))?;
+        assert_eq!(
+            restored.world().resource::<GameState>()?.coins(),
+            saved.coins
+        );
+        restored.shutdown()?;
+        Ok(())
+    }
 
     #[test]
     fn shared_gameplay_runs_headlessly() -> RuntimeResult<()> {

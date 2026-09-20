@@ -424,6 +424,54 @@ background, so games also run normally when the bridge is unavailable. Use `--br
 ADDRESS` to override the default endpoint. On Windows, stop and exit a game before
 rebuilding its executable; restarting a game does not require restarting the bridge.
 
+### Editor attachment and release debugging
+
+Development hosts attempt the bridge connection by default. Release hosts require
+`--enable-debug`; setting `--bridge` alone does not enable debugging. An opted-in
+release host permits local MCP inspection only. Editor mutations, capture, and stop
+require explicit host grants.
+
+Start the bridge with `--editor-listen 127.0.0.1:47632 --editor-token-file PATH` to
+also accept editor RPC. The token file contains one random 64-character hexadecimal
+token. Start the target host with `--enable-debug --debug-access-file PATH` to select
+its separate host credential/grant policy. The [RPC contract](docs/plans/2026-09-19-editor-debug-rpc.md)
+describes the JSON policy, permissions, bounds, and revocation.
+
+For local Play, create `target/editor-rpc.token` once with a cryptographically random
+64-character hexadecimal token, readable only by its owner. Add the editor listener
+to the existing bridge's arguments, using an absolute token-file path:
+
+```toml
+args = ["--listen", "127.0.0.1:47631", "--editor-listen", "127.0.0.1:47632", "--editor-token-file", "/absolute/workspace/target/editor-rpc.token"]
+```
+
+Restart that MCP server after changing its configuration. The editor's default Play
+profile uses the same workspace token path; **Play profile** can override it.
+
+If Play reports a refused connection to `127.0.0.1:47632`, the bridge's editor
+listener is not running. The game registration listener on `47631` alone does not
+support Play. Restart the configured bridge with both editor arguments above,
+then retry Play. Connection errors identify the endpoint and recovery steps;
+initial admission failures occur before building or launching either game host.
+
+In the editor, open **Attach / Inspect**, enter the endpoint and endpoint-token file,
+connect, and discover instances. Choose the exact instance, supply a separate file
+containing its host credential, and attach. Status and the tool catalog support
+inspection and registered calls. **Inspect entities** pages the minimal game's owned
+entity snapshots and opens properties from the same snapshot. References carry world
+and connection generations; stale handles fail after reset or reconnect.
+Detach/disconnect leave the game running.
+`editor_debug_command`, `editor_debug_state`, and `editor_debug_result` expose the
+same workflow through MCP. A reply may acknowledge queued work; inspect the game's
+own command results to establish application.
+
+The registration wire is now version 2: rebuild the bridge and participating hosts
+together. Native editor/release-client attach and compatible rebuild were validated on
+macOS/Metal. **Capture to file** downloads bounded PNG chunks to an editor-local
+file and verifies process/frame identity and SHA-256; it requires capture permission.
+Authenticated SSH forwarding was validated with independently running client/server
+hosts on one Mac. Separate-machine and WAN deployment remain unverified.
+
 ### Discover and call tools
 
 The bridge always exposes these tools:
@@ -433,8 +481,12 @@ The bridge always exposes these tools:
 | `bridge_status` | `{}` | Connected instance count and cache counts |
 | `list_instances` | `{}` | Connected and retained disconnected instances |
 | `instance_status` | `instance_id` | Cached host state, activity, readiness, PID, connection state, and snapshot age |
-| `list_game_tools` | `{}` | Cached game/role API versions and original tool schemas |
+| `list_game_tools` | Optional `instance_id` | Exact instance schemas, or all retained catalog variants with matching instance IDs |
 | `call_game_tool` | `instance_id`, `tool_name`, `arguments` | Routed game tool result or structured error |
+
+Different builds of one game and role may register different schemas concurrently.
+Select `instance_id` in `list_game_tools` before invoking that instance. Dynamic tool
+names with conflicting live schemas are omitted; `call_game_tool` remains available.
 
 On connection, both minimal-game hosts upload `status`, `stop`, `diagnostics`, and the
 game-owned `game_state` tool. The bridge advertises names such as
@@ -578,14 +630,32 @@ retain `scene.nico.json` in the root. Undo/redo retains 64 document
 edits. The close button offers save/discard/cancel for unsaved changes; explicit
 MCP `stop` remains an unconditional orderly stop.
 
-**Play** builds and runs the declared project's `[targets] client` with
-`cargo run -p NAME` from the Cargo workspace root, so game-relative asset defaults
-resolve. It requires a declared project with a client target and a clean saved
-document. **Stop** terminates that process tree. The launched game is an ordinary
-separate client: it reads saved sources at startup, connects to the bridge when
-enabled, and is not updated by later editor edits. The target runs with its own
-default arguments, so a game whose default mode needs an explicit `--project`
-argument must set that default. Closing the editor stops the process it launched.
+The editor reuses unchanged 3D viewport pixels and polls idle UI, imports, and
+bridge commands every 100 ms. Input and UI animations request earlier redraws;
+camera, scene, asset, and viewport-size changes refresh the 3D image.
+
+**Play profile** configures a paired minimal-game or Arena client/server session. Start the
+bridge with its editor listener and private token file as described under
+[editor attachment](#editor-attachment-and-release-debugging), then enter those endpoints and token-file
+path in the profile panel. The local defaults are ports 47631/47632 and
+`target/editor-rpc.token` under the Cargo workspace. **Play** requires a declared project with
+both Cargo targets and a saved document. The engine worker snapshots the saved
+content, builds the targets, starts the server, and waits for readiness before
+starting the client. Both hosts must report the expected content revision.
+Arena starts its world server on an automatically assigned loopback port and connects
+the client to that exact server, with disposable session data. Its saved logic,
+scenery, and character assets are snapshotted together. The minimal-game hosts still
+run separate simulations.
+
+**Stop** requests orderly shutdown of this session's children, with direct-child
+termination as a fallback. **Restart saved** uses a fresh snapshot and isolated
+server-data directory; **Save and restart** first performs normal save validation.
+Closing the editor cleans up its session. External Attach / Inspect targets remain
+independently owned. The panel and `editor_state.play_session` report phase,
+role-specific PID/instance, readiness, observation age, content identity, cleanup,
+and errors. Game captures and successful presentation counts remain separate.
+See the [play-profile contract](docs/plans/2026-09-19-editor-play-profiles.md) for
+bounds, lifecycle, persistence, and tested scope.
 
 The shell presents its first UI frame before project import begins. Project and
 adapter loading run on a joined worker with a modal phase/count display. The Assets
@@ -617,8 +687,12 @@ The usual `--bridge`, `--no-bridge`, `--background`, and `--smoke-frames` option
 apply. Discover the `nico-editor` client through the bridge; `editor_state` reports
 asset revisions/errors, scene state and command results. `editor_command` supports
 `inspect`, `add`, `select`, `transform`, `remove`, `camera`, `pan`, `save`, `reload`,
-`refresh`, `play`, `stop`, `undo`, and `redo`. `editor_state` reports `playing` and
-`play_error` for the launched client process. UI and MCP edits apply at the embedded
+`refresh`, `configure_play`, `play`, `restart`, `save_and_restart`, `stop`, `undo`,
+and `redo`. For example, configure with
+`{"action":"configure_play","bridge":"127.0.0.1:47631","editor_endpoint":"127.0.0.1:47632","endpoint_token_file":"/private/path/editor.token","release":false}`.
+`editor_state` reports `play_profile`, `play_session`, `playing`, and `play_error`.
+Command results acknowledge the requested action; poll the session phase for actual
+readiness or exit. UI and MCP edits apply at the embedded
 runtime's Update boundary. Built-in `status`, `stop`, `diagnostics`, and `window_snapshot`
 remain available. During startup, `editor_state` reports `loading`, phase/counts,
 discovered source count, and `first_ui_presented`. After adoption, `loading` is
@@ -674,9 +748,9 @@ rebuild this adapter. Restart the game/server to load saved world changes.
 See the [Arena authoring plan](docs/plans/2026-09-18-arena-authoring.md).
 
 The scene contract currently describes model instances and transforms. Arbitrary
-gameplay components and embedded game code remain future work. The editor's Play/Stop
-controls launch and terminate the declared client process; they do not simulate
-gameplay inside the editor. Declared paths must remain inside the project; missing
+gameplay components and embedded game code remain future work. Paired Play/Stop
+supports the minimal scene project and Arena's world adapter. Game simulation stays
+outside the editor. Declared paths must remain inside the project; missing
 declared scenes fail explicitly.
 
 ## Development asset cache

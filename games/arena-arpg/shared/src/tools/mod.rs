@@ -41,6 +41,9 @@ pub fn register(builder: AppBuilder) -> io::Result<(AppBuilder, ToolExtensions)>
         let endpoint = operations.clone();
         extensions.register(tool, move |arguments| endpoint.call(name, arguments))?;
     }
+    for name in ["game_state", "game_characters", "game_command"] {
+        extensions.set_access(name, nico_ops::mcp::ToolAccess::Inspect)?;
+    }
     Ok((builder.add_plugin(ToolsPlugin(operations)), extensions))
 }
 

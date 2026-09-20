@@ -8,6 +8,12 @@
 #[cfg(feature = "mcp")]
 pub mod mcp;
 
+#[cfg(feature = "mcp")]
+pub mod identity;
+
+#[cfg(feature = "mcp")]
+pub mod inspection;
+
 #[cfg(feature = "bridge")]
 pub mod bridge;
 

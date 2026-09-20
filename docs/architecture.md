@@ -580,8 +580,11 @@ client/server hosts own adapter threads and retain control handles across connec
 loss. Reconnection never restarts gameplay, and bridge disconnect never requests stop.
 Game `ToolExtensions` upload schemas and keep handlers inside the game process. The
 bridge routes namespaced tools by unique connection instance ID, retains cached schemas
-while games are offline, and replaces a game/role catalog when no live incompatible
-version exists. Cached definitions outlive game connections but not the bridge process.
+while games are offline, and validates each call against the selected instance's own
+catalog. Different API versions and schemas can coexist for one game/role. Dynamic
+names are omitted when live instances disagree on their definition; fixed discovery
+and invocation remain available. Cached definitions outlive game connections but not
+the bridge process.
 Readiness, reported activity, connectivity, and snapshot age are separate. No
 disconnected snapshot establishes process exit.
 
@@ -589,6 +592,19 @@ disconnected snapshot establishes process exit.
 client does not react to dynamic MCP catalog notifications. Games validate their tool
 arguments and return promptly using owned snapshots or bounded runtime requests. The
 minimal game demonstrates a game-owned snapshot plugin ordered after gameplay.
+The optional editor endpoint shares bridge routing while preserving MCP stdio.
+Engine-owned editor workers queue bounded requests and publish owned outcomes,
+including terminal cancellation records for queued commands at shutdown; the
+editor UI and automation use the same worker. Hosts enforce explicit inspection,
+capture, mutation, and stop grants before invoking handlers. The endpoint and host
+independently reread private credential files for revocation. Release hosts require
+explicit debug opt-in and retain inspection-only local MCP permissions. Hosts publish process/build identity separately from connection IDs and optional
+loaded-content revisions. Game-owned extraction can publish bounded entity/property
+snapshots through runtime-free `nico-ops::inspection`; paged queries pin a revision,
+while world replacement and reconnect explicitly invalidate handles. Attach grants
+no process ownership; detach/disconnect never stop games. See the
+[RPC contract](plans/2026-09-19-editor-debug-rpc.md) for protocol and deployment limits.
+
 Transport, schemas, and MCP dependencies do not enter the headless runtime.
 
 See [the bridge contract](plans/2026-09-11-mcp-bridge.md) for protocol limits,
@@ -622,6 +638,19 @@ same device as the UI. Raw wgpu interop remains provider-specific; no egui or na
 graphics types enter the headless runtime or immutable presentation contracts.
 `nico-launch` composes the normal independent bridge connection, built-in lifecycle,
 diagnostics, and rendered capture operations for the editor.
+
+The optional `nico-launch/play` module owns the joined local-session worker,
+Cargo build child, and direct client/server children. UI and MCP enqueue editor
+intents and read owned session snapshots; they never wait on build, file, RPC, or
+process I/O. `nico-scene::content` creates bounded saved-project snapshots and
+content revisions. Minimal-game and Arena hosts independently identify the snapshot
+they load; each game owns its persistence format. Manifest play declarations provide
+game CLI arguments and readiness tools. The engine substitutes only the owned
+server’s published loopback endpoint, without importing game-specific code. Launch supplies an
+isolated disposable data directory, readiness checks, orderly stop, and scoped
+fallback termination. The bridge only discovers/routes hosts, and external attach
+never grants process ownership. The [play-profile contract](plans/2026-09-19-editor-play-profiles.md)
+defines lifetime, bounds, and separate-simulation scope.
 
 The editor shell presents a frame before starting its joined project-load worker.
 That worker prepares owned authoring state; the runtime adopts it at Update.
@@ -687,7 +716,12 @@ presentation success. Launch starts a single background PNG encoding/write job o
 retrieval, returns pending while it runs, and retains one local artifact per process.
 Encoding never runs on the bridge heartbeat/call thread. New captures are rejected
 while the encoder is busy, and teardown joins active work. Shutdown fails pending
-capture requests. Usage and bounds belong in
+capture requests. Launch retains immutable encoded bytes for bounded
+`window_snapshot_read` requests with process, request, frame, and hash identity.
+The engine-owned editor worker verifies chunks and writes an exclusively created
+editor-local file without accessing a host filesystem path. Transfer bounds and
+failure handling belong in the [RPC contract](plans/2026-09-19-editor-debug-rpc.md#bounded-capture-transfer).
+Usage and bounds belong in
 [README](../README.md#window-snapshots-through-mcp).
 
 ## Native window operation ownership

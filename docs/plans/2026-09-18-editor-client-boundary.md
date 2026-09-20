@@ -1,7 +1,7 @@
 # Editor and game client boundary redesign
 
-Status: separate-process direction selected by the user on 2026-09-18. Details below
-are proposed and unimplemented. This replaces this document's earlier embedded-game
+Status: separate-process direction selected by the user on 2026-09-18. The initial loopback attach workflow is implemented and validated as described in
+the dated update below; bounded capture and same-machine SSH forwarding are validated. This replaces this document's earlier embedded-game
 proposal. Existing editor and bridge plans still describe current capabilities.
 
 ## Decision and ownership
@@ -138,9 +138,24 @@ rendered output, not desktop visibility.
 
 Each milestone includes UI and structured automation. Visual validation identifies
 the exact client and separates command completion, rendering, and user observation.
-No implementation validation has been performed for this design.
+Current implementation evidence and remaining deployment limits are recorded below.
 
 Architectural acceptance: keep the editor open, attach to an opted-in release client,
 inspect, detach without stopping it, then attach to a rebuilt compatible client without
 rebuilding the editor. Authoring acceptance: edit and save an Arena encounter, then
 verify it in the real client/server with matching content revisions.
+
+## Implementation update (2026-09-19)
+
+The bridge now accepts differing live API versions and schemas for one game/role,
+retains each instance's original catalog, and supports exact discovery through
+`list_game_tools { instance_id }`. Conflicting dynamic definitions are hidden while
+fixed invocation remains available. The initial editor endpoint, host-enforced grants and file-based revocation, release
+opt-in, editor worker, and Attach / Inspect panel are now implemented. The
+[RPC contract](2026-09-19-editor-debug-rpc.md) specifies current protocol behavior and
+process/build identity, generation-qualified entity inspection, and native validation.
+The architectural acceptance scenario, bounded capture retrieval, and authenticated
+SSH forwarding passed on macOS. The tunnel fixture ran on one machine; physically
+remote deployment remains unverified. The [paired minimal-game play profile](2026-09-19-editor-play-profiles.md) now implements
+local session ownership, content verification, readiness, and cleanup. Arena encounter
+authoring remains the next milestone.

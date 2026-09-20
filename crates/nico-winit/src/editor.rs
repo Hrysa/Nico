@@ -17,6 +17,8 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
+mod refresh;
+use refresh::{ViewportCache, repaint_delay};
 
 pub trait EditorApplication {
     /// UI queues document edits. Returns the desired viewport size in logical pixels.
@@ -47,6 +49,7 @@ struct Graphics {
     texture: egui::TextureId,
     gui: egui_wgpu::Renderer,
     input: egui_winit::State,
+    viewport_cache: ViewportCache,
 }
 struct Host<A> {
     app: A,
@@ -156,6 +159,7 @@ impl<A: EditorApplication> Host<A> {
             texture,
             gui,
             input,
+            viewport_cache: ViewportCache::default(),
         });
         self.window = Some(window);
         self.endpoint.running(self.frames);
@@ -172,6 +176,7 @@ impl<A: EditorApplication> Host<A> {
         let mut output = self.context.run_ui(g.input.take_egui_input(window), |ui| {
             viewport = self.app.ui(ui, g.texture);
         });
+        let repaint = repaint_delay(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay);
         for (id, deltas) in &output.textures_delta.set {
             for delta in deltas {
                 g.gui.update_texture(
@@ -192,6 +197,7 @@ impl<A: EditorApplication> Host<A> {
         let height = (viewport.y * scale).round().clamp(1., 4096.) as u32;
         if g.target.extent().width != width || g.target.extent().height != height {
             g.target = WgpuOffscreen::new(g.backend.device(), width, height)?;
+            g.viewport_cache = ViewportCache::default();
             g.gui.update_egui_texture_from_wgpu_texture(
                 g.backend.device().raw(),
                 g.target.view(),
@@ -199,17 +205,21 @@ impl<A: EditorApplication> Host<A> {
                 g.texture,
             );
         }
-        let extent = g.target.extent();
-        g.mesh.render(
-            g.backend.device(),
-            g.backend.queue(),
-            &mut g.target,
-            &scene,
-            &Scene2d::default(),
-            &UiScene::default(),
-            [viewport.x.max(1.), viewport.y.max(1.)],
-            extent,
-        )?;
+        let logical_size = [viewport.x.max(1.), viewport.y.max(1.)];
+        if g.viewport_cache.changed(&scene, logical_size) {
+            let extent = g.target.extent();
+            g.mesh.render(
+                g.backend.device(),
+                g.backend.queue(),
+                &mut g.target,
+                &scene,
+                &Scene2d::default(),
+                &UiScene::default(),
+                logical_size,
+                extent,
+            )?;
+            g.viewport_cache.store(scene, logical_size);
+        }
         let primitives = self.context.tessellate(output.shapes, scale);
         let (device, queue, surface) = g.backend.parts();
         let acquired = surface.acquire(device)?;
@@ -264,6 +274,7 @@ impl<A: EditorApplication> Host<A> {
                 self.endpoint.snapshots().complete(
                     id,
                     surface.take_snapshot().map(|p| nico_ops::snapshot::Pixels {
+                        frame_id: self.frames,
                         width: p.width,
                         height: p.height,
                         rgba: p.rgba,
@@ -286,6 +297,8 @@ impl<A: EditorApplication> Host<A> {
         }
         self.frames += 1;
         self.endpoint.progress(self.frames);
+        // Schedule from completion: slow frames must not create a redraw backlog.
+        self.next = Instant::now() + repaint;
         Ok(())
     }
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl std::fmt::Display) {
@@ -315,8 +328,10 @@ impl<A: EditorApplication> ApplicationHandler for Host<A> {
         if window.id() != id {
             return;
         }
-        if let Some(g) = &mut self.graphics {
-            let _ = g.input.on_window_event(window, &event);
+        if let Some(g) = &mut self.graphics
+            && g.input.on_window_event(window, &event).repaint
+        {
+            self.next = self.next.min(Instant::now());
         }
         match event {
             WindowEvent::CloseRequested => {
@@ -360,7 +375,7 @@ impl<A: EditorApplication> ApplicationHandler for Host<A> {
             {
                 window.request_redraw();
             }
-            self.next = now + Duration::from_millis(16);
+            self.next = now + refresh::IDLE_INTERVAL;
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next));
     }

@@ -73,6 +73,9 @@ pub fn register_configured(
         let id = match ops.commands.submit(0, |id| (id, edit)) { Ok(id)=>id, Err(_)=>return error("busy") };
         CallToolResult::structured(json!({"accepted":true,"command_id":id}))
     })?;
+    for name in ["client_characters", "client_state"] {
+        tools.set_access(name, nico_ops::mcp::ToolAccess::Inspect)?;
+    }
     Ok(builder.add_plugin(ViewPlugin(ops, character, definitions, logic)))
 }
 fn parse_edit(args: &serde_json::Map<String, Value>) -> Result<Edit, &'static str> {

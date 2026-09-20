@@ -21,30 +21,45 @@ pub fn register(builder: AppBuilder) -> io::Result<(AppBuilder, ToolExtensions)>
         .with_raw_output_schema(json!({"type":"object","required":["snapshot_sequence","snapshot_age_ms","closed","fixed_updates","frame_updates","stamina","coins","movement_quest_completed","entity_count"],
             "properties":{"snapshot_sequence":{"type":"integer","minimum":1},"snapshot_age_ms":{"type":"integer","minimum":0},"closed":{"type":"boolean"},"fixed_updates":{"type":"integer"},"frame_updates":{"type":"integer"},"stamina":{"type":"integer"},
             "coins":{"type":"integer"},"movement_quest_completed":{"type":"boolean"},"entity_count":{"type":"integer"}},"additionalProperties":false}).as_object().unwrap().clone().into());
-    let plugin = SnapshotPlugin(snapshot.clone());
+    let inspection = nico_ops::inspection::Inspection::default();
+    inspection.register_tools(&mut tools)?;
+    let plugin = SnapshotPlugin(snapshot.clone(), inspection);
     tools.register(tool, move |arguments| {
         if !arguments.is_empty() { return CallToolResult::structured_error(json!({"error":{"code":"invalid_arguments","message":"game_state accepts no arguments"}})); }
         snapshot.lock().expect("game snapshot lock poisoned").json().map(CallToolResult::structured)
             .unwrap_or_else(|| CallToolResult::structured_error(json!({"error":{"code":"not_ready","message":"no game update published yet"}})))
     })?;
+    tools.set_access("game_state", nico_ops::mcp::ToolAccess::Inspect)?;
     Ok((builder.add_plugin(plugin), tools))
 }
 
-struct SnapshotPlugin(Arc<Mutex<Publication<Value>>>);
+struct SnapshotPlugin(
+    Arc<Mutex<Publication<Value>>>,
+    nico_ops::inspection::Inspection,
+);
 
 impl Plugin for SnapshotPlugin {
     fn build(&self, builder: &mut AppBuilder) -> RuntimeResult<()> {
         let published = self.0.clone();
+        let inspection = self.1.clone();
         builder.add_system(Stage::Update, "publish game tooling snapshot", move |context| {
         let state = context.world.resource::<GameState>()?;
         let value = json!({"fixed_updates":state.fixed_updates(), "frame_updates":state.frame_updates(),
             "stamina":state.stamina(),"coins":state.coins(),"movement_quest_completed":state.movement_quest_completed(),
             "entity_count":context.world.query::<&Position>().iter().count()});
+        let total = context.world.query::<&Position>().iter().count();
+        let entities = context.world.query::<(nico_runtime::ecs::Entity, &Position)>().iter().take(4096).map(|(entity, position)| nico_ops::inspection::EntityRecord {
+            id:entity.to_bits().get().to_string(),
+            properties:json!({"position":{"x":position.x(),"y":position.y()}}).as_object().unwrap().clone(),
+        }).collect();
+        inspection.publish(state.fixed_updates(), total, entities).map_err(|error| nico_runtime::RuntimeError::System { stage:"Update", name:"publish game tooling snapshot".into(), message:error.to_string() })?;
         published.lock().expect("game snapshot lock poisoned").publish(value);
         Ok(())
     });
         let published = self.0.clone();
+        let inspection = self.1.clone();
         builder.add_system(Stage::Shutdown, "close game tooling snapshot", move |_| {
+            inspection.close();
             published.lock().unwrap().close();
             Ok(())
         });
@@ -63,7 +78,7 @@ mod tests {
         let snapshot = Arc::new(Mutex::new(Publication::default()));
         let mut app = AppBuilder::new()
             .add_plugin(MinimalGamePlugin)
-            .add_plugin(SnapshotPlugin(snapshot.clone()))
+            .add_plugin(SnapshotPlugin(snapshot.clone(), Default::default()))
             .build()?;
         app.start()?;
         app.tick(Duration::from_millis(17))?;

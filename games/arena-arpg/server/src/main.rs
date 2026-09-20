@@ -8,6 +8,9 @@ use nico_runtime::AppBuilder;
 #[derive(Parser)]
 #[command(about = "Arena combat test host and persistent multiplayer world server")]
 struct Args {
+    /// Saved Arena project; loads its authoritative world and character assets.
+    #[arg(long, conflicts_with_all = ["arena", "world_asset", "item_asset", "logic_characters"])]
+    project: Option<std::path::PathBuf>,
     #[command(flatten)]
     common: CommonArgs,
     /// Run the standalone arena combat test instead of the multiplayer world.
@@ -27,11 +30,21 @@ struct Args {
     host: ServerArgs,
 }
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     if args.host.tick_rate.get() != 60 {
         return Err("game simulation requires --tick-rate 60".into());
     }
     init_logging(args.common.log_level)?;
+    let content = args
+        .project
+        .as_deref()
+        .map(arena_arpg_shared::project::ProjectContent::open)
+        .transpose()?;
+    if let Some(content) = &content {
+        args.logic_characters = content.asset("assets/logic/characters")?;
+        args.world_asset = content.source("logic")?;
+        args.item_asset = content.asset("assets/logic/items/iron-sword.item.toml")?;
+    }
     let characters = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
     let (builder, tools) = if !args.arena {
         use arena_arpg_shared::open_world::{
@@ -59,10 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let mut app = builder.build()?;
     tracing::info!(arena = args.arena, "game server starting");
-    ServerHost::new(args.host)
+    let mut host = ServerHost::new(args.host)
         .with_game_identity("arena_arpg", "1")
-        .with_mcp_tools(tools)
-        .run(&mut app)?;
+        .with_mcp_tools(tools);
+    if let Some(content) = &content {
+        content.verify()?;
+        host = host.with_content_revision(content.revision.clone());
+    }
+    host.run(&mut app)?;
     tracing::info!("game server stopped");
     Ok(())
 }

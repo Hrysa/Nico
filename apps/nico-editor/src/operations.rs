@@ -43,6 +43,14 @@ pub enum Action {
     Reload,
     Refresh,
     Play,
+    ConfigurePlay {
+        bridge: std::net::SocketAddr,
+        editor_endpoint: std::net::SocketAddr,
+        endpoint_token_file: PathBuf,
+        release: bool,
+    },
+    Restart,
+    SaveAndRestart,
     Stop,
     Undo,
     Redo,
@@ -63,9 +71,10 @@ pub fn register(queue: SharedQueue, state: Published) -> std::io::Result<ToolExt
         state.lock().unwrap().json().map(CallToolResult::structured).unwrap_or_else(|| error("not_ready"))
     })?;
     let vector = json!({"type":"array","minItems":3,"maxItems":3,"items":{"type":"number","minimum":-10000,"maximum":10000}});
-    tools.register(Tool::new("editor_command", "Queue an editor operation for its runtime update boundary. Assets are project-relative PNG/GLB paths. Save/reload use the manifest default scene, or scene.nico.json for loose content. play builds and runs the manifest client target as a separate process; stop terminates that process tree. Read editor_state for terminal command outcomes; acceptance is not completion.",
+    tools.register(Tool::new("editor_command", "Queue an editor operation for its runtime update boundary. Assets are project-relative PNG/GLB paths. Save/reload use the manifest default scene, or scene.nico.json for loose content. play builds and launches an owned client/server profile; stop requests cleanup of only its processes. configure_play selects bridge/editor endpoints and a private endpoint token file. restart requires saved content; save_and_restart first performs normal save validation. Read editor_state for terminal command outcomes; acceptance is not completion.",
         json!({"type":"object","oneOf":[
-            {"properties":{"action":{"enum":["save","reload","refresh","undo","redo","play","stop"]}},"required":["action"],"additionalProperties":false},
+            {"properties":{"action":{"enum":["save","reload","refresh","undo","redo","play","restart","save_and_restart","stop"]}},"required":["action"],"additionalProperties":false},
+            {"properties":{"action":{"const":"configure_play"},"bridge":{"type":"string"},"editor_endpoint":{"type":"string"},"endpoint_token_file":{"type":"string","maxLength":1024},"release":{"type":"boolean"}},"required":["action","bridge","editor_endpoint","endpoint_token_file","release"],"additionalProperties":false},
             {"properties":{"action":{"enum":["add","inspect"]},"asset":{"type":"string","maxLength":1024}},"required":["action","asset"],"additionalProperties":false},
             {"properties":{"action":{"enum":["remove","select"]},"id":{"type":"integer","minimum":1}},"required":["action","id"],"additionalProperties":false},
             {"properties":{"action":{"const":"transform"},"id":{"type":"integer","minimum":1},"position":vector,"rotation":vector,"scale":{"type":"number","minimum":0.001,"maximum":1000}},"required":["action","id","position","rotation","scale"],"additionalProperties":false},

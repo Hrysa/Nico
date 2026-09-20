@@ -968,6 +968,7 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                             surface
                                 .take_snapshot()
                                 .map(|pixels| nico_ops::snapshot::Pixels {
+                                    frame_id: self.session.presented_frames.saturating_sub(1),
                                     width: pixels.width,
                                     height: pixels.height,
                                     rgba: pixels.rgba,

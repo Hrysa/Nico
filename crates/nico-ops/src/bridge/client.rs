@@ -16,6 +16,8 @@ pub struct GameRegistration {
     pub game: String,
     pub role: GameRole,
     pub api_version: String,
+    pub access: super::DebugAccess,
+    pub content_revision: Option<String>,
 }
 
 impl GameRegistration {
@@ -24,6 +26,8 @@ impl GameRegistration {
             game: game.into(),
             role,
             api_version: api_version.into(),
+            access: super::DebugAccess::default(),
+            content_revision: None,
         }
     }
 }
@@ -54,6 +58,7 @@ impl BridgeClient {
                 "game and API version must be 1-48 ASCII letters, digits, underscores or hyphens",
             ));
         }
+        let access = registration.access;
         let catalog = host_tool_catalog(&tools);
         if catalog.len() > wire::MAX_TOOLS
             || catalog.iter().any(|tool| !wire::identifier(&tool.name))
@@ -69,6 +74,7 @@ impl BridgeClient {
             role: registration.role,
             api_version: registration.api_version,
             pid: std::process::id(),
+            identity: crate::identity::DebugIdentity::capture(registration.content_revision)?,
             tools: catalog,
             status: control.status(),
         };
@@ -92,7 +98,7 @@ impl BridgeClient {
                         result = tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(address)) => result.map_err(io::Error::other).and_then(|stream| stream),
                     };
                     let result = match connection {
-                        Ok(stream) => connected(stream, hello.clone(), &worker_control, &tools, closing.clone()).await,
+                        Ok(stream) => connected(stream, hello.clone(), &worker_control, &tools, &access, closing.clone()).await,
                         Err(error) => Err(error),
                     };
                     if *closing.borrow() { break; }
@@ -126,6 +132,7 @@ async fn connected(
     mut hello: Message,
     control: &HostControl,
     tools: &ToolExtensions,
+    access: &super::DebugAccess,
     mut closing: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let (reader, mut writer) = stream.into_split();
@@ -134,18 +141,21 @@ async fn connected(
         *status = control.status();
     }
     wire::write_message(&mut writer, &hello).await?;
-    match tokio::time::timeout(IO_TIMEOUT, wire::read_message(&mut reader))
+    let instance_id = match tokio::time::timeout(IO_TIMEOUT, wire::read_message(&mut reader))
         .await
         .map_err(io::Error::other)??
     {
-        Message::Registered { .. } => {}
+        Message::Registered { instance_id } => {
+            tools.notify_bridge_connected();
+            instance_id
+        }
         Message::Rejected { reason } => return Err(io::Error::other(reason)),
         _ => {
             return Err(io::Error::other(
                 "expected bridge registration acknowledgement",
             ));
         }
-    }
+    };
     let (mut incoming, reader_task) = wire::reader_task(reader);
     let result = async {
         let mut heartbeat = tokio::time::interval(Duration::from_millis(250));
@@ -169,12 +179,10 @@ async fn connected(
                     last_seen = tokio::time::Instant::now();
                     match message.ok_or_else(|| io::Error::other("bridge reader closed"))?? {
                         Message::Ping => {}
-                        Message::Call { id, name, arguments } => {
+                        Message::Call { id, origin, name, arguments } => {
                             if id <= last_call { return Err(io::Error::other("duplicate or out-of-order call ID")); }
                             last_call = id;
-                            let mut request = rmcp::model::CallToolRequestParams::new(name);
-                            request.arguments = Some(arguments);
-                            let result = invoke_host_tool(control, tools, request);
+                            let result = invoke_authorized(control, tools, access, &origin, (&instance_id, id), name, arguments);
                             wire::write_message(&mut writer, &Message::Reply { id, result }).await?;
                         }
                         _ => return Err(io::Error::other("unexpected bridge message")),
@@ -185,4 +193,73 @@ async fn connected(
     }.await;
     reader_task.abort();
     result
+}
+
+fn invoke_authorized(
+    control: &HostControl,
+    tools: &ToolExtensions,
+    access: &super::DebugAccess,
+    origin: &super::access::CallOrigin,
+    call: (&str, u64),
+    name: String,
+    arguments: crate::mcp::Map<String, crate::mcp::Value>,
+) -> crate::mcp::CallToolResult {
+    let permissions = access.permissions(origin);
+    let admitted = tools
+        .access(&name)
+        .is_some_and(|required| permissions.contains(&required));
+    let session = match origin {
+        super::access::CallOrigin::Local => "local_mcp",
+        super::access::CallOrigin::Editor { session, .. } => session.as_str(),
+    };
+    if !admitted {
+        tracing::info!(target: "nico::debug", session, connection_instance = call.0, call_id = call.1, tool = name, outcome = "rejected", "debug operation");
+        return crate::mcp::CallToolResult::structured_error(
+            serde_json::json!({"error":{"code":"access_denied","message":"host denied operation"}}),
+        );
+    }
+    let mut request = rmcp::model::CallToolRequestParams::new(name.clone());
+    request.arguments = Some(arguments);
+    let mut result = invoke_host_tool(control, tools, request);
+    if tools.access(&name) != Some(crate::mcp::ToolAccess::Inspect) {
+        tracing::info!(target: "nico::debug", session, connection_instance = call.0, call_id = call.1, tool = name, tool_error = result.is_error == Some(true), outcome = "handler_returned", "debug operation; reply may only acknowledge queued work");
+    }
+    if name == "status" && matches!(origin, super::access::CallOrigin::Editor { .. }) {
+        let required: std::collections::BTreeMap<_, _> = host_tool_catalog(tools)
+            .iter()
+            .map(|tool| (tool.name.to_string(), tools.access(&tool.name)))
+            .collect();
+        result.meta.get_or_insert_with(Default::default).insert("nico.debug".into(), serde_json::json!({"permissions":permissions,"required_access":required,"session_id":session}));
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn host_denies_stop_before_invoking_handler() {
+        let (control, _endpoint) = crate::control_channel();
+        let result = invoke_authorized(
+            &control,
+            &ToolExtensions::default(),
+            &super::super::DebugAccess::for_build(false),
+            &super::super::access::CallOrigin::Local,
+            ("test-connection", 1),
+            "stop".into(),
+            Default::default(),
+        );
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(control.status().state, crate::HostState::Starting);
+        let result = invoke_authorized(
+            &control,
+            &ToolExtensions::default(),
+            &super::super::DebugAccess::for_build(true),
+            &super::super::access::CallOrigin::Local,
+            ("test-connection", 1),
+            "stop".into(),
+            Default::default(),
+        );
+        assert_ne!(result.is_error, Some(true));
+    }
 }

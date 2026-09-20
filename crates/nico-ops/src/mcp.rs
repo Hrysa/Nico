@@ -16,15 +16,51 @@ use crate::{HostControl, HostState, HostStatus};
 
 type ToolHandler = Box<dyn Fn(Map<String, Value>) -> CallToolResult + Send + Sync>;
 
+/// Host-enforced operation class. MCP annotations are documentation, not authority.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "bridge", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "bridge", serde(rename_all = "snake_case"))]
+pub enum ToolAccess {
+    Inspect,
+    Capture,
+    #[default]
+    Mutate,
+    Stop,
+}
+
 /// Additional game tools registered before the engine starts MCP.
 ///
 /// Handlers run on the MCP thread and must return promptly. Validate arguments
 /// against the supplied schema and return tool errors on invalid input. Read
 /// owned snapshots or enqueue bounded host requests; never mutate the App here.
 #[derive(Default)]
-pub struct ToolExtensions(BTreeMap<String, (Tool, ToolHandler)>);
+pub struct ToolExtensions {
+    tools: BTreeMap<String, (Tool, ToolHandler, ToolAccess)>,
+    connected: Vec<Box<dyn Fn() + Send + Sync>>,
+}
 
 impl ToolExtensions {
+    /// Register a prompt owned-data invalidation callback for bridge reconnects.
+    /// Callbacks must not access the App or world; engine transport invokes them
+    /// after registration, before admitting the first call on the new connection.
+    pub fn on_bridge_connection(
+        &mut self,
+        handler: impl Fn() + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        if self.connected.len() >= 64 {
+            return Err(io::Error::other("too many connection callbacks"));
+        }
+        self.connected.push(Box::new(handler));
+        Ok(())
+    }
+
+    #[cfg(feature = "bridge")]
+    pub(crate) fn notify_bridge_connected(&self) {
+        for handler in &self.connected {
+            handler();
+        }
+    }
+
     /// Registers a tool. Duplicate names and engine-owned `status`/`stop` are rejected.
     pub fn register(
         &mut self,
@@ -34,15 +70,35 @@ impl ToolExtensions {
         let name = tool.name.to_string();
         if name.is_empty()
             || matches!(name.as_str(), "status" | "stop")
-            || self.0.contains_key(&name)
+            || self.tools.contains_key(&name)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("tool name is empty, reserved, or already registered: {name}"),
             ));
         }
-        self.0.insert(name, (tool, Box::new(handler)));
+        self.tools
+            .insert(name, (tool, Box::new(handler), ToolAccess::Mutate));
         Ok(())
+    }
+
+    /// Classifies a registered tool before host startup. Unclassified tools require
+    /// mutation permission, even if their MCP annotation claims they are read-only.
+    pub fn set_access(&mut self, name: &str, access: ToolAccess) -> io::Result<()> {
+        let entry = self
+            .tools
+            .get_mut(name)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "tool is not registered"))?;
+        entry.2 = access;
+        Ok(())
+    }
+
+    pub fn access(&self, name: &str) -> Option<ToolAccess> {
+        match name {
+            "status" => Some(ToolAccess::Inspect),
+            "stop" => Some(ToolAccess::Stop),
+            _ => self.tools.get(name).map(|entry| entry.2),
+        }
     }
 }
 
@@ -71,8 +127,8 @@ pub(crate) fn invoke_host_tool(
                 CallToolResult::structured_error(result)
             }
         }
-        name => match extensions.0.get(name) {
-            Some((_, handler)) => handler(request.arguments.unwrap_or_default()),
+        name => match extensions.tools.get(name) {
+            Some((_, handler, _)) => handler(request.arguments.unwrap_or_default()),
             None => CallToolResult::structured_error(json!({"error": "Unknown tool"})),
         },
     }
@@ -93,7 +149,7 @@ pub(crate) fn host_tool_catalog(extensions: &ToolExtensions) -> Vec<Tool> {
                 .with_annotations(annotations)
                 .with_raw_output_schema(output_schema(name).as_object().unwrap().clone().into())
         }).collect();
-    tools.extend(extensions.0.values().map(|(tool, _)| tool.clone()));
+    tools.extend(extensions.tools.values().map(|(tool, _, _)| tool.clone()));
     tools
 }
 

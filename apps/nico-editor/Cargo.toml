@@ -18,7 +18,7 @@ nico-assets = { path = "../../crates/nico-assets", features = ["watch"] }
 nico-presentation = { path = "../../crates/nico-presentation" }
 nico-presentation-control = { path = "../../crates/nico-presentation-control", features = ["scene"] }
 nico-runtime = { path = "../../crates/nico-runtime" }
-nico-ops = { path = "../../crates/nico-ops", features = ["mcp"] }
+nico-ops = { path = "../../crates/nico-ops", features = ["bridge"] }
 nico-launch = { path = "../../crates/nico-launch", features = ["editor"] }
 nico-winit = { path = "../../crates/nico-winit", features = ["editor"] }
 

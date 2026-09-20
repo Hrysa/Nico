@@ -24,6 +24,7 @@ struct Progress {
     catalog: Option<CatalogReader>,
 }
 pub struct LoadingEditor {
+    debug_session: Option<nico_ops::bridge::EditorSession>,
     root: PathBuf,
     queue: SharedQueue,
     published: Published,
@@ -42,6 +43,7 @@ impl LoadingEditor {
         registry: nico_authoring::Registry,
     ) -> Self {
         Self {
+            debug_session: None,
             root,
             queue,
             published,
@@ -55,6 +57,10 @@ impl LoadingEditor {
             first_presented: false,
             failure: None,
         }
+    }
+    pub fn with_debug_session(mut self, session: nico_ops::bridge::EditorSession) -> Self {
+        self.debug_session = Some(session);
+        self
     }
     fn start(&mut self) -> std::io::Result<()> {
         let root = self.root.clone();
@@ -170,6 +176,9 @@ impl EditorApplication for LoadingEditor {
                     let mut runtime = builder.build()?;
                     runtime.start()?;
                     let mut editor = Editor::new(runtime);
+                    if let Some(session) = &self.debug_session {
+                        editor.debug = Some(crate::debug::DebugPanel::new(session.clone()));
+                    }
                     let scene = editor.update(elapsed)?;
                     self.editor = Some(editor);
                     return Ok(scene);
@@ -183,6 +192,9 @@ impl EditorApplication for LoadingEditor {
         Ok(Scene3d::default())
     }
     fn shutdown(&mut self) -> NativeClientResult<()> {
+        if let Some(session) = &self.debug_session {
+            session.shutdown();
+        }
         if let Some(editor) = &mut self.editor {
             return editor.shutdown();
         }

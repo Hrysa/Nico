@@ -51,6 +51,15 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         (builder, None)
     };
     let mut sample_tools = tools.take().unwrap_or_default();
+    let content_project = args
+        .project
+        .as_ref()
+        .map(nico_scene::Project::open)
+        .transpose()?;
+    let content_revision = content_project
+        .as_ref()
+        .map(|project| nico_scene::content::revision(project, &|| false))
+        .transpose()?;
     let mode3d = args.project.is_some() || args.sample == "3d";
     let authored = args.project.is_some();
     let builder = if let Some(root) = args.project {
@@ -60,6 +69,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
     if args.host.bridge_address().is_some() {
         tools = Some(sample_tools);
+    }
+    if let Some(project) = &content_project
+        && Some(nico_scene::content::revision(project, &|| false)?) != content_revision
+    {
+        return Err("project content changed while loading".into());
     }
     let app = builder.build()?;
     let config = NativeClientConfig::new(
@@ -81,6 +95,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         config
     };
     let mut host = ClientHost::new(args.host).with_game_identity("minimal_game", "1");
+    if let Some(revision) = content_revision {
+        host = host.with_content_revision(revision);
+    }
     if let Some(tools) = tools {
         host = host.with_mcp_tools(tools);
     }

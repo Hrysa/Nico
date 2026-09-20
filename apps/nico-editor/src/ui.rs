@@ -13,6 +13,7 @@ enum Tab {
     Inspector,
 }
 pub struct Editor {
+    pub(crate) debug: Option<crate::debug::DebugPanel>,
     runtime: nico_runtime::App,
     dock: DockState<Tab>,
     play: PlaySession,
@@ -35,6 +36,7 @@ impl Editor {
         dock.main_surface_mut()
             .split_right(scene, 0.73, vec![Tab::Inspector]);
         Self {
+            debug: None,
             runtime,
             dock,
             play: PlaySession::default(),
@@ -92,6 +94,9 @@ impl EditorApplication for Editor {
         }
         ui.horizontal(|ui| {
             ui.label(RichText::new("NICO").strong().size(20.));
+            if let Some(debug) = &mut self.debug {
+                debug.ui(ui);
+            }
             ui.separator();
             for (label, action) in [
                 ("Save", Action::Save),
@@ -105,12 +110,15 @@ impl EditorApplication for Editor {
                 }
             }
             ui.separator();
+            self.play.ui(ui, core);
             let play_block = if core.playing {
                 Some("Game already running")
             } else if !core.definition.is_declared() {
                 Some("Loose content folders declare no game targets")
             } else if core.definition.manifest.targets.client.is_none() {
                 Some("Project declares no client target")
+            } else if core.definition.manifest.targets.server.is_none() {
+                Some("Project declares no server target")
             } else if core.dirty() {
                 Some("Save before playing")
             } else {
@@ -125,13 +133,16 @@ impl EditorApplication for Editor {
             }
             if ui
                 .add_enabled(core.playing, egui::Button::new("Stop"))
-                .on_hover_text("Terminate the launched client process")
+                .on_hover_text("Stop only this profile’s owned client and server")
                 .clicked()
             {
                 enqueue(core, Action::Stop);
             }
             if core.playing {
-                ui.label(RichText::new("Playing").color(Color32::LIGHT_GREEN));
+                ui.label(
+                    RichText::new(core.play_state["phase"].as_str().unwrap_or("preparing"))
+                        .color(Color32::LIGHT_GREEN),
+                );
             }
             if let Some(error) = &core.play_error {
                 ui.colored_label(Color32::LIGHT_RED, error);
@@ -205,35 +216,8 @@ impl EditorApplication for Editor {
     }
     fn update(&mut self, elapsed: Duration) -> NativeClientResult<nico_presentation::Scene3d> {
         self.runtime.tick(elapsed.min(Duration::from_millis(250)))?;
-        let (root, target) = {
-            let core = self.runtime.world().resource::<Core>().unwrap();
-            (
-                core.definition.root().to_path_buf(),
-                core.definition.manifest.targets.client.clone(),
-            )
-        };
-        let desired = self
-            .runtime
-            .world_mut()
-            .resource_mut::<Core>()?
-            .play_requested
-            .take();
-        if let Some(desired) = desired {
-            let result = if desired {
-                match &target {
-                    Some(target) => self.play.start(&root, target),
-                    None => Err(std::io::Error::other("project declares no client target")),
-                }
-            } else {
-                self.play.stop()
-            };
-            if let Err(error) = result {
-                self.runtime.world_mut().resource_mut::<Core>()?.play_error =
-                    Some(error.to_string());
-            }
-        }
-        let playing = self.play.poll();
-        self.runtime.world_mut().resource_mut::<Core>()?.playing = playing;
+        self.play
+            .update(self.runtime.world_mut().resource_mut::<Core>()?);
         Ok(self
             .runtime
             .world()
@@ -241,7 +225,7 @@ impl EditorApplication for Editor {
             .clone())
     }
     fn shutdown(&mut self) -> NativeClientResult<()> {
-        let _ = self.play.stop();
+        self.play.shutdown();
         self.runtime.world_mut().resource_mut::<Core>()?.close();
         self.runtime.shutdown()?;
         Ok(())
