@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 pub mod character;
 
 mod texture;
-pub use texture::Texture;
+pub use texture::{Texture, TextureEncoding};
 mod material;
 pub use material::{MaterialTexture, PbrMaterial};
 mod mesh;

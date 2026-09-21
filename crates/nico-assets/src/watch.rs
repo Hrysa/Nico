@@ -9,7 +9,7 @@ use crate::{
 };
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -36,7 +36,7 @@ impl ImportedAsset {
     // Conservative logical-content accounting, not allocator/GPU peak memory.
     fn retained_bytes(&self) -> usize {
         match self {
-            Self::Texture(t) => t.pixels().len(),
+            Self::Texture(t) => t.decoded_byte_len(),
             Self::Model(bundle) => {
                 let d = bundle.model.data();
                 let mut bytes = d
@@ -97,7 +97,7 @@ impl ImportedAsset {
                     .textures
                     .iter()
                     .flatten()
-                    .map(|t| t.pixels().len())
+                    .map(|t| t.decoded_byte_len())
                     .sum::<usize>();
                 bytes
             }
@@ -112,6 +112,9 @@ pub struct AssetEntry {
     /// Increments only after a successful import has been published.
     pub revision: u64,
     pub value: Option<ImportedAsset>,
+    /// Unchanged source and primary cache object verified by metadata. Content
+    /// may remain unloaded; this does not establish decoded or GPU readiness.
+    pub cached: bool,
     /// A failure may coexist with a last-good value.
     pub error: Option<String>,
     pub missing: bool,
@@ -144,6 +147,7 @@ pub struct WatchedProject {
     root: PathBuf,
     snapshot: Arc<Mutex<Arc<CatalogSnapshot>>>,
     rescan: Arc<AtomicBool>,
+    requested: Arc<Mutex<BTreeSet<PathBuf>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -153,7 +157,18 @@ impl WatchedProject {
     }
     /// Watch only declared content directories, retaining project-relative keys.
     pub fn open_roots(root: impl AsRef<Path>, directories: &[PathBuf]) -> io::Result<Self> {
-        let root = root.as_ref().canonicalize()?;
+        Self::open_mode(root.as_ref(), directories, false)
+    }
+    /// Check unchanged cached sources using metadata and load their content only
+    /// on request. New and changed sources are still imported automatically.
+    pub fn open_roots_on_demand(
+        root: impl AsRef<Path>,
+        directories: &[PathBuf],
+    ) -> io::Result<Self> {
+        Self::open_mode(root.as_ref(), directories, true)
+    }
+    fn open_mode(root: &Path, directories: &[PathBuf], on_demand: bool) -> io::Result<Self> {
+        let root = root.canonicalize()?;
         if !root.is_dir() {
             return Err(io::Error::other("project root must be a directory"));
         }
@@ -175,6 +190,7 @@ impl WatchedProject {
         let cache = ImportCache::new(&root).map_err(io::Error::other)?;
         let snapshot = Arc::new(Mutex::new(Arc::new(CatalogSnapshot::default())));
         let rescan = Arc::new(AtomicBool::new(true));
+        let requested = Arc::new(Mutex::new(BTreeSet::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let dirty = Arc::new(AtomicBool::new(false));
         let notifications = Arc::new(AtomicU64::new(0));
@@ -209,6 +225,7 @@ impl WatchedProject {
                 let snapshot = snapshot.clone();
                 let rescan = rescan.clone();
                 let stop = stop.clone();
+                let requested = requested.clone();
                 move || {
                     let _watcher = watcher;
                     let mut catalog = CatalogSnapshot::default();
@@ -227,12 +244,14 @@ impl WatchedProject {
                             || due
                             || last_scan.elapsed() >= RECONCILE
                         {
-                            reconcile_roots(
+                            let requests = requested.lock().unwrap().clone();
+                            reconcile_requested(
                                 &root,
                                 &roots,
                                 &cache,
                                 &mut catalog,
                                 &stop,
+                                on_demand.then_some(&requests),
                                 &mut |catalog| {
                                     *snapshot.lock().unwrap() = Arc::new(catalog.clone());
                                 },
@@ -253,6 +272,7 @@ impl WatchedProject {
             root,
             snapshot,
             rescan,
+            requested,
             stop,
             worker: Some(worker),
         })
@@ -265,6 +285,19 @@ impl WatchedProject {
     }
     pub fn snapshot(&self) -> Arc<CatalogSnapshot> {
         self.snapshot.lock().unwrap().clone()
+    }
+    /// Request CPU content for a discovered source. Repeated requests coalesce;
+    /// the worker publishes the result without blocking the caller.
+    pub fn request(&self, path: &Path) {
+        if !self.snapshot().assets.contains_key(path) {
+            return;
+        }
+        if self.requested.lock().unwrap().insert(path.to_owned()) {
+            self.refresh();
+            if let Some(worker) = &self.worker {
+                worker.thread().unpark();
+            }
+        }
     }
     /// Requests stat reconciliation, coalescing repeated requests without blocking.
     pub fn refresh(&self) {
@@ -349,12 +382,25 @@ fn reconcile(root: &Path, cache: &ImportCache, catalog: &mut CatalogSnapshot, st
         &mut |_| {},
     );
 }
+#[cfg(test)]
 fn reconcile_roots(
     root: &Path,
     roots: &[PathBuf],
     cache: &ImportCache,
     catalog: &mut CatalogSnapshot,
     stop: &AtomicBool,
+    publish: &mut dyn FnMut(&CatalogSnapshot),
+) {
+    reconcile_requested(root, roots, cache, catalog, stop, None, publish);
+}
+#[allow(clippy::too_many_arguments)]
+fn reconcile_requested(
+    root: &Path,
+    roots: &[PathBuf],
+    cache: &ImportCache,
+    catalog: &mut CatalogSnapshot,
+    stop: &AtomicBool,
+    requested: Option<&BTreeSet<PathBuf>>,
     publish: &mut dyn FnMut(&CatalogSnapshot),
 ) {
     catalog.scans += 1;
@@ -372,6 +418,7 @@ fn reconcile_roots(
             entry.missing = true;
             entry.error = Some("source file is missing".into());
             entry.stamp = None;
+            entry.cached = false;
         }
     }
     // Publish all source identities before decoding the first file.
@@ -386,6 +433,7 @@ fn reconcile_roots(
                     path: path.clone(),
                     revision: 0,
                     value: None,
+                    cached: false,
                     error: None,
                     missing: false,
                     stamp: None,
@@ -394,15 +442,17 @@ fn reconcile_roots(
         }
     }
     publish(catalog);
+    let probe = requested.and_then(|_| cache.probe().ok());
     for (path, stamp) in files {
         if stop.load(Ordering::Acquire) {
             break;
         }
-        if catalog
-            .assets
-            .get(&path)
-            .is_some_and(|e| !e.missing && stamp.is_some() && e.stamp == stamp)
-        {
+        if catalog.assets.get(&path).is_some_and(|e| {
+            !e.missing
+                && stamp.is_some()
+                && e.stamp == stamp
+                && (e.value.is_some() || e.error.is_some())
+        }) {
             continue;
         }
         if !catalog.assets.contains_key(&path) && catalog.assets.len() >= MAX_ASSETS {
@@ -411,11 +461,34 @@ fn reconcile_roots(
             );
             break;
         }
-        catalog.importing = Some(path.clone());
-        publish(catalog);
         let full = root.join(&path);
         let cancelled = || stop.load(Ordering::Acquire);
         let budget = ImportBudget::default();
+        if requested.is_some_and(|r| !r.contains(&path))
+            && catalog.assets.get(&path).is_some_and(|e| e.value.is_none())
+            && let Some(probe) = &probe
+        {
+            let current = if path.extension().unwrap().eq_ignore_ascii_case("png") {
+                probe.current(&full, &PngImporter, &PngSettings::default(), budget)
+            } else {
+                probe.current(
+                    &full,
+                    &ModelGlbImporter,
+                    &ModelGlbSettings::default(),
+                    budget,
+                )
+            };
+            if current.unwrap_or(false) && stamp == FileStamp::path(&full) {
+                let entry = catalog.assets.get_mut(&path).unwrap();
+                entry.stamp = stamp;
+                entry.cached = true;
+                entry.missing = false;
+                entry.error = None;
+                continue;
+            }
+        }
+        catalog.importing = Some(path.clone());
+        publish(catalog);
         let result = if path.extension().unwrap().eq_ignore_ascii_case("png") {
             cache
                 .load(
@@ -461,12 +534,14 @@ fn reconcile_roots(
                 path,
                 revision: 0,
                 value: None,
+                cached: false,
                 error: None,
                 missing: false,
                 stamp: None,
             });
         entry.stamp = stamp;
         entry.missing = false;
+        entry.cached = false;
         match result {
             Ok(_) if over_budget => {
                 entry.error = Some("project retained content exceeds 512 MiB".into());
@@ -559,6 +634,94 @@ mod tests {
         .unwrap();
         assert_eq!(files.len(), 1);
         assert!(files.contains_key(Path::new("assets/content.png")));
+    }
+    #[test]
+    fn warm_catalog_defers_content_until_requested_and_imports_changed_sources() {
+        let project = Project::new();
+        project.png("a.png", 1);
+        project.png("b.png", 1);
+        let cache = ImportCache::new(&project.0).unwrap();
+        let stop = AtomicBool::new(false);
+        reconcile(&project.0, &cache, &mut CatalogSnapshot::default(), &stop);
+        let activity = crate::cache::observe_current_thread();
+        let before = activity.stats();
+        let mut state = CatalogSnapshot::default();
+        let scan = |state: &mut CatalogSnapshot, requested: &BTreeSet<PathBuf>| {
+            reconcile_requested(
+                &project.0,
+                std::slice::from_ref(&project.0),
+                &cache,
+                state,
+                &stop,
+                Some(requested),
+                &mut |_| {},
+            );
+        };
+        scan(&mut state, &BTreeSet::new());
+        assert!(state.assets.values().all(|a| a.cached && a.value.is_none()));
+        assert_eq!(state.imports, 0);
+        assert_eq!(state.retained_bytes, 0);
+        assert_eq!(activity.stats().hits, before.hits);
+        assert_eq!(activity.stats().source_checks, before.source_checks);
+        assert_eq!(activity.stats().object_checks, before.object_checks);
+        let requested = BTreeSet::from([PathBuf::from("a.png")]);
+        scan(&mut state, &requested);
+        assert_eq!(state.imports, 1);
+        assert!(state.assets[Path::new("a.png")].value.is_some());
+        assert!(state.assets[Path::new("b.png")].value.is_none());
+        scan(&mut state, &requested);
+        assert_eq!(state.imports, 1);
+        project.png("b.png", 2);
+        scan(&mut state, &requested);
+        assert_eq!(state.imports, 2);
+        assert!(state.assets[Path::new("b.png")].value.is_some());
+        // Another importer may have refreshed the disk cache already. Existing
+        // last-good content must still adopt the changed revision.
+        project.png("b.png", 3);
+        cache
+            .load(
+                &project.0.join("b.png"),
+                &PngImporter,
+                &PngSettings::default(),
+                ImportBudget::default(),
+                &|| false,
+            )
+            .unwrap();
+        scan(&mut state, &requested);
+        assert_eq!(state.assets[Path::new("b.png")].revision, 2);
+        let Some(ImportedAsset::Texture(texture)) = &state.assets[Path::new("b.png")].value else {
+            panic!("expected loaded texture");
+        };
+        assert_eq!(texture.width(), 3);
+        fs::write(project.0.join("b.png"), b"invalid").unwrap();
+        scan(&mut state, &requested);
+        assert!(state.assets[Path::new("b.png")].error.is_some());
+        assert!(state.assets[Path::new("b.png")].value.is_some());
+        fs::remove_file(project.0.join("a.png")).unwrap();
+        scan(&mut state, &requested);
+        assert!(state.assets[Path::new("a.png")].missing);
+    }
+    #[test]
+    fn on_demand_worker_accepts_requests_and_joins_shutdown() {
+        let project = Project::new();
+        project.png("a.png", 1);
+        let cache = ImportCache::new(&project.0).unwrap();
+        reconcile(
+            &project.0,
+            &cache,
+            &mut CatalogSnapshot::default(),
+            &AtomicBool::new(false),
+        );
+        let watched =
+            WatchedProject::open_roots_on_demand(&project.0, &[PathBuf::from(".")]).unwrap();
+        wait(&watched, |s| {
+            s.assets.get(Path::new("a.png")).is_some_and(|a| a.cached)
+        });
+        watched.request(Path::new("a.png"));
+        watched.request(Path::new("a.png"));
+        wait(&watched, |s| s.assets[Path::new("a.png")].value.is_some());
+        assert_eq!(watched.snapshot().imports, 1);
+        drop(watched);
     }
     #[test]
     fn stat_checks_preserve_identity_and_failed_replacements_keep_last_good() {

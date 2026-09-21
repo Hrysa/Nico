@@ -63,8 +63,18 @@ fn error(message: impl ToString) -> CallToolResult {
     result.is_error = Some(true);
     result
 }
-pub fn register(queue: SharedQueue, state: Published) -> std::io::Result<ToolExtensions> {
+pub fn register(
+    queue: SharedQueue,
+    state: Published,
+    loading: crate::loading_report::LoadingReport,
+) -> std::io::Result<ToolExtensions> {
     let mut tools = ToolExtensions::default();
+    tools.register(Tool::new("editor_loading", "Read retained startup and latest refresh loading diagnostics, including command ID, elapsed wall time, phase progress and thread-scoped cache hit/import/check counters. Available while the runtime is loading or blocked in refresh. Times include waits, are not CPU/GPU times, and phase durations need not sum to total. first_scene_presented_ms means presentation API success, not GPU completion or desktop visibility. Match process_id to bridge instance/build identity. History is bounded to 32 phases per operation and survives reconnect, not process exit.",
+        json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
+        if !args.is_empty() { return error("no arguments accepted"); }
+        CallToolResult::structured(loading.snapshot())
+    })?;
+    tools.set_access("editor_loading", nico_ops::mcp::ToolAccess::Inspect)?;
     tools.register(Tool::new("editor_state", "Inspect project sources, successful import revisions, errors, scene objects, the launched client process state and command outcomes. Rendering and snapshot age are separate from host presentation counts.",
         json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
         if !args.is_empty() { return error("no arguments accepted"); }

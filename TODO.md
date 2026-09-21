@@ -8,6 +8,17 @@ validation evidence belong in the [roadmap](docs/roadmap.md); the
 
 Acceptance: [roadmap phase 8](docs/roadmap.md#8-make-development-repeatable).
 
+- [ ] Use `editor_loading` to reduce the remaining warm-open scene preparation
+      and preparation-to-first-presentation delay. The latest isolated native Windows
+      run takes about 1.06 seconds from loader start to scene presentation API success;
+      source imports are zero. See
+      [instance evidence](docs/roadmap.md#common-mesh-instancing-2026-09-20-feature-complete).
+
+- [ ] Follow-up optimization (deferred): reduce the remaining moving-camera frame-time
+      gap against expanded grass without changing visible results. The common instance
+      feature is complete without LOD; further performance investigation is deferred
+      by the user. See the [delivery audit](docs/validation/2026-09-20-common-mesh-instancing.md#final-feature-delivery-2026-09-21).
+
 - [ ] Extend Arena authoring to encounters/spawns/colliders, followed by validated
       reload and separation of generic editor code from game adapter registration.
 - [ ] Add source-reference relinking for renamed assets and project import settings

@@ -42,12 +42,32 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (source, output) in [
         (
+            "assets/presentation/shaders/foliage_meshes.slang",
+            "assets/presentation/shaders/generated/wgpu/foliage_meshes.wgsl",
+        ),
+        (
+            "assets/presentation/shaders/foliage_storage.slang",
+            "assets/presentation/shaders/generated/wgpu/foliage_storage.wgsl",
+        ),
+        (
+            "assets/presentation/shaders/instanced_storage.slang",
+            "assets/presentation/shaders/generated/wgpu/instanced_storage.wgsl",
+        ),
+        (
+            "assets/presentation/shaders/instance_visibility.slang",
+            "assets/presentation/shaders/generated/wgpu/instance_visibility.wgsl",
+        ),
+        (
             "assets/presentation/shaders/skinned_meshes.slang",
             "assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl",
         ),
         (
             "assets/presentation/shaders/meshes.slang",
             "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
+        ),
+        (
+            "assets/presentation/shaders/instanced_meshes.slang",
+            "assets/presentation/shaders/generated/wgpu/instanced_meshes.wgsl",
         ),
         (SOURCE, OUTPUT),
         (
@@ -118,11 +138,17 @@ fn compile_shader(compiler: &std::ffi::OsStr, source: &Path, output: &Path) -> i
         .ok_or_else(|| io::Error::other("shader output has no parent directory"))?;
     fs::create_dir_all(parent)?;
 
-    let status = Command::new(compiler)
-        .arg(source)
-        .args([
-            "-target",
-            "wgsl",
+    let mut command = Command::new(compiler);
+    command.arg(source).args(["-target", "wgsl"]);
+    if source
+        .file_stem()
+        .is_some_and(|name| name == "instance_visibility")
+    {
+        for entry in ["reset_main", "count_main", "scan_main", "scatter_main"] {
+            command.args(["-entry", entry, "-stage", "compute"]);
+        }
+    } else {
+        command.args([
             "-entry",
             "vertex_main",
             "-stage",
@@ -131,10 +157,17 @@ fn compile_shader(compiler: &std::ffi::OsStr, source: &Path, output: &Path) -> i
             "fragment_main",
             "-stage",
             "fragment",
-            "-o",
-        ])
-        .arg(output)
-        .status()?;
+        ]);
+    }
+    if source.file_stem().is_some_and(|name| {
+        matches!(
+            name.to_str(),
+            Some("instanced_meshes" | "instanced_storage" | "foliage_meshes" | "foliage_storage")
+        )
+    }) {
+        command.args(["-entry", "vertex_compact_main", "-stage", "vertex"]);
+    }
+    let status = command.arg("-o").arg(output).status()?;
 
     if !status.success() {
         return Err(io::Error::other(format!(

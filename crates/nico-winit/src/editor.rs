@@ -50,6 +50,7 @@ struct Graphics {
     gui: egui_wgpu::Renderer,
     input: egui_winit::State,
     viewport_cache: ViewportCache,
+    prepared_host_frame: u64,
 }
 struct Host<A> {
     app: A,
@@ -60,6 +61,7 @@ struct Host<A> {
     graphics: Option<Graphics>,
     frames: u64,
     last: Instant,
+    render_control: super::instancing::control::RenderControlOwner,
     next: Instant,
     active: bool,
     failure: Option<String>,
@@ -81,6 +83,7 @@ pub fn run<A: EditorApplication + 'static>(
         graphics: None,
         frames: 0,
         last: now,
+        render_control: Default::default(),
         next: now,
         active: true,
         failure: None,
@@ -140,9 +143,30 @@ impl<A: EditorApplication> Host<A> {
             builtin_shaders::bootstrap_wgsl(&mesh_bytes),
             builtin_shaders::bootstrap_wgsl(&quad_bytes),
         )?;
+        let instance_bytes =
+            std::fs::read(shader_root.join("generated/wgpu/instanced_meshes.wgsl"))?;
+        mesh.enable_instancing(
+            backend.device(),
+            builtin_shaders::bootstrap_wgsl(&instance_bytes),
+        )?;
+        mesh.set_instance_source_upload_budget(Some(8 * 1024 * 1024))?;
+        mesh.set_instance_auto_gpu_min_records(crate::instancing::AUTO_GPU_MIN_RECORDS)?;
+        super::instancing::install_gpu(
+            backend.device(),
+            &mut mesh,
+            &shader_root.join("generated/wgpu/instanced_storage.wgsl"),
+            &shader_root.join("generated/wgpu/instance_visibility.wgsl"),
+        )?;
         mesh.enable_skinning(
             backend.device(),
             builtin_shaders::bootstrap_wgsl(&skin_bytes),
+        )?;
+        super::instancing::install_foliage(
+            backend.device(),
+            &mut mesh,
+            &shader_root.join("generated/wgpu/foliage_meshes.wgsl"),
+            &shader_root.join("generated/wgpu/foliage_storage.wgsl"),
+            &shader_root.join("generated/wgpu/instance_visibility.wgsl"),
         )?;
         let input = egui_winit::State::new(
             self.context.clone(),
@@ -160,6 +184,7 @@ impl<A: EditorApplication> Host<A> {
             gui,
             input,
             viewport_cache: ViewportCache::default(),
+            prepared_host_frame: 0,
         });
         self.window = Some(window);
         self.endpoint.running(self.frames);
@@ -191,7 +216,17 @@ impl<A: EditorApplication> Host<A> {
         output.textures_delta.clear();
         g.input
             .handle_platform_output(window, output.platform_output);
-        let scene = self.app.update(elapsed)?;
+        let mut scene = self.app.update(elapsed)?;
+        if self.render_control.prepare(
+            g.backend.device(),
+            &mut g.mesh,
+            &mut scene,
+            &self.endpoint.rendering(),
+            elapsed,
+            self.frames,
+        ) {
+            g.viewport_cache = ViewportCache::default();
+        }
         let scale = output.pixels_per_point;
         let width = (viewport.x * scale).round().clamp(1., 4096.) as u32;
         let height = (viewport.y * scale).round().clamp(1., 4096.) as u32;
@@ -206,7 +241,13 @@ impl<A: EditorApplication> Host<A> {
             );
         }
         let logical_size = [viewport.x.max(1.), viewport.y.max(1.)];
-        if g.viewport_cache.changed(&scene, logical_size) {
+        if g.mesh.instance_stats().deferred_upload_chunks > 0
+            || g.viewport_cache.changed(&scene, logical_size)
+        {
+            // Release the previous scene before renderer weak-owner retirement.
+            // Otherwise evicted chunks survive this render and an unchanged cached
+            // viewport may never prepare another view to reclaim their uploads.
+            g.viewport_cache = ViewportCache::default();
             let extent = g.target.extent();
             g.mesh.render(
                 g.backend.device(),
@@ -218,8 +259,13 @@ impl<A: EditorApplication> Host<A> {
                 logical_size,
                 extent,
             )?;
+            g.prepared_host_frame = self.frames;
             g.viewport_cache.store(scene, logical_size);
         }
+        self.endpoint.instancing(super::instancing::report(
+            g.prepared_host_frame,
+            g.mesh.instance_stats(),
+        ));
         let primitives = self.context.tessellate(output.shapes, scale);
         let (device, queue, surface) = g.backend.parts();
         let acquired = surface.acquire(device)?;

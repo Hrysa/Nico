@@ -149,6 +149,11 @@ pub struct Scene3d {
     pub lighting: SceneLighting,
     pub camera: Camera3d,
     pub meshes: Vec<MeshInstance>,
+    /// Immutable compatible chunks; visibility does not define their asset lifetime.
+    pub instance_batches: Vec<Arc<crate::InstanceBatch>>,
+    /// Owned render-only fields and visual time. Reuse the Arc while unchanged.
+    /// None uses the renderer's explicitly configured default influence snapshot.
+    pub foliage_influences: Option<Arc<crate::foliage::InfluenceSnapshot>>,
 }
 
 /// One directional light plus diffuse ambient illumination, in linear RGB.

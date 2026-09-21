@@ -14,7 +14,11 @@ wgpu.workspace = true
 workspace = true
 
 [dev-dependencies]
+# Opt-in end-to-end scene benchmark; production RHI remains game-independent.
+arena-arpg-presentation = { path = "../../games/arena-arpg/presentation" }
+arena-arpg-shared = { path = "../../games/arena-arpg/shared" }
+glam = "0.30"
 nico-render = { path = "../nico-render" }
 nico-presentation = { path = "../nico-presentation", default-features = false }
-nico-assets = { path = "../nico-assets" }
+nico-assets = { path = "../nico-assets", features = ["texture-compression"] }
 pollster.workspace = true

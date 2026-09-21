@@ -67,7 +67,9 @@ fn branch(
         } else if entry.error.is_some() {
             " (failed)"
         } else if catalog.importing.as_ref() == Some(path) {
-            " (importing…)"
+            " (loading…)"
+        } else if entry.cached && entry.value.is_none() {
+            ""
         } else if entry.value.is_none() {
             " (queued)"
         } else {
@@ -79,7 +81,15 @@ fn branch(
         }
         ui.push_id(path, |ui| {
             let response = ui.selectable_label(selected == Some(path.as_path()), label);
-            if response.double_clicked() && matches!(entry.value, Some(ImportedAsset::Model(_))) {
+            if response.double_clicked()
+                && !entry.missing
+                && entry.error.is_none()
+                && (matches!(entry.value, Some(ImportedAsset::Model(_)))
+                    || (entry.cached
+                        && path
+                            .extension()
+                            .is_some_and(|x| x.eq_ignore_ascii_case("glb"))))
+            {
                 action(path.clone(), true);
             } else if response.clicked() {
                 action(path.clone(), false);

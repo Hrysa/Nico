@@ -1,6 +1,7 @@
 //! Arena's authoring adapter uses exactly the client's scenery and zone validation.
 use crate::environment::{Decoration, Definition, Environment};
 use arena_arpg_shared::open_world::content::ZoneDefinition;
+use nico_assets::cache::FileStamp;
 use nico_authoring::Session;
 use nico_presentation::{Camera3d, Scene3d};
 use nico_scene::{Document, Object, Project};
@@ -29,6 +30,28 @@ struct WorldEditor {
     environment: Environment,
     document: Document,
     assets: BTreeMap<String, PathBuf>,
+    source_stamps: BTreeMap<PathBuf, Option<FileStamp>>,
+}
+fn source_stamps(visual_path: &Path, visual: &Definition) -> BTreeMap<PathBuf, Option<FileStamp>> {
+    std::iter::once(visual_path.to_owned())
+        .chain(
+            visual
+                .models
+                .values()
+                .map(|p| visual_path.parent().unwrap().join(p)),
+        )
+        .map(|p| {
+            let stamp = FileStamp::path(&p);
+            (p, stamp)
+        })
+        .collect()
+}
+fn verified_stamps(stamps: &mut BTreeMap<PathBuf, Option<FileStamp>>) {
+    for (path, stamp) in stamps {
+        if *stamp != FileStamp::path(path) {
+            *stamp = None;
+        }
+    }
 }
 impl WorldEditor {
     fn open(project: Project) -> io::Result<Self> {
@@ -52,12 +75,21 @@ impl WorldEditor {
         let visual_path = source("visual")?;
         let original_logic = fs::read(&logic_path)?;
         let original_visual = fs::read(&visual_path)?;
+        let visual: Definition =
+            toml::from_str(std::str::from_utf8(&original_visual).map_err(error)?).map_err(error)?;
+        let mut source_stamps = source_stamps(&visual_path, &visual);
         let zone = ZoneDefinition::load(&logic_path).map_err(error)?;
         let mut environment = Environment::load(&visual_path).map_err(error)?;
+        environment.ground_cache =
+            Some(nico_assets::cache::ImportCache::new(project.root()).map_err(error)?);
         if zone.id != environment.definition.zone {
             return Err(error("logic and visual zone IDs differ"));
         }
+        let preparing =
+            nico_assets::progress::ImportProgress::new("preparing scenery and landscape", 1)?;
         environment.bind(&zone).map_err(error)?;
+        preparing.complete_one();
+        preparing.finish();
         let mut assets = BTreeMap::new();
         for (key, path) in &environment.definition.models {
             let full = visual_path.parent().unwrap().join(path).canonicalize()?;
@@ -97,6 +129,7 @@ impl WorldEditor {
             });
         }
         document.validate()?;
+        verified_stamps(&mut source_stamps);
         Ok(Self {
             project,
             logic_path,
@@ -109,6 +142,7 @@ impl WorldEditor {
             environment,
             document,
             assets,
+            source_stamps,
         })
     }
 }
@@ -240,6 +274,8 @@ impl Session for WorldEditor {
             self.original_logic = logic;
         }
         self.original_visual = visual;
+        self.source_stamps
+            .insert(self.visual_path.clone(), FileStamp::path(&self.visual_path));
         Ok(())
     }
     fn reload(&mut self) -> io::Result<()> {
@@ -247,15 +283,30 @@ impl Session for WorldEditor {
         Ok(())
     }
     fn refresh_assets(&mut self) -> io::Result<()> {
+        let checking = nico_assets::progress::ImportProgress::new("checking scenery sources", 1)?;
+        let mut stamps = source_stamps(&self.visual_path, &self.base_visual);
+        checking.complete_one();
+        checking.finish();
+        if stamps.values().all(Option::is_some) && stamps == self.source_stamps {
+            return Ok(());
+        }
         if fs::read(&self.visual_path)? != self.original_visual {
             return Err(error(
                 "visual definition changed on disk; reload it before refreshing models",
             ));
         }
         let mut environment = Environment::load(&self.visual_path).map_err(error)?;
+        environment.ground_cache =
+            Some(nico_assets::cache::ImportCache::new(self.project.root()).map_err(error)?);
         environment.definition = self.environment.definition.clone();
+        let preparing =
+            nico_assets::progress::ImportProgress::new("preparing scenery and landscape", 1)?;
         environment.bind(&self.zone).map_err(error)?;
+        preparing.complete_one();
+        preparing.finish();
         self.environment = environment;
+        verified_stamps(&mut stamps);
+        self.source_stamps = stamps;
         Ok(())
     }
     fn inspect(&self) -> serde_json::Value {
@@ -291,6 +342,61 @@ fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adding_and_removing_decoration_retains_grass_batches() {
+        // Use the existing game and its normal cache; never copy or save sources.
+        let project = Project::open(Path::new(env!("CARGO_MANIFEST_DIR")).join("..")).unwrap();
+        let mut editor = WorldEditor::open(project).unwrap();
+        let camera = Camera3d::looking_at([25., 35., 40.], [0.; 3], [0., 1., 0.]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let before = loop {
+            let scene = editor.render(camera);
+            if !scene.instance_batches.is_empty() {
+                break scene;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "grass did not become resident"
+            );
+            std::thread::yield_now();
+        };
+        let original = editor.document();
+        let mut added = original.clone();
+        let mut decoration = added.objects.iter().find(|o| o.id >= 1000).unwrap().clone();
+        decoration.id = added.objects.iter().map(|o| o.id).max().unwrap() + 1;
+        decoration.position[0] += 0.25;
+        added.objects.push(decoration);
+        for document in [&added, &original] {
+            editor.replace(document).unwrap();
+            let after = editor.render(camera);
+            assert!(std::sync::Arc::ptr_eq(
+                before.meshes[1].mesh.as_ref().unwrap(),
+                after.meshes[1].mesh.as_ref().unwrap(),
+            ));
+            for batch in &before.instance_batches {
+                assert!(
+                    after
+                        .instance_batches
+                        .iter()
+                        .any(|retained| { std::sync::Arc::ptr_eq(batch, retained) }),
+                    "resident grass was replaced by an unrelated decoration edit"
+                );
+            }
+        }
+        let mut obstacle_edit = original;
+        obstacle_edit
+            .objects
+            .iter_mut()
+            .find(|o| o.id == 1)
+            .unwrap()
+            .position[0] += 0.25;
+        editor.replace(&obstacle_edit).unwrap();
+        let changed = editor.render(camera);
+        assert!(!std::sync::Arc::ptr_eq(
+            before.meshes[1].mesh.as_ref().unwrap(),
+            changed.meshes[1].mesh.as_ref().unwrap(),
+        ));
+    }
     fn fixture() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -340,6 +446,31 @@ mod tests {
         let camera = Camera3d::looking_at([25., 35., 40.], [0.; 3], [0., 1., 0.]).unwrap();
         let scene = editor.render(camera);
         assert!(scene.meshes.len() > 30 && scene.meshes.len() <= 256);
+        editor.refresh_assets().unwrap();
+        let refreshed = editor.render(camera);
+        assert_eq!(scene.meshes.len(), refreshed.meshes.len());
+        assert!(scene.meshes.iter().zip(&refreshed.meshes).all(|(a, b)| {
+            std::sync::Arc::ptr_eq(a.mesh.as_ref().unwrap(), b.mesh.as_ref().unwrap())
+        }));
+        // Changed sources must still be loaded; failure keeps the last-good
+        // scene and all unsaved authored edits.
+        let model_path = editor
+            .project
+            .root()
+            .join(editor.assets.values().next().unwrap());
+        let model_bytes = fs::read(&model_path).unwrap();
+        fs::write(&model_path, b"invalid model").unwrap();
+        assert!(editor.refresh_assets().is_err());
+        assert_eq!(editor.document(), edited);
+        let retained = editor.render(camera);
+        assert!(std::sync::Arc::ptr_eq(
+            scene.meshes[0].mesh.as_ref().unwrap(),
+            retained.meshes[0].mesh.as_ref().unwrap()
+        ));
+        fs::write(&model_path, model_bytes).unwrap();
+        editor.refresh_assets().unwrap();
+        assert_eq!(editor.document(), edited);
+        editor.render(camera);
         assert_eq!(editor.inspect()["environment"]["loaded_models"], 13);
         editor.save().unwrap();
         assert_eq!(fs::read(&editor.logic_path).unwrap(), original_logic);

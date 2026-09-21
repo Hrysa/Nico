@@ -5,6 +5,8 @@
 //! native providers. Renderers consume snapshots from `nico-presentation`.
 
 pub mod camera;
+pub mod foliage;
+pub mod instances;
 
 pub mod text;
 

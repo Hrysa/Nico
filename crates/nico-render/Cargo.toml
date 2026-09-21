@@ -12,3 +12,6 @@ nico-rhi = { path = "../nico-rhi" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+nico-assets = { path = "../nico-assets", features = ["texture-compression"] }

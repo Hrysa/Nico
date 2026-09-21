@@ -416,8 +416,8 @@ fn client_arguments(
 fn start_host(
     executable: &Path,
     root: &Path,
-    snapshot: &Path,
-    policy: &Path,
+    project: &Path,
+    session: &Path,
     profile: &PlayProfile,
     role: &'static str,
     launch: (&str, &[String]),
@@ -431,17 +431,15 @@ fn start_host(
             &profile.bridge.to_string(),
             "--debug-access-file",
         ])
-        .arg(policy)
+        .arg(session.join("host-access.json"))
         .arg("--project")
-        .arg(snapshot)
+        .arg(project)
         .stdin(Stdio::null());
     if role == "client" {
         command.arg("--background");
     }
     if role == "server" {
-        command
-            .arg("--data-dir")
-            .arg(snapshot.parent().unwrap().join("server-data"));
+        command.arg("--data-dir").arg(session.join("server-data"));
     }
     command.args(launch.1);
     Ok(Host {
@@ -460,7 +458,10 @@ fn ready(
     state: &Mutex<Value>,
     cancelled: &AtomicBool,
 ) -> io::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A project's first launch can import character assets not used by the editor.
+    // Subsequent launches reuse that project's cache; cold imports still need a
+    // bounded startup allowance rather than being killed after thirty seconds.
+    let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         check(cancelled)?;
         if let Some(exit) = host.process.poll()? {
@@ -516,25 +517,38 @@ fn run(profile: &PlayProfile, state: &Mutex<Value>, cancelled: &AtomicBool) -> i
         .as_deref()
         .ok_or_else(|| io::Error::other("profile requires a server target"))?;
     let root = workspace(project.root())?;
-    let directory = tempfile::Builder::new().prefix("nico-play-").tempdir()?;
+    let directory = project.root().join(".nico/play");
+    fs::create_dir_all(&directory)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("session.lock"))?;
+    lock.try_lock().map_err(|error| {
+        io::Error::other(format!("project Play session is already in use: {error}"))
+    })?;
+    let policy = directory.join("host-access.json");
+    match fs::remove_file(&policy) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let result = (|| {
-        let content_path = directory.path().join("project");
-        let (_snapshot, revision) =
-            nico_scene::content::snapshot(&project, &content_path, &|| {
-                cancelled.load(Ordering::Acquire)
-            })?;
-        let data = directory.path().join("server-data");
-        fs::create_dir(&data)?;
-        let policy = directory.path().join("host-access.json");
+        // Hosts load the saved project in place, sharing its existing import cache.
+        // Reuse one project-local Play directory and the normal Cargo binaries.
+        let content_path = project.root();
+        let data = directory.join("server-data");
+        fs::create_dir_all(&data)?;
         let credential = private_policy(&policy)?;
         {
             let mut state = state.lock().unwrap();
-            state["content_revision"] = json!(revision);
             state["content_path"] = json!(content_path);
+            state["session_path"] = json!(directory);
             state["server_data"] = json!(data);
         }
         phase(state, "building");
-        let target_dir = root.join("target/editor-play");
+        let target_dir = root.join("target");
         let mut command = Command::new("cargo");
         command
             .current_dir(&root)
@@ -567,21 +581,20 @@ fn run(profile: &PlayProfile, state: &Mutex<Value>, cancelled: &AtomicBool) -> i
             thread::sleep(Duration::from_millis(100));
         }
         let bin = target_dir.join(if profile.release { "release" } else { "debug" });
-        let owned_bin = directory.path().join("bin");
-        fs::create_dir(&owned_bin)?;
-        for target in [client_target, server_target] {
-            let name = format!("{target}{}", std::env::consts::EXE_SUFFIX);
-            fs::copy(bin.join(&name), owned_bin.join(name))?;
-        }
         let executable =
-            |target: &str| owned_bin.join(format!("{target}{}", std::env::consts::EXE_SUFFIX));
+            |target: &str| bin.join(format!("{target}{}", std::env::consts::EXE_SUFFIX));
+        // Measure saved content after the build, so edits made while Cargo runs
+        // do not invalidate the launch before either host even opens the project.
+        let revision =
+            nico_scene::content::revision(&project, &|| cancelled.load(Ordering::Acquire))?;
+        state.lock().unwrap()["content_revision"] = json!(revision);
         check(cancelled)?;
         phase(state, "starting_server");
         let mut server = start_host(
             &executable(server_target),
             &root,
-            &content_path,
-            &policy,
+            content_path,
+            &directory,
             profile,
             "server",
             (
@@ -607,8 +620,8 @@ fn run(profile: &PlayProfile, state: &Mutex<Value>, cancelled: &AtomicBool) -> i
             client = Some(start_host(
                 &executable(client_target),
                 &root,
-                &content_path,
-                &policy,
+                content_path,
+                &directory,
                 profile,
                 "client",
                 (&project.manifest.play.client_tool, &client_arguments),
@@ -644,7 +657,7 @@ fn run(profile: &PlayProfile, state: &Mutex<Value>, cancelled: &AtomicBool) -> i
         phase(state, "stopping");
         let client_cleanup = client.as_mut().map(|host| host.stop(state)).transpose();
         let server_cleanup = server.stop(state);
-        // Children are reaped before the temporary content/data directory is removed.
+        // Reap children before removing credentials. Project, cache and saves persist.
         drop(client);
         drop(server);
         state.lock().unwrap()["server_progress_saved"] =
@@ -653,7 +666,10 @@ fn run(profile: &PlayProfile, state: &Mutex<Value>, cancelled: &AtomicBool) -> i
         server_cleanup?;
         result
     })();
-    let removed = directory.close();
+    let removed = match fs::remove_file(&policy) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    };
     state.lock().unwrap()["resources_removed"] = json!(removed.is_ok());
     removed?;
     result

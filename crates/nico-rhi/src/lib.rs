@@ -41,6 +41,8 @@ flags! {
     UNIFORM = 1 << 4;
     STORAGE = 1 << 5;
     INDIRECT = 1 << 6;
+    // CPU readback staging only; combine solely with COPY_DESTINATION.
+    MAP_READ = 1 << 7;
 }
 
 flags! {
@@ -150,6 +152,12 @@ pub struct AdapterInfo {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
+    pub max_buffer_size: u64,
+    pub max_vertex_buffer_array_stride: u32,
+    pub max_storage_buffers_per_shader_stage: u32,
+    pub max_compute_workgroup_size_x: u32,
+    pub max_compute_invocations_per_workgroup: u32,
+    pub max_compute_workgroups_per_dimension: u32,
     pub max_texture_dimension_2d: u32,
     pub max_bind_groups: u32,
     pub max_uniform_buffer_binding_size: u64,
@@ -160,6 +168,14 @@ pub struct Limits {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Capabilities {
+    /// Compute dispatch is supported with the reported enabled limits.
+    pub compute: bool,
+    /// Indexed indirect draws with first_instance = 0 are supported.
+    pub indexed_indirect: bool,
+    /// Read-only storage buffers may be fetched from vertex shaders.
+    pub vertex_storage: bool,
+    /// BC3 sampled textures are enabled on this device (linear and sRGB).
+    pub texture_compression_bc: bool,
     pub adapter: AdapterInfo,
     pub limits: Limits,
 }
@@ -216,6 +232,8 @@ pub enum TextureDimension {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextureFormat {
+    Bc3RgbaUnorm,
+    Bc3RgbaUnormSrgb,
     R8Unorm,
     Rgba8Unorm,
     Rgba8UnormSrgb,
@@ -687,6 +705,24 @@ pub trait RhiDevice {
         >;
 
     fn capabilities(&self) -> &Capabilities;
+    /// Optional diagnostics facility. Callers bound their number of tickets.
+    fn supports_buffer_readback(&self) -> bool {
+        false
+    }
+    /// Start mapping a staging buffer after submitting its copy commands. Until
+    /// the ticket completes or is dropped, do not map or submit any use of this
+    /// buffer through another alias. Start must be 8-byte aligned, length a
+    /// nonzero multiple of 4 and at most MAX_BUFFER_READBACK_BYTES.
+    fn read_buffer_async(
+        &self,
+        _buffer: &Self::Buffer,
+        _range: Range<u64>,
+    ) -> Result<Box<dyn BufferReadback>, RhiError> {
+        Err(RhiError::new(
+            RhiErrorKind::Unsupported,
+            "asynchronous buffer readback unavailable",
+        ))
+    }
     fn create_buffer(&self, descriptor: BufferDescriptor<'_>) -> Result<Self::Buffer, RhiError>;
     fn create_texture(&self, descriptor: TextureDescriptor<'_>) -> Result<Self::Texture, RhiError>;
     fn create_texture_view(
@@ -726,6 +762,16 @@ pub trait RhiDevice {
         descriptor: ComputePipelineDescriptor<'_, Self::PipelineLayout, Self::ShaderModule>,
     ) -> Result<Self::ComputePipeline, RhiError>;
     fn create_command_encoder(&self, label: Option<&str>) -> Self::CommandEncoder;
+}
+
+pub const MAX_BUFFER_READBACK_BYTES: u64 = 64 * 1024;
+
+/// Single-consumption, owned readback ticket. Poll never waits for GPU completion.
+/// None means pending; Some transfers the bytes and unmaps the staging buffer.
+/// Polling again after completion is invalid. Drop cancels an outstanding map and
+/// releases its resource reference without waiting for submitted work.
+pub trait BufferReadback {
+    fn poll(&mut self) -> Result<Option<Vec<u8>>, RhiError>;
 }
 
 /// Queue upload and submission interface.
@@ -808,6 +854,8 @@ pub trait RhiRenderPass<'pass> {
     type Buffer: 'pass;
     type BindGroup: 'pass;
     type Pipeline: 'pass;
+    /// Select a pipeline without clearing vertex/index bindings. Bind groups in
+    /// an identical pipeline-layout prefix remain valid until explicitly rebound.
     fn set_pipeline(&mut self, pipeline: &'pass Self::Pipeline);
     fn set_bind_group(&mut self, index: u32, bind_group: &'pass Self::BindGroup, offsets: &[u32]);
     fn set_vertex_buffer(&mut self, slot: u32, buffer: &'pass Self::Buffer, range: Range<u64>);
@@ -829,6 +877,11 @@ pub trait RhiRenderPass<'pass> {
     fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32);
     fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>);
     fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>);
+    /// Read five packed 32-bit words: index_count, instance_count, first_index,
+    /// signed base_vertex, first_instance. Buffer requires INDIRECT usage; offset
+    /// is four-byte aligned and leaves at least 20 bytes. First_instance must be
+    /// zero. Call only when Capabilities::indexed_indirect is enabled.
+    fn draw_indexed_indirect(&mut self, buffer: &'pass Self::Buffer, offset: u64);
 }
 
 pub trait RhiComputePass<'pass> {

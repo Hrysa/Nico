@@ -206,7 +206,7 @@ impl CharacterAssets {
                 },
                 &|| false,
             )?;
-            decoded += texture.pixels().len();
+            decoded += texture.decoded_byte_len();
             textures.push(Some(Arc::new(texture)));
             progress.complete_one();
         }

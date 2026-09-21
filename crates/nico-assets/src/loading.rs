@@ -124,6 +124,7 @@ impl TextureStore {
             crate::importers::PngImporter,
             crate::importers::PngSettings {
                 max_dimension: limits.max_dimension,
+                ..Default::default()
             },
         )
     }

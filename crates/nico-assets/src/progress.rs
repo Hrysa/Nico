@@ -7,16 +7,21 @@ use std::{
         mpsc,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Owned progress notification for a scoped UI observer on the importing thread.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct ProgressUpdate {
     pub label: String,
     pub completed: usize,
     pub total: usize,
     pub finished: bool,
+    /// Elapsed wall time for this loading phase, including waits; not CPU time.
+    pub elapsed_ms: f64,
+    /// Counters scoped to this loading thread and phase, excluding other workers.
+    pub cache: crate::cache::CacheStats,
+    pub shared: usize,
 }
 type Observer = Arc<dyn Fn(ProgressUpdate) + Send + Sync>;
 thread_local! { static OBSERVER: std::cell::RefCell<Option<Observer>> = const { std::cell::RefCell::new(None) }; }
@@ -43,6 +48,7 @@ impl Drop for ProgressObserver {
 /// seconds. Count model files and referenced textures separately. Drop joins the
 /// reporter even on error, without claiming unfinished work completed.
 pub struct ImportProgress {
+    started: Instant,
     observer: Option<Observer>,
     completed: Arc<AtomicUsize>,
     activity: Arc<crate::cache::CacheActivity>,
@@ -65,6 +71,7 @@ impl ImportProgress {
         interval: Duration,
         report: impl Fn(String) + Send + 'static,
     ) -> io::Result<Self> {
+        let started = Instant::now();
         let activity = crate::cache::observe_current_thread();
         let initial = activity.stats();
         let observed_activity = activity.clone();
@@ -95,9 +102,13 @@ impl ImportProgress {
                 completed: 0,
                 total,
                 finished: false,
+                elapsed_ms: 0.,
+                cache: Default::default(),
+                shared: 0,
             });
         }
         Ok(Self {
+            started,
             observer,
             completed,
             initial,
@@ -116,6 +127,9 @@ impl ImportProgress {
                 completed: self.completed.load(Ordering::Relaxed),
                 total: self.total,
                 finished,
+                elapsed_ms: self.started.elapsed().as_secs_f64() * 1000.,
+                cache: self.activity.stats().since(self.initial),
+                shared: self.shared.load(Ordering::Relaxed),
             });
         }
     }

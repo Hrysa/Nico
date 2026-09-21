@@ -180,6 +180,19 @@ The native client maps shared positions to visuals in its game-owned extraction 
 textures, bindings, shaders, pipelines, commands, uploads, passes, and surfaces.
 Concrete providers retain native resource ownership without leaking backend types into
 unrelated APIs.
+Optional `read_buffer_async` maps submitted readback staging into an owned,
+single-consumption ticket. Requests are limited to 64 KiB and aligned ranges;
+callers bound outstanding tickets and exclusively reserve each staging buffer
+until consumption or cancellation. `poll` reports pending without waiting for GPU
+completion, and dropping the ticket cancels/unmaps it. Unsupported providers return
+an explicit unsupported result. This is a diagnostic transport primitive; renderer
+sampling, frame identity and age publication remain renderer/host responsibilities.
+Instance visibility sampling copies counts into at most three pending staging
+buffers, with 512 counts per sample and one sample per eight prepared views.
+Readback failure or capacity exhaustion affects diagnostics only. Samples identify
+their own prepared view and submission age; newer completed samples cannot be
+replaced by older completions. Native cached editor frames poll these tickets and
+republish observations without relabeling the CPU counters' source host frame.
 
 `nico-rhi-wgpu` owns the instance, adapter, device, queue, and surface. It handles
 resize and recoverable surface outcomes, including zero-size, timeout, occlusion,
@@ -214,6 +227,167 @@ explicit quaternion poses.
 `MeshRenderPipeline` owns depth and persistent vertex/index, material, and texture
 caches. Material images are cached by immutable image identity and color-space
 interpretation; bindings and factors are cached by immutable material identity.
+`Scene3d::instance_batches` separately carries immutable `Arc<InstanceBatch>` values.
+`Scene3d::foliage_influences` optionally carries owned visual time and bounded world
+fields, independently of placement identity. When present it overrides the renderer
+default for that view. The editor compares influence Arc identity when deciding
+whether cached viewport pixels can be reused; publishers retain the Arc while paused.
+Typed per-instance foliage responses carry seed-derived phase, response strength
+and wind variation in the unused normal-matrix W components of that same 112-byte
+record. Defaults preserve uniform response. Directional wind varies at one cycle
+per visual second; radial recovery remains lifetime-driven. Visual time is reduced
+to a bounded cycle before GPU conversion, so seeking does not require placement
+uploads or accumulate a large floating-point shader clock. Static shaders ignore
+these components. Response strength and variation are bounded to preserve the
+profile's conservative maximum displacement.
+Native diagnostic field replacement crosses the bounded `nico-ops` command slot as
+dependency-free values. `nico-winit` validates and converts them on the render owner
+before publishing a complete snapshot; failed requests retain the previous fields.
+An empty override disables fields; removing the override restores scene-provided
+fields. Expired fields remain bounded and retained for deterministic backward seeks.
+Each batch validates affine transforms, inverse-transpose normals, stable IDs,
+conservative bounds and uniform winding. Per-record world bounds are retained in
+the immutable batch, recomputed when attaching/replacing a foliage profile, and
+partitioned with their records when splitting. Camera changes do not transform
+prototype bounds again. Opaque/masked static meshes use shared
+geometry and resident 112-byte instance records. An explicit renderer opt-in can
+use guarded 80-byte records with separate compact shader entry points. Encoding is
+chosen once per immutable batch at upload: bounded matrix magnitudes, inverse
+determinant, conditioning and cofactor checks permit reconstruction of normal rows;
+other batches retain stored normal rows. Direct and indirect draws select the
+matching pipeline. Residency counters use actual bytes; admission and capability
+limits remain conservative at 112 bytes. Native hosts enable this guarded path after installing the matching built-in artifacts;
+unsupported compact pipelines retain the full-record path.
+Custom shader callers must supply compatible `vertex_compact_main` entry points in
+all installed instance artifacts before opting in. Blended/skinned batches are rejected.
+CPU and GPU instance culling extract six zero-to-one-depth frustum planes and test
+the AABB support point against each, with a matching arithmetic error margin.
+This avoids cancellation from subtracting projected z/w near the far plane;
+the margin is conservative visibility, not a change to rasterization or camera depth.
+GPU compaction does not preserve record order. Opaque/masked surfaces tied in the
+depth buffer may therefore select different overlapping fragments. The real-scene
+regression compares changed pixels against exact colors from controlled CPU order
+variants, while requiring exact visible counts and deterministic CPU repeats.
+Visibility is cached per CPU batch or shared GPU page by clip matrix and camera
+position. A matching view reuses CPU visible IDs or the submitted GPU page instead
+of repeating culling. GPU keys commit only after queue submission; failed recording
+cannot validate stale output. Camera/projection changes and replacement batches
+invalidate this cache. Influence changes do not: culling uses immutable maximum
+deformation bounds. Field uniforms are serialized and compared with their last
+uploaded bytes; unchanged data skips the queue write while overflow diagnostics
+still update. Empty selections canonicalize unused visual time. This cache retains
+800 CPU bytes per resident foliage batch (at most 512 batches), separate from GPU
+residency counters. Changed fields, expiry and time-dependent strength still update
+the uniform before drawing.
+Weak source identities retain uploads through culling and retire them after owners
+release their snapshots. Direct batches have separate 512-batch/500,000-record
+submission and 64 MiB instance-residency budgets. On devices without the required
+vertex layout, an ordinary-draw fallback supports small scenes within the existing
+256-draw budget. When installed and supported, shared compute kernels cull persistent
+instance bounds and compact IDs into renderer-owned visibility pages before indexed
+indirect draws in the same submitted encoder. Storage-fetch vertices reuse the direct
+transform and PBR functions. Dirty visibility pages share one compute pass per view.
+Within the opaque instance draw loop, the renderer retains identical pipelines,
+material/view/frame bindings and prototype vertex/index buffers across draws.
+The RHI preserves bindings in an identical pipeline-layout prefix when selecting
+a pipeline. Per-batch source bindings still change as required; draw order is
+preserved, and this state cache does not survive the render pass.
+Auto can bypass per-record GPU visibility when a conservative whole-batch test
+places every bound corner inside the clip volume and draw-distance sphere, and the
+direct instance pipeline is available. It draws the existing source vertex buffer
+without compaction or another upload. Boundary-crossing batches retain GPU culling;
+forced GPU mode always retains the indirect path. Direct draws do not update GPU
+visibility cache keys or enter GPU count readback. Their known instance counts are
+reported in `submitted_instances` alongside the remaining GPU candidate counts.
+Dispatches are grouped by stage across independent pages, preserving each page's
+reset-before-cull ordering while reducing repeated pipeline switches.
+Renderer-owned immutable pages reserve disjoint ID ranges using group capacities
+at upload time, then use reset and cull/compact dispatches. Unused range tails are
+never drawn. Offsets cost four upload bytes per group and share the existing output
+allocation; upload pacing includes them. The general tightly packed page path
+retains reset/count/scan/scatter dispatches. Its prefix scan writes indirect
+arguments from completed counts; scatter finishes before the render pass consumes
+the arguments and IDs. Single-group visible counts
+alias the indirect instance-count word, so each kept record reserves its ID slot
+and contributes to the draw with one atomic increment. Count readback uses the
+layout accessor; duplicate pages in a recording call are rejected before writes.
+The CPU path compacts changed
+visible sets separately
+from immutable source uploads and retains unchanged sets. Visibility pages group
+uploads separately for static and foliage pipelines. Later upload waves append to
+available page capacity without moving existing sources or group addresses. Dense
+cohorts can reserve bounded spare capacity; cohorts below 1,024 records retain
+exact allocation. At 1,024 records the compact reservation is four times the next
+power of two, capped at 65,536 records but never below the cohort itself. At 4,096
+records the preferred reservation grows to sixteen times the next power of two,
+capped at 262,144 records but never below the cohort. The compact size is retried
+when the preferred size exceeds device limits or available residency budget.
+The renderer charges allocated capacity once, protects other pending chunks' minimum
+allocation before reserving spare space, and falls back to exact capacity when needed.
+Each chunk retains its source buffer and group-specific draw selection. Page caches
+hold weak references; storage releases when the last group owner retires.
+Allocation counts define stable output-region addresses; active counts bound uploads
+and dispatches. The render owner submits prior consumers before append and allocates
+all new selection bindings before changing an existing page. Append invalidates its
+shared visibility key; GPU reuse diagnostics are evaluated after appends commit.
+Camera changes do not regroup or re-upload source data. Each dispatched view supplies
+a 512-bit group selection, excluding chunks that are culled or use resident direct
+draws. The shader resets excluded
+group counts and skips their per-record visibility tests. The 160-byte view uniform
+and renderer visibility cache key include this selection; changing the selected
+groups at the same camera cannot reuse old output. Reserved page memory includes
+the larger uniform; these per-view writes remain outside immutable source pacing.
+Each live group owns a reservation; the page pool holds weak reservations.
+Allocation coalesces unowned
+record intervals and reuses free group slots without moving live neighbors. A whole
+incoming cohort must fit one page; otherwise it receives a new bounded allocation.
+Partial retirement retains the full charged page capacity until its last owner exits.
+The low-level API supports replaceable, contiguous groups. It retains
+each group's exclusive record-range end in otherwise unused partitioned-output
+scratch storage; the cull shader excludes stale records outside the group's current
+interval. Replacements may shrink or disable groups without clearing unused bounds.
+This costs four extra upload bytes per group, with no additional allocation. Owners
+must supply non-overlapping reserved intervals, submit prior consumers first, and
+invalidate cached visibility after replacement even when active counts do not change.
+The renderer allocates new selection bindings before replacing intervals, disables
+retired groups whose old records could overlap reused space, and invalidates the
+shared visibility key. Immutable source pacing includes 144 bytes per record and
+40 bytes per admitted group. Disabling retired groups writes four bytes per group;
+`visibility_retirement_upload_bytes` reports these bounded dynamic writes separately
+from immutable source pacing. Reservation and selection-binding failures leave live
+residents valid; failed pending source uploads are discarded and can be retried.
+Frame-time acceptance remains open under the instance-system plan.
+Prepared-view diagnostics expose unique `visibility_dispatched_pages` and actual
+encoded `visibility_dispatches`, excluding cached pages. These are command counts,
+not GPU completion or timing measurements.
+Foliage extensions remain in progress under the
+[instance-system plan](plans/2026-09-20-common-mesh-instancing.md).
+
+`nico-presentation-control::instances::streaming` owns distance-based chunk scheduling,
+bounded provider workers and atomic publication of immutable batches. Generation and
+owner identity reject stale completions; cancellation does not release worker capacity
+until thread exit is observed. Resident payload and worker-result budgets account for
+allocated record and cached-bound capacity separately from shared assets and external snapshots. Only
+the presentation owner publishes results; game providers decode their own placement
+formats and do not mutate simulation state. Arena retains compact grass placements and
+expands requested chunks during scene updates, using the scene camera and conservative
+deformation bounds. Explicit shutdown polling establishes worker exit; dropping the
+generic owner alone only signals cancellation and can detach unfinished workers.
+Arena's grass owner instead explicitly cancels and joins workers on replacement or
+destruction. This blocking lifecycle path is limited to bounded cached-chunk providers
+that never wait for the presentation owner; it is not the generic shutdown default.
+
+Renderer upload pacing optionally limits immutable instance records and GPU visibility
+source writes per prepared view. Native hosts use 8 MiB; excess chunks defer while
+resident chunks draw normally. Deferred counts keep the editor viewport updating.
+This is separate from residency, mesh/texture uploads and dynamic visibility/uniform
+writes. The renderer splits oversized batches using enabled buffer/storage limits
+and the upload allowance, retaining segment identities across views while their
+original source remains owned. Splits preserve record order and shared prototypes.
+The cache bounds copied records to 500,000 and source entries to 512; GPU residency
+remains separately budgeted. More than 512 submitted segments or a limit too small
+for one record fails explicitly. Segment CPU copies are additional to provider residency.
+
 Per-frame camera/light, instance transform/tint, and skin palette buffers have
 separate ownership. `SceneLighting` supplies a directional light and diffuse
 ambient term. Lighting uses linear RGB with sRGB material color inputs and output. PBR surface
@@ -397,7 +571,9 @@ Native publication and identity/lease semantics are unchanged.
 Development import caching belongs to runtime-free `nico-assets::cache`, enabled by
 `import-cache` and the built-in importer features. Debug file loaders compare metadata before reading source
 bytes; full content checks run only when metadata is changed or unavailable. They restore validated CPU assets from binary content-addressed objects in
-`assets/.nico`; runtime publication and GPU upload ownership remain unchanged.
+the game-root `.nico`, shared with the editor catalog; runtime publication and GPU
+upload ownership remain unchanged. Root discovery uses the nearest project manifest,
+with legacy-layout and standalone-source fallbacks defined by the cache contract.
 Custom importers explicitly opt in with versioned settings keys and binary codecs.
 The [cache contract](plans/2026-09-18-development-import-cache.md) owns persistence
 and invalidation rules.
@@ -439,9 +615,22 @@ direct file read is not the planned service-backed asset load. Backend shader/pi
 preparation still occurs at runtime.
 
 Authoring project files and metadata stay outside the future shipping runtime contract.
-A supported source encoding can itself be a shipping asset: the selected
-[texture design](plans/2026-09-14-texture-assets.md) uses PNG directly. Introduce new
-data formats when concrete consumers require them. Asset leases retain CPU content
+PNG remains a supported shipping input. The PNG importer cooks block-aligned images
+to BC3 (16 bytes per 4x4 block) and persists those GPU-ready bytes in the project
+cache. Tiny or non-block-aligned images stay RGBA8; `PngSettings::compress = false`
+keeps exact decoded pixels. Compression uses range fitting and is lossy. The texture
+contract still has one mip level, straight alpha, and slot-selected linear/sRGB
+interpretation. Mip generation and other compressed formats are not implemented.
+`Capabilities::texture_compression_bc` describes enabled device support. Wgpu
+requests BC support only when available; material and canvas uploads otherwise use
+a lazy software-decoded RGBA8 fallback. The fallback is not the original lossless
+PNG, and native/software BC decoding need not be pixel-identical. Neither path
+requires source PNG access on a warm cache load. CPU previews also decode lazily;
+accounting retains the conservative RGBA budget without forcing this allocation.
+The optional `texture-compression` feature owns the pure-Rust codec; the default
+asset crate remains dependency-free. The original
+[texture design](plans/2026-09-14-texture-assets.md) records the initial scope.
+Asset leases retain CPU content
 independently of copyable handle identity; an explicit `Arc<Texture>` can pin pixels
 for a snapshot beyond store release. GPU resource lifetime remains owned by the renderer;
 texture and mesh upload and both consumers are implemented. The
@@ -642,12 +831,17 @@ diagnostics, and rendered capture operations for the editor.
 The optional `nico-launch/play` module owns the joined local-session worker,
 Cargo build child, and direct client/server children. UI and MCP enqueue editor
 intents and read owned session snapshots; they never wait on build, file, RPC, or
-process I/O. `nico-scene::content` creates bounded saved-project snapshots and
-content revisions. Minimal-game and Arena hosts independently identify the snapshot
-they load; each game owns its persistence format. Manifest play declarations provide
+process I/O. Play hashes saved content through `nico-scene::content` after building,
+then launches both hosts against the original project root so they reuse its `.nico`
+cache. Minimal-game and Arena hosts independently identify the saved content they
+load; changing files during startup can fail revision validation. Session cleanup
+removes only session credentials, never project content, caches or saves. A locked,
+reusable `.nico/play` directory holds control files and server data; hosts run from
+the normal Cargo target directory without executable copies. Each game owns its
+persistence format. Manifest play declarations provide
 game CLI arguments and readiness tools. The engine substitutes only the owned
 server’s published loopback endpoint, without importing game-specific code. Launch supplies an
-isolated disposable data directory, readiness checks, orderly stop, and scoped
+project-local persistent data directory, readiness checks, orderly stop, and scoped
 fallback termination. The bridge only discovers/routes hosts, and external attach
 never grants process ownership. The [play-profile contract](plans/2026-09-19-editor-play-profiles.md)
 defines lifetime, bounds, and separate-simulation scope.
@@ -669,6 +863,29 @@ last-good content for that session. Notifications request checks rather than mut
 worlds. Cache writes are excluded from watching. The project cache remains generated
 data, distinct from authored `scene.nico.json` and source content. Catalog limits and
 usage are documented in [README](../README.md#integrated-editor).
+
+The editor selects on-demand catalog loading: a single cache-index snapshot plus
+source/object metadata checks identifies unchanged primary artifacts without reading
+their payloads. Cached entries remain distinct from CPU-ready values in UI/MCP state.
+Scene and inspector requests queue content loading on the same worker; new, changed,
+or unverifiable sources still import automatically. Loading validates cached content
+and repairs damaged objects. Existing eager catalog consumers retain their behavior.
+Arena's adapter compares its visual-definition and model metadata on Refresh and
+retains prepared scenery when unchanged; missing metadata forces the normal load path.
+During object edits, the environment retains its landscape, grass streaming owner,
+and resident instance batches while zone extent and obstacle geometry are unchanged.
+Decoration additions, transforms, and removals therefore do not restart grass
+streaming; obstacle geometry edits still invalidate the landscape.
+
+`editor_loading` reads bounded owned operation reports independently of runtime
+snapshots, so a busy loader or Refresh cannot hide its current phase. Startup and
+the latest Refresh each retain at most 32 phase records, scoped cache counters and
+elapsed wall time. `nico-assets::progress` supplies the existing semantic loading
+phases and thread-local counter deltas; the editor owns retention and MCP inspection.
+This is operation diagnostics, not a profiler or per-method instrumentation. The
+first scene presentation marker is distinct from preparation completion and GPU
+completion. Arena's generated ground texture uses the ordinary importer/cache
+contract; the game owns its generator, version and zone-dependent recipe.
 
 The minimal client consumes this scene contract with `--project`, instantiates
 `nico-scene::Object` components at Startup, and extracts their live ECS transforms

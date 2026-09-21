@@ -922,8 +922,8 @@ in `target/editor-attach-ssh/evidence.json`; exact process/frame identities and 
 are recorded in the RPC contract. Separate-machine/WAN deployment and user-observed
 acceptance are unverified.
 
-**Paired play profiles (2026-09-19):** The editor now uses an engine-owned worker to
-snapshot saved content, build and directly launch a minimal-game server/client pair,
+**Paired play profiles (2026-09-19; updated 2026-09-21):** The editor uses an engine-owned worker to
+hash saved content, build and directly launch a minimal-game server/client pair,
 verify matching revisions and readiness, and clean up only its owned children.
 Save/restart, isolated disposable server progress, partial startup/build failure,
 bridge reconnect survival, fallback termination after endpoint revocation, and
@@ -937,7 +937,11 @@ macOS/Metal validation: the saved adapter project launches a server on its own p
 connects its client, verifies content identity, and cleans up its isolated session.
 The engine uses manifest-declared arguments/readiness tools. Inspected captures show
 Meadow and the connected HUD; this establishes rendering, not smoothness or user
-acceptance. Encounter authoring remains unfinished; phase 8 is not complete.
+acceptance. The 2026-09-21 revision uses the existing game project and `.nico` cache,
+normal Cargo binaries, and one reusable `.nico/play` directory with persistent server
+data. The earlier disposable snapshot validation does not validate this revised
+lifecycle; native verification of that revision remains incomplete.
+Encounter authoring remains unfinished; phase 8 is not complete.
 
 **Idle editor CPU (2026-09-19, macOS/Metal, Apple M4):** The development build with
 the Arena project previously used 15.57 CPU seconds over a 15.005-second idle sample
@@ -951,6 +955,186 @@ the captures were inspected, and both test windows exited through MCP stop.
 Evidence is retained in `target/editor-idle-evidence/{before,after}.json` and PNGs.
 Editor/native-host tests, formatting, and strict workspace Clippy passed. This
 validates idle behavior on this machine, not gameplay performance or Windows.
+
+**Unchanged editor imports (2026-09-20, Windows):** The editor now checks warm
+catalog entries through source/cache-object metadata and defers payload loading
+until the scene or inspector requests it. New and changed sources still import.
+Arena Refresh retains prepared scene resources when its visual definition and
+models are unchanged. Shared cache objects keep their timestamps when another
+source produces identical output.
+
+The headless `arena_project_open_measurement` test on the real 13-asset, 99-object
+Arena project measured warm catalog completion at 1.465 seconds before and
+22.37 ms after, with zero catalog payload loads after the change. Unchanged adapter
+Refresh measured 0.765 ms. At that point full project preparation remained 4.04 seconds;
+initial scenery/landscape preparation and GPU upload are outside the metadata-only
+catalog path. These are elapsed headless measurements, not CPU profiles or native
+first-visible-frame/user-observed timings. Asset, editor and Arena presentation
+tests cover on-demand scene/inspector loads, changed/deleted/corrupt sources,
+shared objects, last-good retention, unchanged scene identity and joined shutdown.
+
+Subsequent live investigation confirmed that the user's visible wait persisted:
+MCP showed zero source imports, but scenery preparation still occupied startup.
+The new `editor_loading` tool retains bounded startup/Refresh phase reports and
+thread-scoped cache counters independently of the runtime. On Windows/Vulkan,
+GTX 1660, baseline editor PID 24732 (bridge suffix `-2`) measured 4.185 seconds
+preparation and 6.179 seconds to first scene presentation from loader start.
+Caching the generated ground pixels reduced those values to 2.760/4.707 seconds
+in PID 5448 (`-3`) and 2.809/4.789 seconds in rebuilt default editor PID 24448
+(`-4`). All three instance IDs share prefix `22020-18d6f3821187eef4`.
+The latter build fingerprint is
+`972ed07560c2fcc46ce56d780a545667cc262d896873404915f8e226cf1118c2`.
+Active-startup MCP replies took 7–10 ms across the observed loading phases; invalid
+arguments were rejected. Unchanged queued Refresh completed in 1.50 ms. The initial
+ground-cache population remains a generation step; subsequent opens reused it.
+
+Before/after GPU captures from the test instances were inspected and retain the
+same authored scene. State, timing and capture samples are separate. This is not
+user-observed acceptance, GPU-completion timing or an instant-startup claim:
+roughly two seconds of scenery preparation and another two seconds before scene
+presentation remain. All test editors exited after MCP stop; no stop was sent to
+the original user editor. Changed-package all-feature tests and strict Clippy
+passed, along with formatting. Local evidence lives under
+`target/editor-validation/loading-{before,after,live}.json`, the before/after PNGs,
+and matching process logs. The regular `target/debug/nico-editor.exe` was rebuilt.
+
+**Shared cache root (2026-09-20):** Automatic development loaders now select the
+nearest project manifest's root, sharing `<game>/.nico` with editor imports.
+Custom asset roots and nested projects are covered; legacy layouts use the parent
+of `assets`, and standalone files retain a containing-directory fallback. Sixteen
+cache tests and strict asset-package all-feature/all-target Clippy passed on Windows.
+The real Arena headless open populated missing recipes in the shared root without
+recreating `assets/.nico`. Editor, Arena/minimal clients and character-preview
+executables were rebuilt. The two old nested caches were moved, with loaders
+stopped, to `target/cache-root-migration/` as disposable backups; no source assets
+were moved. This changes cache location, not the remaining first-render costs.
+
+**GPU texture cooking (2026-09-20, Windows/GTX 1660/Vulkan):** PNG imports now
+store BC3 blocks and upload them directly on devices with enabled BC support.
+Material/canvas uploads select RGBA8 software fallback otherwise, preserving slot
+color-space interpretation. Exact-pixel opt-out, small/unaligned RGBA images,
+cache validation, cancellation and unchanged-cache reuse have regression coverage.
+Focused all-feature asset/render/editor/Arena-presentation tests, default-feature-free
+asset tests, workspace/all-target strict Clippy, and formatting passed. A real-GPU
+test with BC enabled and explicitly disabled verified 64 versus 256 upload bytes,
+no repeat uploads on the next frame, and at most 4/255 channel difference in its
+rendered fixture. This tests fallback on the same adapter, not another platform.
+
+The rebuilt Arena cache is 90.56 MiB; its 11 BC3 objects hold 31.25 MiB instead of
+125 MiB of RGBA pixels. The former 346 MiB cache included extra historical sources,
+so the total-size difference is not a compression-only comparison. The prior root
+cache was preserved under `target/bc3-cache-migration/arena-arpg`. MCP on test PID
+25568 confirmed BC enabled, zero import failures, and an unchanged refresh with
+zero imports in 169 ms wall time. Its rendered scene capture was inspected. Warm
+reopen PID 12832 imported nothing, retained a metadata-only 13-source catalog,
+completed scene preparation in 2.79 seconds and first scene presentation API success
+in 4.70 seconds. Thus this change does not make editor startup instant. Both test
+editors were stopped through MCP. Logs, warm report and scene capture live under
+`target/bc3-cache-migration/`. Editor and game/preview binaries were rebuilt.
+Compression remains lossy and single-mip; see the [current asset contract](architecture.md).
+
+### Common mesh instancing (2026-09-20; feature complete)
+
+The [complete plan](plans/2026-09-20-common-mesh-instancing.md) excludes LOD.
+All four implementation milestones are present: shared direct instancing with
+compact placement caches; GPU culling/compaction and indirect draws; typed foliage
+deformation and bounded world influence fields; and asynchronous chunk streaming.
+Arena grass and shrubs use the generic renderer. Production grass no longer expands
+five vertices and nine indices per blade. The current contracts, limits and fallback
+behavior are in [architecture](architecture.md); detailed evidence and reproduction
+commands are in the [validation report](validation/2026-09-20-common-mesh-instancing.md).
+
+Feature delivery is complete under the user's 2026-09-21 instruction to finish the
+goal and defer further optimization. The unvalidated hardware-clipping experiment
+was reverted; the four resulting graphics-test failures are resolved. Final checks
+passed: 494 workspace tests (45 ignored), all 31 explicit graphics regressions on
+each of Vulkan and DX12, workspace all-target Clippy, formatting and shader artifact
+verification. The [final audit](validation/2026-09-20-common-mesh-instancing.md#final-feature-delivery-2026-09-21)
+maps all four milestones to scoped evidence. No LOD is included.
+
+Frame-time parity is **not achieved** and is a deferred optimization. Earlier release measurements on GTX 1660 Vulkan
+at 840x764 with an 8 MiB source-upload budget, two-batch waves, a complete warm-up
+round and 300 measured frames per trial are 2.677 ms Auto versus 2.656 ms expanded
+wide, 2.020 versus 1.983 ms near, and 2.182 versus 2.102 ms at the editor camera.
+Those measurements use full 112-byte records. An initial compact-layout experiment
+failed an affine-conditioning regression and was reverted. Its guarded successor
+uses full records for unsafe transforms and specialized compact shader entry points.
+Native hosts now enable it after instance 32 validated Vulkan CPU/GPU counts,
+unchanged uploads, captures and repeated eviction/reentry. It recovers part of the
+GPU render-pass gain but has not established frame-time parity. The validation report records both experiments and
+run-to-run variation. Larger bounded reservations reduce both publication
+scenarios to one dispatched page/two stages per view, at the cost of roughly 5 MiB
+more retained capacity in the full Arena near/editor fixtures. Compact and exact
+fallbacks preserve device/residency limits. Native instance 29 verified stable
+partial-eviction/reentry allocations, full release, matching 72,468-instance CPU/GPU
+counts and inspected return captures at 2160x1350. Individual retired intervals and group slots are now
+reused with live-neighbor preservation and allocation-failure recovery tests.
+Native instance 27 validated three partial eviction/reentry cycles with stable
+retained bytes after the first reentry, full release, counts and inspected captures.
+Group selection skips unnecessary record culling but has not closed the frame gap. These are
+completed-frame wall times; separately labeled test-only pass timestamps are GPU
+measurements under the user's explicit exception to the profiling deferral.
+Native Auto uses a measured provisional 1024-record minimum per segment. Stationary
+visibility reuse and reduced uploads do not by themselves satisfy moving-view acceptance.
+Auto also bypasses GPU culling for fully visible batch bounds using resident direct
+instance draws. Its Vulkan/DX12 regressions and full Arena count/image checks pass;
+native editor capture/count and eviction/reentry checks also pass for the build
+recorded in the validation report. The earlier frame-time parity gate is superseded
+by the user's feature-first delivery instruction; the residual overhead remains documented.
+An isolated visibility-only benchmark showed that one 64-group page is faster
+than 64 separate pages on the tested Vulkan and DX12 backends. Production now groups
+new GPU uploads into available capacity across views, preserving per-chunk source
+buffers and upload pacing. Pages reserve fixed group ranges at upload time and use
+two dispatches per changed view. Grouped cache/retirement and full Arena image/count
+regressions pass; native paced grouping and the latest fixed-range path also passed
+the scoped lifecycle/capture checks below. Further performance optimization is deferred.
+
+The warm grass-preparation target is met in the scoped debug benchmark: current
+cached preparation took 884.474 ms versus 2001.390 ms expanded (55.8% reduction).
+The 323,871-blade placement payload is 9,068,644 bytes versus 63,478,716 expanded
+geometry bytes. This excludes shrubs, streaming scheduling, GPU uploads and total startup.
+
+Isolated native validation on build `bfa7a62350da` verified cold-cache open,
+warm reopen, unchanged refresh, obstacle edit/save/reload, and full chunk eviction
+and reentry. Warm startup was 910.104 ms with zero imports; scenery preparation was
+217.695 ms, and unchanged refresh took 1.54–1.58 ms with zero imports/rebuilds.
+The fresh-cache startup was 15.99 seconds, including 13.18 seconds of texture imports.
+Rendered captures were inspected from the identified test processes; both stopped
+through MCP and exited. Build `ec85523d3307` subsequently verified grouped native
+streaming, zero-dispatch visibility reuse, zero-byte eviction, restored vegetation
+on reentry, and matching CPU/GPU visible counts. Its warm startup was 912.548 ms and
+unchanged refresh 1.551 ms. That owned process also stopped and exited. These were
+automated capture checks, not user-watched demonstrations; neither native build
+includes the latest fixed-range visibility implementation. Build `98e17401813f`
+then validated that path: 11 pages/22 dispatches on a camera change, zero dispatches
+on unchanged-view preparation, full eviction/reentry, edit/save/reload, and matching
+90,010-instance CPU/GPU counts. Settled captures were inspected and the owned editor
+exited. Its warm startup was 913.681 ms and unchanged refresh 1.671 ms. Detailed
+frame identities and the transient edit capture are in the validation report.
+
+Real-GPU fixtures cover direct/indirect/ordinary fallback, expanded geometry,
+deformed normals, source reuse/replacement/retirement, split/upload limits and
+independent device reconstruction. CPU-reference readback checks visible IDs/counts
+and indirect arguments across camera cuts, empty views and queue-ordered page reuse.
+Full Arena comparisons require exact visible counts and classify every differing
+GPU pixel against controlled CPU draw-order variants; no unexplained pixels remain
+in those fixtures. Streaming/cache/control tests cover bounded work, cancellation,
+stale generations, failure retention, influence expiry and shutdown.
+
+The retained draw-binding cache passed all 26 graphics tests on both Vulkan and
+DX12 on the same adapter. Full Arena order-reference captures wait for paced
+uploads to finish and assert the complete visible count. Workspace validation
+was refreshed after the batch-size benchmark control: 493 tests passed, 39 were
+ignored, and none were filtered out. The full rerun outside the sandbox passed
+the compiler-descendant cancellation test that Windows had denied in the initial
+run. Workspace all-target Clippy also passed. Current-build native instance 28
+validated warm startup, unchanged refresh, matching 90,010-instance CPU/GPU counts,
+inspected captures and full eviction/reentry; its owned process exited. Cold imports,
+edits and active influence captures retain the earlier build-specific evidence.
+Frame-time parity remains unproven. Further rendering changes
+require renewed checks. The deferred optimization is tracked in [TODO](../TODO.md).
+Physical device-loss recovery and general hardware
+compatibility are not claimed.
 
 ## 9. Validate performance
 

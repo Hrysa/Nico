@@ -12,16 +12,22 @@ Externally attached processes are never adopted or cleaned up by a play session.
 
 A profile selects declared Cargo client/server targets, project root, build mode,
 bridge registration endpoint, editor RPC endpoint, and endpoint credential file.
-Preparation copies the saved manifest, scene, and declared asset roots into a new
-session directory. A deterministic bounded SHA-256 revision covers relative paths
+Implementation update (2026-09-21): Play now loads the existing project, as requested,
+instead of copying content into a temporary project on every launch. This supersedes
+the original snapshot-isolation behavior recorded in the historical validation below.
+The editor and hosts share the game-root `.nico` import cache. After building, a
+deterministic bounded SHA-256 revision covers relative paths
 and exact file bytes. Symlinks and special files are rejected. Both hosts load this
-snapshot and independently calculate/report its revision. Unknown or mismatched
+project and independently calculate/report its revision. Unknown or mismatched
 revisions fail readiness. Import caches and persistence are not content inputs.
 Content is limited to 32,768 files, 65,536 visited entries, directory depth 64, and
 512 MiB. The digest is versioned and includes UTF-8 relative names and lengths.
-Hash/copy loops check cancellation; failed snapshots remove only their new directory.
-Each session gets a distinct disposable server-data directory; restart prepares a
-new snapshot and directory. Unsaved edits require saving before launch/restart.
+Hash loops check cancellation. Edits during host startup can fail revision checks;
+saved edits require restart rather than promising immutable session content.
+Play reuses the game's `.nico/play/server-data` across launches. A file lock in
+`.nico/play` excludes concurrent Play sessions for the same project. Unsaved edits require
+saving before launch/restart. `content_path` identifies the original project;
+`session_path` identifies the reusable project-local Play directory.
 
 ## Ownership and lifecycle
 
@@ -29,9 +35,11 @@ Engine code in `nico-launch` owns a joined worker, bounded commands, owned statu
 build subprocess, and direct executable children. File I/O, building, discovery,
 readiness waits, and process waits happen off the editor UI/runtime thread.
 Build completes before hosts launch, avoiding ownership of a `cargo run` wrapper.
-Cargo uses `target/editor-play`; completed executable artifacts are copied into the
-session directory before launch so another build need not overwrite running binaries.
-Builds have a ten-minute deadline; each host readiness wait has a 30-second deadline
+Cargo uses the normal workspace `target/debug` or `target/release` binaries directly.
+Play creates no temporary projects, separate build trees or executable copies.
+On Windows, another running instance may prevent rebuilding its executable; stop
+that instance before rebuilding. Play does not stop independently launched hosts.
+Builds have a ten-minute deadline; each host readiness wait has a 120-second deadline
 plus bounded RPC calls. Stop allows three seconds after an accepted host stop before
 forcing direct-child termination. The UI remains responsive during these waits.
 The worker starts the server, discovers its exact PID and verifies ready/content
@@ -76,16 +84,17 @@ only owned processes exit. Report platform and rendered-output limits explicitly
 Minimal-game server `--data-dir PATH` optionally loads bounded versioned
 `progress.json` before runtime startup and saves durable stamina, quest progress,
 and coins after orderly shutdown. Tick counts and transient movement are not saved.
-Without that flag, existing in-memory behavior remains. Profile directories start
-empty and are removed after child exit; restart deliberately starts fresh game data.
+Without that flag, existing in-memory behavior remains. Play retains its project-local
+server data after child exit, and restart loads that saved progress.
 A forced stop cannot promise a progress save; `server_progress_saved` reports whether
-the file existed before cleanup. `resources_removed` reports directory cleanup.
+the file existed before cleanup. `resources_removed` reports session credential cleanup;
+it does not mean the project, saved data, or import cache was removed.
 
 Profiles use a game-owned project CLI contract and both manifest targets.
 The optional manifest `[play]` declaration provides `content_roots`, `server_args`,
 `client_args`, `server_tool`, `client_tool`, and a `server_address` JSON pointer.
 Defaults preserve minimal-game behavior. Additional content roots participate in
-snapshotting and hashing without widening the editor's asset browser. Tool names
+hashing without widening the editor's asset browser. Tool names
 are bounded identifiers, argument lists have at most 32 strings of 1,024 bytes, and
 roots retain containment checks. Arguments go directly to the executable without a
 shell. The only substitution is a whole `{server_address}` client argument, resolved
@@ -94,7 +103,7 @@ The game readiness tool returns `ready`; host readiness is checked independently
 
 Arena declares its own world tools, `--listen 127.0.0.1:0`, and the matching client
 `--server` argument. Both hosts accept `--project`, load world source paths and
-character/item content from that snapshot, verify it after startup loading, and
+character/item content from the saved project, verify it after startup loading, and
 publish the revision. The server uses the session data directory rather than
 `target/world-data`. `server_progress_saved` specifically describes minimal-game's
 `progress.json`; it does not certify Arena's character-file persistence.

@@ -57,6 +57,7 @@ impl ClientHost {
         let (control, endpoint) = control_channel();
         control.snapshots().enable();
         let tools = crate::snapshot::register(self.tools, control.clone())?;
+        let tools = crate::rendering::register(tools, control.clone())?;
         let tools = crate::diagnostics::register(tools)?;
         let _bridge = if let Some(address) = self.args.bridge_address() {
             let (game, version) = self
@@ -136,6 +137,7 @@ impl ClientHost {
         let (control, endpoint) = control_channel();
         control.snapshots().enable();
         let tools = crate::snapshot::register(self.tools, control.clone())?;
+        let tools = crate::rendering::register(tools, control.clone())?;
         let tools = crate::window::register(tools, control.clone())?;
         let _bridge = BridgeClient::start(
             address,

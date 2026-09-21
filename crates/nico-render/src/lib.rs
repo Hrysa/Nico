@@ -1,10 +1,16 @@
 //! Backend-neutral rendering policy built on Nico's RHI.
 
+pub mod foliage;
 mod quads;
+mod textures;
+pub mod visibility;
 pub use quads::QuadRenderPipeline;
 mod materials;
 mod meshes;
-pub use meshes::MeshRenderPipeline;
+pub use meshes::{
+    GpuReadbackStats, GpuVisibilitySample, InstanceRenderMode, InstanceRenderStats,
+    MeshRenderPipeline,
+};
 
 use nico_rhi::{
     Color, ColorTargetState, ColorWrites, FragmentState, GraphicsShaderArtifact, LoadOp,

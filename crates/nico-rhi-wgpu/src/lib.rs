@@ -4,6 +4,7 @@
 mod quad_tests;
 
 mod offscreen;
+mod readback;
 mod snapshot;
 pub use offscreen::WgpuOffscreen;
 pub use snapshot::CapturedPixels;
@@ -36,17 +37,26 @@ pub struct WgpuPipelineLayout(wgpu::PipelineLayout);
 #[derive(Clone, Debug)]
 pub struct WgpuRenderPipeline(wgpu::RenderPipeline);
 #[derive(Clone, Debug)]
-pub struct WgpuComputePipeline(wgpu::ComputePipeline);
+pub struct WgpuComputePipeline(wgpu::ComputePipeline, #[cfg(test)] Option<&'static str>);
 #[derive(Debug)]
 pub struct WgpuCommandBuffer(wgpu::CommandBuffer);
 #[derive(Debug)]
-pub struct WgpuCommandEncoder(wgpu::CommandEncoder);
+pub struct WgpuCommandEncoder(
+    wgpu::CommandEncoder,
+    #[cfg(test)] Option<Arc<quad_tests::gpu_timestamps::PassTimestamps>>,
+);
 
 /// Resource factory for the selected wgpu adapter.
 pub struct WgpuDevice {
     inner: wgpu::Device,
     capabilities: Capabilities,
     failure: Arc<Mutex<Option<BackendFailure>>>,
+    #[cfg(test)]
+    fail_bind_group: Mutex<Option<(&'static str, usize)>>,
+    #[cfg(test)]
+    disable_buffer_readback: bool,
+    #[cfg(test)]
+    timestamps: Option<Arc<quad_tests::gpu_timestamps::PassTimestamps>>,
 }
 
 /// Upload and submission queue paired with [`WgpuDevice`].
@@ -81,7 +91,11 @@ pub struct WgpuSurfaceFrame {
 }
 
 pub struct WgpuRenderPass<'pass>(wgpu::RenderPass<'pass>);
-pub struct WgpuComputePass<'pass>(wgpu::ComputePass<'pass>);
+pub struct WgpuComputePass<'pass>(
+    wgpu::ComputePass<'pass>,
+    #[cfg(test)] Option<Arc<quad_tests::gpu_timestamps::PassTimestamps>>,
+    #[cfg(test)] Option<&'static str>,
+);
 
 // Provider-specific interop stays here, never in engine-facing RHI contracts.
 impl WgpuDevice {
@@ -151,7 +165,7 @@ where
         let (inner_device, inner_queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Nico RHI device"),
-                required_features: wgpu::Features::empty(),
+                required_features: adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
@@ -184,14 +198,35 @@ where
         }));
 
         let adapter_info = adapter.get_info();
-        let limits = adapter.limits();
+        let limits = inner_device.limits();
         let capabilities = Capabilities {
+            compute: adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS),
+            indexed_indirect: adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION),
+            vertex_storage: adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::VERTEX_STORAGE),
+            texture_compression_bc: inner_device
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             adapter: AdapterInfo {
                 name: adapter_info.name.clone(),
                 api: graphics_api(adapter_info.backend),
                 kind: adapter_kind(adapter_info.device_type),
             },
             limits: Limits {
+                max_buffer_size: limits.max_buffer_size,
+                max_vertex_buffer_array_stride: limits.max_vertex_buffer_array_stride,
+                max_storage_buffers_per_shader_stage: limits.max_storage_buffers_per_shader_stage,
+                max_compute_workgroup_size_x: limits.max_compute_workgroup_size_x,
+                max_compute_invocations_per_workgroup: limits.max_compute_invocations_per_workgroup,
+                max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
                 max_texture_dimension_2d: limits.max_texture_dimension_2d,
                 max_bind_groups: limits.max_bind_groups,
                 max_uniform_buffer_binding_size: limits.max_uniform_buffer_binding_size,
@@ -201,7 +236,8 @@ where
             },
         };
         tracing::info!(adapter = %adapter_info.name, backend = ?adapter_info.backend,
-            device_type = ?adapter_info.device_type, driver_validation, "graphics device created");
+            device_type = ?adapter_info.device_type, driver_validation,
+            texture_compression_bc = capabilities.texture_compression_bc, "graphics device created");
 
         let config_extent = presentable_extent(extent);
         let configuration = surface_configuration(&surface, &adapter, config_extent)?;
@@ -210,6 +246,12 @@ where
             inner: inner_device,
             capabilities,
             failure: failure.clone(),
+            #[cfg(test)]
+            fail_bind_group: Mutex::new(None),
+            #[cfg(test)]
+            disable_buffer_readback: false,
+            #[cfg(test)]
+            timestamps: None,
         };
         let queue = WgpuQueue { inner: inner_queue };
         let mut surface = WgpuSurface {
@@ -349,9 +391,33 @@ impl RhiDevice for WgpuDevice {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
+    fn supports_buffer_readback(&self) -> bool {
+        #[cfg(test)]
+        if self.disable_buffer_readback {
+            return false;
+        }
+        true
+    }
+    fn read_buffer_async(
+        &self,
+        buffer: &Self::Buffer,
+        range: std::ops::Range<u64>,
+    ) -> Result<Box<dyn BufferReadback>, RhiError> {
+        readback::begin(self, buffer, range)
+    }
 
     fn create_buffer(&self, descriptor: BufferDescriptor<'_>) -> Result<Self::Buffer, RhiError> {
         self.check_failure()?;
+        if descriptor.usages.contains(BufferUsages::MAP_READ)
+            && descriptor.usages.bits()
+                & !(BufferUsages::MAP_READ | BufferUsages::COPY_DESTINATION).bits()
+                != 0
+        {
+            return Err(RhiError::new(
+                RhiErrorKind::InvalidDescriptor,
+                "readback staging cannot have GPU binding or source usages",
+            ));
+        }
         if descriptor.size == 0 {
             return Err(RhiError::new(
                 RhiErrorKind::InvalidDescriptor,
@@ -374,6 +440,16 @@ impl RhiDevice for WgpuDevice {
             return Err(RhiError::new(
                 RhiErrorKind::InvalidDescriptor,
                 "texture extent, mip levels, and sample count must be non-zero",
+            ));
+        }
+        if matches!(
+            descriptor.format,
+            TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb
+        ) && !self.capabilities.texture_compression_bc
+        {
+            return Err(RhiError::new(
+                RhiErrorKind::Unsupported,
+                "BC texture compression is not enabled on this device",
             ));
         }
         Ok(WgpuTexture(self.inner.create_texture(
@@ -489,6 +565,22 @@ impl RhiDevice for WgpuDevice {
         >,
     ) -> Result<Self::BindGroup, RhiError> {
         self.check_failure()?;
+        #[cfg(test)]
+        {
+            let mut fault = self.fail_bind_group.lock().unwrap();
+            if let Some((label, remaining)) = fault.as_mut()
+                && descriptor.label == Some(*label)
+            {
+                *remaining -= 1;
+                if *remaining == 0 {
+                    *fault = None;
+                    return Err(RhiError::new(
+                        RhiErrorKind::OutOfMemory,
+                        "injected bind group allocation failure",
+                    ));
+                }
+            }
+        }
         let entries = descriptor
             .entries
             .iter()
@@ -620,22 +712,31 @@ impl RhiDevice for WgpuDevice {
         descriptor: ComputePipelineDescriptor<'_, Self::PipelineLayout, Self::ShaderModule>,
     ) -> Result<Self::ComputePipeline, RhiError> {
         self.check_failure()?;
-        Ok(WgpuComputePipeline(self.inner.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: descriptor.label,
-                layout: Some(&descriptor.layout.0),
-                module: &descriptor.shader.0,
-                entry_point: Some(descriptor.entry_point),
-                compilation_options: Default::default(),
-                cache: None,
+        Ok(WgpuComputePipeline(
+            self.inner
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: descriptor.label,
+                    layout: Some(&descriptor.layout.0),
+                    module: &descriptor.shader.0,
+                    entry_point: Some(descriptor.entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            #[cfg(test)]
+            match descriptor.entry_point {
+                "reset_main" => Some("visibility_reset"),
+                "count_main" => Some("visibility_count"),
+                _ => None,
             },
-        )))
+        ))
     }
 
     fn create_command_encoder(&self, label: Option<&str>) -> Self::CommandEncoder {
         WgpuCommandEncoder(
             self.inner
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label }),
+            #[cfg(test)]
+            self.timestamps.clone(),
         )
     }
 }
@@ -813,24 +914,54 @@ impl RhiCommandEncoder for WgpuCommandEncoder {
                 depth_ops: attachment.depth_operations.map(depth_operations),
                 stencil_ops: attachment.stencil_operations.map(stencil_operations),
             });
-        WgpuRenderPass(self.0.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: descriptor.label,
-            color_attachments: &colors,
-            depth_stencil_attachment: depth,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        }))
+        #[cfg(test)]
+        let stamp = self.1.as_ref().and_then(|t| t.allocate(descriptor.label));
+        WgpuRenderPass(self.0.begin_render_pass(
+            &wgpu::RenderPassDescriptor {
+                label: descriptor.label,
+                color_attachments: &colors,
+                depth_stencil_attachment: depth,
+                #[cfg(not(test))]
+                timestamp_writes: None,
+                #[cfg(test)]
+                timestamp_writes: stamp.as_ref().map(|(set, index)| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: Some(*index),
+                        end_of_pass_write_index: Some(*index + 1),
+                    }
+                }),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            },
+        ))
     }
 
     fn begin_compute_pass<'pass>(
         &'pass mut self,
         descriptor: ComputePassDescriptor<'pass>,
     ) -> Self::ComputePass<'pass> {
-        WgpuComputePass(self.0.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: descriptor.label,
-            timestamp_writes: None,
-        }))
+        #[cfg(test)]
+        let stamp = self.1.as_ref().and_then(|t| t.allocate(descriptor.label));
+        WgpuComputePass(
+            self.0.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: descriptor.label,
+                #[cfg(not(test))]
+                timestamp_writes: None,
+                #[cfg(test)]
+                timestamp_writes: stamp.as_ref().map(|(set, index)| {
+                    wgpu::ComputePassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: Some(*index),
+                        end_of_pass_write_index: Some(*index + 1),
+                    }
+                }),
+            }),
+            #[cfg(test)]
+            self.1.clone(),
+            #[cfg(test)]
+            None,
+        )
     }
 
     fn finish(self) -> Self::CommandBuffer {
@@ -884,6 +1015,9 @@ impl<'pass> RhiRenderPass<'pass> for WgpuRenderPass<'pass> {
     fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
         self.0.draw(vertices, instances);
     }
+    fn draw_indexed_indirect(&mut self, buffer: &'pass WgpuBuffer, offset: u64) {
+        self.0.draw_indexed_indirect(&buffer.0, offset);
+    }
     fn draw_indexed(
         &mut self,
         indices: std::ops::Range<u32>,
@@ -899,12 +1033,29 @@ impl<'pass> RhiComputePass<'pass> for WgpuComputePass<'pass> {
     type Pipeline = WgpuComputePipeline;
     fn set_pipeline(&mut self, pipeline: &'pass WgpuComputePipeline) {
         self.0.set_pipeline(&pipeline.0);
+        #[cfg(test)]
+        {
+            self.2 = pipeline.1;
+        }
     }
     fn set_bind_group(&mut self, index: u32, bind_group: &'pass WgpuBindGroup, offsets: &[u32]) {
         self.0.set_bind_group(index, &bind_group.0, offsets);
     }
     fn dispatch(&mut self, x: u32, y: u32, z: u32) {
+        #[cfg(test)]
+        let stamp = self
+            .1
+            .as_ref()
+            .and_then(|timestamps| timestamps.allocate_dispatch(self.2));
+        #[cfg(test)]
+        if let Some((set, index)) = &stamp {
+            self.0.write_timestamp(set, *index);
+        }
         self.0.dispatch_workgroups(x, y, z);
+        #[cfg(test)]
+        if let Some((set, index)) = &stamp {
+            self.0.write_timestamp(set, *index + 1);
+        }
     }
 }
 
@@ -925,6 +1076,7 @@ fn buffer_usages(value: BufferUsages) -> wgpu::BufferUsages {
         (BufferUsages::UNIFORM, wgpu::BufferUsages::UNIFORM),
         (BufferUsages::STORAGE, wgpu::BufferUsages::STORAGE),
         (BufferUsages::INDIRECT, wgpu::BufferUsages::INDIRECT),
+        (BufferUsages::MAP_READ, wgpu::BufferUsages::MAP_READ),
     ] {
         if value.contains(rhi) {
             result |= backend;
@@ -1045,6 +1197,8 @@ fn texture_view_dimension(value: TextureViewDimension) -> wgpu::TextureViewDimen
 }
 fn texture_format(value: TextureFormat) -> wgpu::TextureFormat {
     match value {
+        TextureFormat::Bc3RgbaUnorm => wgpu::TextureFormat::Bc3RgbaUnorm,
+        TextureFormat::Bc3RgbaUnormSrgb => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
         TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
         TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
         TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -1059,6 +1213,8 @@ fn texture_format(value: TextureFormat) -> wgpu::TextureFormat {
 }
 fn try_rhi_texture_format(value: wgpu::TextureFormat) -> Option<TextureFormat> {
     Some(match value {
+        wgpu::TextureFormat::Bc3RgbaUnorm => TextureFormat::Bc3RgbaUnorm,
+        wgpu::TextureFormat::Bc3RgbaUnormSrgb => TextureFormat::Bc3RgbaUnormSrgb,
         wgpu::TextureFormat::R8Unorm => TextureFormat::R8Unorm,
         wgpu::TextureFormat::Rgba8Unorm => TextureFormat::Rgba8Unorm,
         wgpu::TextureFormat::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,

@@ -264,31 +264,7 @@ fn upload<D: RhiDevice, Q: RhiQueue<D>>(
     sampler: &D::Sampler,
     source: &Arc<Texture>,
 ) -> Result<Uploaded<D>, RhiError> {
-    crate::validate_texture(device, source)?;
-    let extent = Extent3d::surface(source.width(), source.height());
-    let texture = device.create_texture(TextureDescriptor {
-        label: Some("quad sRGB texture"),
-        extent,
-        mip_levels: 1,
-        samples: 1,
-        dimension: TextureDimension::Two,
-        format: TextureFormat::Rgba8UnormSrgb,
-        usages: TextureUsages::SAMPLED | TextureUsages::COPY_DESTINATION,
-    })?;
-    queue.write_texture(
-        TextureCopy {
-            texture: &texture,
-            mip_level: 0,
-            origin: Origin3d::default(),
-        },
-        source.pixels(),
-        TextureDataLayout {
-            offset: 0,
-            bytes_per_row: Some(source.width() * 4),
-            rows_per_image: Some(source.height()),
-        },
-        extent,
-    );
+    let texture = crate::textures::upload(device, queue, source, true)?;
     let view = device.create_texture_view(&texture, TextureViewDescriptor::default())?;
     let binding = device.create_bind_group(BindGroupDescriptor {
         label: Some("quad texture binding"),

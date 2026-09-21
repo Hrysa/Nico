@@ -14,8 +14,17 @@ or a live file watcher. Direct importer calls intentionally remain uncached.
 Release loaders continue importing source content. No packaged release format is
 introduced by this work.
 
-The nearest ancestor named `assets` owns `.nico`; an external override without that
-ancestor uses the source's parent. The source must exist and resolve inside its root.
+The original 2026-09-18 implementation placed `.nico` in the nearest ancestor named
+`assets`. **Implementation update (2026-09-20):** automatic development loaders now
+share the editor's game-root `.nico`, beside the nearest ancestor `nico.project.toml`.
+The nearest manifest takes precedence over directory names, supporting custom asset
+roots and nested projects without adding a dependency on `nico-scene`. Legacy layouts
+without a manifest use the parent of the nearest `assets` directory. Standalone
+external sources without either marker use the source's parent. Explicit
+`ImportCache::new(root)` still uses exactly the root supplied by its owner.
+Old `assets/.nico` caches are not read or automatically migrated; sources rebuild
+missing recipe variants in the shared root. Stop older loaders before removing old
+caches. The source must exist and resolve inside its root.
 Files outside the root and inside `.nico` cannot be indexed as sources. File loaders
 compare source size, high-resolution modification time, creation time when available,
 and (on Unix) device/inode and change-time metadata with the index before reading

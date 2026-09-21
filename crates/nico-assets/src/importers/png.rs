@@ -77,11 +77,7 @@ pub(crate) fn decode_bytes(bytes: &[u8], limits: TextureLimits) -> LoadResult {
             png::ColorType::Indexed => return Err(TextureError::UnsupportedPng),
         }
     }
-    Ok(Texture {
-        width,
-        height,
-        pixels,
-    })
+    Texture::rgba8(width, height, pixels).ok_or(TextureError::LimitExceeded)
 }
 
 #[cfg(test)]

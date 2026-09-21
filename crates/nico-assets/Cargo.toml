@@ -9,12 +9,14 @@ default = []
 character = ["dep:serde"]
 loading = ["runtime-loading", "png-import", "gltf-import"]
 runtime-loading = ["dep:nico-runtime"]
-png-import = ["dep:png", "import-cache"]
+png-import = ["dep:png", "import-cache", "texture-compression"]
+texture-compression = ["dep:texpresso"]
 gltf-import = ["dep:gltf", "import-cache"]
 import-cache = ["dep:serde", "dep:serde_json", "dep:bincode", "dep:sha2", "dep:tracing"]
 watch = ["png-import", "gltf-import", "dep:notify"]
 
 [dependencies]
+texpresso = { version = "2.0.2", optional = true }
 notify = { version = "8.2", optional = true }
 tracing = { workspace = true, optional = true }
 bincode = { version = "1.3.3", optional = true }

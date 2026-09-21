@@ -4,7 +4,7 @@ use glam::{Mat4, Quat, Vec3};
 use nico_animation::Pose;
 use nico_assets::{
     Texture,
-    import::ImportBudget,
+    import::{AssetImporter, ImportBudget},
     importers::{PngImporter, PngSettings},
 };
 use nico_presentation::{Camera3d, MeshInstance, Scene3d};
@@ -55,11 +55,14 @@ struct Placement {
     bounds: ModelBounds,
 }
 pub struct Environment {
+    source: std::path::PathBuf,
+    pub(crate) ground_cache: Option<nico_assets::cache::ImportCache>,
     pub(crate) definition: Definition,
     models: BTreeMap<String, Model>,
     solids: BTreeMap<usize, Placement>,
     decorations: Vec<Placement>,
     landscape: Option<super::landscape::Landscape>,
+    landscape_settings: Option<Vec<u8>>,
     pub inspection: serde_json::Value,
 }
 fn height_valid(height: f32) -> bool {
@@ -200,15 +203,18 @@ impl Environment {
         }
         progress.finish();
         Ok(Self {
+            source: path.to_owned(),
+            ground_cache: nico_assets::cache::development_cache(path)?,
             definition,
             models,
             solids: BTreeMap::new(),
             decorations: Vec::new(),
             landscape: None,
+            landscape_settings: None,
             inspection: serde_json::Value::Null,
         })
     }
-    /// Rebuild cached static palettes only when the server supplies a new zone/epoch.
+    /// Update placements, retaining landscape residency until its geometry inputs change.
     pub fn bind(&mut self, zone: &ZoneDefinition) -> Result<()> {
         let mut solids = BTreeMap::new();
         let mut decorations = Vec::new();
@@ -216,9 +222,40 @@ impl Environment {
             self.solids.clear();
             self.decorations.clear();
             self.landscape = None;
+            self.landscape_settings = None;
             return Ok(());
         }
-        let landscape = Some(super::landscape::Landscape::new(zone));
+        // Ground and foliage depend on zone extent and obstacle geometry, not
+        // decoration placements. Keep the streaming owner and its instance Arcs
+        // alive across ordinary authoring edits.
+        let settings = super::ground_import::GroundImporter.cache_settings(zone)?;
+        let landscape = if self.landscape.is_none() || self.landscape_settings != settings {
+            let ground = if let Some(cache) = &self.ground_cache {
+                cache.load(
+                    &self.source,
+                    &super::ground_import::GroundImporter,
+                    zone,
+                    ImportBudget::default(),
+                    &|| false,
+                )?
+            } else {
+                super::landscape::ground_texture(zone)
+            };
+            let grass = if let Some(cache) = &self.ground_cache {
+                cache.load(
+                    &self.source,
+                    &super::grass_import::GrassImporter,
+                    zone,
+                    ImportBudget::default(),
+                    &|| false,
+                )?
+            } else {
+                super::grass_import::GrassPlacements::generate(zone, || Ok(()))?
+            };
+            Some(super::landscape::Landscape::streamed(zone, ground, grass))
+        } else {
+            None
+        };
         for (index, obstacle) in zone.obstacles.iter().enumerate() {
             if let Some(binding) = self.definition.obstacles.get(&obstacle.id) {
                 let model = &self.models[&binding.model];
@@ -251,7 +288,10 @@ impl Environment {
         }
         self.solids = solids;
         self.decorations = decorations;
-        self.landscape = landscape;
+        if let Some(landscape) = landscape {
+            self.landscape = Some(landscape);
+            self.landscape_settings = settings;
+        }
         Ok(())
     }
     pub fn backdrop(&self, camera: Camera3d, scene: &mut Scene3d) -> bool {
@@ -275,10 +315,16 @@ impl Environment {
         for placement in &self.decorations {
             placement.submit(projection, scene);
         }
-        if let Some(landscape) = &self.landscape {
+        if let Some(landscape) = &mut self.landscape {
             landscape.decorate(projection, scene);
         }
         self.inspection = serde_json::json!({"zone":self.definition.zone,"loaded_models":self.models.len(),"solid_models":self.solids.len(),"decorations":self.decorations.len(),"decoration_draws":scene.meshes.len()-before});
+        self.inspection["grass_streaming"] = self
+            .landscape
+            .as_ref()
+            .map_or(serde_json::Value::Null, |landscape| {
+                landscape.streaming_status()
+            });
     }
 }
 impl Model {

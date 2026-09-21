@@ -22,13 +22,24 @@ static IMPORTS: AtomicU64 = AtomicU64::new(0);
 static REBUILDS: AtomicU64 = AtomicU64::new(0);
 static SOURCE_CHECKS: AtomicU64 = AtomicU64::new(0);
 static OBJECT_CHECKS: AtomicU64 = AtomicU64::new(0);
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct CacheStats {
     pub hits: u64,
     pub imports: u64,
     pub rebuilds: u64,
     pub source_checks: u64,
     pub object_checks: u64,
+}
+impl CacheStats {
+    pub(crate) fn since(self, earlier: Self) -> Self {
+        Self {
+            hits: self.hits.saturating_sub(earlier.hits),
+            imports: self.imports.saturating_sub(earlier.imports),
+            rebuilds: self.rebuilds.saturating_sub(earlier.rebuilds),
+            source_checks: self.source_checks.saturating_sub(earlier.source_checks),
+            object_checks: self.object_checks.saturating_sub(earlier.object_checks),
+        }
+    }
 }
 /// Process-wide operational counters, not timings or profiling data.
 pub fn stats() -> CacheStats {
@@ -96,7 +107,7 @@ struct Entry {
 /// Metadata fast path. Unix change time and identity detect timestamp-preserving
 /// edits and file replacement; missing timestamps always require a full check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct FileStamp {
+pub struct FileStamp {
     len: u64,
     modified: (u64, u32),
     created: Option<(u64, u32)>,
@@ -125,7 +136,9 @@ impl FileStamp {
             identity,
         })
     }
-    pub(crate) fn path(path: &Path) -> Option<Self> {
+    /// Missing or unsupported metadata returns `None` and must not be treated
+    /// as proof that a source is unchanged.
+    pub fn path(path: &Path) -> Option<Self> {
         Self::metadata(&fs::metadata(path).ok()?)
     }
 }
@@ -158,6 +171,70 @@ impl Input<'_> {
 #[derive(Clone, Debug)]
 pub struct ImportCache {
     root: PathBuf,
+}
+/// One index snapshot for a metadata-only catalog scan. This is a freshness hint,
+/// not a decoded value: normal loading still validates and repairs cache objects.
+#[cfg(feature = "watch")]
+pub(crate) struct CacheProbe<'a> {
+    cache: &'a ImportCache,
+    index: Index,
+}
+#[cfg(feature = "watch")]
+impl CacheProbe<'_> {
+    pub(crate) fn current<I: AssetImporter>(
+        &self,
+        path: &Path,
+        importer: &I,
+        settings: &I::Settings,
+        budget: ImportBudget,
+    ) -> Result<bool, ImportError> {
+        importer.validate_settings(settings)?;
+        let Some(recipe) = recipe(importer, settings, budget)? else {
+            return Ok(false);
+        };
+        let source = self.cache.source(path)?;
+        let key = serde_json::to_string(&(&source, "", importer.descriptor().id, &recipe))
+            .map_err(|e| error("cache_key", e))?;
+        let Some(entry) = self.index.entries.get(&key) else {
+            return Ok(false);
+        };
+        let stamp = FileStamp::path(path);
+        if stamp.is_none()
+            || stamp != entry.source_stat
+            || entry.source_len > budget.max_input_bytes as u64
+            || entry.decoded_bytes > budget.max_decoded_bytes
+            || entry.recipe != recipe
+            || !hex(&entry.object)
+        {
+            return Ok(false);
+        }
+        let object = self
+            .cache
+            .directory()
+            .join("objects")
+            .join(&entry.object[..2])
+            .join(&entry.object[2..]);
+        Ok(entry.object_stat.is_some() && FileStamp::path(&object) == entry.object_stat)
+    }
+}
+fn recipe<I: AssetImporter>(
+    importer: &I,
+    settings: &I::Settings,
+    budget: ImportBudget,
+) -> Result<Option<String>, ImportError> {
+    let Some(settings_key) = importer.cache_settings(settings)? else {
+        return Ok(None);
+    };
+    let descriptor = importer.descriptor();
+    Ok(Some(digest(&encode(&(
+        FORMAT,
+        descriptor.id,
+        descriptor.version,
+        settings_key,
+        std::env::consts::ARCH,
+        budget.max_input_bytes,
+        budget.max_decoded_bytes,
+    ))?)))
 }
 fn error(code: &str, message: impl std::fmt::Display) -> ImportError {
     ImportError::new(ImportErrorKind::Io, code, &message.to_string())
@@ -247,6 +324,13 @@ fn publish(path: &Path, bytes: &[u8]) -> Result<(), ImportError> {
     result.map_err(|e| error("cache_publish", e))
 }
 impl ImportCache {
+    #[cfg(feature = "watch")]
+    pub(crate) fn probe(&self) -> Result<CacheProbe<'_>, ImportError> {
+        Ok(CacheProbe {
+            cache: self,
+            index: self.index()?,
+        })
+    }
     /// Explicit project-cache loading, including in release editor builds.
     pub fn load<I: AssetImporter>(
         &self,
@@ -377,7 +461,7 @@ impl ImportCache {
     ) -> Result<I::Output, ImportError> {
         check(cancelled)?;
         importer.validate_settings(settings)?;
-        let Some(settings_key) = importer.cache_settings(settings)? else {
+        let Some(recipe) = recipe(importer, settings, budget)? else {
             let bytes = input.read(path, budget, cancelled)?;
             let output = importer.import(
                 &mut ImportContext::new(&bytes, budget, cancelled)?,
@@ -388,15 +472,6 @@ impl ImportCache {
         };
         let source = self.source(path)?;
         let descriptor = importer.descriptor();
-        let recipe = digest(&encode(&(
-            FORMAT,
-            descriptor.id,
-            descriptor.version,
-            settings_key,
-            std::env::consts::ARCH,
-            budget.max_input_bytes,
-            budget.max_decoded_bytes,
-        ))?);
         let key = serde_json::to_string(&(&source, subresource, descriptor.id, &recipe))
             .map_err(|e| error("cache_key", e))?;
         let _asset_lock =
@@ -513,7 +588,15 @@ impl ImportCache {
             .join("objects")
             .join(&object[..2])
             .join(&object[2..]);
-        publish(&object_path, &payload)?;
+        // Different sources can produce the same object. Preserve its metadata
+        // when it is already correct so publishing one source does not invalidate
+        // the other sources' metadata-only freshness checks.
+        {
+            let _lock = self.lock(&format!("locks/object-{object}.lock"), cancelled)?;
+            if !read_bounded(&object_path, limit).is_ok_and(|existing| existing == payload) {
+                publish(&object_path, &payload)?;
+            }
+        }
         check(cancelled)?;
         let verified = source_stat.filter(|s| Some(s) == input.stamp(path).as_ref());
         let entry = Entry {
@@ -537,7 +620,9 @@ impl ImportCache {
 }
 /// Development means debug assertions enabled. Release builds keep the explicit
 /// source import path until a separately specified cooked-content loader exists.
-/// External source overrides use their containing directory when no assets ancestor exists.
+/// Project loaders share the `.nico` beside the nearest `nico.project.toml`.
+/// Legacy layouts without a manifest use the parent of the nearest `assets`
+/// directory; standalone external sources use their containing directory.
 pub fn development_cache(path: &Path) -> Result<Option<ImportCache>, ImportError> {
     if !cfg!(debug_assertions) {
         return Ok(None);
@@ -548,7 +633,13 @@ pub fn development_cache(path: &Path) -> Result<Option<ImportCache>, ImportError
         .ok_or_else(|| error("source_path", "missing source parent"))?;
     let root = parent
         .ancestors()
-        .find(|p| p.file_name().is_some_and(|n| n == "assets"))
+        .find(|p| p.join("nico.project.toml").is_file())
+        .or_else(|| {
+            parent
+                .ancestors()
+                .find(|p| p.file_name().is_some_and(|n| n == "assets"))
+                .and_then(Path::parent)
+        })
         .unwrap_or(parent);
     ImportCache::new(root).map(Some)
 }
@@ -701,6 +792,103 @@ mod tests {
         assert_eq!(observer.stats().source_checks, before.source_checks);
         assert_eq!(observer.stats().object_checks, before.object_checks);
         assert_eq!(i.calls.load(Ordering::SeqCst), 1);
+    }
+    #[cfg(debug_assertions)]
+    #[test]
+    fn development_loaders_share_the_explicit_project_cache() {
+        let f = Fixture::new();
+        fs::write(f.0.join("nico.project.toml"), "version = 1").unwrap();
+        // Custom roots and nested directories named assets must still select
+        // the owning project, not create per-content caches.
+        for relative in [
+            "assets/presentation/model.bin",
+            "content/vendor/assets/model.bin",
+        ] {
+            let source = f.0.join(relative);
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(&source, b"abc").unwrap();
+            let importer = Counting::default();
+            f.cache()
+                .load(&source, &importer, &0, budget(), &|| false)
+                .unwrap();
+            let cache = development_cache(&source).unwrap().unwrap();
+            assert_eq!(cache.directory(), f.cache().directory());
+            assert_eq!(
+                cache
+                    .load(&source, &importer, &0, budget(), &|| false)
+                    .unwrap(),
+                b"abc"
+            );
+            assert_eq!(importer.calls.load(Ordering::SeqCst), 1);
+            assert!(!source.parent().unwrap().join(".nico").exists());
+        }
+        assert!(!f.0.join("assets/.nico").exists());
+        let nested = f.0.join("nested");
+        fs::create_dir_all(nested.join("assets")).unwrap();
+        fs::write(nested.join("nico.project.toml"), "version = 1").unwrap();
+        let source = nested.join("assets/model.bin");
+        fs::write(&source, b"abc").unwrap();
+        assert_eq!(
+            development_cache(&source).unwrap().unwrap().directory(),
+            nested.canonicalize().unwrap().join(".nico")
+        );
+    }
+    #[cfg(debug_assertions)]
+    #[test]
+    fn development_cache_uses_game_root_for_legacy_assets_and_parent_for_standalone_files() {
+        let f = Fixture::new();
+        let source = f.0.join("assets/presentation/model.bin");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"abc").unwrap();
+        assert_eq!(
+            development_cache(&source).unwrap().unwrap().directory(),
+            f.cache().directory()
+        );
+        fs::write(f.source(), b"abc").unwrap();
+        assert_eq!(
+            development_cache(&f.source()).unwrap().unwrap().directory(),
+            f.cache().directory()
+        );
+        assert!(development_cache(&f.0.join("missing.bin")).is_err());
+    }
+    #[cfg(feature = "watch")]
+    #[test]
+    fn metadata_probe_checks_recipe_source_and_object_without_loading_content() {
+        let f = Fixture::new();
+        let i = Counting::default();
+        fs::write(f.source(), b"abc").unwrap();
+        file_run(&f, &i).unwrap();
+        let cache = f.cache();
+        let probe = cache.probe().unwrap();
+        let activity = observe_current_thread();
+        let before = activity.stats();
+        assert!(probe.current(&f.source(), &i, &0, budget()).unwrap());
+        assert!(!probe.current(&f.source(), &i, &1, budget()).unwrap());
+        assert!(
+            !probe
+                .current(
+                    &f.source(),
+                    &i,
+                    &0,
+                    ImportBudget {
+                        max_decoded_bytes: 1,
+                        ..budget()
+                    }
+                )
+                .unwrap()
+        );
+        assert_eq!(activity.stats().hits, before.hits);
+        assert_eq!(activity.stats().source_checks, before.source_checks);
+        assert_eq!(activity.stats().object_checks, before.object_checks);
+        fs::write(object_path(&f), b"broken cache").unwrap();
+        assert!(!probe.current(&f.source(), &i, &0, budget()).unwrap());
+        assert_eq!(file_run(&f, &i).unwrap(), b"abc");
+        let probe = cache.probe().unwrap();
+        assert!(probe.current(&f.source(), &i, &0, budget()).unwrap());
+        fs::write(f.source(), b"changed").unwrap();
+        assert!(!probe.current(&f.source(), &i, &0, budget()).unwrap());
+        fs::remove_file(f.source()).unwrap();
+        assert!(probe.current(&f.source(), &i, &0, budget()).is_err());
     }
     #[test]
     fn metadata_changes_hash_once_then_refresh_without_reimport() {
@@ -978,6 +1166,48 @@ mod tests {
         });
         assert_eq!(f.cache().index().unwrap().entries.len(), 8);
         assert_eq!(i.calls.load(Ordering::SeqCst), 8);
+    }
+
+    #[cfg(feature = "png-import")]
+    #[test]
+    fn compressed_png_warm_load_skips_cooking_and_content_checks() {
+        use crate::importers::{PngImporter, PngSettings};
+        let f = Fixture::new();
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 8, 8);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&[255, 0, 0, 128].repeat(64))
+                .unwrap();
+        }
+        fs::write(f.source(), &bytes).unwrap();
+        let load = || {
+            f.cache()
+                .load(
+                    &f.source(),
+                    &PngImporter,
+                    &PngSettings::default(),
+                    budget(),
+                    &|| false,
+                )
+                .unwrap()
+        };
+        let first = load();
+        assert_eq!(first.encoding(), crate::TextureEncoding::Bc3);
+        let observer = observe_current_thread();
+        let before = observer.stats();
+        let second = load();
+        let delta = observer.stats().since(before);
+        assert_eq!(delta.imports, 0);
+        assert_eq!(delta.source_checks, 0);
+        assert_eq!(delta.object_checks, 0);
+        assert_eq!(delta.hits, 1);
+        assert_eq!(second.encoded_bytes(), first.encoded_bytes());
+        assert_eq!(second.encoded_bytes().len(), 64);
     }
 
     #[cfg(feature = "png-import")]

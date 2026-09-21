@@ -13,6 +13,7 @@ use std::{
 };
 
 pub struct Core {
+    pub loading_report: crate::loading_report::LoadingReport,
     pub project: WatchedProject,
     pub definition: nico_scene::Project,
     pub adapter: Option<Box<dyn nico_authoring::Session>>,
@@ -63,8 +64,10 @@ impl Core {
         discovered: impl FnOnce(nico_assets::watch::CatalogReader),
     ) -> std::io::Result<Self> {
         let definition = nico_scene::Project::open(root)?;
-        let project =
-            WatchedProject::open_roots(definition.root(), &definition.manifest.asset_roots)?;
+        let project = WatchedProject::open_roots_on_demand(
+            definition.root(),
+            &definition.manifest.asset_roots,
+        )?;
         discovered(project.reader());
         let adapter = registry.open(&definition)?;
         let camera = adapter
@@ -76,6 +79,7 @@ impl Core {
             definition.load_scene()?
         };
         Ok(Self {
+            loading_report: Default::default(),
             project,
             definition,
             adapter,
@@ -246,11 +250,15 @@ impl Core {
                             return Err("asset must be project relative".into());
                         }
                         let snapshot = self.project.snapshot();
-                        if !snapshot
-                            .assets
-                            .get(&asset)
-                            .is_some_and(|e| matches!(e.value, Some(ImportedAsset::Model(_))))
-                        {
+                        if !snapshot.assets.get(&asset).is_some_and(|e| {
+                            !e.missing
+                                && e.error.is_none()
+                                && (matches!(e.value, Some(ImportedAsset::Model(_)))
+                                    || (e.cached
+                                        && asset
+                                            .extension()
+                                            .is_some_and(|x| x.eq_ignore_ascii_case("glb"))))
+                        }) {
                             return Err("model is not ready".into());
                         }
                         let id = self
@@ -325,7 +333,12 @@ impl Core {
             let Some((id, action)) = command else {
                 break;
             };
+            let operation = matches!(action, Action::Refresh)
+                .then(|| self.loading_report.begin(self.project.root(), Some(id)));
             let error = self.apply(action).err();
+            if let Some(operation) = operation {
+                operation.finish(error.clone());
+            }
             self.error = error.clone();
             self.queue
                 .lock()
@@ -333,12 +346,16 @@ impl Core {
                 .record(json!({"command_id":id,"error":error}));
         }
         let catalog = self.project.snapshot();
+        if let Some(path) = &self.inspected_asset {
+            self.project.request(path);
+        }
         for object in self
             .document
             .objects
             .iter()
             .filter(|_| self.adapter.is_none())
         {
+            self.project.request(&object.asset);
             let Some(entry) = catalog.assets.get(&object.asset) else {
                 continue;
             };
@@ -408,8 +425,8 @@ impl Core {
             "project":self.project.root(), "manifest":self.definition.manifest, "dirty":self.dirty(), "objects":self.document.objects,
             "selected":self.selected,"inspected_asset":self.inspected_asset,"camera":self.camera,"camera_pan":self.camera_pan,"draws":scene.meshes.len(),"error":self.error,
             "playing":self.playing,"play_requested":self.play_requested,"play_error":self.play_error,"play_profile":self.play_profile,"play_session":self.play_state,
-            "imports":{"current":catalog.importing,"pending":catalog.assets.values().filter(|a| a.value.is_none() && a.error.is_none() && !a.missing).count(),"scans":catalog.scans,"attempts":catalog.imports,"notifications":catalog.notifications,"error":catalog.error},
-            "assets":catalog.assets.values().map(|e| json!({"path":e.path,"revision":e.revision,"ready":e.value.is_some(),"missing":e.missing,"error":e.error})).collect::<Vec<_>>(),
+            "imports":{"current":catalog.importing,"pending":catalog.assets.values().filter(|a| a.value.is_none() && !a.cached && a.error.is_none() && !a.missing).count(),"scans":catalog.scans,"attempts":catalog.imports,"notifications":catalog.notifications,"error":catalog.error},
+            "assets":catalog.assets.values().map(|e| json!({"path":e.path,"revision":e.revision,"ready":e.value.is_some(),"cached":e.cached,"missing":e.missing,"error":e.error})).collect::<Vec<_>>(),
             "command_results":self.queue.lock().unwrap().history()
         }));
         scene
@@ -433,9 +450,11 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../games/arena-arpg");
         let definition = nico_scene::Project::open(&root).unwrap();
         let start = Instant::now();
-        let catalog =
-            nico_assets::watch::WatchedProject::open_roots(&root, &definition.manifest.asset_roots)
-                .unwrap();
+        let catalog = nico_assets::watch::WatchedProject::open_roots_on_demand(
+            &root,
+            &definition.manifest.asset_roots,
+        )
+        .unwrap();
         loop {
             let snapshot = catalog.snapshot();
             assert!(snapshot.error.is_none(), "{:?}", snapshot.error);
@@ -445,14 +464,14 @@ mod tests {
                 && snapshot
                     .assets
                     .values()
-                    .all(|a| a.value.is_some() || a.error.is_some())
+                    .all(|a| a.value.is_some() || a.cached || a.error.is_some())
             {
                 assert_eq!(snapshot.assets.len(), 13);
                 assert!(
                     snapshot
                         .assets
                         .values()
-                        .all(|a| a.value.is_some() && a.error.is_none())
+                        .all(|a| (a.value.is_some() || a.cached) && a.error.is_none())
                 );
                 break;
             }
@@ -460,6 +479,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         eprintln!("catalog elapsed: {:?}", start.elapsed());
+        eprintln!("catalog loads: {}", catalog.snapshot().imports);
         drop(catalog);
         let start = Instant::now();
         let environment = arena_arpg_presentation::environment::Environment::load(
@@ -470,9 +490,12 @@ mod tests {
         // Measure the real adapter separately, including zone/landscape preparation.
         drop(environment);
         let start = Instant::now();
-        let adapter = arena_arpg_presentation::authoring::open(&definition).unwrap();
+        let mut adapter = arena_arpg_presentation::authoring::open(&definition).unwrap();
         eprintln!("authoring adapter elapsed: {:?}", start.elapsed());
         assert_eq!(adapter.document().objects.len(), 99);
+        let start = Instant::now();
+        adapter.refresh_assets().unwrap();
+        eprintln!("unchanged refresh elapsed: {:?}", start.elapsed());
         drop(adapter);
         let start = Instant::now();
         let mut registry = nico_authoring::Registry::default();
@@ -510,6 +533,71 @@ mod tests {
         )
         .unwrap();
         root
+    }
+    #[test]
+    fn cached_catalog_loads_only_inspected_or_added_content() {
+        use std::time::{Duration, Instant};
+        let root = declared_project();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../games/minimal-game/assets/presentation");
+        fs::copy(
+            source.join("meshes/cube.glb"),
+            root.path().join("assets/cube.glb"),
+        )
+        .unwrap();
+        fs::copy(
+            source.join("textures/sample.png"),
+            root.path().join("assets/sample.png"),
+        )
+        .unwrap();
+        let wait = |predicate: &mut dyn FnMut() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !predicate() {
+                assert!(Instant::now() < deadline, "asset request did not complete");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let warm = WatchedProject::open(root.path()).unwrap();
+        wait(&mut || {
+            let s = warm.snapshot();
+            s.assets.len() == 2 && s.assets.values().all(|a| a.value.is_some())
+        });
+        drop(warm);
+        let mut core = Core::new(
+            root.path(),
+            Arc::new(Mutex::new(crate::operations::Queue::new(32))),
+            Arc::new(Mutex::new(nico_ops::publication::Publication::default())),
+        )
+        .unwrap();
+        wait(&mut || {
+            let s = core.project.snapshot();
+            s.assets.len() == 2 && s.assets.values().all(|a| a.cached)
+        });
+        core.update();
+        assert_eq!(core.project.snapshot().imports, 0);
+        core.apply(Action::Inspect {
+            asset: "assets/sample.png".into(),
+        })
+        .unwrap();
+        wait(&mut || {
+            core.update();
+            core.project.snapshot().assets[Path::new("assets/sample.png")]
+                .value
+                .is_some()
+        });
+        assert!(
+            core.project.snapshot().assets[Path::new("assets/cube.glb")]
+                .value
+                .is_none()
+        );
+        core.apply(Action::Add {
+            asset: "assets/cube.glb".into(),
+        })
+        .unwrap();
+        wait(&mut || !core.update().meshes.is_empty());
+        assert_eq!(core.document.objects.len(), 1);
+        assert_eq!(core.project.snapshot().imports, 2);
+        core.close();
     }
     #[test]
     fn arena_adapter_allows_play_for_its_saved_project() {

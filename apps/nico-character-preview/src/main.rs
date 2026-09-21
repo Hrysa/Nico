@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         let camera_changed = last_camera != Some(camera_key);
         last_camera = Some(camera_key);
         let position = camera.target + Vec3::new(camera.yaw.sin() * camera.pitch.cos(), camera.pitch.sin(), camera.yaw.cos() * camera.pitch.cos()) * camera.distance;
-        let mut scene = Scene3d { lighting: Default::default(),
+        let mut scene = Scene3d { foliage_influences: None, instance_batches: Vec::new(), lighting: Default::default(),
             camera: Camera3d::looking_at(position.to_array(), camera.target.to_array(), [0., 1., 0.]).ok_or_else(|| runtime_error("invalid preview camera"))?,
             meshes: Vec::new(),
         };

@@ -24,6 +24,7 @@ struct Progress {
     catalog: Option<CatalogReader>,
 }
 pub struct LoadingEditor {
+    loading_report: crate::loading_report::LoadingReport,
     debug_session: Option<nico_ops::bridge::EditorSession>,
     root: PathBuf,
     queue: SharedQueue,
@@ -43,6 +44,7 @@ impl LoadingEditor {
         registry: nico_authoring::Registry,
     ) -> Self {
         Self {
+            loading_report: Default::default(),
             debug_session: None,
             root,
             queue,
@@ -62,19 +64,24 @@ impl LoadingEditor {
         self.debug_session = Some(session);
         self
     }
+    pub fn with_loading_report(mut self, report: crate::loading_report::LoadingReport) -> Self {
+        self.loading_report = report;
+        self
+    }
     fn start(&mut self) -> std::io::Result<()> {
         let root = self.root.clone();
         let queue = self.queue.clone();
         let published = self.published.clone();
         let registry = self.registry.take().unwrap();
         let progress = self.progress.clone();
+        let loading_report = self.loading_report.clone();
         self.progress.lock().unwrap().phase = "Discovering project assets".into();
         self.worker = Some(
             std::thread::Builder::new()
                 .name("editor-project-load".into())
                 .spawn(move || {
                     let observed = progress.clone();
-                    let _observer = nico_assets::progress::observe_progress(move |p| {
+                    let operation = loading_report.begin_observed(&root, None, move |p| {
                         let mut state = observed.lock().unwrap();
                         state.phase = if p.finished {
                             "Preparing scene".into()
@@ -84,8 +91,14 @@ impl LoadingEditor {
                         state.completed = p.completed;
                         state.total = if p.finished { 0 } else { p.total };
                     });
-                    Core::load(&root, queue, published, &registry, |reader| {
+                    let result = Core::load(&root, queue, published, &registry, |reader| {
+                        loading_report.catalog(reader.clone());
                         progress.lock().unwrap().catalog = Some(reader);
+                    });
+                    operation.finish(result.as_ref().err().map(ToString::to_string));
+                    result.map(|mut core| {
+                        core.loading_report = loading_report;
+                        core
                     })
                 })?,
         );
@@ -95,6 +108,9 @@ impl LoadingEditor {
 impl EditorApplication for LoadingEditor {
     fn presented(&mut self) {
         self.first_presented = true;
+        if self.editor.is_some() {
+            self.loading_report.scene_presented();
+        }
     }
     fn ui(&mut self, ui: &mut egui::Ui, texture: egui::TextureId) -> egui::Vec2 {
         if let Some(editor) = &mut self.editor {
@@ -120,7 +136,7 @@ impl EditorApplication for LoadingEditor {
                 ui.heading("Project could not be opened");
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             } else {
-                ui.heading("Importing project");
+                ui.heading("Opening project");
                 ui.label(&progress.phase);
                 if progress.total > 0 {
                     ui.add(
@@ -135,7 +151,7 @@ impl EditorApplication for LoadingEditor {
                     let ready = catalog
                         .assets
                         .values()
-                        .filter(|e| e.value.is_some() || e.error.is_some())
+                        .filter(|e| e.value.is_some() || e.cached || e.error.is_some())
                         .count();
                     ui.label(format!(
                         "Assets: {ready} / {} processed",

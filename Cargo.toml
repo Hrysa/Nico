@@ -66,3 +66,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.wgpu-hal]
 opt-level = 3
+
+# BC3 cooking measured 3.4 seconds for 256x256 with an unoptimized encoder.
+# Keep offline codec loops optimized without changing engine debug builds.
+[profile.dev.package.texpresso]
+opt-level = 3

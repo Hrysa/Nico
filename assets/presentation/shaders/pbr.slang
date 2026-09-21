@@ -5,6 +5,7 @@ struct VertexOutput {
     float2 uv : TEXCOORD0;
     float3 worldPosition : TEXCOORD1;
     float3 normal : TEXCOORD2;
+    float4 tint : TEXCOORD3;
 };
 struct DrawUniforms {
     column_major float4x4 transform;
@@ -40,13 +41,14 @@ VertexOutput vertexOutput(float4 position, float3 normal, float2 uv)
     output.worldPosition = mul(draw.model, position).xyz;
     output.normal = mul(draw.normalTransform, float4(normal, 0.)).xyz;
     output.uv = uv;
+    output.tint = draw.color;
     return output;
 }
 
 [shader("fragment")]
 float4 fragment_main(VertexOutput input, bool front : SV_IsFrontFace) : SV_Target0
 {
-    float4 base = baseImage.Sample(baseSampler, input.uv) * material.baseColor * draw.color;
+    float4 base = baseImage.Sample(baseSampler, input.uv) * material.baseColor * input.tint;
     // Derivatives and samples precede alpha discard and divergent branches.
     float2 mr = mrImage.Sample(mrSampler, input.uv).gb;
     float3 mapped = normalImage.Sample(normalSampler, input.uv).xyz * 2. - 1.;

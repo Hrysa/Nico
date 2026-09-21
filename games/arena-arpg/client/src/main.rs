@@ -107,7 +107,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "assets/presentation/shaders/generated/wgpu/meshes.wgsl",
         "assets/presentation/shaders/generated/wgpu/quads.wgsl",
     )
+    .with_instance_shader("assets/presentation/shaders/generated/wgpu/instanced_meshes.wgsl")
+    .with_gpu_instance_shaders(
+        "assets/presentation/shaders/generated/wgpu/instanced_storage.wgsl",
+        "assets/presentation/shaders/generated/wgpu/instance_visibility.wgsl",
+    )
     .with_skin_shader("assets/presentation/shaders/generated/wgpu/skinned_meshes.wgsl")
+    .with_foliage_shaders(
+        "assets/presentation/shaders/generated/wgpu/foliage_meshes.wgsl",
+        "assets/presentation/shaders/generated/wgpu/foliage_storage.wgsl",
+        "assets/presentation/shaders/generated/wgpu/instance_visibility.wgsl",
+    )
     .with_pointer_capture();
     let mut host = ClientHost::new(args.host)
         .with_game_identity("arena_arpg", "1")

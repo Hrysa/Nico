@@ -158,6 +158,8 @@ impl Visuals {
         }
         self.last_tick = state.tick;
         let mut scene = Scene3d {
+            foliage_influences: None,
+            instance_batches: Vec::new(),
             lighting: Default::default(),
             camera,
             meshes: Vec::new(),

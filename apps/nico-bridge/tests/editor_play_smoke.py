@@ -112,11 +112,17 @@ def main():
             editor_id = editor_instance["instance_id"]
             while state().get("loading"):
                 time.sleep(0.05)
+            cache_marker = project / ".nico" / "play-cache-preservation-test"
+            cache_marker.parent.mkdir(exist_ok=True)
+            cache_marker.write_text("preserve project cache")
             print(f"Automated play control starts: editor PID {editor.pid}, {editor_id}", flush=True)
             command("configure_play", bridge=game_address, editor_endpoint=editor_address,
                     endpoint_token_file=str(token), release=False)
             command("play")
             first = phase("running")
+            assert pathlib.Path(first["content_path"]).samefile(project)
+            assert not (pathlib.Path(first["session_path"]) / "project").exists()
+            assert cache_marker.read_text() == "preserve project cache"
             print("Owned hosts:", first["server"]["pid"], first["client"]["pid"], flush=True)
             for role in ("server", "client"):
                 assert first[role]["ready"]
@@ -139,6 +145,22 @@ def main():
                 assert stopped["resources_removed"]
                 assert all(stopped[role]["exit_code"] == 0 and stopped[role]["exited"] for role in ("client", "server"))
                 assert unrelated.poll() is None
+                assert project.is_dir() and cache_marker.read_text() == "preserve project cache"
+                assert not (pathlib.Path(stopped["session_path"]) / "host-access.json").exists()
+                # Repeated Play must reuse the same source project and cache while
+                # reusing its project-local Play directory.
+                command("play")
+                repeated = phase("running", previous=first["session_id"])
+                assert repeated["content_path"] == first["content_path"]
+                assert repeated["content_revision"] == first["content_revision"]
+                assert repeated["session_path"] == first["session_path"]
+                assert cache_marker.read_text() == "preserve project cache"
+                command("stop")
+                repeated_stop = phase("exited")
+                assert repeated_stop["resources_removed"]
+                assert all(repeated_stop[role]["exit_code"] == 0 for role in ("client", "server"))
+                assert project.is_dir() and cache_marker.read_text() == "preserve project cache"
+                evidence.update(repeated=repeated, repeated_stop=repeated_stop)
                 evidence.update(stopped=stopped, sampling="State and GPU captures sampled separately; no user-observed acceptance claim.")
                 (args.evidence / "evidence.json").write_text(json.dumps(evidence, indent=2))
                 bridge.game(editor_id, "stop")
@@ -156,9 +178,11 @@ def main():
             command("save_and_restart")
             second = phase("running", previous=first["session_id"])
             assert first["content_revision"] != second["content_revision"]
-            assert first["server_data"] != second["server_data"]
-            assert not pathlib.Path(first["server_data"]).exists()
-            assert not pathlib.Path(first["content_path"]).exists()
+            assert first["server_data"] == second["server_data"]
+            assert pathlib.Path(first["server_data"]).is_dir()
+            assert pathlib.Path(first["content_path"]).samefile(project)
+            assert first["session_path"] == second["session_path"]
+            assert cache_marker.read_text() == "preserve project cache"
             for role in ("server", "client"):
                 assert second[role]["pid"] != first[role]["pid"]
                 assert second[role]["identity"]["content_revision"] == second["content_revision"]
@@ -186,7 +210,8 @@ def main():
             build_failed = phase("failed", previous=failed["session_id"])
             assert "build failed" in build_failed["error"]
             assert build_failed["server"] is None and build_failed["client"] is None
-            assert not pathlib.Path(build_failed["content_path"]).exists()
+            assert pathlib.Path(build_failed["content_path"]).samefile(project)
+            assert not (pathlib.Path(build_failed["session_path"]) / "host-access.json").exists()
             evidence["build_failure"] = build_failed
             manifest.write_text(original)
             command("configure_play", bridge=address(), editor_endpoint=editor_address,
@@ -246,8 +271,10 @@ def main():
             # Closing the editor owns cleanup; disconnecting MCP alone does not.
             bridge.game(editor_id, "stop")
             assert editor.wait(timeout=30) == 0
-            assert not pathlib.Path(third["content_path"]).exists()
-            assert not pathlib.Path(third["server_data"]).exists()
+            assert pathlib.Path(third["content_path"]).samefile(project)
+            assert not (pathlib.Path(third["session_path"]) / "host-access.json").exists()
+            assert cache_marker.read_text() == "preserve project cache"
+            assert pathlib.Path(third["server_data"]).is_dir()
             assert unrelated.poll() is None
             evidence["editor_exit_session"] = third
             evidence["sampling"] = "GPU captures and state sampled separately; no user-observed acceptance claim."

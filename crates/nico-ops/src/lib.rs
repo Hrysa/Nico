@@ -17,6 +17,7 @@ pub mod inspection;
 #[cfg(feature = "bridge")]
 pub mod bridge;
 
+pub mod rendering;
 pub mod snapshot;
 pub mod window;
 
@@ -79,6 +80,72 @@ pub struct GraphicsStatus {
     pub last_outcome: GraphicsOutcome,
 }
 
+/// Bounded renderer publication. Host frame and prepared view identify the source
+/// of CPU submission counters. Optional GPU observations carry their own view ID
+/// and age and never imply presentation completion or scanout.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "mcp", derive(serde::Serialize, serde::Deserialize))]
+pub struct InstancingStatus {
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub gpu_sample: Option<GpuVisibilityStatus>,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub gpu_readback_pending: u32,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub gpu_readback_skipped: u64,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub gpu_readback_failed: u64,
+    pub host_frame: u64,
+    pub prepared_view: u64,
+    pub visible_chunks: u32,
+    pub culled_chunks: u32,
+    /// CPU-known direct submissions; indirect candidate capacity is separate.
+    pub submitted_instances: u32,
+    pub submitted_draws: u32,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub indirect_draws: u32,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub gpu_candidate_instances: u32,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub visibility_upload_bytes: u64,
+    pub visibility_retirement_upload_bytes: u64,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub foliage_upload_bytes: u64,
+    /// Omitted field/chunk pairs in the prepared view, not unique field IDs.
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub influence_overflow: u32,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub visible_record_upload_bytes: u64,
+    pub instance_upload_bytes: u64,
+    pub mesh_upload_bytes: u64,
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub deferred_upload_chunks: u32,
+    pub visibility_reused_batches: u32,
+    /// Unique GPU pages encoded in the prepared view, excluding reused pages.
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub visibility_dispatched_pages: u32,
+    /// Encoded compute dispatches, not completed GPU work.
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub visibility_dispatches: u32,
+    pub retained_instance_bytes: u64,
+    /// Renderer-owned CPU split payload; distinct from GPU instance residency.
+    #[cfg_attr(feature = "mcp", serde(default))]
+    pub retained_split_cpu_bytes: u64,
+    pub retained_batches: u32,
+    pub ordinary_fallback: bool,
+}
+
+/// GPU visibility observed for a specific prepared view, independent of the
+/// report's latest CPU counters. Age is sampled when the host publishes status.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "mcp", derive(serde::Serialize, serde::Deserialize))]
+pub struct GpuVisibilityStatus {
+    pub prepared_view: u64,
+    pub visible_instances: u32,
+    pub candidate_instances: u32,
+    pub indirect_draws: u32,
+    pub age_ms: u64,
+}
+
 /// An owned copy of the latest host report; it never exposes application state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "bridge", derive(serde::Serialize, serde::Deserialize))]
@@ -92,6 +159,9 @@ pub struct HostStatus {
     /// None for hosts without graphics reporting. Retained across suspension/shutdown.
     #[cfg_attr(feature = "bridge", serde(default))]
     pub graphics: Option<GraphicsStatus>,
+    /// Latest prepared instance view. Retained when a viewport reuses its pixels.
+    #[cfg_attr(feature = "bridge", serde(default))]
+    pub instancing: Option<InstancingStatus>,
     /// Failure reported by the host, or an unexpected endpoint disconnect.
     pub failure: Option<String>,
 }
@@ -134,6 +204,7 @@ pub struct HostControl {
     status: Arc<Mutex<HostStatus>>,
     snapshots: snapshot::SnapshotControl,
     window: window::WindowControl,
+    rendering: rendering::RenderingControl,
 }
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
@@ -164,11 +235,21 @@ impl Drop for StopSender {
 }
 
 impl HostControl {
+    pub fn rendering(&self) -> rendering::RenderingControl {
+        self.rendering.clone()
+    }
+
     pub fn window(&self) -> window::WindowControl {
         self.window.clone()
     }
 
     /// Queue one native operation and wake the host even when no redraw is pending.
+    pub fn request_rendering(&self, action: rendering::RenderAction) -> Result<u64, &'static str> {
+        let id = self.rendering.request(action)?;
+        self.stop.wakeup.notify();
+        Ok(id)
+    }
+
     pub fn request_window(&self, action: window::WindowAction) -> Result<u64, &'static str> {
         let id = self.window.request(action)?;
         self.stop.wakeup.notify();
@@ -234,11 +315,16 @@ pub struct HostEndpoint {
     status: Arc<Mutex<HostStatus>>,
     snapshots: snapshot::SnapshotControl,
     window: window::WindowControl,
+    rendering: rendering::RenderingControl,
     stop_requested: bool,
     wakeup: Arc<Wakeup>,
 }
 
 impl HostEndpoint {
+    pub fn rendering(&self) -> rendering::RenderingControl {
+        self.rendering.clone()
+    }
+
     pub fn window(&self) -> window::WindowControl {
         self.window.clone()
     }
@@ -316,6 +402,13 @@ impl HostEndpoint {
         }
     }
 
+    pub fn instancing(&mut self, report: InstancingStatus) {
+        let mut status = self.status.lock().expect("host status lock poisoned");
+        if matches!(status.state, HostState::Starting | HostState::Running) {
+            status.instancing = Some(report);
+        }
+    }
+
     /// Reports host activity without changing readiness, for example on suspension.
     pub fn activity(&mut self, active: bool) {
         let mut status = self.status.lock().expect("host status lock poisoned");
@@ -349,6 +442,7 @@ impl Drop for HostEndpoint {
     fn drop(&mut self) {
         self.snapshots.close();
         self.window.close();
+        self.rendering.close();
         self.wakeup
             .0
             .lock()
@@ -374,11 +468,13 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
         active: false,
         completed_steps: 0,
         graphics: None,
+        instancing: None,
         failure: None,
     }));
     let wakeup = Arc::new(Wakeup::default());
     let snapshots = snapshot::SnapshotControl::default();
     let window = window::WindowControl::default();
+    let rendering = rendering::RenderingControl::default();
     (
         HostControl {
             stop: Arc::new(StopSender {
@@ -388,12 +484,14 @@ pub fn control_channel() -> (HostControl, HostEndpoint) {
             status: status.clone(),
             snapshots: snapshots.clone(),
             window: window.clone(),
+            rendering: rendering.clone(),
         },
         HostEndpoint {
             stop: receiver,
             status,
             snapshots,
             window,
+            rendering,
             stop_requested: false,
             wakeup,
         },

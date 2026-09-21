@@ -23,6 +23,8 @@ pub mod server;
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
+mod rendering;
+#[cfg(feature = "client")]
 mod snapshot;
 #[cfg(feature = "client")]
 mod window;

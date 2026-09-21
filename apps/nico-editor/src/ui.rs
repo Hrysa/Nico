@@ -168,7 +168,7 @@ impl EditorApplication for Editor {
         }
         ui.horizontal(|ui| {
             ui.small(format!(
-                "{} assets · {} imports · {} file events",
+                "{} assets · {} content loads · {} file events",
                 snapshot.assets.len(),
                 snapshot.imports,
                 snapshot.notifications
@@ -194,14 +194,14 @@ impl EditorApplication for Editor {
         if snapshot
             .assets
             .values()
-            .any(|a| a.value.is_none() && a.error.is_none() && !a.missing)
+            .any(|a| a.value.is_none() && !a.cached && a.error.is_none() && !a.missing)
         {
             egui::Modal::new(egui::Id::new("asset_import")).show(ui.ctx(), |ui| {
-                ui.heading("Importing assets");
+                ui.heading("Loading assets");
                 let done = snapshot
                     .assets
                     .values()
-                    .filter(|a| a.value.is_some() || a.error.is_some())
+                    .filter(|a| a.value.is_some() || a.cached || a.error.is_some())
                     .count();
                 ui.add(
                     egui::ProgressBar::new(done as f32 / snapshot.assets.len().max(1) as f32)

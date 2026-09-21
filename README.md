@@ -639,18 +639,24 @@ bridge with its editor listener and private token file as described under
 [editor attachment](#editor-attachment-and-release-debugging), then enter those endpoints and token-file
 path in the profile panel. The local defaults are ports 47631/47632 and
 `target/editor-rpc.token` under the Cargo workspace. **Play** requires a declared project with
-both Cargo targets and a saved document. The engine worker snapshots the saved
-content, builds the targets, starts the server, and waits for readiness before
-starting the client. Both hosts must report the expected content revision.
+both Cargo targets and a saved document. The engine worker builds the targets,
+hashes the saved project, starts the server, and waits for readiness before
+starting the client. Both hosts load the existing project and share its `.nico`
+import cache; Play does not copy assets to a temporary project. Both hosts must
+report the expected content revision. Changing files during startup can cause a
+revision mismatch; save and restart after the edit completes.
 Arena starts its world server on an automatically assigned loopback port and connects
-the client to that exact server, with disposable session data. Its saved logic,
-scenery, and character assets are snapshotted together. The minimal-game hosts still
+the client to that exact server, with saved data in the game's `.nico/play/server-data`. Its saved logic,
+scenery, and character assets participate in the content revision. The minimal-game hosts still
 run separate simulations.
 
 **Stop** requests orderly shutdown of this session's children, with direct-child
-termination as a fallback. **Restart saved** uses a fresh snapshot and isolated
-server-data directory; **Save and restart** first performs normal save validation.
-Closing the editor cleans up its session. External Attach / Inspect targets remain
+termination as a fallback. **Restart saved** reloads the same project and saved game data;
+**Save and restart** first performs normal save validation. Play uses normal Cargo
+`target/debug` or `target/release` binaries without copying them. One reusable
+`.nico/play` directory holds control files and server data; a lock prevents concurrent
+Play sessions for the same project. Closing the editor removes session credentials
+and retains project content, import cache, and saves. External Attach / Inspect targets remain
 independently owned. The panel and `editor_state.play_session` report phase,
 role-specific PID/instance, readiness, observation age, content identity, cleanup,
 and errors. Game captures and successful presentation counts remain separate.
@@ -672,7 +678,13 @@ content. Successful replacements appear without restarting the editor. `.nico`,
 Generated `.nico` cache data is disposable; sources and the scene are authoritative.
 Editor imports use the project cache in both debug and release builds.
 Embedded GLB textures also use that cache, avoiding repeated PNG decoding when
-reopening a project. The first import still decodes and caches those textures;
+reopening a project. Block-aligned PNGs now cache GPU-ready BC3 blocks (one quarter
+of RGBA8 pixel bytes); unsupported graphics devices automatically upload an RGBA8
+fallback. Compression is lossy; tiny/unaligned images retain RGBA8, and importer
+settings can disable compression. The cache recipe changed, so existing sources
+need one import with this build. Older recipe objects remain until the disposable
+cache is cleared; updating the executable alone does not remove them.
+The first import still decodes and compresses those textures;
 game-specific scene preparation is separate from asset import.
 
 Use a focused project directory: the initial catalog allows 1,024 assets, 16,384
@@ -742,10 +754,31 @@ zone, monster spawns, quest data and environment draw counts. Gameplay is not ru
 Save writes the existing logic/visual TOML sources, not a separate editor scene.
 Decoration-only edits preserve the logic file. Changed TOML files are reformatted
 and lose comments; unrelated semantic data is retained. External edits block Save.
-Reload requires a clean document and clears history. **Refresh assets** rebuilds
-Arena's model preview while retaining edits; catalog changes do not automatically
+Reload requires a clean document and clears history. **Refresh assets** checks file
+metadata and keeps Arena's prepared preview when unchanged; changed models rebuild
+the preview while retaining edits. Catalog changes do not automatically
 rebuild this adapter. Restart the game/server to load saved world changes.
 See the [Arena authoring plan](docs/plans/2026-09-18-arena-authoring.md).
+
+Opening the editor checks unchanged cached assets using metadata, without loading
+every cached model or texture. Content loads when needed by the scene or Inspector;
+new and changed sources still import automatically. MCP asset entries distinguish
+`cached` (metadata checked) from `ready` (CPU content loaded). Scene preparation and
+GPU uploads are separate from this import check.
+
+For a slow open or refresh, discover the editor instance and call `editor_loading`
+through the bridge. It retains startup and the latest queued Refresh report, with
+elapsed wall time, current/completed loading phases, cache hits versus actual
+imports, source/object checks, and catalog metadata/CPU-ready counts. It remains
+readable while project loading or Refresh occupies the runtime. Match `process_id`
+to the bridge instance/build identity; `refresh.command_id` identifies the command.
+History is limited to 32 phases per operation and marks truncation. The report
+survives reconnects, not process exit. Times include waits and are not CPU profiles;
+`first_scene_presented_ms` runs from loader start to the first scene presentation
+API success, excluding earlier graphics/shell initialization and not proving GPU
+completion or desktop visibility. Arena caches generated ground pixels using the
+zone extent, obstacle geometry, source and generator version; other scene setup
+and first GPU submission still take time.
 
 The scene contract currently describes model instances and transforms. Arbitrary
 gameplay components and embedded game code remain future work. Paired Play/Stop
@@ -756,7 +789,8 @@ declared scenes fail explicitly.
 ## Development asset cache
 
 Debug builds automatically cache imported GLB models/animations, static meshes, and
-decoded PNGs in the nearest `assets/.nico/` directory. Arena startup, character
+decoded PNGs in the game-root `.nico/` beside `nico.project.toml`, shared with the
+editor catalog. Arena startup, character
 preview, and the asynchronous asset stores use this path. File metadata is checked first; unchanged files skip source reads and content
 hashing. Changed or unavailable metadata triggers full verification; unchanged
 content still reuses binary CPU objects rather than running the source parser again. Settings, importer versions, and budgets invalidate reuse.
@@ -773,7 +807,10 @@ under `.nico/objects/`. The directory is ignored by Git and can be removed while
 loaders are stopped to force a rebuild. Source files remain required. GPU uploads,
 model validation, TOML definitions, and procedural geometry still run at startup.
 Release builds currently use source imports; shipping cooked content is deferred.
-Overrides outside an `assets` tree place `.nico` beside the source file.
+The nearest project manifest determines the root, including custom asset roots.
+Without a manifest, an `assets` tree uses its parent directory; standalone external
+sources place `.nico` beside the source file. Old `assets/.nico` directories are
+unused by rebuilt loaders and can be removed when older loaders are stopped.
 
 Headless inspection reports cumulative cache hit/import/rebuild counts as JSON:
 
@@ -1074,8 +1111,61 @@ Canvas textures retain their checkerboard fallback.
 Mesh-only GLB accepts one indexed triangle primitive with float positions and UVs,
 embedded geometry, and identity node transforms. Materials, external buffers, scenes
 with multiple nodes, skins, animations, and sparse accessors are unsupported. Defaults
-limit a mesh to 250,000 vertices and 750,000 indices; drawing caps instances at 256.
+limit a mesh to 250,000 vertices and 750,000 indices; ordinary drawing caps draws at 256.
 See the [mesh contract](docs/plans/2026-09-14-mesh-assets.md) for bounds and ownership.
+
+Arena grass now uses shared mesh instancing and compact placement caching. Unchanged
+batches retain GPU uploads. Native hosts pace new instance-source uploads at 8 MiB
+per prepared view; `status.instancing.deferred_upload_chunks` reports visible chunks
+waiting for that allowance. Mesh/texture uploads and dynamic writes are separate.
+`retained_split_cpu_bytes` reports renderer-owned split batch/record payload and
+segment-reference capacity separately from GPU `retained_instance_bytes`; original
+provider data, shared assets and allocator metadata are excluded.
+Arena's `editor_state.authoring.environment.grass_streaming` includes cumulative
+`evicted` tracked chunks alongside pending, resident, failed and memory counters.
+Eviction includes unloaded pending/failed entries; replacements, repeated unloads
+of absent keys and shutdown do not increment it.
+Native `status.instancing` reports the source frame,
+`visibility_reused_batches` for unchanged-view CPU/GPU culling reuse,
+direct submitted instances, indirect draws, GPU candidate instances, upload bytes,
+retained batches/bytes and fallback use. Candidate counts are inputs to GPU culling;
+`gpu_sample` reports asynchronously observed visible counts for its own prepared-view
+ID, candidates, indirect draws and age at publication. Samples cover indirect draws
+only and may precede the latest CPU counters. Sampling runs once per eight prepared
+views with at most three pending maps (6 KiB staging); pending, skipped and failed
+readbacks are explicit. Cached editor frames poll pending maps without preparing
+another view. Count completion does not establish presentation or scanout.
+Supported native paths now use GPU
+culling and indexed indirect drawing. The common GPU-driven foliage feature is
+[implemented without LOD](docs/roadmap.md#common-mesh-instancing-2026-09-20-feature-complete); further frame-time optimization is deferred.
+
+Native `rendering_control` queues `mode`, `pause`, `seek` and `fields` actions;
+poll `rendering_state` with the returned request ID for application. A `fields`
+value replaces the diagnostic influence set atomically (maximum 256 unique IDs).
+Each field contains `id`, `kind` (`wind` or `radial`), world-space `position`,
+nonzero `direction`, positive `radius`, `strength` in [0, 1], and absolute visual
+`start`/`end` seconds. An empty array disables fields; `null` restores scene fields.
+State reports `fields_overridden` and `influence_count`, including retained expired
+fields so seeking backward can replay them. These controls affect rendering only.
+`rendering_state.auto_gpu_min_records` and `auto_policy` explain automatic path
+selection. Native hosts currently use a provisional 1,024-record minimum per
+rendered segment: smaller segments prefer direct instancing when available.
+Forced CPU/GPU modes ignore this threshold. `status.instancing` counters distinguish
+submitted direct instances from GPU candidates and indirect draws in mixed views.
+The threshold is based on the scoped GTX 1660 measurements in the roadmap, not a
+universal performance guarantee.
+
+`rendering_state.capabilities` reports enabled compute, indirect, vertex-storage
+and asynchronous-readback support plus the actual buffer, binding, vertex and
+compute limits. `cpu_rejection`/`gpu_rejection` explain failed current-scene
+preflight; device features alone do not establish support for a particular scene.
+Arena grass derives wind variation from cached placement seeds. An isolated native
+validation observed field deformation, expiry and matching CPU/GPU visible counts;
+small image discrepancies remain unresolved (see the linked roadmap evidence).
+Sparse broad-leaf shrubs now share meadow chunk streaming and cached roots, with
+a separate shared mesh/material and a stiffer foliage response. Streaming status
+counts both types' records and batches; resident chunks remain spatial units.
+Native captures include both types; GPU performance acceptance remains unfinished.
 
 The registered `sample_state` includes mode, mesh readiness, counts, camera and yaw.
 In 3D mode, `sample_control` also accepts `set_mesh_enabled` with boolean `value`,

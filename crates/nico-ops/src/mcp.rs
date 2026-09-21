@@ -154,10 +154,63 @@ pub(crate) fn host_tool_catalog(extensions: &ToolExtensions) -> Vec<Tool> {
 }
 
 #[cfg(any(feature = "bridge", test))]
+fn instancing_schema() -> Value {
+    let fields = [
+        "gpu_readback_pending",
+        "gpu_readback_skipped",
+        "gpu_readback_failed",
+        "host_frame",
+        "prepared_view",
+        "visible_chunks",
+        "culled_chunks",
+        "submitted_instances",
+        "submitted_draws",
+        "indirect_draws",
+        "gpu_candidate_instances",
+        "visibility_upload_bytes",
+        "visibility_retirement_upload_bytes",
+        "foliage_upload_bytes",
+        "influence_overflow",
+        "visible_record_upload_bytes",
+        "instance_upload_bytes",
+        "deferred_upload_chunks",
+        "visibility_reused_batches",
+        "visibility_dispatched_pages",
+        "visibility_dispatches",
+        "mesh_upload_bytes",
+        "retained_instance_bytes",
+        "retained_split_cpu_bytes",
+        "retained_batches",
+    ];
+    let mut properties: serde_json::Map<String, Value> = fields
+        .iter()
+        .map(|f| ((*f).into(), json!({"type":"integer","minimum":0})))
+        .collect();
+    properties.insert("ordinary_fallback".into(), json!({"type":"boolean"}));
+    let sample_fields = [
+        "prepared_view",
+        "visible_instances",
+        "candidate_instances",
+        "indirect_draws",
+        "age_ms",
+    ];
+    let sample_properties: serde_json::Map<String, Value> = sample_fields
+        .iter()
+        .map(|name| ((*name).into(), json!({"type":"integer","minimum":0})))
+        .collect();
+    properties.insert("gpu_sample".into(), json!({"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":sample_fields,"properties":sample_properties}]}));
+    let required: Vec<_> = fields
+        .into_iter()
+        .chain(["ordinary_fallback", "gpu_sample"])
+        .collect();
+    json!({"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":required,"properties":properties}]})
+}
+
+#[cfg(any(feature = "bridge", test))]
 fn output_schema(name: &str) -> Value {
     let status = json!({
         "type": "object", "additionalProperties": false,
-        "required": ["state", "completed_steps", "ready", "finished", "failure", "graphics"],
+        "required": ["state", "completed_steps", "ready", "finished", "failure", "graphics", "instancing"],
         "properties": {
             "state": {"type": "string", "enum": ["starting", "running", "stopping", "stopped", "failed"]},
             "completed_steps": {"type": "integer", "minimum": 0},
@@ -165,6 +218,7 @@ fn output_schema(name: &str) -> Value {
                 "required":["presented_frames","last_outcome"],"properties":{
                     "presented_frames":{"type":"integer","minimum":0},
                     "last_outcome":{"type":"string","enum":["not_attempted","presented","zero_sized","timeout","occluded","initialization_failed","render_failed"]}}}]},
+            "instancing": instancing_schema(),
             "ready": {"type": "boolean"}, "finished": {"type": "boolean"},
             "failure": {"type": ["string", "null"]}
         }
@@ -193,6 +247,7 @@ fn snapshot(status: HostStatus) -> Value {
         "state": state,
         "completed_steps": status.completed_steps,
         "graphics": status.graphics.map(|g| json!({"presented_frames":g.presented_frames,"last_outcome":g.last_outcome.as_str()})),
+        "instancing": status.instancing,
         "ready": status.is_ready(),
         "finished": status.is_finished(),
         "failure": status.failure,
@@ -203,6 +258,48 @@ fn snapshot(status: HostStatus) -> Value {
 mod tests {
     use super::*;
     use crate::control_channel;
+
+    #[test]
+    fn instancing_report_retains_source_frame_without_claiming_presentation() {
+        let (control, mut host) = control_channel();
+        assert!(snapshot(control.status())["instancing"].is_null());
+        host.instancing(crate::InstancingStatus {
+            host_frame: 3,
+            prepared_view: 2,
+            submitted_instances: 100,
+            foliage_upload_bytes: 800,
+            influence_overflow: 4,
+            visibility_dispatched_pages: 2,
+            visibility_dispatches: 7,
+            gpu_sample: Some(crate::GpuVisibilityStatus {
+                prepared_view: 1,
+                visible_instances: 70,
+                candidate_instances: 100,
+                indirect_draws: 2,
+                age_ms: 40,
+            }),
+            ..Default::default()
+        });
+        host.progress(10);
+        let report = snapshot(control.status());
+        assert_eq!(report["instancing"]["host_frame"], 3);
+        assert_eq!(report["instancing"]["submitted_instances"], 100);
+        assert_eq!(report["instancing"]["foliage_upload_bytes"], 800);
+        assert_eq!(report["instancing"]["influence_overflow"], 4);
+        assert_eq!(report["instancing"]["visibility_dispatched_pages"], 2);
+        assert_eq!(report["instancing"]["visibility_dispatches"], 7);
+        assert_eq!(report["instancing"]["gpu_sample"]["prepared_view"], 1);
+        assert_eq!(report["instancing"]["gpu_sample"]["visible_instances"], 70);
+        assert_eq!(report["instancing"]["gpu_sample"]["age_ms"], 40);
+        assert!(report["graphics"].is_null());
+        assert_eq!(report["completed_steps"], 10);
+        host.stopping();
+        host.instancing(crate::InstancingStatus::default());
+        assert_eq!(
+            snapshot(control.status())["instancing"],
+            report["instancing"]
+        );
+    }
 
     #[test]
     fn routed_status_reports_optional_graphics_with_stable_outcomes() {

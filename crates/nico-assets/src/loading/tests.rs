@@ -59,11 +59,7 @@ fn complete(backend: &Backend, result: LoadResult) {
         .unwrap();
 }
 fn pixel() -> Arc<Texture> {
-    Arc::new(Texture {
-        width: 1,
-        height: 1,
-        pixels: vec![10, 20, 30, 255],
-    })
+    Arc::new(Texture::rgba8(1, 1, vec![10, 20, 30, 255]).unwrap())
 }
 
 #[test]

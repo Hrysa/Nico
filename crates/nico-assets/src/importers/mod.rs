@@ -29,32 +29,37 @@ fn failure(error: AssetError) -> ImportError {
 #[derive(Clone, Copy, Debug)]
 pub struct PngSettings {
     pub max_dimension: u32,
+    /// Lossy GPU block compression; disable for exact pixels or sensitive data maps.
+    pub compress: bool,
 }
 #[cfg(feature = "png-import")]
 impl Default for PngSettings {
     fn default() -> Self {
         Self {
             max_dimension: 4096,
+            compress: true,
         }
     }
 }
 
-/// Decodes one static PNG to RGBA8/sRGB, straight alpha. No runtime dependency.
+/// Imports one static PNG to GPU-ready BC3 or RGBA8, straight alpha.
 #[cfg(feature = "png-import")]
 pub struct PngImporter;
 #[cfg(feature = "png-import")]
 impl AssetImporter for PngImporter {
     fn cache_settings(&self, s: &Self::Settings) -> Result<Option<Vec<u8>>, ImportError> {
-        crate::cache::encode(&("rgba8-v1", s)).map(Some)
+        crate::cache::encode(&("texture-bc3-v2", s)).map(Some)
     }
     fn cache_encode(&self, value: &Self::Output) -> Result<Vec<u8>, ImportError> {
-        // Preserve rgba8-v1's little-endian bincode layout, but copy the byte
-        // buffer in bulk instead of serializing/deserializing each pixel byte.
-        let mut bytes = Vec::with_capacity(16 + value.pixels().len());
+        let mut bytes = Vec::with_capacity(17 + value.encoded_bytes().len());
         bytes.extend_from_slice(&value.width().to_le_bytes());
         bytes.extend_from_slice(&value.height().to_le_bytes());
-        bytes.extend_from_slice(&(value.pixels().len() as u64).to_le_bytes());
-        bytes.extend_from_slice(value.pixels());
+        bytes.extend_from_slice(&(value.encoded_bytes().len() as u64).to_le_bytes());
+        bytes.push(match value.encoding() {
+            crate::TextureEncoding::Rgba8 => 0,
+            crate::TextureEncoding::Bc3 => 1,
+        });
+        bytes.extend_from_slice(value.encoded_bytes());
         Ok(bytes)
     }
     fn cache_decode(&self, bytes: &[u8], s: &Self::Settings) -> Result<Self::Output, ImportError> {
@@ -65,21 +70,30 @@ impl AssetImporter for PngImporter {
                 "invalid cached texture",
             )
         };
-        let header = bytes.get(..16).ok_or_else(invalid)?;
+        let header = bytes.get(..17).ok_or_else(invalid)?;
         let w = u32::from_le_bytes(header[..4].try_into().unwrap());
         let h = u32::from_le_bytes(header[4..8].try_into().unwrap());
         let length = u64::from_le_bytes(header[8..16].try_into().unwrap());
-        let pixels = &bytes[16..];
-        let expected = u64::from(w)
-            .checked_mul(u64::from(h))
-            .and_then(|n| n.checked_mul(4));
+        let encoding = match header[16] {
+            0 => crate::TextureEncoding::Rgba8,
+            1 if s.compress => crate::TextureEncoding::Bc3,
+            _ => return Err(invalid()),
+        };
+        let pixels = &bytes[17..];
+        let expected = u64::from(w).checked_mul(u64::from(h)).and_then(|n| {
+            n.checked_mul(if encoding == crate::TextureEncoding::Rgba8 {
+                4
+            } else {
+                1
+            })
+        });
         if w == 0 || h == 0 || expected != Some(length) || length != pixels.len() as u64 {
             return Err(invalid());
         }
         if w > s.max_dimension || h > s.max_dimension {
             return Err(failure(AssetError::LimitExceeded));
         }
-        crate::Texture::rgba8(w, h, pixels.to_vec()).ok_or_else(|| {
+        crate::Texture::from_encoded(w, h, encoding, pixels.to_vec()).ok_or_else(|| {
             ImportError::new(
                 ImportErrorKind::Malformed,
                 "cache_texture",
@@ -93,7 +107,7 @@ impl AssetImporter for PngImporter {
     fn descriptor(&self) -> ImporterDescriptor {
         ImporterDescriptor {
             id: "nico.png",
-            version: "1",
+            version: "2",
             extensions: &["png"],
         }
     }
@@ -126,8 +140,12 @@ impl AssetImporter for PngImporter {
         .map_err(failure)?;
         // Decoder checks the same output bound before allocation and separately
         // bounds its working buffer. These are not a combined peak-memory limit.
-        context.claim_decoded(texture.pixels().len())?;
-        Ok(texture)
+        context.claim_decoded(texture.decoded_byte_len())?;
+        if settings.compress {
+            texture.compress_bc3(|| context.check_cancelled())
+        } else {
+            Ok(texture)
+        }
     }
 }
 
@@ -227,11 +245,75 @@ pub use model::{ModelGlbImporter, ModelGlbSettings};
 mod cache_tests {
     use super::*;
     #[test]
-    fn bulk_rgba_codec_preserves_existing_objects_and_rejects_bad_lengths() {
+    fn png_compression_cache_and_exact_pixel_opt_out() {
+        use crate::{TextureEncoding, import::ImportBudget};
+        let rgba: Vec<u8> = (0..256 * 256)
+            .flat_map(|i| [i as u8, (i / 256) as u8, 80, 255])
+            .collect();
+        let mut png = Vec::new();
+        {
+            let mut encoder = ::png::Encoder::new(&mut png, 256, 256);
+            encoder.set_color(::png::ColorType::Rgba);
+            encoder.set_depth(::png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&rgba)
+                .unwrap();
+        }
+        let start = std::time::Instant::now();
+        let mut context = ImportContext::new(&png, ImportBudget::default(), &|| false).unwrap();
+        let compressed = PngImporter
+            .import(&mut context, &PngSettings::default())
+            .unwrap();
+        eprintln!(
+            "256x256 PNG decode and BC3 cook: {:?} wall time",
+            start.elapsed()
+        );
+        assert_eq!(compressed.encoding(), TextureEncoding::Bc3);
+        assert_eq!(context.claimed_bytes(), rgba.len());
+        let payload = PngImporter.cache_encode(&compressed).unwrap();
+        assert_eq!(payload.len(), 17 + rgba.len() / 4);
+        let restored = PngImporter
+            .cache_decode(&payload, &PngSettings::default())
+            .unwrap();
+        assert_eq!(restored.encoded_bytes(), compressed.encoded_bytes());
+        let exact = PngSettings {
+            compress: false,
+            ..Default::default()
+        };
+        assert_ne!(
+            PngImporter.cache_settings(&exact).unwrap(),
+            PngImporter.cache_settings(&PngSettings::default()).unwrap()
+        );
+        assert!(PngImporter.cache_decode(&payload, &exact).is_err());
+        let raw = PngImporter
+            .import(
+                &mut ImportContext::new(&png, ImportBudget::default(), &|| false).unwrap(),
+                &exact,
+            )
+            .unwrap();
+        assert_eq!(raw.encoding(), TextureEncoding::Rgba8);
+        assert_eq!(raw.pixels(), rgba);
+        let mut unknown = payload.clone();
+        unknown[16] = 255;
+        assert!(
+            PngImporter
+                .cache_decode(&unknown, &PngSettings::default())
+                .is_err()
+        );
+        let mut unaligned = payload.clone();
+        unaligned[..4].copy_from_slice(&255u32.to_le_bytes());
+        assert!(
+            PngImporter
+                .cache_decode(&unaligned, &PngSettings::default())
+                .is_err()
+        );
+    }
+    #[test]
+    fn texture_codec_round_trips_and_rejects_bad_lengths() {
         let texture = crate::Texture::rgba8(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 128]).unwrap();
-        let old =
-            crate::cache::encode(&(texture.width(), texture.height(), texture.pixels())).unwrap();
-        assert_eq!(PngImporter.cache_encode(&texture).unwrap(), old);
+        let old = PngImporter.cache_encode(&texture).unwrap();
         assert_eq!(
             PngImporter
                 .cache_decode(&old, &PngSettings::default())
@@ -262,7 +344,13 @@ mod cache_tests {
         );
         assert!(
             PngImporter
-                .cache_decode(&old, &PngSettings { max_dimension: 1 })
+                .cache_decode(
+                    &old,
+                    &PngSettings {
+                        max_dimension: 1,
+                        ..Default::default()
+                    }
+                )
                 .is_err()
         );
     }

@@ -4,6 +4,7 @@ mod core;
 mod debug;
 mod document;
 mod loading;
+mod loading_report;
 mod operations;
 mod play;
 mod ui;
@@ -32,7 +33,8 @@ fn main() -> nico_winit::NativeClientResult<()> {
     nico_launch::init_logging(args.common.log_level)?;
     let queue = Arc::new(Mutex::new(operations::Queue::new(32)));
     let published = Arc::new(Mutex::new(nico_ops::publication::Publication::default()));
-    let mut tools = operations::register(queue.clone(), published.clone())?;
+    let loading = loading_report::LoadingReport::default();
+    let mut tools = operations::register(queue.clone(), published.clone(), loading.clone())?;
     let debug_session = nico_ops::bridge::EditorSession::start()?;
     debug_session.register_tools(&mut tools)?;
     let mut adapters = nico_authoring::Registry::default();
@@ -42,6 +44,7 @@ fn main() -> nico_winit::NativeClientResult<()> {
     )?;
     let title = format!("Nico Editor — {}", args.project.display());
     let editor = loading::LoadingEditor::new(args.project, queue, published, adapters)
+        .with_loading_report(loading)
         .with_debug_session(debug_session);
     ClientHost::new(args.host)
         .with_game_identity("nico-editor", "1")

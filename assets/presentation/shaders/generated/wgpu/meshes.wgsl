@@ -50,17 +50,13 @@ struct FrameUniforms_std140_0
 };
 
 @binding(0) @group(2) var<uniform> frame_0 : FrameUniforms_std140_0;
-fn rsqrt_0( x_0 : f32) -> f32
-{
-    return 1.0f / sqrt(x_0);
-}
-
 struct VertexOutput_0
 {
     @builtin(position) position_0 : vec4<f32>,
     @location(0) uv_0 : vec2<f32>,
     @location(1) worldPosition_0 : vec3<f32>,
     @location(2) normal_0 : vec3<f32>,
+    @location(3) tint_0 : vec4<f32>,
 };
 
 fn vertexOutput_0( position_1 : vec4<f32>,  normal_1 : vec3<f32>,  uv_1 : vec2<f32>) -> VertexOutput_0
@@ -70,6 +66,7 @@ fn vertexOutput_0( position_1 : vec4<f32>,  normal_1 : vec3<f32>,  uv_1 : vec2<f
     output_0.worldPosition_0 = (((position_1) * (mat4x4<f32>(draw_0.model_0.data_0[i32(0)][i32(0)], draw_0.model_0.data_0[i32(1)][i32(0)], draw_0.model_0.data_0[i32(2)][i32(0)], draw_0.model_0.data_0[i32(3)][i32(0)], draw_0.model_0.data_0[i32(0)][i32(1)], draw_0.model_0.data_0[i32(1)][i32(1)], draw_0.model_0.data_0[i32(2)][i32(1)], draw_0.model_0.data_0[i32(3)][i32(1)], draw_0.model_0.data_0[i32(0)][i32(2)], draw_0.model_0.data_0[i32(1)][i32(2)], draw_0.model_0.data_0[i32(2)][i32(2)], draw_0.model_0.data_0[i32(3)][i32(2)], draw_0.model_0.data_0[i32(0)][i32(3)], draw_0.model_0.data_0[i32(1)][i32(3)], draw_0.model_0.data_0[i32(2)][i32(3)], draw_0.model_0.data_0[i32(3)][i32(3)])))).xyz;
     output_0.normal_0 = (((vec4<f32>(normal_1, 0.0f)) * (mat4x4<f32>(draw_0.normalTransform_0.data_0[i32(0)][i32(0)], draw_0.normalTransform_0.data_0[i32(1)][i32(0)], draw_0.normalTransform_0.data_0[i32(2)][i32(0)], draw_0.normalTransform_0.data_0[i32(3)][i32(0)], draw_0.normalTransform_0.data_0[i32(0)][i32(1)], draw_0.normalTransform_0.data_0[i32(1)][i32(1)], draw_0.normalTransform_0.data_0[i32(2)][i32(1)], draw_0.normalTransform_0.data_0[i32(3)][i32(1)], draw_0.normalTransform_0.data_0[i32(0)][i32(2)], draw_0.normalTransform_0.data_0[i32(1)][i32(2)], draw_0.normalTransform_0.data_0[i32(2)][i32(2)], draw_0.normalTransform_0.data_0[i32(3)][i32(2)], draw_0.normalTransform_0.data_0[i32(0)][i32(3)], draw_0.normalTransform_0.data_0[i32(1)][i32(3)], draw_0.normalTransform_0.data_0[i32(2)][i32(3)], draw_0.normalTransform_0.data_0[i32(3)][i32(3)])))).xyz;
     output_0.uv_0 = uv_1;
+    output_0.tint_0 = draw_0.color_0;
     return output_0;
 }
 
@@ -84,6 +81,11 @@ struct vertexInput_0
 fn vertex_main( _S1 : vertexInput_0) -> VertexOutput_0
 {
     return vertexOutput_0(vec4<f32>(_S1.position_2, 1.0f), _S1.normal_2, _S1.uv_2);
+}
+
+fn rsqrt_0( x_0 : f32) -> f32
+{
+    return 1.0f / sqrt(x_0);
 }
 
 fn safeNormalize_0( value_0 : vec3<f32>,  fallback_0 : vec3<f32>) -> vec3<f32>
@@ -111,12 +113,13 @@ struct pixelInput_0
     @location(0) uv_3 : vec2<f32>,
     @location(1) worldPosition_1 : vec3<f32>,
     @location(2) normal_3 : vec3<f32>,
+    @location(3) tint_1 : vec4<f32>,
 };
 
 @fragment
 fn fragment_main( _S3 : pixelInput_0, @builtin(front_facing) front_0 : bool, @builtin(position) position_3 : vec4<f32>) -> pixelOutput_0
 {
-    var base_0 : vec4<f32> = (textureSample((baseImage_0), (baseSampler_0), (_S3.uv_3))) * material_0.baseColor_0 * draw_0.color_0;
+    var base_0 : vec4<f32> = (textureSample((baseImage_0), (baseSampler_0), (_S3.uv_3))) * material_0.baseColor_0 * _S3.tint_1;
     var mr_0 : vec2<f32> = (textureSample((mrImage_0), (mrSampler_0), (_S3.uv_3))).yz;
     var _S4 : vec3<f32> = vec3<f32>(1.0f);
     var mapped_0 : vec3<f32> = (textureSample((normalImage_0), (normalSampler_0), (_S3.uv_3))).xyz * vec3<f32>(2.0f) - _S4;

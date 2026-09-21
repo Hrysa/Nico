@@ -2,6 +2,8 @@
 #[cfg(feature = "authoring")]
 pub mod authoring;
 pub mod environment;
+mod grass_import;
+mod ground_import;
 mod landscape;
 fn load_model(
     path: &std::path::Path,

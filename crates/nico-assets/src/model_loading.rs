@@ -72,7 +72,7 @@ fn bundle_with(
             max_decoded_bytes: remaining,
         };
         let value = Arc::new(decode(texture.image, &image.bytes, budget)?);
-        remaining = remaining.saturating_sub(value.pixels().len());
+        remaining = remaining.saturating_sub(value.decoded_byte_len());
         decoded.insert(texture.image, value.clone());
         textures.push(Some(value));
     }

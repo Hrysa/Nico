@@ -1,6 +1,9 @@
+mod instances;
 use crate::materials::Materials;
 use crate::{DEFAULT_CLEAR_COLOR, QuadRenderPipeline, RenderStatus, acquired_frame};
 use glam::{Mat4, Vec3};
+pub use instances::readback::{GpuReadbackStats, GpuVisibilitySample};
+pub use instances::{InstanceRenderMode, InstanceRenderStats};
 use nico_assets::{Mesh, MeshVertex, model::AlphaMode};
 use nico_presentation::{Camera3d, MeshInstance, Scene2d, Scene3d, UiScene};
 use nico_rhi::*;
@@ -45,6 +48,7 @@ pub struct MeshRenderPipeline<D: RhiDevice> {
     frame_layout: D::BindGroupLayout,
     frame: Uniform<D>,
     skin: Option<SkinPipeline<D>>,
+    instances: Option<instances::InstanceRenderer<D>>,
     shader: D::ShaderModule,
     pipeline: Vec<D::RenderPipeline>,
     uniform_layout: D::BindGroupLayout,
@@ -134,6 +138,8 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             mesh_shader.vertex_entry_point,
             mesh_shader.fragment_entry_point,
             None,
+            false,
+            None,
         )?;
         let fallback = Arc::new(
             Mesh::triangles(
@@ -165,6 +171,7 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             frame_layout,
             frame,
             skin: None,
+            instances: None,
             shader,
             pipeline,
             uniform_layout,
@@ -176,6 +183,240 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             vertex_entry: mesh_shader.vertex_entry_point.into(),
             fragment_entry: mesh_shader.fragment_entry_point.into(),
         })
+    }
+
+    /// CPU counters describe the last prepared view. Optional GPU samples carry
+    /// their own source view and age; neither proves presentation or scanout.
+    pub fn instance_stats(&self) -> InstanceRenderStats {
+        self.instances
+            .as_ref()
+            .map_or_else(InstanceRenderStats::default, |i| InstanceRenderStats {
+                gpu_readback: i.readbacks.stats(),
+                ..i.stats
+            })
+    }
+    /// Progress bounded diagnostic maps, including when cached pixels are reused.
+    pub fn poll_instance_readbacks(&mut self) {
+        if let Some(instances) = &mut self.instances {
+            instances.readbacks.poll();
+        }
+    }
+    /// Pace immutable instance records and GPU visibility-source uploads per
+    /// prepared view. Existing resident batches remain drawable. Does not budget
+    /// meshes, textures, dynamic uniforms, retired visibility ranges or CPU
+    /// visibility compaction. Oversized
+    /// batches are split into cached segments within the 512-group draw budget.
+    /// Limits unable to fit one record fail explicitly.
+    /// None retains unpaced upload behavior within the residency limits.
+    pub fn set_instance_source_upload_budget(
+        &mut self,
+        bytes: Option<u64>,
+    ) -> Result<(), RhiError> {
+        if bytes == Some(0) {
+            return Err(invalid("instance source upload budget must be positive"));
+        }
+        self.instances
+            .as_mut()
+            .ok_or_else(|| invalid("instancing is not installed"))?
+            .source_upload_budget = bytes;
+        Ok(())
+    }
+
+    /// Minimum records per rendered segment for automatic GPU culling when
+    /// direct instancing is available. Zero (default) prefers GPU at every size.
+    /// Forced modes ignore this policy. Changing it retires path-dependent
+    /// uploads; reapplying the same value preserves residency.
+    pub fn set_instance_auto_gpu_min_records(&mut self, minimum: usize) -> Result<(), RhiError> {
+        let state = self
+            .instances
+            .as_mut()
+            .ok_or_else(|| invalid("instancing is not installed"))?;
+        if state.auto_gpu_min_records != minimum {
+            state.uploads.clear();
+            state.auto_gpu_min_records = minimum;
+        }
+        Ok(())
+    }
+
+    pub fn instance_mode(&self) -> InstanceRenderMode {
+        self.instances
+            .as_ref()
+            .map_or(InstanceRenderMode::Auto, |state| state.mode)
+    }
+    /// Current automatic-path threshold, in records per rendered segment.
+    pub fn instance_auto_gpu_min_records(&self) -> usize {
+        self.instances
+            .as_ref()
+            .map_or(0, |state| state.auto_gpu_min_records)
+    }
+    pub fn supports_instance_mode(
+        &self,
+        device: &D,
+        scene: &Scene3d,
+        mode: InstanceRenderMode,
+    ) -> bool {
+        self.validate_instance_mode(device, scene, mode).is_ok()
+    }
+    /// Read-only preflight with the same rejection reason used by mode changes.
+    pub fn validate_instance_mode(
+        &self,
+        device: &D,
+        scene: &Scene3d,
+        mode: InstanceRenderMode,
+    ) -> Result<(), RhiError> {
+        let state = self
+            .instances
+            .as_ref()
+            .ok_or_else(|| invalid("instancing is not installed"))?;
+        instances::validate_mode(device, scene, state, mode)
+    }
+
+    /// Validate against the current scene before changing mode. A successful
+    /// change retires mode-dependent residency; the next draw rebuilds it.
+    /// Reapplying the same mode preserves uploads. Call at the render boundary.
+    pub fn set_instance_mode(
+        &mut self,
+        device: &D,
+        scene: &Scene3d,
+        mode: InstanceRenderMode,
+    ) -> Result<(), RhiError> {
+        let state = self
+            .instances
+            .as_mut()
+            .ok_or_else(|| invalid("instancing is not installed"))?;
+        instances::validate_mode(device, scene, state, mode)?;
+        if state.mode != mode {
+            state.uploads.clear();
+            state.mode = mode;
+        }
+        Ok(())
+    }
+
+    /// Installs the backend-neutral static instancing shader. Source buffers remain
+    /// resident while immutable batch owners exist, even if temporarily culled.
+    pub fn enable_instancing(
+        &mut self,
+        device: &D,
+        artifact: GraphicsShaderArtifact<'_>,
+    ) -> Result<(), RhiError> {
+        self.instances = Some(instances::InstanceRenderer::new(
+            device,
+            artifact,
+            &self.materials.layout,
+            &self.uniform_layout,
+            &self.frame_layout,
+            self.format,
+        )?);
+        Ok(())
+    }
+
+    /// Opt into guarded 80-byte records with 112-byte fallback. All installed
+    /// instance shaders must provide the vertex_compact_main entry point.
+    /// Built-in shaders do; custom shader callers must explicitly opt in only
+    /// after providing compatible direct, storage and foliage artifacts.
+    pub fn enable_compact_instance_records(&mut self, device: &D) -> Result<(), RhiError> {
+        self.instances
+            .as_mut()
+            .ok_or_else(|| invalid("instance shaders are not installed"))?
+            .enable_compact(
+                device,
+                &self.materials.layout,
+                &self.uniform_layout,
+                &self.frame_layout,
+                self.format,
+            )
+    }
+
+    /// Installs direct foliage drawing. Call before first use
+    /// (or accept invalidation of existing instance uploads).
+    pub fn enable_foliage(
+        &mut self,
+        device: &D,
+        artifact: GraphicsShaderArtifact<'_>,
+    ) -> Result<(), RhiError> {
+        let instances = self
+            .instances
+            .as_mut()
+            .ok_or_else(|| invalid("enable instancing before foliage"))?;
+        let foliage = instances::foliage::FoliageRenderer::new(
+            device,
+            artifact,
+            &self.materials.layout,
+            &self.uniform_layout,
+            &self.frame_layout,
+            self.format,
+        )?;
+        instances.uploads.clear();
+        instances.foliage = Some(foliage);
+        Ok(())
+    }
+
+    /// Installs indirect foliage rendering after the direct foliage fallback.
+    /// Installation invalidates existing instance residency.
+    pub fn enable_gpu_foliage(
+        &mut self,
+        device: &D,
+        graphics: GraphicsShaderArtifact<'_>,
+        compute: ShaderModuleDescriptor<'_>,
+    ) -> Result<(), RhiError> {
+        let instances = self
+            .instances
+            .as_mut()
+            .ok_or_else(|| invalid("enable foliage first"))?;
+        if instances.foliage.is_none() {
+            return Err(invalid("enable foliage first"));
+        }
+        let gpu = instances::gpu::GpuInstances::new(
+            device,
+            graphics,
+            compute,
+            &self.materials.layout,
+            &self.uniform_layout,
+            &self.frame_layout,
+            self.format,
+            true,
+        )?;
+        instances.uploads.clear();
+        instances.gpu_foliage = Some(gpu);
+        Ok(())
+    }
+
+    /// Set the owned influence snapshot for subsequent views. Does not invalidate
+    /// immutable placement uploads. Call at the render owner's view boundary.
+    pub fn set_foliage_influences(
+        &mut self,
+        snapshot: Arc<nico_presentation::foliage::InfluenceSnapshot>,
+    ) -> Result<(), RhiError> {
+        self.instances
+            .as_mut()
+            .ok_or_else(|| invalid("instancing is not enabled"))?
+            .influences = snapshot;
+        Ok(())
+    }
+
+    /// Installs GPU visibility and storage-fetch drawing. Call before first use
+    /// Installs direct foliage drawing. Call before first use
+    /// (or accept invalidation of existing instance uploads). Unsupported devices
+    /// return an error without replacing the direct instancing path.
+    pub fn enable_gpu_instancing(
+        &mut self,
+        device: &D,
+        graphics: GraphicsShaderArtifact<'_>,
+        compute: ShaderModuleDescriptor<'_>,
+    ) -> Result<(), RhiError> {
+        let instances = self
+            .instances
+            .as_mut()
+            .ok_or_else(|| invalid("enable direct instancing before GPU instancing"))?;
+        instances.enable_gpu(
+            device,
+            graphics,
+            compute,
+            &self.materials.layout,
+            &self.uniform_layout,
+            &self.frame_layout,
+            self.format,
+        )
     }
 
     /// Installs the independently compiled GPU skinning shader. Static draws keep
@@ -214,6 +455,8 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             artifact.vertex_entry_point,
             artifact.fragment_entry_point,
             Some(&layout),
+            false,
+            None,
         )?;
         self.skin = Some(SkinPipeline {
             shader,
@@ -271,6 +514,14 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                 crate::validate_texture(device, texture)?;
             }
         }
+        let segmented = self
+            .instances
+            .as_mut()
+            .map(|state| state.segmented_scene(device, scene))
+            .transpose()?
+            .flatten();
+        let scene = segmented.as_ref().unwrap_or(scene);
+        instances::validate(device, scene, self.instances.as_ref())?;
         let camera = camera_matrix(scene.camera, viewport[0] / viewport[1])?;
         let transforms: Vec<_> = scene
             .meshes
@@ -303,6 +554,8 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                 &self.vertex_entry,
                 &self.fragment_entry,
                 None,
+                false,
+                None,
             )?;
             if let Some(skin) = &mut self.skin {
                 skin.pipeline = pipeline(
@@ -315,6 +568,17 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                     &skin.vertex_entry,
                     &skin.fragment_entry,
                     Some(&skin.layout),
+                    false,
+                    None,
+                )?;
+            }
+            if let Some(instances) = &mut self.instances {
+                instances.rebuild(
+                    device,
+                    &self.materials.layout,
+                    &self.uniform_layout,
+                    &self.frame_layout,
+                    surface.format(),
                 )?;
             }
             self.format = surface.format();
@@ -456,7 +720,67 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
             }
             draws.push((mesh_slot, texture_slot));
         }
+        let instance_draws = if let Some(instances) = &mut self.instances {
+            instances.prepare(
+                device,
+                queue,
+                scene,
+                camera,
+                &mut self.meshes,
+                &mut self.materials,
+                &self.uniform_layout,
+            )?
+        } else {
+            Vec::new()
+        };
         let mut encoder = device.create_command_encoder(Some("PBR scene encoder"));
+        let mut visibility_pages: Vec<instances::gpu::ViewPage<D>> = Vec::new();
+        if let Some(instances) = &mut self.instances {
+            for draw in &instance_draws {
+                let uploaded = &instances.uploads[draw.upload];
+                if let Some(gpu) = &uploaded.gpu
+                    && !draw.direct_all
+                {
+                    let index = visibility_pages
+                        .iter()
+                        .position(|entry| Arc::ptr_eq(&entry.page, &gpu.page))
+                        .unwrap_or_else(|| {
+                            visibility_pages.push(instances::gpu::ViewPage {
+                                page: gpu.page.clone(),
+                                view: gpu.visibility_view.clone(),
+                                groups: [0; 16],
+                                batches: 0,
+                            });
+                            visibility_pages.len() - 1
+                        });
+                    let entry = &mut visibility_pages[index];
+                    entry.groups[gpu.group as usize / 32] |= 1 << (gpu.group % 32);
+                    entry.batches += 1;
+                }
+            }
+            let pages: Vec<_> = visibility_pages
+                .iter()
+                .filter_map(|entry| {
+                    let reused = *entry.view.lock().unwrap()
+                        == Some((camera, Vec3::from(scene.camera.position), entry.groups));
+                    if reused {
+                        instances.stats.visibility_reused_batches += entry.batches;
+                        None
+                    } else {
+                        Some((entry.page.as_ref(), entry.groups))
+                    }
+                })
+                .collect();
+            let dispatches = crate::visibility::GpuVisibilityPage::record_selected_pages(
+                &pages,
+                queue,
+                &mut encoder,
+                camera,
+                Vec3::from(scene.camera.position),
+            )?;
+            instances.stats.visibility_dispatched_pages = pages.len() as u32;
+            instances.stats.visibility_dispatches = dispatches;
+        }
         for transparent_pass in [false, true] {
             let colors = [Some(RenderPassColorAttachment {
                 view: &view,
@@ -518,8 +842,156 @@ impl<D: RhiDevice> MeshRenderPipeline<D> {
                 );
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
+            if !transparent_pass && let Some(instances) = &self.instances {
+                // Every instance variant shares material/view/frame layouts at
+                // slots 0..2. Preserve draw order and retain compatible bindings
+                // across direct, indirect and foliage pipeline changes.
+                let mut bound_view: Option<&D::BindGroup> = None;
+                let mut bound_pipeline: Option<&D::RenderPipeline> = None;
+                let mut bound_material = None;
+                let mut bound_mesh = None;
+                let mut frame_bound = false;
+                for draw in &instance_draws {
+                    let mesh = &self.meshes[draw.mesh];
+                    let batch = &scene.instance_batches[draw.batch];
+                    let uploaded = &instances.uploads[draw.upload];
+                    let variant = usize::from(batch.material().double_sided) * 2
+                        + usize::from(batch.mirrored());
+                    let compact = uploaded.encoding == instances::encoding::Encoding::Compact;
+                    let instance_view = &instances.view.binding;
+                    let (pipeline, binding, source_binding) =
+                        if let Some(index) = draw.fallback_record {
+                            (
+                                &self.pipeline[variant],
+                                &uploaded.fallback_uniforms[index].binding,
+                                None,
+                            )
+                        } else if let Some(gpu) = &uploaded.gpu
+                            && !draw.direct_all
+                        {
+                            let renderer = if batch.foliage().is_some() {
+                                instances.gpu_foliage.as_ref()
+                            } else {
+                                instances.gpu.as_ref()
+                            };
+                            (
+                                &if compact {
+                                    &renderer.unwrap().compact_pipelines
+                                } else {
+                                    &renderer.unwrap().pipelines
+                                }[variant],
+                                instance_view,
+                                Some(&gpu.binding),
+                            )
+                        } else if let Some(foliage) = &uploaded.foliage {
+                            (
+                                &if compact {
+                                    &instances.foliage.as_ref().unwrap().compact_pipelines
+                                } else {
+                                    &instances.foliage.as_ref().unwrap().pipelines
+                                }[variant],
+                                instance_view,
+                                Some(&foliage.binding),
+                            )
+                        } else {
+                            (
+                                &if compact {
+                                    &instances.compact_pipeline
+                                } else {
+                                    &instances.pipeline
+                                }[variant],
+                                instance_view,
+                                None,
+                            )
+                        };
+                    if bound_pipeline.is_none_or(|bound| !std::ptr::eq(bound, pipeline)) {
+                        pass.set_pipeline(pipeline);
+                        bound_pipeline = Some(pipeline);
+                    }
+                    if let Some(binding) = source_binding {
+                        pass.set_bind_group(3, binding, &[]);
+                    }
+                    if bound_material != Some(draw.material) {
+                        pass.set_bind_group(0, self.materials.binding(draw.material), &[]);
+                        bound_material = Some(draw.material);
+                    }
+                    if bound_view.is_none_or(|bound| !std::ptr::eq(bound, binding)) {
+                        pass.set_bind_group(1, binding, &[]);
+                        bound_view = Some(binding);
+                    }
+                    if !frame_bound {
+                        pass.set_bind_group(2, &self.frame.binding, &[]);
+                        frame_bound = true;
+                    }
+                    if bound_mesh != Some(draw.mesh) {
+                        pass.set_vertex_buffer(0, &mesh.vertices, 0..mesh.vertex_bytes);
+                        pass.set_index_buffer(
+                            &mesh.indices,
+                            IndexFormat::Uint32,
+                            0..u64::from(mesh.index_count) * 4,
+                        );
+                        bound_mesh = Some(draw.mesh);
+                    }
+                    if (uploaded.gpu.is_none() || draw.direct_all)
+                        && let Some(buffer) = if draw.direct_all
+                            || uploaded.visible_count as usize == batch.records().len()
+                        {
+                            uploaded.buffer.as_ref()
+                        } else {
+                            uploaded.visible_buffer.as_ref()
+                        }
+                    {
+                        pass.set_vertex_buffer(1, buffer, 0..uploaded.bytes);
+                    }
+                    if let Some(gpu) = &uploaded.gpu
+                        && !draw.direct_all
+                    {
+                        pass.draw_indexed_indirect(
+                            gpu.page.output(),
+                            gpu.page.layout().indirect_byte(gpu.group).unwrap(),
+                        );
+                    } else {
+                        pass.draw_indexed(
+                            0..mesh.index_count,
+                            0,
+                            0..if draw.fallback_record.is_some() {
+                                1
+                            } else if draw.direct_all {
+                                batch.records().len() as u32
+                            } else {
+                                uploaded.visible_count
+                            },
+                        );
+                    }
+                }
+            }
         }
+        let readback = self.instances.as_mut().and_then(|instances| {
+            instances.readbacks.stage(
+                device,
+                &mut encoder,
+                instance_draws
+                    .iter()
+                    .filter(|draw| !draw.direct_all)
+                    .filter_map(|draw| {
+                        instances.uploads[draw.upload]
+                            .gpu
+                            .as_ref()
+                            .map(|gpu| (gpu.page.as_ref(), gpu.group, gpu.records))
+                    }),
+                instances.stats.prepared_view,
+            )
+        });
         queue.submit(vec![encoder.finish()]);
+        // Commit only after submission: failed recording cannot make old output
+        // reusable, and selecting more groups at the same camera requires culling.
+        for entry in &visibility_pages {
+            *entry.view.lock().unwrap() =
+                Some((camera, Vec3::from(scene.camera.position), entry.groups));
+        }
+        if let (Some(instances), Some(readback)) = (&mut self.instances, readback) {
+            instances.readbacks.submitted(device, readback);
+        }
         self.canvas.draw_into(
             device,
             queue,
@@ -617,10 +1089,46 @@ fn pipeline<D: RhiDevice>(
     vertex: &str,
     fragment: &str,
     skin_layout: Option<&D::BindGroupLayout>,
+    instanced: bool,
+    storage_layout: Option<&D::BindGroupLayout>,
+) -> Result<Vec<D::RenderPipeline>, RhiError> {
+    pipeline_with_stride(
+        device,
+        shader,
+        texture_layout,
+        uniform_layout,
+        frame_layout,
+        format,
+        vertex,
+        fragment,
+        skin_layout,
+        instanced,
+        storage_layout,
+        112,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pipeline_with_stride<D: RhiDevice>(
+    device: &D,
+    shader: &D::ShaderModule,
+    texture_layout: &D::BindGroupLayout,
+    uniform_layout: &D::BindGroupLayout,
+    frame_layout: &D::BindGroupLayout,
+    format: TextureFormat,
+    vertex: &str,
+    fragment: &str,
+    skin_layout: Option<&D::BindGroupLayout>,
+    instanced: bool,
+    storage_layout: Option<&D::BindGroupLayout>,
+    instance_stride: u64,
 ) -> Result<Vec<D::RenderPipeline>, RhiError> {
     let mut layouts = vec![texture_layout, uniform_layout, frame_layout];
     if let Some(skin) = skin_layout {
         layouts.push(skin);
+    }
+    if let Some(storage) = storage_layout {
+        layouts.push(storage);
     }
     let mut attributes = vec![
         VertexAttribute {
@@ -631,12 +1139,20 @@ fn pipeline<D: RhiDevice>(
         VertexAttribute {
             format: VertexFormat::Float32x2,
             offset: 12,
-            shader_location: 1,
+            shader_location: if instanced {
+                if instance_stride == 80 { 5 } else { 7 }
+            } else {
+                1
+            },
         },
         VertexAttribute {
             format: VertexFormat::Float32x3,
             offset: 20,
-            shader_location: 2,
+            shader_location: if instanced {
+                if instance_stride == 80 { 6 } else { 8 }
+            } else {
+                2
+            },
         },
     ];
     if skin_layout.is_some() {
@@ -657,6 +1173,30 @@ fn pipeline<D: RhiDevice>(
         label: Some("mesh pipeline layout"),
         bind_group_layouts: &layouts,
     })?;
+    let vector_count = if instance_stride == 80 { 5 } else { 7 };
+    let instance_attributes: Vec<_> = (0..vector_count)
+        .map(|i| VertexAttribute {
+            format: VertexFormat::Float32x4,
+            offset: i as u64 * 16,
+            shader_location: if i == vector_count - 1 {
+                vector_count + 2
+            } else {
+                i + 1
+            },
+        })
+        .collect();
+    let mut buffers = vec![VertexBufferLayout {
+        stride: if skin_layout.is_some() { 64 } else { 32 },
+        step_mode: VertexStepMode::Vertex,
+        attributes: &attributes,
+    }];
+    if instanced {
+        buffers.push(VertexBufferLayout {
+            stride: instance_stride,
+            step_mode: VertexStepMode::Instance,
+            attributes: &instance_attributes,
+        });
+    }
     (0..8)
         .map(|variant| {
             device.create_render_pipeline(RenderPipelineDescriptor {
@@ -665,11 +1205,7 @@ fn pipeline<D: RhiDevice>(
                 vertex: VertexState {
                     shader,
                     entry_point: vertex,
-                    buffers: &[VertexBufferLayout {
-                        stride: if skin_layout.is_some() { 64 } else { 32 },
-                        step_mode: VertexStepMode::Vertex,
-                        attributes: &attributes,
-                    }],
+                    buffers: &buffers,
                 },
                 fragment: Some(FragmentState {
                     shader,

@@ -3,6 +3,7 @@
 #[cfg(feature = "editor")]
 pub mod editor;
 
+mod instancing;
 use std::{
     collections::HashMap,
     error::Error,
@@ -96,6 +97,9 @@ pub struct NativeClientConfig {
     quad_rendering: bool,
     mesh_shader_path: Option<PathBuf>,
     skin_shader_path: Option<PathBuf>,
+    instance_shader_path: Option<PathBuf>,
+    gpu_instance_shaders: Option<(PathBuf, PathBuf)>,
+    foliage_shaders: Option<(PathBuf, PathBuf, PathBuf)>,
     pointer_capture: bool,
     initially_active: bool,
 }
@@ -111,6 +115,9 @@ impl NativeClientConfig {
             quad_rendering: false,
             mesh_shader_path: None,
             skin_shader_path: None,
+            instance_shader_path: None,
+            gpu_instance_shaders: None,
+            foliage_shaders: None,
             pointer_capture: false,
             initially_active: true,
         }
@@ -130,6 +137,9 @@ impl NativeClientConfig {
         self.quad_rendering = true;
         self.mesh_shader_path = None;
         self.skin_shader_path = None;
+        self.instance_shader_path = None;
+        self.gpu_instance_shaders = None;
+        self.foliage_shaders = None;
         self
     }
     /// Selects perspective meshes with a shared quad/HUD overlay.
@@ -138,6 +148,34 @@ impl NativeClientConfig {
         self.bootstrap_shader_path = hud.into();
         self.quad_rendering = true;
         self.mesh_shader_path = Some(mesh.into());
+        self
+    }
+    /// Installs direct and optional indirect foliage variants after instancing.
+    #[must_use]
+    pub fn with_foliage_shaders(
+        mut self,
+        direct: impl Into<PathBuf>,
+        storage: impl Into<PathBuf>,
+        compute: impl Into<PathBuf>,
+    ) -> Self {
+        self.foliage_shaders = Some((direct.into(), storage.into(), compute.into()));
+        self
+    }
+
+    /// Enable GPU visibility when supported, retaining the CPU fallback shader.
+    #[must_use]
+    pub fn with_gpu_instance_shaders(
+        mut self,
+        storage: impl Into<PathBuf>,
+        compute: impl Into<PathBuf>,
+    ) -> Self {
+        self.gpu_instance_shaders = Some((storage.into(), compute.into()));
+        self
+    }
+    /// Enables persistent static instance batches alongside ordinary meshes.
+    #[must_use]
+    pub fn with_instance_shader(mut self, shader: impl Into<PathBuf>) -> Self {
+        self.instance_shader_path = Some(shader.into());
         self
     }
     /// Enables GPU skinning alongside the mesh pipeline.
@@ -250,6 +288,7 @@ impl ClientSession {
 }
 
 struct NativeClientHost {
+    render_control: instancing::control::RenderControlOwner,
     session: ClientSession,
     window: Option<Arc<Window>>,
     graphics: Option<WgpuBackend<Window>>,
@@ -257,6 +296,9 @@ struct NativeClientHost {
     quad_rendering: bool,
     mesh_shader_path: Option<PathBuf>,
     skin_shader_path: Option<PathBuf>,
+    instance_shader_path: Option<PathBuf>,
+    gpu_instance_shaders: Option<(PathBuf, PathBuf)>,
+    foliage_shaders: Option<(PathBuf, PathBuf, PathBuf)>,
     active: bool,
     focused: bool,
     size: PhysicalSize<u32>,
@@ -294,11 +336,23 @@ impl NativeClientHost {
             .insert_resource(NativeWindowState::default());
         Self {
             session: ClientSession::new(app),
+            render_control: Default::default(),
             window: None,
             graphics: None,
             renderer: None,
             quad_rendering: config.quad_rendering,
             skin_shader_path: config.skin_shader_path,
+            instance_shader_path: config.instance_shader_path.map(|p| resolve_asset_path(&p)),
+            foliage_shaders: config.foliage_shaders.map(|(a, b, c)| {
+                (
+                    resolve_asset_path(&a),
+                    resolve_asset_path(&b),
+                    resolve_asset_path(&c),
+                )
+            }),
+            gpu_instance_shaders: config
+                .gpu_instance_shaders
+                .map(|(a, b)| (resolve_asset_path(&a), resolve_asset_path(&b))),
             mesh_shader_path: config
                 .mesh_shader_path
                 .map(|path| resolve_asset_path(&path)),
@@ -728,6 +782,43 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                                         nico_rhi::builtin_shaders::bootstrap_wgsl(&bytes),
                                     )?;
                                 }
+                                if let Some(path) = &self.instance_shader_path {
+                                    let bytes = fs::read(path).map_err(|e| {
+                                        nico_rhi::RhiError::new(
+                                            nico_rhi::RhiErrorKind::Backend,
+                                            format!(
+                                                "failed to read instance shader {}: {e}",
+                                                path.display()
+                                            ),
+                                        )
+                                    })?;
+                                    renderer.enable_instancing(
+                                        graphics.device(),
+                                        nico_rhi::builtin_shaders::bootstrap_wgsl(&bytes),
+                                    )?;
+                                    renderer
+                                        .set_instance_source_upload_budget(Some(8 * 1024 * 1024))?;
+                                    renderer.set_instance_auto_gpu_min_records(
+                                        instancing::AUTO_GPU_MIN_RECORDS,
+                                    )?;
+                                }
+                                if let Some((storage, compute)) = &self.gpu_instance_shaders {
+                                    instancing::install_gpu(
+                                        graphics.device(),
+                                        &mut renderer,
+                                        storage,
+                                        compute,
+                                    )?;
+                                }
+                                if let Some((direct, storage, compute)) = &self.foliage_shaders {
+                                    instancing::install_foliage(
+                                        graphics.device(),
+                                        &mut renderer,
+                                        direct,
+                                        storage,
+                                        compute,
+                                    )?;
+                                }
                                 Ok(NativeRenderer::Meshes(Box::new(renderer)))
                             }),
                             Err(error) => Err(nico_rhi::RhiError::new(
@@ -943,16 +1034,29 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                         NativeRenderer::Bootstrap(renderer) => {
                             renderer.render(device, queue, surface)
                         }
-                        NativeRenderer::Meshes(renderer) => renderer.render(
-                            device,
-                            queue,
-                            surface,
-                            self.session.presentation.scene3d(),
-                            self.session.presentation.scene(),
-                            self.session.presentation.ui(),
-                            viewport,
-                            Extent3d::surface(self.size.width, self.size.height),
-                        ),
+                        NativeRenderer::Meshes(renderer) => {
+                            let mut scene = self.session.presentation.scene3d().clone();
+                            if let Some(host) = &self.operations {
+                                self.render_control.prepare(
+                                    device,
+                                    renderer,
+                                    &mut scene,
+                                    &host.rendering(),
+                                    delta,
+                                    self.session.presented_frames,
+                                );
+                            }
+                            renderer.render(
+                                device,
+                                queue,
+                                surface,
+                                &scene,
+                                self.session.presentation.scene(),
+                                self.session.presentation.ui(),
+                                viewport,
+                                Extent3d::surface(self.size.width, self.size.height),
+                            )
+                        }
                         NativeRenderer::Quads(renderer) => renderer.render(
                             device,
                             queue,
@@ -962,6 +1066,15 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                             viewport,
                         ),
                     };
+                    if matches!(rendered, Ok(RenderStatus::Presented))
+                        && let NativeRenderer::Meshes(renderer) = renderer
+                        && let Some(host) = &mut self.operations
+                    {
+                        host.instancing(instancing::report(
+                            self.session.presented_frames.saturating_sub(1),
+                            renderer.instance_stats(),
+                        ));
+                    }
                     if let Some(id) = request {
                         snapshot.as_ref().unwrap().complete(
                             id,

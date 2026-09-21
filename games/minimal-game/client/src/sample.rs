@@ -338,7 +338,7 @@ impl Plugin for SamplePlugin {
                     _ => ("loading",None,None),
                 }
             };
-            let scene3d = Scene3d { lighting: Default::default(), camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
+            let scene3d = Scene3d { foliage_influences: None, instance_batches: Vec::new(), lighting: Default::default(), camera: sample.camera3d, meshes: if sample.mode3d && sample.visible {
                 positions.iter().map(|p| MeshInstance { mirrored: false, material: None, skin_palette: None, position: [p[0],p[1],0.0], orientation: nico_presentation::Quaternion::from_rotation_y(sample.yaw), scale: 1.0,
                     color: [1.0;4], mesh: mesh.clone(), texture: checker.clone() }).collect()
             } else { Vec::new() } };

@@ -37,11 +37,15 @@ fn same_scene(a: &Scene3d, b: &Scene3d) -> bool {
         camera: ac,
         lighting: al,
         meshes: am,
+        instance_batches: ai,
+        foliage_influences: af,
     } = a;
     let Scene3d {
         camera: bc,
         lighting: bl,
         meshes: bm,
+        instance_batches: bi,
+        foliage_influences: bf,
     } = b;
     let nico_presentation::Camera3d {
         position,
@@ -56,6 +60,7 @@ fn same_scene(a: &Scene3d, b: &Scene3d) -> bool {
         ambient,
     } = al;
     *position == bc.position
+        && same_resource(af, bf)
         && *orientation == bc.orientation
         && *vertical_fov_radians == bc.vertical_fov_radians
         && *near == bc.near
@@ -63,6 +68,8 @@ fn same_scene(a: &Scene3d, b: &Scene3d) -> bool {
         && *direction == bl.direction
         && *radiance == bl.radiance
         && *ambient == bl.ambient
+        && ai.len() == bi.len()
+        && ai.iter().zip(bi).all(|(a, b)| Arc::ptr_eq(a, b))
         && am.len() == bm.len()
         && am.iter().zip(bm).all(|(a, b)| {
             let nico_presentation::MeshInstance {
@@ -91,6 +98,62 @@ fn same_scene(a: &Scene3d, b: &Scene3d) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_instance_snapshot_reuses_pixels_but_replacement_redraws() {
+        let mesh = Arc::new(
+            nico_assets::Mesh::triangles(
+                vec![
+                    nico_assets::MeshVertex {
+                        position: [0.; 3],
+                        uv: [0.; 2],
+                    },
+                    nico_assets::MeshVertex {
+                        position: [1., 0., 0.],
+                        uv: [0.; 2],
+                    },
+                    nico_assets::MeshVertex {
+                        position: [0., 1., 0.],
+                        uv: [0.; 2],
+                    },
+                ],
+                vec![0, 1, 2],
+            )
+            .unwrap(),
+        );
+        let material = Arc::new(nico_assets::PbrMaterial::default());
+        let batch = || {
+            Arc::new(
+                nico_presentation::InstanceBatch::new(mesh.clone(), material.clone(), vec![], 100.)
+                    .unwrap(),
+            )
+        };
+        let mut scene = Scene3d {
+            instance_batches: vec![batch()],
+            ..Default::default()
+        };
+        let mut cache = ViewportCache::default();
+        cache.store(scene.clone(), [100.; 2]);
+        assert!(!cache.changed(&scene, [100.; 2]));
+        scene.instance_batches[0] = batch();
+        assert!(cache.changed(&scene, [100.; 2]));
+    }
+    #[test]
+    fn influence_snapshot_changes_invalidate_pixels_without_replacing_instances() {
+        use nico_presentation::foliage::InfluenceSnapshot;
+        let mut scene = Scene3d::default();
+        let mut cache = ViewportCache::default();
+        cache.store(scene.clone(), [100.; 2]);
+        scene.foliage_influences = Some(Arc::new(InfluenceSnapshot::new(1., Vec::new()).unwrap()));
+        assert!(cache.changed(&scene, [100.; 2]));
+        cache.store(scene.clone(), [100.; 2]);
+        assert!(!cache.changed(&scene.clone(), [100.; 2]));
+        scene.foliage_influences = Some(Arc::new(InfluenceSnapshot::new(2., Vec::new()).unwrap()));
+        assert!(cache.changed(&scene, [100.; 2]));
+        cache.store(scene.clone(), [100.; 2]);
+        scene.foliage_influences = None;
+        assert!(cache.changed(&scene, [100.; 2]));
+    }
     use nico_presentation::MeshInstance;
 
     #[test]

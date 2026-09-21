@@ -99,3 +99,10 @@ Regression coverage must exercise shared requests, last-owner release, cancellat
 release/reacquisition and retry races, malformed and oversized files, overload, and
 shutdown with outstanding requests and leases. Sample validation must distinguish CPU
 readiness, GPU preparation, and successful presentation.
+
+## Implementation update — 2026-09-20
+
+The initial RGBA-only representation above is historical. PNG imports now support
+BC3 cooking, cache storage, direct GPU block uploads, and a software RGBA8 fallback
+when BC is not enabled on the device. See the current [asset contract](../architecture.md)
+for compression settings, dimension restrictions, and single-mip limitations.
