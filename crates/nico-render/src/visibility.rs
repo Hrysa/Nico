@@ -80,8 +80,8 @@ fn validate_ordered_groups(records: &[VisibilityRecord]) -> Result<(), RhiError>
     Ok(())
 }
 
-/// Reference used by the CPU fallback and validation. Ordering is source order;
-/// the GPU may scatter a different ordering within an opaque/masked draw group.
+/// CPU reference used by GPU parity tests. Ordering is source order; the GPU may
+/// scatter a different ordering within an opaque/masked draw group.
 pub fn visible_ids(
     records: &[VisibilityRecord],
     groups: &[VisibilityGroup],
@@ -94,10 +94,9 @@ pub fn visible_ids(
     }
     let mut result = vec![Vec::new(); groups.len()];
     for (id, record) in records.iter().enumerate() {
-        if record.bounds.intersects_clip(clip)
-            && record
-                .bounds
-                .within_distance(eye, groups[record.group as usize].max_distance)
+        if record
+            .bounds
+            .visible_in_view(clip, eye, groups[record.group as usize].max_distance)
         {
             result[record.group as usize].push(id as u32);
         }

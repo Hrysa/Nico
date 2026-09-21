@@ -34,7 +34,7 @@ native providers, or launch policy. `nico-ecs` does not depend on runtime.
 | `nico-runtime` | Lifecycle, schedules, time, events, and service completion publication |
 | `nico-input` | Provider-neutral device state and frame-to-fixed-step accumulation |
 | `nico-presentation` | Immutable world-facing presentation lifecycle |
-| `nico-presentation-control` | Camera control, coordinate helpers, bitmap text caching/layout, and quad construction |
+| `nico-presentation-control` | Camera control, coordinate helpers, bitmap text caching/layout, quad construction, instance/foliage streaming, and model visual assembly |
 | `nico-render` | Shader/pipeline selection, frame recording, submission, and presentation |
 | `nico-rhi` | Backend-neutral GPU resource, command, and surface contracts |
 | `nico-rhi-wgpu` | Native GPU resources and surface recovery using wgpu |
@@ -356,11 +356,13 @@ shared visibility key. Immutable source pacing includes 144 bytes per record and
 `visibility_retirement_upload_bytes` reports these bounded dynamic writes separately
 from immutable source pacing. Reservation and selection-binding failures leave live
 residents valid; failed pending source uploads are discarded and can be retried.
-Frame-time acceptance remains open under the instance-system plan.
+Frame-time parity is not claimed; further optimization is a deferred follow-up under the
+instance-system plan.
 Prepared-view diagnostics expose unique `visibility_dispatched_pages` and actual
 encoded `visibility_dispatches`, excluding cached pages. These are command counts,
 not GPU completion or timing measurements.
-Foliage extensions remain in progress under the
+Foliage deformation, grass/shrub consumers and bounded provider streaming are
+implemented; see the
 [instance-system plan](plans/2026-09-20-common-mesh-instancing.md).
 
 `nico-presentation-control::instances::streaming` owns distance-based chunk scheduling,

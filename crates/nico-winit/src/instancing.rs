@@ -2,6 +2,14 @@
 pub(crate) mod control;
 // Provisional native policy measured with cached bounds and fused GPU culling.
 pub(super) const AUTO_GPU_MIN_RECORDS: usize = 1024;
+fn read_shader(path: &std::path::Path, label: &str) -> Result<Vec<u8>, nico_rhi::RhiError> {
+    std::fs::read(path).map_err(|e| {
+        nico_rhi::RhiError::new(
+            nico_rhi::RhiErrorKind::Backend,
+            format!("failed to read {label} shader {}: {e}", path.display()),
+        )
+    })
+}
 pub(super) fn install_foliage<D: nico_rhi::RhiDevice>(
     device: &D,
     renderer: &mut nico_render::MeshRenderPipeline<D>,
@@ -9,15 +17,7 @@ pub(super) fn install_foliage<D: nico_rhi::RhiDevice>(
     storage: &std::path::Path,
     compute: &std::path::Path,
 ) -> Result<(), nico_rhi::RhiError> {
-    let read = |path: &std::path::Path| {
-        std::fs::read(path).map_err(|e| {
-            nico_rhi::RhiError::new(
-                nico_rhi::RhiErrorKind::Backend,
-                format!("failed to read foliage shader {}: {e}", path.display()),
-            )
-        })
-    };
-    let direct = read(direct)?;
+    let direct = read_shader(direct, "foliage")?;
     match renderer.enable_foliage(device, nico_rhi::builtin_shaders::bootstrap_wgsl(&direct)) {
         Err(e) if e.kind() == nico_rhi::RhiErrorKind::Unsupported => {
             tracing::info!(reason=%e,"foliage rendering unavailable on this device");
@@ -25,8 +25,8 @@ pub(super) fn install_foliage<D: nico_rhi::RhiDevice>(
         }
         result => result?,
     }
-    let storage = read(storage)?;
-    let compute = read(compute)?;
+    let storage = read_shader(storage, "foliage")?;
+    let compute = read_shader(compute, "foliage")?;
     match renderer.enable_gpu_foliage(
         device,
         nico_rhi::builtin_shaders::bootstrap_wgsl(&storage),
@@ -63,16 +63,8 @@ pub(super) fn install_gpu<D: nico_rhi::RhiDevice>(
     storage: &std::path::Path,
     compute: &std::path::Path,
 ) -> Result<(), nico_rhi::RhiError> {
-    let read = |path: &std::path::Path| {
-        std::fs::read(path).map_err(|e| {
-            nico_rhi::RhiError::new(
-                nico_rhi::RhiErrorKind::Backend,
-                format!("failed to read instance shader {}: {e}", path.display()),
-            )
-        })
-    };
-    let storage = read(storage)?;
-    let compute = read(compute)?;
+    let storage = read_shader(storage, "instance")?;
+    let compute = read_shader(compute, "instance")?;
     match renderer.enable_gpu_instancing(
         device,
         nico_rhi::builtin_shaders::bootstrap_wgsl(&storage),

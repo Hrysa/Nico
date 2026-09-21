@@ -768,10 +768,8 @@ impl<D: RhiDevice> InstanceRenderer<D> {
             let Some(bounds) = batch.bounds() else {
                 continue;
             };
-            if !bounds.intersects_clip(camera)
-                || !bounds
-                    .within_distance(Vec3::from(scene.camera.position), batch.max_draw_distance())
-            {
+            let camera_position = Vec3::from(scene.camera.position);
+            if !bounds.visible_in_view(camera, camera_position, batch.max_draw_distance()) {
                 stats.culled_chunks += 1;
                 continue;
             }
@@ -975,12 +973,9 @@ impl<D: RhiDevice> InstanceRenderer<D> {
                     .enumerate()
                     .filter_map(|(i, _)| {
                         let bounds = batch.record_bounds(i).expect("validated bounds");
-                        (bounds.intersects_clip(camera)
-                            && bounds.within_distance(
-                                Vec3::from(scene.camera.position),
-                                batch.max_draw_distance(),
-                            ))
-                        .then_some(i)
+                        bounds
+                            .visible_in_view(camera, camera_position, batch.max_draw_distance())
+                            .then_some(i)
                     })
                     .collect();
                 let uploaded = &mut self.uploads[slot];
@@ -1020,12 +1015,7 @@ impl<D: RhiDevice> InstanceRenderer<D> {
                     let bounds = batch
                         .record_bounds(index)
                         .expect("validated instance bounds");
-                    if !bounds.intersects_clip(camera)
-                        || !bounds.within_distance(
-                            Vec3::from(scene.camera.position),
-                            batch.max_draw_distance(),
-                        )
-                    {
+                    if !bounds.visible_in_view(camera, camera_position, batch.max_draw_distance()) {
                         continue;
                     }
                     let bytes: Vec<_> = (camera * record.transform())

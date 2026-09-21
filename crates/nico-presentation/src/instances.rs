@@ -67,6 +67,12 @@ impl InstanceBounds {
     pub fn within_distance(self, position: Vec3, distance: f32) -> bool {
         position.distance(position.clamp(self.min, self.max)) <= distance
     }
+    /// Conservative clip/draw-distance culling predicate shared by the CPU paths
+    /// and the validity-check reference in `nico-render`. GPU visibility repeats
+    /// this arithmetic in `instance_visibility.slang`.
+    pub fn visible_in_view(self, clip: Mat4, position: Vec3, distance: f32) -> bool {
+        self.intersects_clip(clip) && self.within_distance(position, distance)
+    }
     /// True only when the entire bound lies inside all clip planes and the
     /// draw-distance sphere. A false result still requires ordinary culling.
     pub fn fully_visible(self, clip: Mat4, position: Vec3, distance: f32) -> bool {
@@ -688,5 +694,12 @@ mod tests {
         assert!(!bounds.intersects_clip(Mat4::from_translation(Vec3::new(3., 0., 0.))));
         assert!(bounds.within_distance(Vec3::new(2., 0., 0.), 1.));
         assert!(!bounds.within_distance(Vec3::new(2.1, 0., 0.), 1.));
+        assert!(bounds.visible_in_view(Mat4::IDENTITY, Vec3::new(2., 0., 0.), 1.));
+        assert!(!bounds.visible_in_view(Mat4::IDENTITY, Vec3::new(2.1, 0., 0.), 1.));
+        assert!(!bounds.visible_in_view(
+            Mat4::from_translation(Vec3::new(3., 0., 0.)),
+            Vec3::ZERO,
+            1.
+        ));
     }
 }
