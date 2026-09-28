@@ -1,0 +1,11 @@
+schema_version = 1
+
+[[entities]]
+id = "splash"
+name = "Nico Splash"
+scope = "client"
+
+[entities.components."arena.splash"]
+title = "NICO"
+duration_seconds = 1.0
+next_scene = "assets/scenes/meadow.scene.toml"

@@ -78,7 +78,9 @@ pub fn start(
     })
 }
 
-fn load_with_cancel(
+/// Load owned CPU assets with cooperative cancellation shared with the calling worker.
+/// Progress observers run on the calling thread.
+pub fn load_with_cancel(
     roots: Vec<PathBuf>,
     dependencies: impl Fn(&Path) -> Result<Vec<PathBuf>, Error>,
     cancelled: Arc<AtomicBool>,

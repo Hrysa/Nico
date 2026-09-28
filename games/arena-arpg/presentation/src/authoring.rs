@@ -27,7 +27,14 @@ fn environment(content: &ProjectContent) -> io::Result<Environment> {
     Ok(environment)
 }
 impl WorldEditor {
-    fn open(project: Project) -> io::Result<Self> {
+    fn open(mut project: Project) -> io::Result<Self> {
+        let entry = arena_arpg_shared::project::StartupScene::load(
+            project.root(),
+            Some(&project.manifest.default_scene),
+        )?;
+        if let Some(splash) = entry.splash {
+            project.manifest.default_scene = splash.next_scene;
+        }
         let original = fs::read(project.scene_path()?)?;
         let content =
             ProjectContent::from_scene(project.clone(), project.load_scene()?, HostRole::Client)?;

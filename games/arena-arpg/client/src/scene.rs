@@ -67,7 +67,8 @@ mod tests {
     #[test]
     fn scene_camera_and_lights_drive_runtime_settings() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let project = nico_scene::Project::open(root).unwrap();
+        let mut project = nico_scene::Project::open(root).unwrap();
+        project.manifest.default_scene = "assets/scenes/meadow.scene.toml".into();
         let mut definition = project.load_scene().unwrap();
         let camera = definition
             .entities

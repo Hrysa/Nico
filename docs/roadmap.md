@@ -42,6 +42,22 @@ Clippy passed for those packages with the existing `chunks_exact_to_as_chunks` l
 Strict Clippy remains blocked by that existing lint in rendering and grass import code.
 Native rendering and user-observed gameplay were not checked for this migration.
 
+### Default splash scene — 2026-09-29
+
+The default client scene displays NICO for one second, then shows Meadow loading progress.
+CPU asset preparation runs through the engine batch loader. The native window stays open during the scene switch.
+Headless startup follows the same target without a splash delay.
+The `scene_loading` tool exposes phase, asset counts, and failures.
+
+On macOS arm64, workspace checking passed with all targets and features.
+Focused tests cover splash timing, background success and failure, server target selection, and runtime replacement cleanup.
+Clippy passed with the existing `chunks_exact_to_as_chunks` lint allowed.
+The isolated native splash test passed with client PID 82385 and private server and bridge ports.
+Captures showed splash, loading, preparation, and connected Meadow gameplay in the same client process.
+Asset progress reached 24 of 24 files. Host status recorded 437 successful presentation calls before shutdown.
+Captures and status snapshots were separate samples. Desktop visibility and user-observed approval were not verified.
+The test stopped its own hosts and closed its window.
+
 ## 1. Run a native client
 
 **Remaining goal:** Complete native lifecycle checks on supported platforms.

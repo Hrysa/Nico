@@ -193,11 +193,28 @@ The game compiles authoritative components into its existing zone snapshot for n
 The client reads camera and light components when building its presentation state.
 The retained authoring adapter edits and saves this same scene.
 
-Arena currently requires one orbit camera, one directional light, and one ambient light.
+Arena gameplay scenes require one orbit camera, one directional light, and one ambient light.
 Actor spawns and quest markers are planar. Collider boxes remain axis-aligned.
 Scenery supports Y rotation and authored height. Unsupported transforms fail validation.
 Solo scenes retain the fixed arena bounds and three initial spawn kinds required by the wave rules.
 Scene components configure startup; live component edits do not automatically rebuild game resources.
+
+The default splash scene contains a client `arena.splash` component with title, duration, and target scene.
+It waits one second of active runtime time before starting Meadow preparation.
+`nico-assets::Batch` owns the worker. Progress observers publish owned counts through shared state.
+Workers prepare owned CPU data; runtime composition and network setup happen on the window thread.
+Asset cancellation is cooperative. Closing the host joins remaining work after its next cancellation check.
+Import completion changes the label to preparation while character and scenery data finish.
+Loading failures keep the splash visible. No partial gameplay runtime starts.
+
+`nico-winit::NativeScene` keeps the same window and renderer when changing runtimes.
+A host frame boundary shuts down the old runtime, installs the new runtime, and resets input state.
+`nico-launch::ClientHost::run_scenes` replaces bridge registration with the new tools and loaded content revision.
+Bridge reconnects use new instance IDs. Host frame counts remain continuous across scene changes.
+Host readiness can describe a rendered splash. `scene_loading` reports gameplay asset loading separately.
+Its loaded phase does not prove server connection, GPU completion, or desktop visibility.
+Headless hosts and the retained world authoring adapter follow the splash target without showing it.
+Splash targets must be gameplay scenes; self-references and splash chains are rejected.
 
 Offline Slang compilation produces checked-in WGSL outside Cargo's build graph.
 Hosts load shaders and prepare pipelines before their first redraw.

@@ -32,6 +32,31 @@ use winit::{
 pub type NativeClientResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 type InputDispatcher = dyn FnMut(&InputState, &mut App);
 
+/// A prepared runtime and its input mapping. The host keeps its window and renderer across scenes.
+pub struct NativeScene {
+    app: App,
+    dispatch_input: Box<InputDispatcher>,
+}
+impl NativeScene {
+    pub fn new<C: Event>(
+        app: App,
+        mut map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
+    ) -> Self {
+        let mut commands = Vec::new();
+        Self {
+            app,
+            dispatch_input: Box::new(move |input, app| {
+                commands.clear();
+                map_input(input, &mut commands);
+                for command in commands.drain(..) {
+                    app.send_event(command);
+                }
+            }),
+        }
+    }
+}
+type ScenePoll = dyn FnMut(&App) -> NativeClientResult<Option<NativeScene>>;
+
 const FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 const POINTER_MOTION: InputControlId = InputControlId::new(1);
 const POINTER_SCROLL: InputControlId = InputControlId::new(2);
@@ -245,6 +270,14 @@ impl ClientSession {
         Ok(())
     }
 
+    fn replace(&mut self, app: App) -> NativeClientResult<()> {
+        self.shutdown()?;
+        let frames = self.presented_frames;
+        *self = Self::new(app);
+        self.presented_frames = frames;
+        self.start()
+    }
+
     fn present(&mut self, delta: Duration) -> NativeClientResult<()> {
         if self.state != SessionState::Running {
             return Err(io::Error::other("client session is not running").into());
@@ -310,6 +343,7 @@ struct NativeClientHost {
     title: String,
     bootstrap_shader_path: PathBuf,
     dispatch_input: Box<InputDispatcher>,
+    scene_poll: Option<Box<ScenePoll>>,
     operations: Option<HostEndpoint>,
     pointer_capture: bool,
     window_state: NativeWindowState,
@@ -367,6 +401,7 @@ impl NativeClientHost {
             title: config.title,
             bootstrap_shader_path: resolve_asset_path(&config.bootstrap_shader_path),
             dispatch_input,
+            scene_poll: None,
             operations: None,
             pointer_capture: config.pointer_capture,
             window_state: NativeWindowState::default(),
@@ -529,6 +564,24 @@ impl NativeClientHost {
         if let Some(operations) = &mut self.operations {
             operations.graphics(outcome);
         }
+    }
+
+    fn poll_scene(&mut self) -> NativeClientResult<()> {
+        let next = match &mut self.scene_poll {
+            Some(poll) => poll(&self.session.app)?,
+            None => None,
+        };
+        if let Some(mut next) = next {
+            next.app
+                .world_mut()
+                .insert_resource(self.window_state.clone());
+            self.session.replace(next.app)?;
+            self.dispatch_input = next.dispatch_input;
+            self.input = InputManager::default();
+            self.input_devices.clear();
+            self.last_frame = None;
+        }
+        Ok(())
     }
 
     fn present(&mut self, delta: Duration) -> NativeClientResult<()> {
@@ -998,6 +1051,11 @@ impl ApplicationHandler<HostEvent> for NativeClientHost {
                 });
             }
             WindowEvent::RedrawRequested if self.active => {
+                if let Err(error) = self.poll_scene() {
+                    self.record_failure(error);
+                    self.stop(event_loop);
+                    return;
+                }
                 self.publish_window();
                 (self.dispatch_input)(self.input.state(), &mut self.session.app);
                 self.input.end_frame();
@@ -1196,18 +1254,25 @@ pub fn run_native_client_with_operations<C: Event>(
 fn run_client<C: Event>(
     app: App,
     config: NativeClientConfig,
-    mut map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
+    map_input: impl FnMut(&InputState, &mut Vec<C>) + 'static,
     operations: Option<HostEndpoint>,
 ) -> NativeClientResult<App> {
-    let mut commands = Vec::new();
-    let dispatch_input = move |input: &InputState, app: &mut App| {
-        commands.clear();
-        map_input(input, &mut commands);
-        for command in commands.drain(..) {
-            app.send_event(command);
-        }
-    };
-    let mut host = NativeClientHost::new(app, config, Box::new(dispatch_input));
+    run_native_scenes(NativeScene::new(app, map_input), config, operations, |_| {
+        Ok(None)
+    })
+}
+
+/// Poll scene preparation on the window thread before input and runtime updates.
+/// A replacement shuts down the previous runtime and starts the new one in the same window.
+/// Polling must not block on file imports. Errors follow the normal host failure path.
+pub fn run_native_scenes(
+    scene: NativeScene,
+    config: NativeClientConfig,
+    operations: Option<HostEndpoint>,
+    poll: impl FnMut(&App) -> NativeClientResult<Option<NativeScene>> + 'static,
+) -> NativeClientResult<App> {
+    let mut host = NativeClientHost::new(scene.app, config, scene.dispatch_input);
+    host.scene_poll = Some(Box::new(poll));
     host.operations = operations;
     if let Some(operations) = &mut host.operations {
         operations.graphics(GraphicsOutcome::NotAttempted);
@@ -1514,6 +1579,74 @@ mod tests {
                 assert_eq!(control.status().graphics.unwrap().presented_frames, 3);
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn scene_replacement_shuts_down_old_runtime_and_preserves_host_frame_count()
+    -> NativeClientResult<()> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let stops = Arc::new(AtomicUsize::new(0));
+        let counted = stops.clone();
+        let mut initial = AppBuilder::new();
+        initial.add_system(Stage::Shutdown, "old scene cleanup", move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        let mut host = test_host(initial.build()?);
+        host.session.start()?;
+        host.present(Duration::from_millis(17))?;
+        let mut next = AppBuilder::new();
+        next.add_system(Stage::Startup, "new scene", |ctx| {
+            ctx.world.insert_resource(42_u32);
+            Ok(())
+        });
+        let mut next = Some(next.build()?);
+        host.scene_poll = Some(Box::new(move |_| {
+            Ok(next
+                .take()
+                .map(|app| super::NativeScene::new(app, |_, _: &mut Vec<()>| {})))
+        }));
+        host.poll_scene()?;
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+        assert_eq!(*host.session.app.world().resource::<u32>()?, 42);
+        assert!(
+            host.session
+                .app
+                .world()
+                .resource::<super::NativeWindowState>()
+                .is_ok()
+        );
+        assert_eq!(host.session.presented_frames, 1);
+        host.poll_scene()?;
+        host.present(Duration::from_millis(17))?;
+        assert_eq!(host.session.presented_frames, 2);
+        host.finish()?;
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_startup_failure_is_terminal_and_runs_cleanup_once() -> NativeClientResult<()> {
+        let mut host = test_host(AppBuilder::new().build()?);
+        host.session.start()?;
+        let mut next = AppBuilder::new();
+        next.add_system(Stage::Startup, "failed scene", |_| {
+            Err(RuntimeError::MissingResource("fixture"))
+        });
+        let mut next = Some(next.build()?);
+        host.scene_poll = Some(Box::new(move |_| {
+            Ok(next
+                .take()
+                .map(|app| super::NativeScene::new(app, |_, _: &mut Vec<()>| {})))
+        }));
+        let error = host.poll_scene().unwrap_err();
+        host.record_failure(error);
+        assert_eq!(host.session.app.state(), AppState::Stopped);
+        assert!(host.finish().is_err());
         Ok(())
     }
 

@@ -39,6 +39,13 @@ impl ClientArgs {
     }
 }
 
+/// A prepared scene and its tools, published together at a host frame boundary.
+pub struct ClientScene {
+    pub scene: nico_winit::NativeScene,
+    pub tools: ToolExtensions,
+    pub content_revision: Option<String>,
+}
+
 pub struct ClientHost {
     args: ClientArgs,
     identity: Option<(String, String)>,
@@ -76,6 +83,57 @@ impl ClientHost {
         self.tools = tools;
         self
     }
+    /// Keep the native window open while a caller polls prepared scene data.
+    /// Scene changes reconnect the bridge with the new tool catalog and content revision.
+    pub fn run_scenes(
+        self,
+        scene: nico_winit::NativeScene,
+        config: NativeClientConfig,
+        mut poll: impl FnMut(&App) -> NativeClientResult<Option<ClientScene>> + 'static,
+    ) -> NativeClientResult<App> {
+        let config = config.with_smoke_frames(self.args.smoke_frames);
+        let config = if self.args.background {
+            config.with_initial_focus(false)
+        } else {
+            config
+        };
+        let Some(address) = self.args.bridge_address() else {
+            return nico_winit::run_native_scenes(scene, config, None, move |app| {
+                Ok(poll(app)?.map(|next| next.scene))
+            });
+        };
+        let (game, version) = self
+            .identity
+            .ok_or_else(|| io::Error::other("bridge mode requires a game identity"))?;
+        let (control, endpoint) = control_channel();
+        control.snapshots().enable();
+        let access = self.args.debug.access();
+        let connect = move |tools, revision| -> NativeClientResult<BridgeClient> {
+            let tools = crate::snapshot::register(tools, control.clone())?;
+            let tools = crate::rendering::register(tools, control.clone())?;
+            let tools = crate::window::register(tools, control.clone())?;
+            Ok(BridgeClient::start(
+                address,
+                GameRegistration {
+                    access: access.clone(),
+                    content_revision: revision,
+                    ..GameRegistration::new(game.clone(), GameRole::Client, version.clone())
+                },
+                control.clone(),
+                crate::diagnostics::register(tools)?,
+            )?)
+        };
+        let mut bridge = Some(connect(self.tools, self.content_revision)?);
+        nico_winit::run_native_scenes(scene, config, Some(endpoint), move |app| {
+            let Some(next) = poll(app)? else {
+                return Ok(None);
+            };
+            drop(bridge.take());
+            bridge = Some(connect(next.tools, next.content_revision)?);
+            Ok(Some(next.scene))
+        })
+    }
+
     /// Runs Winit on this thread. Bridge I/O runs separately and survives reconnects.
     pub fn run<C: Event>(
         self,

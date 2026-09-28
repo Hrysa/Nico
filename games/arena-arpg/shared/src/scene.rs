@@ -17,6 +17,34 @@ use std::{collections::BTreeMap, io, path::PathBuf};
 fn error(e: impl ToString) -> io::Error {
     io::Error::other(e.to_string())
 }
+/// Client entry scene. Headless hosts follow its target without showing the splash.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Splash {
+    pub title: String,
+    pub next_scene: PathBuf,
+    pub duration_seconds: f64,
+}
+impl SceneComponent for Splash {
+    fn validate(&self) -> io::Result<()> {
+        if self.title.is_empty()
+            || self.title.len() > 48
+            || !self
+                .title
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == ' ')
+            || !self.duration_seconds.is_finite()
+            || !(0.0..=30.0).contains(&self.duration_seconds)
+        {
+            return Err(error("invalid splash title or duration"));
+        }
+        Ok(())
+    }
+    fn assets(&self) -> Vec<PathBuf> {
+        vec![self.next_scene.clone()]
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct World {
@@ -188,6 +216,7 @@ pub fn registry() -> io::Result<ComponentRegistry> {
     let mut r = ComponentRegistry::default();
     nico_scene::components::register(&mut r)?;
     use ComponentScope::{Client, Shared};
+    r.register::<Splash>("arena.splash", Client)?;
     r.register::<World>("arena.world", Shared)?;
     r.register::<Environment>("arena.environment", Client)?;
     r.register::<BoxCollider>("arena.box_collider", Shared)?;

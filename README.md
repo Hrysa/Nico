@@ -222,12 +222,22 @@ Load Arena's declared project:
 cargo run -p arena-arpg-client -- --project games/arena-arpg
 ~~~
 
-Both hosts load the project’s `default_scene` before starting gameplay.
+The project’s `default_scene` is `assets/scenes/splash.scene.toml`.
+The client shows NICO for one second, then loads Meadow with a progress bar and completed asset counts.
+It switches scenes when CPU preparation finishes. Server connection and first GPU presentation remain separate steps.
+The server follows the splash’s target directly, without the visual delay.
+`--scene assets/scenes/meadow.scene.toml` loads Meadow directly and skips the splash.
 Use `--scene assets/scenes/arena.scene.toml` to select another scene within that project.
 `--arena` selects that same solo scene and cannot be combined with `--scene`.
 Scenes compose entities from typed components, including world references, placements, camera settings, and lights.
 Servers create shared gameplay components and skip client components.
 Restart affected hosts after editing source files.
+The `scene_loading` MCP tool reports splash, loading, preparing, loaded, or failed state.
+Scene transitions refresh bridge registration; discover the new instance ID before calling game tools.
+Loading errors remain on the splash and include details in diagnostics and `scene_loading`.
+Run the isolated native check with
+`python3 apps/nico-mcp-bridge/tests/splash_native_smoke.py --bin-dir target/bridge-validation/debug`.
+It opens a test window, uses private ports, and stops only its own processes.
 
 CLI games and preview tools reuse imported data in debug and release builds.
 The `.nico` cache sits beside the project manifest, or above the nearest `assets` folder.
@@ -238,7 +248,7 @@ Automatic discovery skips folders starting with `~` and everything inside them.
 This applies to declared asset roots too. Explicit file loads still work.
 GPU resource reuse is separate from persistent import caching.
 Arena and character preview load models and textures with up to four CPU workers per batch.
-Startup waits for required assets; library callers can poll batches without blocking.
+The splash stays responsive while required assets load. Library callers can also poll batches without blocking.
 Arena makes one recursive load request from `nico.project.toml`.
 `default_scene` selects a `SceneDefinition`. Its components reference rules, character catalogs, and the scenery library.
 Scenes live under `assets/scenes`; referenced assets live under `assets/logic` and `assets/presentation`.

@@ -2,6 +2,7 @@ mod camera;
 mod character;
 mod controls;
 mod scene;
+mod splash;
 mod view;
 mod visuals;
 mod world;
@@ -54,9 +55,58 @@ struct Args {
     #[arg(long, conflicts_with_all = ["character_model", "character_animations"])]
     procedural_hero: bool,
 }
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn main() -> Result<()> {
     let mut args = Args::parse();
     init_logging(args.common.log_level)?;
+    let entry = arena_arpg_shared::project::StartupScene::load(
+        args.project.as_deref().unwrap_or(std::path::Path::new(
+            arena_arpg_shared::project::DEFAULT_PROJECT,
+        )),
+        args.scene.as_deref().or_else(|| {
+            args.arena
+                .then_some(std::path::Path::new("assets/scenes/arena.scene.toml"))
+        }),
+    )?;
+    args.project = Some(entry.project.root().to_owned());
+    if entry.splash.is_some() {
+        return splash::run(args, entry);
+    }
+    let host = ClientHost::new(args.host.clone()).with_game_identity("arena_arpg", "1");
+    let prepared = prepare_game(
+        args,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )?;
+    let config = native_config(prepared.args.arena);
+    let ready = compose_game(prepared)?;
+    host.with_mcp_tools(ready.tools)
+        .with_content_revision(ready.content_revision.unwrap())
+        .run_scenes(ready.scene, config, |_| Ok(None))?;
+    Ok(())
+}
+
+struct PreparedGame {
+    args: Args,
+    content: arena_arpg_shared::project::ProjectContent,
+    presentation: scene::Presentation,
+    logic: std::sync::Arc<arena_arpg_shared::characters::CharacterCatalog>,
+    definitions: [character::definition::CharacterVisualDefinition; 3],
+    character: [Option<std::sync::Arc<character::CharacterAssets>>; 3],
+    environment: Option<world::environment::Environment>,
+}
+fn prepare_game(
+    mut args: Args,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<PreparedGame> {
+    let check = || -> Result<()> {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            Err("scene loading cancelled".into())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
     let content = arena_arpg_shared::project::ProjectContent::load_scene(
         args.project.as_deref().unwrap_or(std::path::Path::new(
             arena_arpg_shared::project::DEFAULT_PROJECT,
@@ -78,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .character_model
         .as_deref()
         .zip(args.character_animations.as_deref());
-    let loaded = load_project_assets(&args, &definitions, &content)?;
+    let loaded = load_project_assets_cancelled(&args, &definitions, &content, cancelled.clone())?;
     let mut character = std::array::from_fn(|_| None);
     for (index, definition) in definitions.iter().enumerate() {
         if definition.core.model.is_some() && !(index == 0 && args.procedural_hero) {
@@ -90,14 +140,44 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )?);
         }
     }
-    let mut builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
-    content.attach(&mut builder, nico_scene::HostRole::Client)?;
-    let (builder, tools) = if !args.arena {
-        let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
+    check()?;
+    let environment = if !args.arena {
         let mut environment =
             world::environment::Environment::from_loaded(&args.visual_world, &loaded)?;
         environment.apply_scene(&content.scene)?;
         environment.bind(&content.zone)?;
+        Some(environment)
+    } else {
+        None
+    };
+    check()?;
+    content.verify()?;
+    Ok(PreparedGame {
+        args,
+        content,
+        presentation,
+        logic,
+        definitions,
+        character,
+        environment,
+    })
+}
+
+fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientScene> {
+    let PreparedGame {
+        args,
+        content,
+        presentation,
+        logic,
+        definitions,
+        character,
+        environment,
+    } = prepared;
+    let mut builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
+    content.attach(&mut builder, nico_scene::HostRole::Client)?;
+    let (builder, tools) = if !args.arena {
+        let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
+        let environment = environment.expect("prepared world environment");
         world::register(
             builder,
             client,
@@ -127,8 +207,22 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             tools,
         )
     };
-    let config = NativeClientConfig::new(
-        if !args.arena {
+    let app = builder.build()?;
+    let scene = if args.arena {
+        nico_winit::NativeScene::new(app, controls::map_input)
+    } else {
+        nico_winit::NativeScene::new(app, world::map_input)
+    };
+    Ok(nico_launch::client::ClientScene {
+        scene,
+        tools,
+        content_revision: Some(content.revision),
+    })
+}
+
+fn native_config(arena: bool) -> NativeClientConfig {
+    NativeClientConfig::new(
+        if !arena {
             "Nico | Meadow"
         } else {
             "Nico | Arena"
@@ -150,80 +244,88 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "assets/presentation/shaders/generated/wgpu/foliage_storage.wgsl",
         "assets/presentation/shaders/generated/wgpu/instance_visibility.wgsl",
     )
-    .with_pointer_capture();
-    let mut host = ClientHost::new(args.host)
-        .with_game_identity("arena_arpg", "1")
-        .with_mcp_tools(tools);
-    content.verify()?;
-    host = host.with_content_revision(content.revision.clone());
-    if !args.arena {
-        host.run(builder.build()?, config, world::map_input)?;
-    } else {
-        host.run(builder.build()?, config, controls::map_input)?;
-    }
-    Ok(())
+    .with_pointer_capture()
 }
 
+#[cfg(test)]
 fn load_project_assets(
     args: &Args,
     definitions: &[character::definition::CharacterVisualDefinition; 3],
     content: &arena_arpg_shared::project::ProjectContent,
-) -> Result<nico_assets::graph::LoadedAssets, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<nico_assets::graph::LoadedAssets> {
+    load_project_assets_cancelled(
+        args,
+        definitions,
+        content,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+}
+
+fn load_project_assets_cancelled(
+    args: &Args,
+    definitions: &[character::definition::CharacterVisualDefinition; 3],
+    content: &arena_arpg_shared::project::ProjectContent,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<nico_assets::graph::LoadedAssets> {
     use std::path::Path;
     let root = args
         .project
         .as_deref()
         .unwrap_or(Path::new("games/arena-arpg"));
-    nico_assets::graph::load(vec![root.join("nico.project.toml")], |path| {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("invalid asset filename")?;
-        if name == "nico.project.toml" {
-            let mut sources = vec![content.scene_path()?];
-            for name in arena_arpg_shared::characters::NAMES {
-                sources.push(
-                    args.visual_characters
-                        .join(format!("{name}.char-vis.toml"))
-                        .canonicalize()?,
+    nico_assets::graph::load_with_cancel(
+        vec![root.join("nico.project.toml")],
+        |path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("invalid asset filename")?;
+            if name == "nico.project.toml" {
+                let mut sources = vec![content.scene_path()?];
+                for name in arena_arpg_shared::characters::NAMES {
+                    sources.push(
+                        args.visual_characters
+                            .join(format!("{name}.char-vis.toml"))
+                            .canonicalize()?,
+                    );
+                }
+                return Ok(sources);
+            }
+
+            if path == content.scene_path()? {
+                return Ok(vec![content.source("visual")?]);
+            }
+            if name.ends_with(".char-vis.toml") {
+                let definition = character::definition::CharacterVisualDefinition::parse(
+                    &arena_arpg_shared::characters::read_definition(path)?,
+                )?;
+                let hero = definition.core.character == definitions[0].core.character;
+                if hero && args.procedural_hero {
+                    return Ok(Vec::new());
+                }
+                let overrides = if hero {
+                    args.character_model
+                        .as_deref()
+                        .zip(args.character_animations.as_deref())
+                } else {
+                    None
+                };
+                return character::CharacterAssets::dependencies(
+                    &definition,
+                    path.parent().unwrap(),
+                    overrides,
                 );
             }
-            return Ok(sources);
-        }
-
-        if path == content.scene_path()? {
-            return Ok(vec![content.source("visual")?]);
-        }
-        if name.ends_with(".char-vis.toml") {
-            let definition = character::definition::CharacterVisualDefinition::parse(
-                &arena_arpg_shared::characters::read_definition(path)?,
-            )?;
-            let hero = definition.core.character == definitions[0].core.character;
-            if hero && args.procedural_hero {
-                return Ok(Vec::new());
+            if name.ends_with(".world-vis.toml") {
+                return if args.arena {
+                    Ok(Vec::new())
+                } else {
+                    world::environment::Environment::dependencies(path)
+                };
             }
-            let overrides = if hero {
-                args.character_model
-                    .as_deref()
-                    .zip(args.character_animations.as_deref())
-            } else {
-                None
-            };
-            return character::CharacterAssets::dependencies(
-                &definition,
-                path.parent().unwrap(),
-                overrides,
-            );
-        }
-        if name.ends_with(".world-vis.toml") {
-            return if args.arena {
-                Ok(Vec::new())
-            } else {
-                world::environment::Environment::dependencies(path)
-            };
-        }
-        Err(format!("unsupported asset definition: {}", path.display()).into())
-    })
+            Err(format!("unsupported asset definition: {}", path.display()).into())
+        },
+        cancelled,
+    )
 }
 
 #[cfg(test)]

@@ -6,6 +6,72 @@ use std::{
     path::{Path, PathBuf},
 };
 pub const DEFAULT_PROJECT: &str = "games/arena-arpg";
+/// Lightweight entry parsing. Gameplay content is prepared only after following the splash.
+pub struct StartupScene {
+    pub project: nico_scene::Project,
+    pub scene: SceneDefinition,
+    pub splash: Option<scene::Splash>,
+}
+impl StartupScene {
+    pub fn load(root: &Path, selected: Option<&Path>) -> io::Result<Self> {
+        let mut project = nico_scene::Project::open(root)?;
+        if let Some(path) = selected {
+            project.resolve_asset(path)?;
+            project.manifest.default_scene = path.into();
+        }
+        let scene = project.load_scene()?;
+        let splash = if scene
+            .entities
+            .iter()
+            .any(|e| e.components.contains_key("arena.splash"))
+        {
+            scene::registry()?.prepare(&scene, HostRole::Client, |p| project.resolve_asset(p))?;
+            if scene.entities.len() != 1
+                || scene.entities[0].components.len() != 1
+                || scene.entities[0].scope != nico_scene::ComponentScope::Client
+            {
+                return Err(error("splash scene requires one client splash entity"));
+            }
+            let splash: scene::Splash = scene::single(&scene, "arena.splash")?;
+            if project.resolve_asset(&splash.next_scene)? == project.scene_path()? {
+                return Err(error("splash cannot load itself"));
+            }
+            let target = SceneDefinition::load(&project.resolve_asset(&splash.next_scene)?)
+                .map_err(error)?;
+            if target
+                .entities
+                .iter()
+                .any(|e| e.components.contains_key("arena.splash"))
+            {
+                return Err(error("splash target must be a gameplay scene"));
+            }
+            Some(splash)
+        } else {
+            None
+        };
+        Ok(Self {
+            project,
+            scene,
+            splash,
+        })
+    }
+    pub fn into_game(mut self, role: HostRole) -> io::Result<ProjectContent> {
+        if let Some(splash) = self.splash {
+            self.project.manifest.default_scene = splash.next_scene;
+            self.scene = self.project.load_scene()?;
+            if self
+                .scene
+                .entities
+                .iter()
+                .any(|e| e.components.contains_key("arena.splash"))
+            {
+                return Err(error("splash target must be a gameplay scene"));
+            }
+        }
+        ProjectContent::from_scene(self.project, self.scene, role)
+    }
+}
+
 pub struct SceneEntities(pub Vec<nico_ecs::Entity>);
 pub struct ProjectContent {
     project: nico_scene::Project,
@@ -28,13 +94,7 @@ impl ProjectContent {
         Self::load_scene(root, None, role)
     }
     pub fn load_scene(root: &Path, selected: Option<&Path>, role: HostRole) -> io::Result<Self> {
-        let mut project = nico_scene::Project::open(root)?;
-        if let Some(path) = selected {
-            project.resolve_asset(path)?;
-            project.manifest.default_scene = path.into();
-        }
-        let scene = project.load_scene()?;
-        Self::from_scene(project, scene, role)
+        StartupScene::load(root, selected)?.into_game(role)
     }
     pub fn from_scene(
         project: nico_scene::Project,
@@ -120,6 +180,66 @@ impl ProjectContent {
 mod tests {
     use super::*;
     #[test]
+    fn splash_rejects_self_references_chains_and_missing_targets() {
+        let root =
+            std::env::temp_dir().join(format!("nico-splash-validation-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("assets/scenes")).unwrap();
+        std::fs::write(
+            root.join("nico.project.toml"),
+            "version = 1\nname = 'Fixture'\ndefault_scene = 'assets/scenes/splash.scene.toml'\n",
+        )
+        .unwrap();
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/scenes/splash.scene.toml");
+        let original = SceneDefinition::load(&source).unwrap();
+        for target in [
+            "assets/scenes/splash.scene.toml",
+            "assets/scenes/other.scene.toml",
+            "assets/scenes/missing.scene.toml",
+        ] {
+            let mut scene = original.clone();
+            let mut splash: scene::Splash = scene::single(&scene, "arena.splash").unwrap();
+            splash.next_scene = target.into();
+            scene.entities[0]
+                .set_component("arena.splash", &splash)
+                .unwrap();
+            scene
+                .save_file(&root.join("assets/scenes/splash.scene.toml"))
+                .unwrap();
+            original
+                .save_file(&root.join("assets/scenes/other.scene.toml"))
+                .unwrap();
+            assert!(StartupScene::load(&root, None).is_err(), "{target}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn default_entry_is_splash_and_server_follows_its_gameplay_target() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let entry = StartupScene::load(&root, None).unwrap();
+        assert_eq!(
+            entry.project.manifest.default_scene,
+            Path::new("assets/scenes/splash.scene.toml")
+        );
+        assert_eq!(entry.splash.as_ref().unwrap().duration_seconds, 1.);
+        let server = entry.into_game(HostRole::Server).unwrap();
+        assert_eq!(server.zone.id, "meadow");
+        assert_eq!(server.entities.query::<&scene::Splash>().iter().count(), 0);
+        let direct = ProjectContent::load_scene(
+            &root,
+            Some(Path::new("assets/scenes/meadow.scene.toml")),
+            HostRole::Server,
+        )
+        .unwrap();
+        assert_eq!(server.revision, direct.revision);
+        assert!(
+            StartupScene::load(&root, Some(Path::new("assets/scenes/arena.scene.toml")))
+                .unwrap()
+                .splash
+                .is_none()
+        );
+    }
+    #[test]
     fn composed_scene_supplies_world_camera_lights_and_typed_entities() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut project = nico_scene::Project::open(&root).unwrap();
@@ -202,7 +322,8 @@ mod tests {
     #[test]
     fn unknown_components_bad_references_and_missing_models_fail_before_startup() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let project = nico_scene::Project::open(&root).unwrap();
+        let mut project = nico_scene::Project::open(&root).unwrap();
+        project.manifest.default_scene = "assets/scenes/meadow.scene.toml".into();
         let scene = project.load_scene().unwrap();
         for failure in 0..7 {
             let mut invalid = scene.clone();
