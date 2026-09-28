@@ -8,7 +8,7 @@ use crate::{
     mcp::{CallToolResult, Map, Tool, Value},
 };
 
-pub(super) const VERSION: u32 = 2;
+pub(super) const VERSION: u32 = 3;
 pub(super) const MAX_FRAME: usize = 256 * 1024;
 pub(super) const MAX_TOOLS: usize = 64;
 pub(super) const QUEUE: usize = 32;
@@ -58,7 +58,6 @@ pub(super) enum Message {
     Ping,
     Call {
         id: u64,
-        origin: super::access::CallOrigin,
         name: String,
         arguments: Map<String, Value>,
     },

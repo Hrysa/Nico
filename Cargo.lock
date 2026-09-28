@@ -1577,12 +1577,10 @@ version = "0.1.0"
 name = "nico-ops"
 version = "0.1.0"
 dependencies = [
- "base64",
  "rmcp",
  "serde",
  "serde_json",
  "sha2",
- "tempfile",
  "tokio",
  "tracing",
  "uuid",

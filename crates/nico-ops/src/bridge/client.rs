@@ -181,10 +181,10 @@ async fn connected(
                     last_seen = tokio::time::Instant::now();
                     match message.ok_or_else(|| io::Error::other("bridge reader closed"))?? {
                         Message::Ping => {}
-                        Message::Call { id, origin, name, arguments } => {
+                        Message::Call { id, name, arguments } => {
                             if id <= last_call { return Err(io::Error::other("duplicate or out-of-order call ID")); }
                             last_call = id;
-                            let result = invoke_authorized(control, tools, access, &origin, (&instance_id, id), name, arguments);
+                            let result = invoke_authorized(control, tools, access, (&instance_id, id), name, arguments);
                             wire::write_message(&mut writer, &Message::Reply { id, result }).await?;
                         }
                         _ => return Err(io::Error::other("unexpected bridge message")),
@@ -201,19 +201,15 @@ fn invoke_authorized(
     control: &HostControl,
     tools: &ToolExtensions,
     access: &super::DebugAccess,
-    origin: &super::access::CallOrigin,
     call: (&str, u64),
     name: String,
     arguments: crate::mcp::Map<String, crate::mcp::Value>,
 ) -> crate::mcp::CallToolResult {
-    let permissions = access.permissions(origin);
+    let permissions = access.permissions();
     let admitted = tools
         .access(&name)
         .is_some_and(|required| permissions.contains(&required));
-    let session = match origin {
-        super::access::CallOrigin::Local => "local_mcp",
-        super::access::CallOrigin::Editor { session, .. } => session.as_str(),
-    };
+    let session = "local_mcp";
     if !admitted {
         tracing::info!(target: "nico::debug", session, connection_instance = call.0, call_id = call.1, tool = name, outcome = "rejected", "debug operation");
         return crate::mcp::CallToolResult::structured_error(
@@ -222,16 +218,9 @@ fn invoke_authorized(
     }
     let mut request = rmcp::model::CallToolRequestParams::new(name.clone());
     request.arguments = Some(arguments);
-    let mut result = invoke_host_tool(control, tools, request);
+    let result = invoke_host_tool(control, tools, request);
     if tools.access(&name) != Some(crate::mcp::ToolAccess::Inspect) {
         tracing::info!(target: "nico::debug", session, connection_instance = call.0, call_id = call.1, tool = name, tool_error = result.is_error == Some(true), outcome = "handler_returned", "debug operation; reply may only acknowledge queued work");
-    }
-    if name == "status" && matches!(origin, super::access::CallOrigin::Editor { .. }) {
-        let required: std::collections::BTreeMap<_, _> = host_tool_catalog(tools)
-            .iter()
-            .map(|tool| (tool.name.to_string(), tools.access(&tool.name)))
-            .collect();
-        result.meta.get_or_insert_with(Default::default).insert("nico.debug".into(), serde_json::json!({"permissions":permissions,"required_access":required,"session_id":session}));
     }
     result
 }
@@ -246,7 +235,6 @@ mod tests {
             &control,
             &ToolExtensions::default(),
             &super::super::DebugAccess::for_build(false),
-            &super::super::access::CallOrigin::Local,
             ("test-connection", 1),
             "stop".into(),
             Default::default(),
@@ -257,7 +245,6 @@ mod tests {
             &control,
             &ToolExtensions::default(),
             &super::super::DebugAccess::for_build(true),
-            &super::super::access::CallOrigin::Local,
             ("test-connection", 1),
             "stop".into(),
             Default::default(),

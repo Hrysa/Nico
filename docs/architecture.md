@@ -223,11 +223,11 @@ Snapshot reads never refresh publication time.
 Bridge adapters retain control handles across reconnects.
 Blocking startup or game systems can delay orderly stop.
 
-Debug RPC enforces separate inspection, capture, mutation, and stop permissions.
+Local MCP enforces separate inspection, capture, mutation, and stop permissions.
 Release hosts require explicit debug opt-in; local release MCP remains inspection-only.
-Credential changes can revoke access without stopping games.
-Entity inspection pins revisions and rejects stale handles.
-Attachment grants no process ownership.
+The editor RPC endpoint, session workers, credential grants, and capture downloader have been removed.
+Bridge protocol version 3 removes editor call origins; older hosts and bridges must be rebuilt together.
+Window capture still uses host snapshot controls, native GPU readback, and MCP PNG tools.
 
 Launch owns bounded diagnostics and capture encoding.
 Diagnostic cursors are process-local; history survives reconnects, not process exit.

@@ -1,6 +1,6 @@
 //! Native debug startup policy shared by client and server hosts.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::net::SocketAddr;
 
 use clap::Args;
 
@@ -9,9 +9,6 @@ pub struct DebugArgs {
     /// Explicitly enable debug operations in a release executable.
     #[arg(long, conflicts_with = "no_bridge")]
     pub enable_debug: bool,
-    /// Private host-local JSON credentials and grants; reread to enforce revocation.
-    #[arg(long, requires = "enable_debug")]
-    pub debug_access_file: Option<PathBuf>,
 }
 
 impl DebugArgs {
@@ -37,11 +34,7 @@ impl DebugArgs {
     }
 
     pub(crate) fn access(&self) -> nico_ops::bridge::DebugAccess {
-        let access = nico_ops::bridge::DebugAccess::default();
-        match &self.debug_access_file {
-            Some(path) => access.with_policy_file(path.clone()),
-            None => access,
-        }
+        nico_ops::bridge::DebugAccess::default()
     }
 }
 

@@ -7,10 +7,9 @@ license.workspace = true
 [features]
 default = []
 mcp = ["dep:rmcp", "dep:serde_json", "dep:serde", "dep:uuid"]
-bridge = ["mcp", "dep:base64", "dep:sha2", "dep:tokio", "dep:tracing", "rmcp/transport-io", "tokio/net", "tokio/sync", "tokio/io-util", "tokio/macros"]
+bridge = ["mcp", "dep:sha2", "dep:tokio", "dep:tracing", "rmcp/transport-io", "tokio/net", "tokio/sync", "tokio/io-util", "tokio/macros"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 sha2 = { version = "0.10", optional = true }
 tracing = { workspace = true, optional = true }
@@ -21,6 +20,3 @@ tokio = { version = "1", features = ["rt", "time"], optional = true }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-tempfile = "3"

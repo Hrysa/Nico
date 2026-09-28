@@ -86,12 +86,15 @@ Native checks covered acceptance and saved progress, but not the full kill-to-re
 
 The integrated editor and Play launcher were removed on 2026-09-28.
 CLI hosts reuse cached imports and require restart after content edits.
-Project scenes, authoring libraries, explicit cache/watch APIs, and bridge debug attachment remain.
+Project scenes, authoring libraries, explicit cache/watch APIs, and local MCP operations remain.
 Earlier editor results do not describe current CLI loading.
 
 Recorded removal checks passed Windows workspace and focused package checks.
 They did not include native visual gameplay.
-Debug RPC tunnel checks used one machine; physically remote deployment remains unverified.
+Editor RPC, credential grants, and the editor capture downloader were removed on 2026-09-28.
+MCP window capture remains available; the bridge wire protocol is now version 3.
+On macOS, workspace type checks and 65 bridge and host tests passed after this removal.
+These include snapshot and PNG transfer tests; no native GPU capture was performed for this removal.
 
 **Complete when:** A fresh checkout builds content and runs documented reference tests.
 Content changes reach the game through a clear workflow, and failures identify their source.

@@ -181,9 +181,10 @@ Discover current limits and supported actions through each tool's schema.
 
 Release hosts require --enable-debug; --bridge alone does not enable debugging.
 Local release MCP permits inspection only.
-The separate authenticated debug RPC endpoint requires explicit host grants for mutation, capture, and stop.
-Its APIs remain available, but the old editor UI and Play launcher are removed.
-See [debug access code](crates/nico-ops/src/bridge/access.rs) for policy types and validation.
+Development MCP permits inspection, capture, mutation, and stop.
+The editor RPC endpoint, credential files, and editor capture downloader have been removed.
+MCP window capture remains available through window_snapshot and window_snapshot_read.
+See [debug access code](crates/nico-ops/src/bridge/access.rs) for local permission rules.
 
 ## Content and tools
 

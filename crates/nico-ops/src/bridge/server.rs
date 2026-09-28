@@ -43,7 +43,6 @@ struct Catalog {
     tools: Vec<Tool>,
 }
 struct Command {
-    origin: super::access::CallOrigin,
     name: String,
     arguments: Map<String, Value>,
     reply: oneshot::Sender<CallToolResult>,
@@ -225,40 +224,12 @@ pub(super) struct Bridge {
 }
 
 impl Bridge {
-    pub(super) fn identity(&self, id: &str) -> Option<crate::identity::DebugIdentity> {
-        self.registry
-            .lock()
-            .unwrap()
-            .instances
-            .get(id)
-            .map(|instance| instance.identity.clone())
-    }
-
-    pub(super) fn compatible(&self, id: &str, api_version: &str) -> bool {
-        self.registry
-            .lock()
-            .unwrap()
-            .instances
-            .get(id)
-            .is_some_and(|instance| {
-                instance.sender.is_some() && instance.catalog.version == api_version
-            })
-    }
     fn changed(&self) {
         self.revision
             .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
     pub(super) async fn invoke(&self, request: CallToolRequestParams) -> CallToolResult {
-        self.invoke_as(request, super::access::CallOrigin::Local)
-            .await
-    }
-
-    pub(super) async fn invoke_as(
-        &self,
-        request: CallToolRequestParams,
-        origin: super::access::CallOrigin,
-    ) -> CallToolResult {
         let args = request.arguments.unwrap_or_default();
         let allowed: &[&str] = match request.name.as_ref() {
             "bridge_status" | "list_instances" => &[],
@@ -396,7 +367,6 @@ impl Bridge {
         };
         let (reply, response) = oneshot::channel();
         if let Err(error) = sender.try_send(Command {
-            origin,
             name,
             arguments,
             reply,
@@ -525,7 +495,7 @@ async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
                         continue;
                     }
                     next_id += 1;
-                    wire::write_message(&mut writer, &Message::Call {id:next_id,origin:command.origin,name:command.name,arguments:command.arguments}).await?;
+                    wire::write_message(&mut writer, &Message::Call {id:next_id,name:command.name,arguments:command.arguments}).await?;
                     pending.insert(next_id, command.reply);
                 }
                 message = incoming.recv() => {
@@ -565,18 +535,7 @@ async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
 /// Serves Codex on stdio and accepts independently launched games on loopback TCP.
 /// No game processes are spawned, terminated, or stopped on MCP disconnect.
 pub fn serve_stdio(address: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync>> {
-    serve_stdio_with_editor(address, None)
-}
-
-/// Serves local MCP and an optional authenticated editor endpoint concurrently.
-pub fn serve_stdio_with_editor(
-    address: SocketAddr,
-    editor: Option<super::editor::EditorEndpoint>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
     check_address(address)?;
-    if let Some(endpoint) = &editor {
-        check_address(endpoint.address)?;
-    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -587,37 +546,6 @@ pub fn serve_stdio_with_editor(
         let bridge = Bridge {
             registry: Arc::new(Mutex::new(Registry::new())),
             revision,
-        };
-        let editor_accepting = if let Some(endpoint) = editor {
-            let listener = TcpListener::bind(endpoint.address).await?;
-            let editor_bridge = bridge.clone();
-            let session_prefix = bridge.registry.lock().unwrap().session.clone();
-            Some(tokio::spawn(async move {
-                let slots = Arc::new(Semaphore::new(8));
-                let mut next_session = 0_u64;
-                loop {
-                    let (stream, _) = listener.accept().await?;
-                    let Ok(slot) = slots.clone().try_acquire_owned() else {
-                        continue;
-                    };
-                    next_session = next_session
-                        .checked_add(1)
-                        .ok_or_else(|| io::Error::other("editor session IDs exhausted"))?;
-                    let session = format!("{session_prefix}-editor-{next_session}");
-                    let bridge = editor_bridge.clone();
-                    let endpoint = endpoint.clone();
-                    tokio::spawn(async move {
-                        let _slot = slot;
-                        // No request or credential content is logged on failure.
-                        let _ =
-                            super::editor::serve_editor(stream, bridge, endpoint, session).await;
-                    });
-                }
-                #[allow(unreachable_code)]
-                Ok::<(), io::Error>(())
-            }))
-        } else {
-            None
         };
         let accept_bridge = bridge.clone();
         let accepting = tokio::spawn(async move {
@@ -642,9 +570,6 @@ pub fn serve_stdio_with_editor(
         let service = bridge.serve(rmcp::transport::stdio()).await?;
         let result = service.waiting().await;
         accepting.abort();
-        if let Some(task) = editor_accepting {
-            task.abort();
-        }
         result?;
         Ok(())
     });
@@ -700,228 +625,6 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned()
-    }
-
-    #[tokio::test]
-    async fn editor_endpoint_authenticates_attaches_revokes_and_never_owns_host_lifecycle() {
-        use super::super::{
-            BridgeClient, DebugAccess, EditorConnection, EditorEndpoint, EditorRequest,
-            GameRegistration,
-        };
-        use crate::mcp::{ToolAccess, ToolExtensions};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let dir = tempfile::tempdir().unwrap();
-        let endpoint_file = dir.path().join("endpoint-token");
-        let policy_file = dir.path().join("host-policy.json");
-        let endpoint_token = "a".repeat(64);
-        let host_token = "b".repeat(64);
-        std::fs::write(&endpoint_file, &endpoint_token).unwrap();
-        std::fs::write(
-            &policy_file,
-            json!({"grants":[{"credential":host_token}]}).to_string(),
-        )
-        .unwrap();
-        let bridge = bridge();
-        let game_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let game_address = game_listener.local_addr().unwrap();
-        let game_bridge = bridge.clone();
-        let game_task = tokio::spawn(async move {
-            let (stream, _) = game_listener.accept().await.unwrap();
-            serve_game(stream, game_bridge).await
-        });
-        let (control, _host_endpoint) = control_channel();
-        let mutations = Arc::new(AtomicUsize::new(0));
-        let mut tools = ToolExtensions::default();
-        tools
-            .register(Tool::new("inspect", "owned inspection", Map::new()), |_| {
-                CallToolResult::structured(json!({"revision":7}))
-            })
-            .unwrap();
-        tools.set_access("inspect", ToolAccess::Inspect).unwrap();
-        let count = mutations.clone();
-        tools
-            .register(Tool::new("mutate", "mutation", Map::new()), move |_| {
-                count.fetch_add(1, Ordering::SeqCst);
-                CallToolResult::structured(json!({"accepted":true}))
-            })
-            .unwrap();
-        let registration = GameRegistration {
-            access: DebugAccess::for_build(false).with_policy_file(policy_file.clone()),
-            ..GameRegistration::new("demo", GameRole::Server, "1")
-        };
-        let host = BridgeClient::start(game_address, registration, control.clone(), tools).unwrap();
-        let id = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            loop {
-                if let Some(id) = bridge
-                    .registry
-                    .lock()
-                    .unwrap()
-                    .instances
-                    .keys()
-                    .next()
-                    .cloned()
-                {
-                    break id;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let editor_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let editor_address = editor_listener.local_addr().unwrap();
-        let endpoint = EditorEndpoint {
-            address: editor_address,
-            token_file: endpoint_file.clone(),
-        };
-        let editor_bridge = bridge.clone();
-        let editor_task = tokio::spawn(async move {
-            for index in 0..3 {
-                let (stream, _) = editor_listener.accept().await.unwrap();
-                let bridge = editor_bridge.clone();
-                let endpoint = endpoint.clone();
-                tokio::spawn(async move {
-                    super::super::editor::serve_editor(
-                        stream,
-                        bridge,
-                        endpoint,
-                        format!("test-{index}"),
-                    )
-                    .await
-                });
-            }
-        });
-        let observation = control.clone();
-        tokio::task::spawn_blocking(move || {
-            use std::io::{BufRead, Write};
-            let mut unsupported = std::net::TcpStream::connect(editor_address).unwrap();
-            unsupported
-                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-                .unwrap();
-            writeln!(
-                unsupported,
-                "{}",
-                json!({"protocol":99,"token":endpoint_token})
-            )
-            .unwrap();
-            let mut response = String::new();
-            std::io::BufReader::new(unsupported)
-                .read_line(&mut response)
-                .unwrap();
-            assert_eq!(
-                error_code(serde_json::from_str(&response).unwrap()),
-                "authentication_failed"
-            );
-            assert!(EditorConnection::connect(editor_address, "c".repeat(64)).is_err());
-            let mut editor = EditorConnection::connect(editor_address, endpoint_token).unwrap();
-            assert_eq!(
-                editor
-                    .request(&EditorRequest::List)
-                    .unwrap()
-                    .structured_content
-                    .unwrap()["instances"][0]["instance_id"],
-                id
-            );
-            assert_eq!(
-                error_code(
-                    editor
-                        .request(&EditorRequest::Attach {
-                            instance_id: id.clone(),
-                            api_version: "2".into(),
-                            credential: host_token.clone()
-                        })
-                        .unwrap()
-                ),
-                "incompatible_instance"
-            );
-            assert_eq!(
-                error_code(
-                    editor
-                        .request(&EditorRequest::Attach {
-                            instance_id: id.clone(),
-                            api_version: "1".into(),
-                            credential: "c".repeat(64)
-                        })
-                        .unwrap()
-                ),
-                "access_denied"
-            );
-            let attach = || EditorRequest::Attach {
-                instance_id: id.clone(),
-                api_version: "1".into(),
-                credential: host_token.clone(),
-            };
-            assert_ne!(editor.request(&attach()).unwrap().is_error, Some(true));
-            assert_ne!(
-                editor.request(&EditorRequest::Catalog).unwrap().is_error,
-                Some(true)
-            );
-            let invoke = |name: &str| EditorRequest::Call {
-                tool_name: name.into(),
-                arguments: Map::new(),
-            };
-            assert_eq!(
-                editor
-                    .request(&invoke("inspect"))
-                    .unwrap()
-                    .structured_content
-                    .unwrap()["revision"],
-                7
-            );
-            for name in ["mutate", "stop"] {
-                assert_eq!(
-                    error_code(editor.request(&invoke(name)).unwrap()),
-                    "access_denied"
-                );
-            }
-            assert_eq!(mutations.load(Ordering::SeqCst), 0);
-            std::fs::write(
-                &policy_file,
-                json!({"grants":[{"credential":host_token,"permissions":["inspect","mutate"]}]})
-                    .to_string(),
-            )
-            .unwrap();
-            assert_ne!(
-                editor.request(&invoke("mutate")).unwrap().is_error,
-                Some(true)
-            );
-            assert_eq!(mutations.load(Ordering::SeqCst), 1);
-            std::fs::remove_file(&policy_file).unwrap();
-            assert_eq!(
-                error_code(editor.request(&invoke("inspect")).unwrap()),
-                "access_denied"
-            );
-            assert_eq!(
-                error_code(editor.request(&invoke("mutate")).unwrap()),
-                "access_denied"
-            );
-            assert_eq!(mutations.load(Ordering::SeqCst), 1);
-            assert_ne!(
-                editor.request(&EditorRequest::Detach).unwrap().is_error,
-                Some(true)
-            );
-            assert_eq!(
-                error_code(editor.request(&invoke("inspect")).unwrap()),
-                "not_attached"
-            );
-            std::fs::remove_file(&endpoint_file).unwrap();
-            assert_eq!(
-                error_code(editor.request(&EditorRequest::List).unwrap()),
-                "access_revoked"
-            );
-            drop(editor);
-            assert_eq!(observation.status().state, HostState::Starting);
-        })
-        .await
-        .unwrap();
-        editor_task.await.unwrap();
-        assert_eq!(control.status().state, HostState::Starting);
-        drop(host);
-        assert_eq!(
-            game_task.await.unwrap().unwrap_err().kind(),
-            io::ErrorKind::UnexpectedEof
-        );
     }
 
     #[test]
@@ -1066,7 +769,7 @@ mod tests {
         let (sender, _commands) = mpsc::channel(wire::QUEUE);
         let mut invalid = hello("demo", GameRole::Server, &["test"]);
         if let Message::Register { protocol, .. } = &mut invalid {
-            *protocol = 99;
+            *protocol = wire::VERSION - 1;
         }
         assert!(registry.register(invalid, sender.clone()).is_err());
         assert!(
@@ -1133,7 +836,6 @@ mod tests {
         let (reply, _response) = oneshot::channel();
         sender
             .try_send(Command {
-                origin: super::super::access::CallOrigin::Local,
                 name: "echo".into(),
                 arguments: Map::new(),
                 reply,
