@@ -220,7 +220,7 @@ mod tests {
             source.replace("radius_m = 0.4", "radius_m = nan"),
             source.replace("active_ticks = 6", "active_ticks = 65535"),
             source.replace("radius_m = 0.4", "radius_m = 0.4\nraduis = 1"),
-            source.replace("invulnerable_ticks = 12", "invulnerable_ticks = 19"),
+            source.replace("invulnerable_ticks = 12", "invulnerable_ticks = 53"),
         ] {
             assert!(CharacterLogicDefinition::parse(&invalid).is_err());
         }

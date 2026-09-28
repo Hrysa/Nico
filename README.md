@@ -62,6 +62,9 @@ cargo run -p arena-arpg-server -- --arena
 These hosts do not share the same encounter.
 Use default world mode for multiplayer.
 Arena uses the same movement and combat controls; R restarts the encounter.
+The hero's dodge lasts 23 ticks, about 0.38 seconds, playing the trimmed roll about 1.5 times faster.
+At 8 metres per second, an unobstructed dodge travels about 3.1 metres.
+Its cooldown lasts 52 ticks. Invulnerability covers the first 12 ticks.
 Add --procedural-hero to skip the hero's imported model and animation.
 
 Clients support --background to avoid requesting initial focus and --smoke-frames N for bounded sessions.

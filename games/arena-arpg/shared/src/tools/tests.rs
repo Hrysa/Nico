@@ -508,7 +508,7 @@ fn combat_completion_means_started_and_failures_are_deferred() {
     let dodge = call(&endpoint, "game_dodge", json!({"run_id":1,"x":1,"z":0}))["command_id"]
         .as_u64()
         .unwrap();
-    tick(&mut app, 18);
+    tick(&mut app, 23);
     assert_eq!(poll(&endpoint, dodge)["state"], "completed");
     let again = call(&endpoint, "game_dodge", json!({"run_id":1,"x":1,"z":0}))["command_id"]
         .as_u64()

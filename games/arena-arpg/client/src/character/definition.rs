@@ -74,6 +74,8 @@ pub struct ActionAnimationBinding {
     pub speed: f64,
     pub blend_seconds: f64,
     pub contact_seconds: Option<f64>,
+    /// Clip-relative dodge endpoint; omitted bindings use the full clip.
+    pub end_seconds: Option<f64>,
     pub authored_speed_mps: Option<f64>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -191,6 +193,11 @@ impl DefinitionValidation for CharacterVisualDefinition {
                     .is_none_or(|x| name == "attack" && x.is_finite() && x > 0.)
                     && (name != "attack" || a.contact_seconds.is_some()),
                 "animation contact_seconds",
+            )?;
+            check(
+                a.end_seconds
+                    .is_none_or(|x| name == "dodge" && x.is_finite() && x > 0.),
+                "animation end_seconds",
             )?;
             check(
                 a.authored_speed_mps
@@ -406,6 +413,7 @@ mod tests {
     fn malformed_visuals_fail_before_playback_with_field_context() {
         let source = include_str!("../../../assets/presentation/characters/hero.char-vis.toml");
         for invalid in [
+            source.replace("end_seconds = 0.566666667", "end_seconds = -1.0"),
             source.replace("schema_version = 1", "schema_version = 2"),
             source.replace("target_height_m = 1.8", "target_height_m = nan"),
             source.replace("floor_offset_m = 0.0", "floor_offest_m = 0.0"),

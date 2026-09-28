@@ -24,7 +24,8 @@ recovery_ticks = 18
 
 [arena.dodge]
 speed_mps = 8.0
-duration_ticks = 18
+# Play the trimmed roll about 1.5 times faster, rounded to whole ticks.
+duration_ticks = 23
 invulnerable_ticks = 12
-cooldown_ticks = 48
+cooldown_ticks = 52
 buffer_ticks = 9

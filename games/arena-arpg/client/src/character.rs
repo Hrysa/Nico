@@ -306,6 +306,12 @@ impl CharacterAssets {
         {
             return Err("animations.attack.contact_seconds must be inside the clip".into());
         }
+        if definition.arena.animations["dodge"]
+            .end_seconds
+            .is_some_and(|end| end > set.clips()[3].duration())
+        {
+            return Err("animations.dodge.end_seconds must be inside the clip".into());
+        }
         let playback = Arc::new(PlaybackSettings::new(&definition, &set));
         Ok(Arc::new(Self {
             set,
@@ -330,10 +336,14 @@ struct MotionParameters {
 struct PlaybackSettings {
     motions: [MotionParameters; 5],
     contact: f64,
+    dodge_end: f64,
 }
 impl PlaybackSettings {
     fn new(definition: &definition::CharacterVisualDefinition, set: &AnimationSet) -> Self {
         Self {
+            dodge_end: definition.arena.animations["dodge"]
+                .end_seconds
+                .unwrap_or(set.clips()[3].duration()),
             contact: definition.arena.animations["attack"]
                 .contact_seconds
                 .unwrap()
@@ -437,7 +447,12 @@ impl Controller {
             if current_action.is_some() && current_action == self.motion {
                 self.player.update_at(
                     delta,
-                    frame_action_position(actor, self.player.duration(), self.settings.contact),
+                    frame_action_position(
+                        actor,
+                        self.player.duration(),
+                        self.settings.contact,
+                        self.settings.dodge_end,
+                    ),
                 )?;
             } else {
                 self.player.update(delta)?;
@@ -486,7 +501,12 @@ impl Controller {
                         }
                         _ => 0.,
                     }),
-                    frame_action_position(actor, self.player.duration(), self.settings.contact),
+                    frame_action_position(
+                        actor,
+                        self.player.duration(),
+                        self.settings.contact,
+                        self.settings.dodge_end,
+                    ),
                 )?;
             }
             self.motion = Some(desired);
@@ -496,7 +516,12 @@ impl Controller {
     }
 }
 
-fn frame_action_position(actor: &CharacterFrame, duration: f64, contact: f64) -> f64 {
+fn frame_action_position(
+    actor: &CharacterFrame,
+    duration: f64,
+    contact: f64,
+    dodge_end: f64,
+) -> f64 {
     match actor.action {
         Action::Attack { elapsed, .. } => {
             let stats = actor.stats;
@@ -510,7 +535,7 @@ fn frame_action_position(actor: &CharacterFrame, duration: f64, contact: f64) ->
             duration * phase.clamp(0., 1.)
         }
         Action::Dodge { elapsed, .. } => {
-            duration * (f64::from(elapsed) / f64::from(actor.dodge_duration)).clamp(0., 1.)
+            dodge_end * (f64::from(elapsed) / f64::from(actor.dodge_duration)).clamp(0., 1.)
         }
         _ => 0.,
     }
@@ -854,6 +879,25 @@ mod tests {
         assert_eq!(c.player.time(), 0.);
     }
     #[test]
+    fn dodge_samples_trimmed_roll_at_faster_authoritative_timing() {
+        let mut c = controller();
+        let mut s = state();
+        update(&mut c, &s);
+        for elapsed in [1, 11, 22] {
+            s.tick = u64::from(elapsed);
+            s.actors[0].action = Action::Dodge {
+                elapsed,
+                direction: arena_arpg_shared::Vec2 { x: 0., z: 1. },
+            };
+            update(&mut c, &s);
+            assert!((c.player.time() - (34. / 60.) * f64::from(elapsed) / 23.).abs() < 1e-6);
+        }
+        s.tick = 23;
+        s.actors[0].action = Action::Idle;
+        update(&mut c, &s);
+        assert_eq!(c.motion, Some(Motion::Idle));
+    }
+    #[test]
     fn dodge_death_and_restart_obey_snapshot_precedence() {
         let mut c = controller();
         let mut s = state();
@@ -865,7 +909,7 @@ mod tests {
         };
         update(&mut c, &s);
         assert_eq!(c.motion, Some(Motion::Dodge(4)));
-        assert!((c.player.time() - 1. / 3.).abs() < 1e-6);
+        assert!((c.player.time() - (34. / 60.) * 6. / 23.).abs() < 1e-6);
         s.tick += 1;
         s.actors[0].action = Action::Idle;
         s.actors[0].health -= 20;

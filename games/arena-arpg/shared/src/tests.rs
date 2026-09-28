@@ -308,11 +308,17 @@ fn dodge_has_priority_cooldown_and_cannot_cross_actors() {
         a.snapshot.actors[0].action,
         Action::Dodge { elapsed: 1, .. }
     ));
-    idle(&mut a, 17);
+    assert_eq!(a.step(input).rejection, Some(Rejection::ActionLocked));
+    idle(&mut a, 20);
+    assert!(matches!(
+        a.snapshot.actors[0].action,
+        Action::Dodge { elapsed: 22, .. }
+    ));
+    idle(&mut a, 1);
     assert!(a.snapshot.actors[0].position.z <= 0.7);
     assert_eq!(a.snapshot.actors[0].action, Action::Idle);
     assert_eq!(a.step(input).rejection, Some(Rejection::Cooldown));
-    idle(&mut a, 29);
+    idle(&mut a, 28);
     assert_eq!(a.snapshot.actors[0].dodge_cooldown, 0);
     assert_eq!(a.step(input).rejection, None);
 }
@@ -454,7 +460,11 @@ fn play_encounter(a: &mut Arena) {
                 && matches!(m.action, Action::Attack { elapsed, .. } if elapsed < m.stats().windup)).collect();
             if hero.dodge_cooldown == 0 && let Some(threat) = threats.iter().find(|m| matches!(m.action, Action::Attack { elapsed, .. } if elapsed >= m.stats().windup - 12)) {
                 input.dodge = Some(Vec2::new(threat.facing.z, -threat.facing.x));
-            } else if toward.dot(toward) <= 4.0 && threats.is_empty() {
+            } else if toward.dot(toward) <= 4.0
+                && threats.iter().all(|m| matches!(m.action,
+                    Action::Attack { elapsed, .. }
+                    if m.stats().windup - elapsed > hero.stats().windup + hero.stats().active))
+            {
                 input.attack_yaw = Some(toward.x.atan2(toward.z));
             } else if toward.dot(toward) > 4.0 {
                 input.movement = toward.unit();

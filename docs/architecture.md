@@ -98,6 +98,9 @@ Presentation reads gameplay immutably and publishes owned scene snapshots.
 Renderers receive snapshots, never world access.
 Scene references retain CPU assets until released.
 Games own visual layout and animation choices.
+Arena maps action progress to animation time using authoritative action ticks.
+Dodge bindings may set a clip-relative `end_seconds` to exclude settling motion after the recovered pose.
+Bindings without this endpoint use the full clip. Clip loading rejects endpoints beyond the source duration.
 
 Rendering owns pipelines, uploads, draw order, submission, and presentation.
 RHI defines GPU contracts; providers own native resources and recovery.
