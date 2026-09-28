@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "apps/nico-bridge",
+    "apps/nico-mcp-bridge",
     "apps/nico-character-preview",
     "apps/nico-shaderc",
     "crates/nico-assets",

@@ -1,5 +1,5 @@
 [package]
-name = "nico-bridge"
+name = "nico-mcp-bridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

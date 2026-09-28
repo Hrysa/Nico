@@ -31,7 +31,7 @@ def main():
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)); processes.append(p); return p
     try:
         server=start('arena-arpg-server','--arena','--bridge',address)
-        bridge=Mcp(start('nico-bridge','--listen',address,mcp=True)); sid=bridge.ready('server')
+        bridge=Mcp(start('nico-mcp-bridge','--listen',address,mcp=True)); sid=bridge.ready('server')
         character_arguments=[]
         if args.procedural_hero:
             character_arguments=['--procedural-hero']

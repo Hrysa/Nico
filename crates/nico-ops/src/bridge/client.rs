@@ -89,7 +89,7 @@ impl BridgeClient {
             .build()?;
         let (shutdown, mut closing) = watch::channel(false);
         let worker_control = control.clone();
-        let worker = thread::Builder::new().name("nico-bridge-client".into()).spawn(move || {
+        let worker = thread::Builder::new().name("nico-mcp-bridge-client".into()).spawn(move || {
             runtime.block_on(async move {
                 loop {
                     if *closing.borrow() { break; }

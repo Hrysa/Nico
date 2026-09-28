@@ -118,7 +118,7 @@ def main():
     save_directory = tempfile.TemporaryDirectory(prefix="nico-world-native-")
     saves = save_directory.name
     try:
-        bridge = Mcp(start('nico-bridge', '--listen', bridge_address, mcp=True))
+        bridge = Mcp(start('nico-mcp-bridge', '--listen', bridge_address, mcp=True))
         def launch_server():
             process = start('arena-arpg-server', '--bridge', bridge_address, '--listen', game_address, '--data-dir', saves)
             return process, discover(process, 'server')

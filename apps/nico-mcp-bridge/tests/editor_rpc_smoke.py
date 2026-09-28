@@ -1,6 +1,6 @@
 """Validate release-server debug opt-in and editor RPC through an isolated bridge.
 
-Build nico-bridge in debug and arena-arpg-server in release first.
+Build nico-mcp-bridge in debug and arena-arpg-server in release first.
 No windows open; cleanup stops only processes owned by this test.
 Arena supplies game snapshots. Entity inspection stays covered by engine unit tests.
 """

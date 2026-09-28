@@ -427,7 +427,7 @@ impl Bridge {
 impl ServerHandler for Bridge {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_tool_list_changed().build())
-            .with_server_info(Implementation::new("nico-bridge", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new("nico-mcp-bridge", env!("CARGO_PKG_VERSION")))
             .with_instructions("Games start independently. First list_instances; use connected instance IDs. Cached tools may be offline. list_game_tools returns original game schemas; call_game_tool invokes them even if dynamic tool refresh is unavailable. A timeout or disconnect may leave execution outcome unknown. The bridge never starts or kills processes.")
     }
 
@@ -582,7 +582,7 @@ pub fn serve_stdio_with_editor(
         .build()?;
     let result = runtime.block_on(async move {
         let listener = TcpListener::bind(address).await?;
-        eprintln!("Nico bridge listening on {}", listener.local_addr()?);
+        eprintln!("Nico MCP bridge listening on {}", listener.local_addr()?);
         let (revision, _) = watch::channel(0);
         let bridge = Bridge {
             registry: Arc::new(Mutex::new(Registry::new())),

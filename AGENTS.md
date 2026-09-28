@@ -18,7 +18,7 @@ and motion retargeting. `nico-launch` owns native CLI and diagnostics startup; i
 `nico-ops` provides
 dependency-free host control, command bookkeeping, and owned snapshot publication.
 Its optional `mcp` feature owns host/game tool catalogs
-and handlers; `bridge` owns registration, routing, and reconnects. `apps/nico-bridge` is
+and handlers; `bridge` owns registration, routing, and reconnects. `apps/nico-mcp-bridge` is
 the executable entry point. Audio, UI, and broader devtools have no placeholder crates.
 Runtime must not depend on presentation, providers, or launch policy, and `nico-ecs`
 must not depend on runtime.
@@ -41,7 +41,7 @@ belong in `docs/`.
 - `cargo test --workspace`: run all unit and integration tests.
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: enforce lint-clean code.
-- `cargo build -p nico-bridge -p arena-arpg-client -p arena-arpg-server`: build the bridge and both hosts.
+- `cargo build -p nico-mcp-bridge -p arena-arpg-client -p arena-arpg-server`: build the bridge and both hosts.
 - `cargo run -p arena-arpg-client`: run the native world client.
 - `cargo run -p arena-arpg-client -- --arena --smoke-frames 3`: run a bounded solo client session.
   The counter does not guarantee three successful GPU presentations.
@@ -49,8 +49,8 @@ belong in `docs/`.
 - `cargo run -p nico-shaderc -- --check`: verify generated shaders; requires `slangc`.
 
 For isolated native checks, build these packages with `--target-dir target/bridge-validation`.
-Run `python apps/nico-bridge/tests/arena_native_smoke.py --bin-dir target/bridge-validation/debug` for solo combat and window checks.
-Run `python apps/nico-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug` for the two-client world scenario.
+Run `python apps/nico-mcp-bridge/tests/arena_native_smoke.py --bin-dir target/bridge-validation/debug` for solo combat and window checks.
+Run `python apps/nico-mcp-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug` for the two-client world scenario.
 These scripts open test windows, use private ports, and clean up only their own processes.
 Do not replace or stop a user's running session.
 Windows can lock running executable files; use a separate target directory when needed.
@@ -79,7 +79,7 @@ time, and preserve authoritative behavior. Profiling work does not block AI-acce
 client/server operations.
 
 Client and server operations must be accessible through structured, discoverable
-interfaces. Codex connects only to `nico-bridge`. Users launch games independently; the
+interfaces. Codex connects only to `nico-mcp-bridge`. Users launch games independently; the
 bridge never launches games, and bridge/Codex disconnect must not stop them. Games
 attempt connections to `127.0.0.1:47631` by default; `--no-bridge` disables attempts and
 `--bridge ADDRESS` overrides the endpoint. Client/server executables do not expose

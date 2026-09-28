@@ -1501,17 +1501,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nico-bridge"
-version = "0.1.0"
-dependencies = [
- "arena-arpg-shared",
- "clap",
- "nico-ops",
- "nico-runtime",
- "serde_json",
-]
-
-[[package]]
 name = "nico-character-preview"
 version = "0.1.0"
 dependencies = [
@@ -1556,6 +1545,17 @@ dependencies = [
  "sha2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nico-mcp-bridge"
+version = "0.1.0"
+dependencies = [
+ "arena-arpg-shared",
+ "clap",
+ "nico-ops",
+ "nico-runtime",
+ "serde_json",
 ]
 
 [[package]]

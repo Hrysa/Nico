@@ -85,9 +85,9 @@ A passing default test run does not cover every native or GPU path.
 Build Arena smoke binaries separately to avoid Windows locks from running games:
 
 ~~~sh
-cargo build -p nico-bridge -p arena-arpg-client -p arena-arpg-server --target-dir target/bridge-validation
-python apps/nico-bridge/tests/arena_native_smoke.py --bin-dir target/bridge-validation/debug
-python apps/nico-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug
+cargo build -p nico-mcp-bridge -p arena-arpg-client -p arena-arpg-server --target-dir target/bridge-validation
+python apps/nico-mcp-bridge/tests/arena_native_smoke.py --bin-dir target/bridge-validation/debug
+python apps/nico-mcp-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug
 ~~~
 
 These scripts open test windows, use isolated ports, and clean up only their own processes.
@@ -102,15 +102,15 @@ See [native check tasks](TODO.md#native-host-validation) for remaining manual wo
 Build the bridge:
 
 ~~~sh
-cargo build -p nico-bridge
+cargo build -p nico-mcp-bridge
 ~~~
 
-Register only nico-bridge with your MCP client.
+Register only nico-mcp-bridge with your MCP client.
 For Codex, the server configuration can use:
 
 ~~~toml
-[mcp_servers.nico-bridge]
-command = "E:/repos/Nico/target/debug/nico-bridge.exe"
+[mcp_servers.nico-mcp-bridge]
+command = "E:/repos/Nico/target/debug/nico-mcp-bridge.exe"
 args = ["--listen", "127.0.0.1:47631"]
 ~~~
 

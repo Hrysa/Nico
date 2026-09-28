@@ -35,7 +35,7 @@ Provider types stay inside their integration boundaries.
 | [nico-launch](../crates/nico-launch/src/lib.rs) | CLI, logging, diagnostics, and host setup |
 | [nico-ops](../crates/nico-ops/src/lib.rs) | Host control, bounded commands, snapshots, and optional bridge transport |
 | [nico-net](../crates/nico-net/src/lib.rs) | Bounded game TCP transport, without gameplay or runtime dependencies |
-| [apps/nico-bridge](../apps/nico-bridge/src/main.rs) | MCP entry point for independently launched games |
+| [apps/nico-mcp-bridge](../apps/nico-mcp-bridge/src/main.rs) | MCP entry point for independently launched games |
 | [apps/nico-shaderc](../apps/nico-shaderc/src/main.rs) | Offline shader compilation |
 
 ## Runtime and ECS
@@ -195,7 +195,7 @@ Single-threaded stepping and enhanced determinism do not prove cross-platform re
 
 ## AI operation requirements
 
-Codex connects only to nico-bridge.
+Codex connects only to nico-mcp-bridge.
 Users launch games independently; the bridge never launches or owns them.
 Bridge and Codex disconnect never stop games.
 Reconnects preserve gameplay and receive new instance IDs.

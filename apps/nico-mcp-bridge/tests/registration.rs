@@ -21,7 +21,7 @@ struct Mcp {
 }
 impl Mcp {
     fn start(address: SocketAddr) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nico-bridge"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nico-mcp-bridge"));
         command
             .args(["--listen", &address.to_string()])
             .stdin(Stdio::piped())
