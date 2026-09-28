@@ -4,7 +4,7 @@ use glam::Quat;
 #[cfg(test)]
 use glam::Vec3;
 use nico_assets::{MaterialTexture, Mesh, MeshVertex, PbrMaterial, Texture};
-use nico_presentation::{Camera3d, MeshInstance, Scene3d, SceneLighting};
+use nico_presentation::{Camera3d, MeshInstance, Scene3d};
 #[cfg(test)]
 use nico_presentation_control::model::ModelBounds;
 use std::sync::Arc;
@@ -358,11 +358,6 @@ impl Landscape {
         }
     }
     pub fn backdrop(&self, camera: Camera3d, scene: &mut Scene3d) {
-        scene.lighting = SceneLighting {
-            direction: [-0.4364358, 0.8728716, -0.2182179],
-            radiance: [2.4, 2.25, 1.95],
-            ambient: [0.48, 0.55, 0.60],
-        };
         let mut sky = self.sky.clone();
         sky.position = camera.position;
         sky.scale = camera.far * 0.92;
@@ -515,11 +510,11 @@ mod tests {
     #[test]
     #[ignore = "manual baseline of existing expanded grass generation"]
     fn expanded_grass_generation_measurement() {
-        let zone = ZoneDefinition::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/logic/worlds/meadow.world.toml"),
+        let zone = arena_arpg_shared::project::ProjectContent::open(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
         )
-        .unwrap();
+        .unwrap()
+        .zone;
         let start = std::time::Instant::now();
         let grass = build_grass(&zone);
         let elapsed = start.elapsed();
@@ -542,11 +537,11 @@ mod tests {
 
     #[test]
     fn meadow_ground_matches_collision_plane_and_grass_respects_draw_budget() {
-        let zone = ZoneDefinition::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/logic/worlds/meadow.world.toml"),
+        let zone = arena_arpg_shared::project::ProjectContent::open(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
         )
-        .unwrap();
+        .unwrap()
+        .zone;
         let mut landscape = Landscape::new(&zone);
         assert!(
             landscape.hills.mesh.as_ref().unwrap().vertices()[..97]

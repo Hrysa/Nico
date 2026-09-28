@@ -1,0 +1,864 @@
+schema_version = 1
+
+[[entities]]
+id = "world"
+name = "World"
+[entities.components]
+"arena.world" = { "rules" = "assets/logic/worlds/meadow.rules.toml", "characters" = "assets/logic/characters", "item" = "assets/logic/items/iron-sword.item.toml" }
+"arena.environment" = { "library" = "assets/presentation/worlds/meadow.world-vis.toml", "characters" = "assets/presentation/characters" }
+"arena.quest" = { "warden" = "warden", "camp" = "camp", "camp_radius_m" = 12.0 }
+
+[[entities]]
+id = "player-spawn"
+name = "Player Spawn"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 0.0, -20.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.player_spawn" = {  }
+
+[[entities]]
+id = "warden"
+name = "Warden"
+[entities.components]
+"nico.transform" = { "position" = [3.0, 0.0, -18.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+
+[[entities]]
+id = "camp"
+name = "Camp"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 0.0, 9.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+
+[[entities]]
+id = "camera"
+scope = "client"
+name = "Camera"
+[entities.components]
+"nico.camera" = { "vertical_fov_radians" = 1.0, "near" = 0.05, "far" = 200.0, "active" = true }
+"nico.orbit" = { "sensitivity" = [-0.003, 0.003], "pitch_limits" = [0.15, 1.1], "distance" = 7.5, "minimum_distance" = 0.15, "radius" = 0.2, "collision_margin" = 0.02, "restoration_rate" = 10.0, "maximum_delta" = 0.1, "yaw" = 0.0, "pitch" = 0.48 }
+"arena.follow_player" = { "spawn" = "player-spawn", "offset" = [0.0, 1.2, 0.0] }
+
+[[entities]]
+id = "sun"
+scope = "client"
+name = "Sun"
+[entities.components]
+"nico.directional_light" = { "direction" = [-0.4364358, 0.8728716, -0.2182179], "radiance" = [2.4, 2.25, 1.95] }
+
+[[entities]]
+id = "ambient"
+scope = "client"
+name = "Ambient"
+[entities.components]
+"nico.ambient_light" = { "radiance" = [0.48, 0.55, 0.6] }
+
+[[entities]]
+id = "house-west"
+name = "House West"
+[entities.components]
+"nico.transform" = { "position" = [-9.0, 2.0, -22.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [6.0, 4.0, 7.0], "color" = [0.65, 0.46, 0.28, 1.0] }
+"arena.scenery" = { "model" = "rock2" }
+
+[[entities]]
+id = "house-east"
+name = "House East"
+[entities.components]
+"nico.transform" = { "position" = [9.0, 2.0, -22.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [6.0, 4.0, 7.0], "color" = [0.55, 0.4, 0.3, 1.0] }
+"arena.scenery" = { "model" = "rock" }
+
+[[entities]]
+id = "rock-west"
+name = "Rock West"
+[entities.components]
+"nico.transform" = { "position" = [-15.0, 1.5, 5.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [4.0, 3.0, 5.0], "color" = [0.4, 0.44, 0.4, 1.0] }
+"arena.scenery" = { "model" = "rock" }
+
+[[entities]]
+id = "rock-east"
+name = "Rock East"
+[entities.components]
+"nico.transform" = { "position" = [16.0, 2.0, 14.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [5.0, 4.0, 6.0], "color" = [0.4, 0.44, 0.4, 1.0] }
+"arena.scenery" = { "model" = "rock2" }
+
+[[entities]]
+id = "tree-0"
+name = "Tree 0"
+[entities.components]
+"nico.transform" = { "position" = [-20.0, 1.4, -30.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "pine", "height_m" = 6.4 }
+
+[[entities]]
+id = "tree-1"
+name = "Tree 1"
+[entities.components]
+"nico.transform" = { "position" = [20.0, 1.4, -30.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.1, "autumn" = true }
+
+[[entities]]
+id = "tree-2"
+name = "Tree 2"
+[entities.components]
+"nico.transform" = { "position" = [-19.0, 1.4, -9.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.8 }
+
+[[entities]]
+id = "tree-3"
+name = "Tree 3"
+[entities.components]
+"nico.transform" = { "position" = [19.0, 1.4, -9.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "canopy", "height_m" = 6.4, "autumn" = true }
+
+[[entities]]
+id = "tree-4"
+name = "Tree 4"
+[entities.components]
+"nico.transform" = { "position" = [-25.0, 1.4, 7.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.1 }
+
+[[entities]]
+id = "tree-5"
+name = "Tree 5"
+[entities.components]
+"nico.transform" = { "position" = [25.0, 1.4, 7.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.8, "autumn" = true }
+
+[[entities]]
+id = "tree-6"
+name = "Tree 6"
+[entities.components]
+"nico.transform" = { "position" = [-20.0, 1.4, 27.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "pine", "height_m" = 6.4 }
+
+[[entities]]
+id = "tree-7"
+name = "Tree 7"
+[entities.components]
+"nico.transform" = { "position" = [20.0, 1.4, 27.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.1, "autumn" = true }
+
+[[entities]]
+id = "tree-8"
+name = "Tree 8"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 1.4, 34.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.box_collider" = { "size" = [1.0, 2.8, 1.0], "color" = [0.35, 0.25, 0.15, 1.0] }
+"arena.scenery" = { "model" = "tree", "height_m" = 7.8 }
+
+[[entities]]
+id = "monster-0"
+name = "Monster 0"
+[entities.components]
+"nico.transform" = { "position" = [-7.0, 0.0, 7.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.monster_spawn" = { "kind" = "grunt" }
+
+[[entities]]
+id = "monster-1"
+name = "Monster 1"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 0.0, 12.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.monster_spawn" = { "kind" = "grunt" }
+
+[[entities]]
+id = "monster-2"
+name = "Monster 2"
+[entities.components]
+"nico.transform" = { "position" = [7.0, 0.0, 7.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.monster_spawn" = { "kind" = "brute" }
+
+[[entities]]
+id = "decoration-0"
+scope = "client"
+name = "Decoration 0"
+[entities.components]
+"nico.transform" = { "position" = [-27.994, 0.0, -43.0], "rotation_radians" = [0.0, 1.122, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 8.655, "autumn" = false }
+
+[[entities]]
+id = "decoration-1"
+scope = "client"
+name = "Decoration 1"
+[entities.components]
+"nico.transform" = { "position" = [-35.885, 0.0, -33.0], "rotation_radians" = [0.0, 3.661, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 8.379, "autumn" = false }
+
+[[entities]]
+id = "decoration-2"
+scope = "client"
+name = "Decoration 2"
+[entities.components]
+"nico.transform" = { "position" = [-38.514, 0.0, -12.0], "rotation_radians" = [0.0, 2.713, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 8.677, "autumn" = false }
+
+[[entities]]
+id = "decoration-3"
+scope = "client"
+name = "Decoration 3"
+[entities.components]
+"nico.transform" = { "position" = [-32.022, 0.0, 0.0], "rotation_radians" = [0.0, 5.421, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 10.733, "autumn" = false }
+
+[[entities]]
+id = "decoration-4"
+scope = "client"
+name = "Decoration 4"
+[entities.components]
+"nico.transform" = { "position" = [-29.133, 0.0, 19.0], "rotation_radians" = [0.0, 0.301, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 7.003, "autumn" = false }
+
+[[entities]]
+id = "decoration-5"
+scope = "client"
+name = "Decoration 5"
+[entities.components]
+"nico.transform" = { "position" = [-28.476, 0.0, 32.0], "rotation_radians" = [0.0, 2.557, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 10.897, "autumn" = false }
+
+[[entities]]
+id = "decoration-6"
+scope = "client"
+name = "Decoration 6"
+[entities.components]
+"nico.transform" = { "position" = [-34.96, 0.0, 43.0], "rotation_radians" = [0.0, 1.381, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "twisted", "height_m" = 9.841, "autumn" = false }
+
+[[entities]]
+id = "decoration-7"
+scope = "client"
+name = "Decoration 7"
+[entities.components]
+"nico.transform" = { "position" = [36.31, 0.0, -43.0], "rotation_radians" = [0.0, 3.397, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 9.3, "autumn" = true }
+
+[[entities]]
+id = "decoration-8"
+scope = "client"
+name = "Decoration 8"
+[entities.components]
+"nico.transform" = { "position" = [26.457, 0.0, -33.0], "rotation_radians" = [0.0, 6.251, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 8.558, "autumn" = true }
+
+[[entities]]
+id = "decoration-9"
+scope = "client"
+name = "Decoration 9"
+[entities.components]
+"nico.transform" = { "position" = [36.039, 0.0, -12.0], "rotation_radians" = [0.0, 3.385, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 9.224, "autumn" = true }
+
+[[entities]]
+id = "decoration-10"
+scope = "client"
+name = "Decoration 10"
+[entities.components]
+"nico.transform" = { "position" = [34.228, 0.0, 0.0], "rotation_radians" = [0.0, 2.932, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 7.037, "autumn" = true }
+
+[[entities]]
+id = "decoration-11"
+scope = "client"
+name = "Decoration 11"
+[entities.components]
+"nico.transform" = { "position" = [28.128, 0.0, 19.0], "rotation_radians" = [0.0, 1.012, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 10.459, "autumn" = true }
+
+[[entities]]
+id = "decoration-12"
+scope = "client"
+name = "Decoration 12"
+[entities.components]
+"nico.transform" = { "position" = [38.095, 0.0, 32.0], "rotation_radians" = [0.0, 4.746, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 7.508, "autumn" = true }
+
+[[entities]]
+id = "decoration-13"
+scope = "client"
+name = "Decoration 13"
+[entities.components]
+"nico.transform" = { "position" = [34.332, 0.0, 43.0], "rotation_radians" = [0.0, 5.681, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "canopy", "height_m" = 7.951, "autumn" = true }
+
+[[entities]]
+id = "decoration-14"
+scope = "client"
+name = "Decoration 14"
+[entities.components]
+"nico.transform" = { "position" = [-4.658, 0.0, 31.089], "rotation_radians" = [0.0, 1.224, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.225, "autumn" = false }
+
+[[entities]]
+id = "decoration-15"
+scope = "client"
+name = "Decoration 15"
+[entities.components]
+"nico.transform" = { "position" = [14.15, 0.0, -32.631], "rotation_radians" = [0.0, 5.759, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.611, "autumn" = false }
+
+[[entities]]
+id = "decoration-16"
+scope = "client"
+name = "Decoration 16"
+[entities.components]
+"nico.transform" = { "position" = [-7.508, 0.0, -38.925], "rotation_radians" = [0.0, 3.62, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.902, "autumn" = false }
+
+[[entities]]
+id = "decoration-17"
+scope = "client"
+name = "Decoration 17"
+[entities.components]
+"nico.transform" = { "position" = [9.367, 0.0, -34.45], "rotation_radians" = [0.0, 0.063, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.298, "autumn" = false }
+
+[[entities]]
+id = "decoration-18"
+scope = "client"
+name = "Decoration 18"
+[entities.components]
+"nico.transform" = { "position" = [-6.064, 0.0, 20.743], "rotation_radians" = [0.0, 6.067, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.589, "autumn" = false }
+
+[[entities]]
+id = "decoration-19"
+scope = "client"
+name = "Decoration 19"
+[entities.components]
+"nico.transform" = { "position" = [18.557, 0.0, 35.694], "rotation_radians" = [0.0, 3.684, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.658, "autumn" = false }
+
+[[entities]]
+id = "decoration-20"
+scope = "client"
+name = "Decoration 20"
+[entities.components]
+"nico.transform" = { "position" = [-13.867, 0.0, 29.295], "rotation_radians" = [0.0, 4.186, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 0.791, "autumn" = false }
+
+[[entities]]
+id = "decoration-21"
+scope = "client"
+name = "Decoration 21"
+[entities.components]
+"nico.transform" = { "position" = [9.327, 0.0, 10.083], "rotation_radians" = [0.0, 1.894, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.731, "autumn" = false }
+
+[[entities]]
+id = "decoration-22"
+scope = "client"
+name = "Decoration 22"
+[entities.components]
+"nico.transform" = { "position" = [-21.267, 0.0, 15.797], "rotation_radians" = [0.0, 0.011, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.78, "autumn" = false }
+
+[[entities]]
+id = "decoration-23"
+scope = "client"
+name = "Decoration 23"
+[entities.components]
+"nico.transform" = { "position" = [14.623, 0.0, -37.601], "rotation_radians" = [0.0, 1.547, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.124, "autumn" = false }
+
+[[entities]]
+id = "decoration-24"
+scope = "client"
+name = "Decoration 24"
+[entities.components]
+"nico.transform" = { "position" = [-20.473, 0.0, -4.909], "rotation_radians" = [0.0, 0.853, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.602, "autumn" = false }
+
+[[entities]]
+id = "decoration-25"
+scope = "client"
+name = "Decoration 25"
+[entities.components]
+"nico.transform" = { "position" = [8.537, 0.0, -14.526], "rotation_radians" = [0.0, 1.012, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.64, "autumn" = false }
+
+[[entities]]
+id = "decoration-26"
+scope = "client"
+name = "Decoration 26"
+[entities.components]
+"nico.transform" = { "position" = [-20.147, 0.0, 30.435], "rotation_radians" = [0.0, 1.677, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 0.778, "autumn" = false }
+
+[[entities]]
+id = "decoration-27"
+scope = "client"
+name = "Decoration 27"
+[entities.components]
+"nico.transform" = { "position" = [7.111, 0.0, 4.332], "rotation_radians" = [0.0, 0.609, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.497, "autumn" = false }
+
+[[entities]]
+id = "decoration-28"
+scope = "client"
+name = "Decoration 28"
+[entities.components]
+"nico.transform" = { "position" = [-7.987, 0.0, -14.572], "rotation_radians" = [0.0, 1.529, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.853, "autumn" = false }
+
+[[entities]]
+id = "decoration-29"
+scope = "client"
+name = "Decoration 29"
+[entities.components]
+"nico.transform" = { "position" = [20.03, 0.0, 10.634], "rotation_radians" = [0.0, 1.755, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.596, "autumn" = false }
+
+[[entities]]
+id = "decoration-30"
+scope = "client"
+name = "Decoration 30"
+[entities.components]
+"nico.transform" = { "position" = [-5.344, 0.0, -9.469], "rotation_radians" = [0.0, 3.966, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.709, "autumn" = false }
+
+[[entities]]
+id = "decoration-31"
+scope = "client"
+name = "Decoration 31"
+[entities.components]
+"nico.transform" = { "position" = [7.052, 0.0, -33.305], "rotation_radians" = [0.0, 4.26, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.759, "autumn" = false }
+
+[[entities]]
+id = "decoration-32"
+scope = "client"
+name = "Decoration 32"
+[entities.components]
+"nico.transform" = { "position" = [-13.208, 0.0, 35.942], "rotation_radians" = [0.0, 5.305, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.036, "autumn" = false }
+
+[[entities]]
+id = "decoration-33"
+scope = "client"
+name = "Decoration 33"
+[entities.components]
+"nico.transform" = { "position" = [6.798, 0.0, -9.201], "rotation_radians" = [0.0, 5.744, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.789, "autumn" = false }
+
+[[entities]]
+id = "decoration-34"
+scope = "client"
+name = "Decoration 34"
+[entities.components]
+"nico.transform" = { "position" = [-12.642, 0.0, -10.334], "rotation_radians" = [0.0, 2.548, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.679, "autumn" = false }
+
+[[entities]]
+id = "decoration-35"
+scope = "client"
+name = "Decoration 35"
+[entities.components]
+"nico.transform" = { "position" = [22.542, 0.0, -23.861], "rotation_radians" = [0.0, 5.179, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.78, "autumn" = false }
+
+[[entities]]
+id = "decoration-36"
+scope = "client"
+name = "Decoration 36"
+[entities.components]
+"nico.transform" = { "position" = [-19.828, 0.0, -24.729], "rotation_radians" = [0.0, 3.858, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.634, "autumn" = false }
+
+[[entities]]
+id = "decoration-37"
+scope = "client"
+name = "Decoration 37"
+[entities.components]
+"nico.transform" = { "position" = [14.641, 0.0, 37.611], "rotation_radians" = [0.0, 5.449, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.68, "autumn" = false }
+
+[[entities]]
+id = "decoration-38"
+scope = "client"
+name = "Decoration 38"
+[entities.components]
+"nico.transform" = { "position" = [-17.874, 0.0, 36.538], "rotation_radians" = [0.0, 3.322, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.291, "autumn" = false }
+
+[[entities]]
+id = "decoration-39"
+scope = "client"
+name = "Decoration 39"
+[entities.components]
+"nico.transform" = { "position" = [6.754, 0.0, -14.892], "rotation_radians" = [0.0, 2.838, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.675, "autumn" = false }
+
+[[entities]]
+id = "decoration-40"
+scope = "client"
+name = "Decoration 40"
+[entities.components]
+"nico.transform" = { "position" = [-15.38, 0.0, -30.198], "rotation_radians" = [0.0, 2.074, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.729, "autumn" = false }
+
+[[entities]]
+id = "decoration-41"
+scope = "client"
+name = "Decoration 41"
+[entities.components]
+"nico.transform" = { "position" = [10.861, 0.0, -13.112], "rotation_radians" = [0.0, 3.774, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.196, "autumn" = false }
+
+[[entities]]
+id = "decoration-42"
+scope = "client"
+name = "Decoration 42"
+[entities.components]
+"nico.transform" = { "position" = [-19.419, 0.0, -21.174], "rotation_radians" = [0.0, 5.496, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.479, "autumn" = false }
+
+[[entities]]
+id = "decoration-43"
+scope = "client"
+name = "Decoration 43"
+[entities.components]
+"nico.transform" = { "position" = [22.302, 0.0, -41.65], "rotation_radians" = [0.0, 1.303, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.826, "autumn" = false }
+
+[[entities]]
+id = "decoration-44"
+scope = "client"
+name = "Decoration 44"
+[entities.components]
+"nico.transform" = { "position" = [-17.783, 0.0, -0.978], "rotation_radians" = [0.0, 0.215, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 0.838, "autumn" = false }
+
+[[entities]]
+id = "decoration-45"
+scope = "client"
+name = "Decoration 45"
+[entities.components]
+"nico.transform" = { "position" = [7.858, 0.0, -40.828], "rotation_radians" = [0.0, 2.352, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.666, "autumn" = false }
+
+[[entities]]
+id = "decoration-46"
+scope = "client"
+name = "Decoration 46"
+[entities.components]
+"nico.transform" = { "position" = [-13.633, 0.0, -0.546], "rotation_radians" = [0.0, 2.606, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.625, "autumn" = false }
+
+[[entities]]
+id = "decoration-47"
+scope = "client"
+name = "Decoration 47"
+[entities.components]
+"nico.transform" = { "position" = [16.029, 0.0, 11.048], "rotation_radians" = [0.0, 3.096, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.254, "autumn" = false }
+
+[[entities]]
+id = "decoration-48"
+scope = "client"
+name = "Decoration 48"
+[entities.components]
+"nico.transform" = { "position" = [-16.571, 0.0, -1.403], "rotation_radians" = [0.0, 0.147, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.442, "autumn" = false }
+
+[[entities]]
+id = "decoration-49"
+scope = "client"
+name = "Decoration 49"
+[entities.components]
+"nico.transform" = { "position" = [15.624, 0.0, 24.446], "rotation_radians" = [0.0, 4.641, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.783, "autumn" = false }
+
+[[entities]]
+id = "decoration-50"
+scope = "client"
+name = "Decoration 50"
+[entities.components]
+"nico.transform" = { "position" = [-5.399, 0.0, 3.033], "rotation_radians" = [0.0, 4.503, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.035, "autumn" = false }
+
+[[entities]]
+id = "decoration-51"
+scope = "client"
+name = "Decoration 51"
+[entities.components]
+"nico.transform" = { "position" = [12.105, 0.0, -35.989], "rotation_radians" = [0.0, 2.287, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.492, "autumn" = false }
+
+[[entities]]
+id = "decoration-52"
+scope = "client"
+name = "Decoration 52"
+[entities.components]
+"nico.transform" = { "position" = [-16.953, 0.0, -25.28], "rotation_radians" = [0.0, 5.854, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.696, "autumn" = false }
+
+[[entities]]
+id = "decoration-53"
+scope = "client"
+name = "Decoration 53"
+[entities.components]
+"nico.transform" = { "position" = [12.263, 0.0, 1.636], "rotation_radians" = [0.0, 2.853, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.423, "autumn" = false }
+
+[[entities]]
+id = "decoration-54"
+scope = "client"
+name = "Decoration 54"
+[entities.components]
+"nico.transform" = { "position" = [-22.2, 0.0, 33.311], "rotation_radians" = [0.0, 4.443, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.449, "autumn" = false }
+
+[[entities]]
+id = "decoration-55"
+scope = "client"
+name = "Decoration 55"
+[entities.components]
+"nico.transform" = { "position" = [11.695, 0.0, -8.192], "rotation_radians" = [0.0, 6.11, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.894, "autumn" = false }
+
+[[entities]]
+id = "decoration-56"
+scope = "client"
+name = "Decoration 56"
+[entities.components]
+"nico.transform" = { "position" = [-14.381, 0.0, -34.235], "rotation_radians" = [0.0, 2.562, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.092, "autumn" = false }
+
+[[entities]]
+id = "decoration-57"
+scope = "client"
+name = "Decoration 57"
+[entities.components]
+"nico.transform" = { "position" = [15.646, 0.0, 26.075], "rotation_radians" = [0.0, 4.609, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.726, "autumn" = false }
+
+[[entities]]
+id = "decoration-58"
+scope = "client"
+name = "Decoration 58"
+[entities.components]
+"nico.transform" = { "position" = [-15.398, 0.0, -14.302], "rotation_radians" = [0.0, 3.609, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.586, "autumn" = false }
+
+[[entities]]
+id = "decoration-59"
+scope = "client"
+name = "Decoration 59"
+[entities.components]
+"nico.transform" = { "position" = [15.418, 0.0, -37.889], "rotation_radians" = [0.0, 3.383, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.073, "autumn" = false }
+
+[[entities]]
+id = "decoration-60"
+scope = "client"
+name = "Decoration 60"
+[entities.components]
+"nico.transform" = { "position" = [-22.487, 0.0, -20.672], "rotation_radians" = [0.0, 1.372, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.524, "autumn" = false }
+
+[[entities]]
+id = "decoration-61"
+scope = "client"
+name = "Decoration 61"
+[entities.components]
+"nico.transform" = { "position" = [19.809, 0.0, -0.211], "rotation_radians" = [0.0, 4.053, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.853, "autumn" = false }
+
+[[entities]]
+id = "decoration-62"
+scope = "client"
+name = "Decoration 62"
+[entities.components]
+"nico.transform" = { "position" = [-12.816, 0.0, 22.389], "rotation_radians" = [0.0, 6.066, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.121, "autumn" = false }
+
+[[entities]]
+id = "decoration-63"
+scope = "client"
+name = "Decoration 63"
+[entities.components]
+"nico.transform" = { "position" = [15.084, 0.0, -27.743], "rotation_radians" = [0.0, 0.668, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.792, "autumn" = false }
+
+[[entities]]
+id = "decoration-64"
+scope = "client"
+name = "Decoration 64"
+[entities.components]
+"nico.transform" = { "position" = [-4.825, 0.0, -38.495], "rotation_radians" = [0.0, 4.02, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.879, "autumn" = false }
+
+[[entities]]
+id = "decoration-65"
+scope = "client"
+name = "Decoration 65"
+[entities.components]
+"nico.transform" = { "position" = [5.677, 0.0, 29.31], "rotation_radians" = [0.0, 1.72, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.634, "autumn" = false }
+
+[[entities]]
+id = "decoration-66"
+scope = "client"
+name = "Decoration 66"
+[entities.components]
+"nico.transform" = { "position" = [-11.604, 0.0, -15.499], "rotation_radians" = [0.0, 0.518, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.537, "autumn" = false }
+
+[[entities]]
+id = "decoration-67"
+scope = "client"
+name = "Decoration 67"
+[entities.components]
+"nico.transform" = { "position" = [13.004, 0.0, -1.661], "rotation_radians" = [0.0, 3.876, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.739, "autumn" = false }
+
+[[entities]]
+id = "decoration-68"
+scope = "client"
+name = "Decoration 68"
+[entities.components]
+"nico.transform" = { "position" = [-5.023, 0.0, 3.425], "rotation_radians" = [0.0, 2.316, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.04, "autumn" = false }
+
+[[entities]]
+id = "decoration-69"
+scope = "client"
+name = "Decoration 69"
+[entities.components]
+"nico.transform" = { "position" = [14.865, 0.0, -5.868], "rotation_radians" = [0.0, 3.418, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.624, "autumn" = false }
+
+[[entities]]
+id = "decoration-70"
+scope = "client"
+name = "Decoration 70"
+[entities.components]
+"nico.transform" = { "position" = [-17.787, 0.0, -27.737], "rotation_radians" = [0.0, 6.114, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.648, "autumn" = false }
+
+[[entities]]
+id = "decoration-71"
+scope = "client"
+name = "Decoration 71"
+[entities.components]
+"nico.transform" = { "position" = [15.598, 0.0, 28.878], "rotation_radians" = [0.0, 1.905, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.621, "autumn" = false }
+
+[[entities]]
+id = "decoration-72"
+scope = "client"
+name = "Decoration 72"
+[entities.components]
+"nico.transform" = { "position" = [-18.785, 0.0, -21.467], "rotation_radians" = [0.0, 1.242, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.643, "autumn" = false }
+
+[[entities]]
+id = "decoration-73"
+scope = "client"
+name = "Decoration 73"
+[entities.components]
+"nico.transform" = { "position" = [6.999, 0.0, 24.563], "rotation_radians" = [0.0, 2.481, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.672, "autumn" = false }
+
+[[entities]]
+id = "decoration-74"
+scope = "client"
+name = "Decoration 74"
+[entities.components]
+"nico.transform" = { "position" = [-9.16, 0.0, -39.681], "rotation_radians" = [0.0, 6.052, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.053, "autumn" = false }
+
+[[entities]]
+id = "decoration-75"
+scope = "client"
+name = "Decoration 75"
+[entities.components]
+"nico.transform" = { "position" = [20.894, 0.0, 11.675], "rotation_radians" = [0.0, 3.207, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.718, "autumn" = false }
+
+[[entities]]
+id = "decoration-76"
+scope = "client"
+name = "Decoration 76"
+[entities.components]
+"nico.transform" = { "position" = [-18.445, 0.0, -11.137], "rotation_radians" = [0.0, 5.343, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.716, "autumn" = false }
+
+[[entities]]
+id = "decoration-77"
+scope = "client"
+name = "Decoration 77"
+[entities.components]
+"nico.transform" = { "position" = [10.821, 0.0, 19.802], "rotation_radians" = [0.0, 4.476, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.358, "autumn" = false }
+
+[[entities]]
+id = "decoration-78"
+scope = "client"
+name = "Decoration 78"
+[entities.components]
+"nico.transform" = { "position" = [-17.41, 0.0, -15.022], "rotation_radians" = [0.0, 1.449, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.701, "autumn" = false }
+
+[[entities]]
+id = "decoration-79"
+scope = "client"
+name = "Decoration 79"
+[entities.components]
+"nico.transform" = { "position" = [12.245, 0.0, 11.404], "rotation_radians" = [0.0, 3.175, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.667, "autumn" = false }
+
+[[entities]]
+id = "decoration-80"
+scope = "client"
+name = "Decoration 80"
+[entities.components]
+"nico.transform" = { "position" = [-11.122, 0.0, -3.429], "rotation_radians" = [0.0, 4.718, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "fern", "height_m" = 1.213, "autumn" = false }
+
+[[entities]]
+id = "decoration-81"
+scope = "client"
+name = "Decoration 81"
+[entities.components]
+"nico.transform" = { "position" = [20.633, 0.0, -33.245], "rotation_radians" = [0.0, 1.983, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers", "height_m" = 0.756, "autumn" = false }
+
+[[entities]]
+id = "decoration-82"
+scope = "client"
+name = "Decoration 82"
+[entities.components]
+"nico.transform" = { "position" = [-8.13, 0.0, 21.297], "rotation_radians" = [0.0, 3.203, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowers2", "height_m" = 0.542, "autumn" = false }
+
+[[entities]]
+id = "decoration-83"
+scope = "client"
+name = "Decoration 83"
+[entities.components]
+"nico.transform" = { "position" = [5.627, 0.0, 26.211], "rotation_radians" = [0.0, 0.403, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "flowerbush", "height_m" = 1.807, "autumn" = false }
+
+[[entities]]
+id = "decoration-84"
+scope = "client"
+name = "Decoration 84"
+[entities.components]
+"nico.transform" = { "position" = [-21.858, 0.0, 8.674], "rotation_radians" = [0.0, 1.298, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "mushroom", "height_m" = 0.572, "autumn" = false }
+
+[[entities]]
+id = "decoration-85"
+scope = "client"
+name = "Decoration 85"
+[entities.components]
+"nico.transform" = { "position" = [18.954, 0.0, -13.262], "rotation_radians" = [0.0, 4.619, 0.0], "scale" = 1.0 }
+"arena.scenery" = { "model" = "rock2", "height_m" = 0.886, "autumn" = false }

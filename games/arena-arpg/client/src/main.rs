@@ -1,6 +1,7 @@
 mod camera;
 mod character;
 mod controls;
+mod scene;
 mod view;
 mod visuals;
 mod world;
@@ -19,8 +20,11 @@ use std::path::PathBuf;
 #[command(about = "Persistent multiplayer action RPG with an optional arena combat test")]
 struct Args {
     /// Saved Arena project; loads its world and character assets as one revision.
-    #[arg(long, conflicts_with_all = ["arena", "logic_characters", "visual_characters", "visual_world", "character_model", "character_animations"])]
+    #[arg(long)]
     project: Option<PathBuf>,
+    /// Scene asset relative to the project root.
+    #[arg(long, conflicts_with = "arena")]
+    scene: Option<std::path::PathBuf>,
     #[command(flatten)]
     common: CommonArgs,
     /// Run the standalone arena combat test instead of the multiplayer world.
@@ -33,13 +37,13 @@ struct Args {
     #[command(flatten)]
     host: ClientArgs,
     /// Directory containing hero/grunt/brute .char.toml definitions.
-    #[arg(long, default_value = arena_arpg_shared::characters::DEFAULT_LOGIC_ROOT)]
+    #[arg(skip = PathBuf::from(arena_arpg_shared::characters::DEFAULT_LOGIC_ROOT))]
     logic_characters: PathBuf,
     /// Directory containing matching .char-vis.toml definitions and relative assets.
-    #[arg(long, default_value = character::definition::DEFAULT_VISUAL_ROOT)]
+    #[arg(skip = PathBuf::from(character::definition::DEFAULT_VISUAL_ROOT))]
     visual_characters: PathBuf,
     /// Client-only scenery definition; solid placements come from the server zone.
-    #[arg(long, default_value = world::environment::DEFAULT_VISUAL_WORLD)]
+    #[arg(skip = PathBuf::from(world::environment::DEFAULT_VISUAL_WORLD))]
     visual_world: PathBuf,
     /// Override the hero model; requires the selected animation directory.
     #[arg(long, requires = "character_animations")]
@@ -53,32 +57,28 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args = Args::parse();
     init_logging(args.common.log_level)?;
-    let content = args
-        .project
-        .as_deref()
-        .map(arena_arpg_shared::project::ProjectContent::open)
-        .transpose()?;
-    if let Some(content) = &content {
-        args.logic_characters = content.asset("assets/logic/characters")?;
-        args.visual_characters = content.asset("assets/presentation/characters")?;
-        args.visual_world = arena_arpg_shared::project::ProjectContent::default_scene(
-            args.project.as_deref().unwrap(),
-        )?;
-    }
-    if content.is_none()
-        && args.visual_world == std::path::Path::new(world::environment::DEFAULT_VISUAL_WORLD)
-    {
-        args.visual_world = arena_arpg_shared::project::ProjectContent::default_scene(
-            std::path::Path::new("games/arena-arpg"),
-        )?;
-    }
+    let content = arena_arpg_shared::project::ProjectContent::load_scene(
+        args.project.as_deref().unwrap_or(std::path::Path::new(
+            arena_arpg_shared::project::DEFAULT_PROJECT,
+        )),
+        args.scene.as_deref().or_else(|| {
+            args.arena
+                .then_some(std::path::Path::new("assets/scenes/arena.scene.toml"))
+        }),
+        nico_scene::HostRole::Client,
+    )?;
+    args.arena = content.mode()? == arena_arpg_shared::scene::WorldMode::Arena;
+    args.logic_characters = content.source("logic_characters")?;
+    args.visual_characters = content.source("visual_characters")?;
+    args.visual_world = content.source("visual")?;
+    let presentation = scene::Presentation::load(&content)?;
     let logic = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
     let definitions = character::definition::load_visuals(&args.visual_characters, &logic)?;
     let overrides = args
         .character_model
         .as_deref()
         .zip(args.character_animations.as_deref());
-    let loaded = load_project_assets(&args, &definitions)?;
+    let loaded = load_project_assets(&args, &definitions, &content)?;
     let mut character = std::array::from_fn(|_| None);
     for (index, definition) in definitions.iter().enumerate() {
         if definition.core.model.is_some() && !(index == 0 && args.procedural_hero) {
@@ -90,20 +90,40 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )?);
         }
     }
-    let builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
+    let mut builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
+    content.attach(&mut builder, nico_scene::HostRole::Client)?;
     let (builder, tools) = if !args.arena {
         let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
-        let environment =
+        let mut environment =
             world::environment::Environment::from_loaded(&args.visual_world, &loaded)?;
-        world::register(builder, client, character, definitions, environment)?
+        environment.apply_scene(&content.scene)?;
+        environment.bind(&content.zone)?;
+        world::register(
+            builder,
+            client,
+            character,
+            definitions,
+            environment,
+            presentation,
+        )?
     } else {
         let (builder, mut tools) = arena_arpg_shared::tools::register(
             builder
-                .add_plugin(controls::ControlsPlugin)
-                .add_plugin(ArenaPlugin::with_characters(logic.clone())),
+                .add_plugin(controls::ControlsPlugin(presentation.camera.clone()))
+                .add_plugin(ArenaPlugin::with_scene(
+                    logic.clone(),
+                    arena_arpg_shared::scene::arena_level(&content.zone)?,
+                )),
         )?;
         (
-            view::register_configured(builder, &mut tools, character, definitions, logic)?,
+            view::register_configured(
+                builder,
+                &mut tools,
+                character,
+                definitions,
+                logic,
+                presentation.lighting,
+            )?,
             tools,
         )
     };
@@ -134,10 +154,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut host = ClientHost::new(args.host)
         .with_game_identity("arena_arpg", "1")
         .with_mcp_tools(tools);
-    if let Some(content) = &content {
-        content.verify()?;
-        host = host.with_content_revision(content.revision.clone());
-    }
+    content.verify()?;
+    host = host.with_content_revision(content.revision.clone());
     if !args.arena {
         host.run(builder.build()?, config, world::map_input)?;
     } else {
@@ -149,6 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 fn load_project_assets(
     args: &Args,
     definitions: &[character::definition::CharacterVisualDefinition; 3],
+    content: &arena_arpg_shared::project::ProjectContent,
 ) -> Result<nico_assets::graph::LoadedAssets, Box<dyn std::error::Error + Send + Sync>> {
     use std::path::Path;
     let root = args
@@ -161,16 +180,7 @@ fn load_project_assets(
             .and_then(|name| name.to_str())
             .ok_or("invalid asset filename")?;
         if name == "nico.project.toml" {
-            // The project selects the scene; Arena's catalog selects its character definitions.
-            let scene =
-                arena_arpg_shared::project::ProjectContent::default_scene(path.parent().unwrap())?;
-            let scene = if args.visual_world == Path::new(world::environment::DEFAULT_VISUAL_WORLD)
-            {
-                scene
-            } else {
-                args.visual_world.canonicalize()?
-            };
-            let mut sources = vec![scene];
+            let mut sources = vec![content.scene_path()?];
             for name in arena_arpg_shared::characters::NAMES {
                 sources.push(
                     args.visual_characters
@@ -181,6 +191,9 @@ fn load_project_assets(
             return Ok(sources);
         }
 
+        if path == content.scene_path()? {
+            return Ok(vec![content.source("visual")?]);
+        }
         if name.ends_with(".char-vis.toml") {
             let definition = character::definition::CharacterVisualDefinition::parse(
                 &arena_arpg_shared::characters::read_definition(path)?,
@@ -236,7 +249,10 @@ mod tests {
         let _observer = nico_assets::progress::observe_progress(move |update| {
             send.send(update).unwrap();
         });
-        let assets = load_project_assets(&args, &definitions).unwrap();
+        let content =
+            arena_arpg_shared::project::ProjectContent::load(&root, nico_scene::HostRole::Client)
+                .unwrap();
+        let assets = load_project_assets(&args, &definitions, &content).unwrap();
         assert!(!assets.is_empty());
         for definition in definitions {
             if definition.core.model.is_some() {
@@ -293,10 +309,11 @@ mod tests {
             "startup measurement: environment assets {:?}",
             phase.elapsed()
         );
-        let zone = arena_arpg_shared::open_world::content::ZoneDefinition::load(
-            &root.join("games/arena-arpg/assets/logic/worlds/meadow.world.toml"),
-        )
-        .unwrap();
+        let content =
+            arena_arpg_shared::project::ProjectContent::open(&root.join("games/arena-arpg"))
+                .unwrap();
+        environment.apply_scene(&content.scene).unwrap();
+        let zone = content.zone;
         let phase = Instant::now();
         environment.bind(&zone).unwrap();
         eprintln!(

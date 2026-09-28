@@ -12,6 +12,7 @@ use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 pub struct Visuals {
+    pub lighting: nico_presentation::SceneLighting,
     pub debug_combat: bool,
     debug_colliders: Vec<Arc<Mesh>>,
     debug_sectors: Vec<Arc<Mesh>>,
@@ -82,6 +83,7 @@ impl Visuals {
             })
             .collect();
         Self {
+            lighting: Default::default(),
             debug_combat: false,
             debug_colliders: vec![],
             debug_sectors: vec![],
@@ -188,6 +190,7 @@ impl Visuals {
                 .collect();
         }
         let mut scene = Scene3d {
+            lighting: self.lighting,
             camera,
             ..Default::default()
         };

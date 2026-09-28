@@ -34,10 +34,10 @@ struct Held {
     wave: u8,
     suppress: bool,
 }
-pub struct ControlsPlugin;
+pub struct ControlsPlugin(pub Camera);
 impl Plugin for ControlsPlugin {
     fn build(&self, builder: &mut AppBuilder) -> RuntimeResult<()> {
-        builder.insert_resource(Camera::default());
+        builder.insert_resource(self.0.clone());
         builder.insert_resource(Held::default());
         let mut frames = EventReader::<FrameInput>::new();
         let mut focus = EventReader::<WindowFocusLost>::new();
@@ -129,7 +129,7 @@ mod tests {
     use arena_arpg_shared::{ArenaPlugin, FIXED_STEP};
     fn app() -> nico_runtime::App {
         let mut app = AppBuilder::new()
-            .add_plugin(ControlsPlugin)
+            .add_plugin(ControlsPlugin(Camera::default()))
             .add_plugin(ArenaPlugin)
             .build()
             .unwrap();
@@ -226,7 +226,7 @@ mod boundary_tests {
     #[test]
     fn rounded_camera_pi_and_diagonal_input_produce_valid_combat() {
         let mut app = AppBuilder::new()
-            .add_plugin(ControlsPlugin)
+            .add_plugin(ControlsPlugin(Camera::default()))
             .add_plugin(ArenaPlugin)
             .build()
             .unwrap();

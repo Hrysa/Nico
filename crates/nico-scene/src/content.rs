@@ -119,7 +119,10 @@ fn digest(
         collect(project.root(), path, &mut files, 0, &mut entries, cancelled)?;
     }
     let mut hash = Sha256::new();
-    hash.update(b"nico-content-v1\0");
+    hash.update(b"nico-content-v2\0");
+    let selected = project.manifest.default_scene.to_string_lossy();
+    hash.update((selected.len() as u64).to_le_bytes());
+    hash.update(selected.as_bytes());
     let mut total = 0_u64;
     for relative in files {
         check(cancelled)?;

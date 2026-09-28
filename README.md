@@ -222,8 +222,11 @@ Load Arena's declared project:
 cargo run -p arena-arpg-client -- --project games/arena-arpg
 ~~~
 
-Both Arena hosts accept --project for declared logic and visual content.
-It cannot be combined with --arena or conflicting content overrides.
+Both hosts load the project’s `default_scene` before starting gameplay.
+Use `--scene assets/scenes/arena.scene.toml` to select another scene within that project.
+`--arena` selects that same solo scene and cannot be combined with `--scene`.
+Scenes compose entities from typed components, including world references, placements, camera settings, and lights.
+Servers create shared gameplay components and skip client components.
 Restart affected hosts after editing source files.
 
 CLI games and preview tools reuse imported data in debug and release builds.
@@ -237,12 +240,12 @@ GPU resource reuse is separate from persistent import caching.
 Arena and character preview load models and textures with up to four CPU workers per batch.
 Startup waits for required assets; library callers can poll batches without blocking.
 Arena makes one recursive load request from `nico.project.toml`.
-`default_scene` selects world content. Arena's character catalog supplies its character definitions.
-Game assets live under `assets/logic` and `assets/presentation`; the project needs no root or startup asset lists.
+`default_scene` selects a `SceneDefinition`. Its components reference rules, character catalogs, and the scenery library.
+Scenes live under `assets/scenes`; referenced assets live under `assets/logic` and `assets/presentation`.
 Shared source files load once. Each model completes after its referenced textures are ready.
 Progress counts unique GLB and PNG source files once, then logs only completed-count changes.
 Embedded textures belong to their model's progress unit.
-The `[authoring]` section holds the retained adapter and source paths; `[editor]` has been removed.
+The `[authoring]` section selects the retained adapter, which edits the same scene loaded by both hosts.
 
 | Need | Starting point |
 | --- | --- |

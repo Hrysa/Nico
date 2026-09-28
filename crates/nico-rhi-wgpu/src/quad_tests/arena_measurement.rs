@@ -2,7 +2,6 @@
 //! Loading and streaming settle before timing; this is not a startup benchmark.
 use super::*;
 use arena_arpg_presentation::environment::Environment;
-use arena_arpg_shared::open_world::content::ZoneDefinition;
 use nico_presentation::{Camera3d, Scene3d};
 use nico_render::{InstanceRenderMode, MeshRenderPipeline};
 use std::time::{Duration, Instant};
@@ -27,9 +26,11 @@ fn gpu_arena_moving_grass_measurement() {
 
 fn arena_measurement(expanded_baseline: bool, moving: bool) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../games/arena-arpg");
-    let zone = ZoneDefinition::load(&root.join("assets/logic/worlds/meadow.world.toml")).unwrap();
+    let content = arena_arpg_shared::project::ProjectContent::open(&root).unwrap();
+    let zone = content.zone;
     let mut environment =
         Environment::load(&root.join("assets/presentation/worlds/meadow.world-vis.toml")).unwrap();
+    environment.apply_scene(&content.scene).unwrap();
     environment.bind(&zone).unwrap();
     let subgroup_shader = std::env::var_os("NICO_MEASUREMENT_SUBGROUP_SHADER");
     let timestamps = std::env::var("NICO_MEASUREMENT_GPU_TIMESTAMPS").as_deref() == Ok("1");

@@ -4,8 +4,8 @@ pub mod characters;
 mod collision;
 pub use collision::move_on_floor;
 pub mod open_world;
-#[cfg(feature = "project")]
 pub mod project;
+pub mod scene;
 use characters::CharacterCatalog;
 use std::sync::Arc;
 pub mod geometry;

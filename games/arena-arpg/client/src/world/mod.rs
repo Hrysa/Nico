@@ -133,6 +133,7 @@ pub fn register(
     assets: [Option<Arc<CharacterAssets>>; 3],
     definitions: [CharacterVisualDefinition; 3],
     environment: environment::Environment,
+    presentation: crate::scene::Presentation,
 ) -> std::io::Result<(AppBuilder, ToolExtensions)> {
     let ops = Arc::new(Mutex::new(Operations {
         commands: FifoCommands::new(128),
@@ -172,7 +173,7 @@ pub fn register(
         tools.set_access(name, nico_ops::mcp::ToolAccess::Inspect)?;
     }
     builder.insert_resource(client);
-    builder.insert_resource(Camera::default());
+    builder.insert_resource(presentation.camera);
     builder.insert_resource(CombatDebug::default());
     builder.insert_resource(Scene3d::default());
     builder.insert_resource(UiScene::default());
@@ -232,14 +233,14 @@ pub fn register(
     });
     let read = ops.clone();
     let mut visuals = visuals::Visuals::new(assets, definitions, environment);
+    visuals.lighting = presentation.lighting;
     builder.add_system(Stage::Update,"world_client::extract",move|ctx|{
         let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
         let client=ctx.world.resource::<WorldClient>()?;let position=client.prediction.as_ref().map(|p|p.actor.position).unwrap_or(client.zone.settlement);let obstacles=client.zone.obstacles.clone();let dt=ctx.time.delta();
         let camera=ctx.world.resource_mut::<Camera>()?;
-        let mut view=camera.rig.view([position.x as f32,1.2,position.z as f32],dt.as_secs_f32(),|sweep|obstacles.iter().filter_map(|o|sweep.cast_aabb(std::array::from_fn(|i|(o.center[i]-o.size[i]/2.)as f32),std::array::from_fn(|i|(o.center[i]+o.size[i]/2.)as f32))).reduce(f32::min));
+        let view=camera.rig.view([position.x as f32+camera.follow_offset[0],camera.follow_offset[1],position.z as f32+camera.follow_offset[2]],dt.as_secs_f32(),|sweep|obstacles.iter().filter_map(|o|sweep.cast_aabb(std::array::from_fn(|i|(o.center[i]-o.size[i]/2.)as f32),std::array::from_fn(|i|(o.center[i]+o.size[i]/2.)as f32))).reduce(f32::min));
         let camera_info=json!({"yaw":camera.rig.yaw(),"pitch":camera.rig.pitch(),"distance":camera.rig.distance(),"position":view.position});
         let client=ctx.world.resource::<WorldClient>()?;
-        view.far=200.;
         visuals.debug_combat=ctx.world.resource::<CombatDebug>()?.0;
         let (scene,hud)=visuals.render(client,view,window.logical_size,window.pointer_captured,dt).map_err(|message|RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message})?;
         if scene.meshes.len()>256{return Err(RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message:"world draw budget exceeded".into()});}

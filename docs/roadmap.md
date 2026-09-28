@@ -29,6 +29,19 @@ The `--arena` option keeps client and server simulations independent.
 Character names are local development identities, not authenticated accounts.
 Resource limits do not prove player capacity or broad hardware support.
 
+### Scene startup migration — 2026-09-29
+
+Both Arena hosts now load composed `SceneDefinition` assets before gameplay starts.
+Scenes own camera settings, lighting, world references, collider placements, spawns, and scenery placement.
+The retained authoring adapter edits that same scene. Server startup skips client component creation.
+
+On macOS arm64, workspace checking passed with all targets and features.
+Focused tests across scene, authoring, and four Arena packages passed: 137 tests, three ignored measurements.
+Coverage includes scene selection, role filtering, owned entity cleanup, camera settings, lights, and invalid references.
+Clippy passed for those packages with the existing `chunks_exact_to_as_chunks` lint allowed.
+Strict Clippy remains blocked by that existing lint in rendering and grass import code.
+Native rendering and user-observed gameplay were not checked for this migration.
+
 ## 1. Run a native client
 
 **Remaining goal:** Complete native lifecycle checks on supported platforms.

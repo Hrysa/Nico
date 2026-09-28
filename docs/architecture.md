@@ -166,7 +166,8 @@ Polling does not block. Cancellation is cooperative; dropping a batch cancels qu
 Workers return owned values. GPU work and runtime publication stay on their owning threads.
 Arena starts one dependency graph from `nico.project.toml`, using `default_scene` and its character catalog.
 Project asset references stay under the fixed `assets` folder.
-Content hashes and snapshots include the manifest, default scene, and `assets` folder.
+Content hashes include the selected scene path, manifest, and `assets` folder.
+Snapshots include the manifest and project assets.
 `assets/logic` holds authoritative content; `assets/presentation` holds client content.
 Game readers resolve definition references; engine workers load unique GLB and PNG sources and their embedded textures.
 Traversal rejects cycles and missing files before loading. One fixed progress total counts source files, including their embedded dependencies.
@@ -176,6 +177,27 @@ Worker cache counts return through the caller's progress scope.
 Texture batches reserve their total RGBA budget before decoding and share identical images.
 Runtime asset stores keep their existing worker and update-boundary publication.
 Persistent import storage and GPU resource reuse are separate.
+
+### Authored scenes
+
+`nico-scene` owns `SceneDefinition`, entity identities, component registration, and prepared scene creation.
+Each entity contains named, typed components. Registrations declare shared, client, or server ownership.
+Preparation checks schemas, component values, asset paths, and entity references before creating any runtime entities.
+Hosts instantiate supported components at startup. Shutdown removes only entities owned by that scene.
+Servers validate presentation references without importing meshes or creating camera and light components.
+
+Arena loads its selected scene through `ProjectContent` on both hosts.
+Scene components reference reusable world rules, character catalogs, item definitions, and a scenery library.
+Transforms, collider boxes, spawns, quest markers, camera controls, and lights belong to scene entities.
+The game compiles authoritative components into its existing zone snapshot for networking and simulation.
+The client reads camera and light components when building its presentation state.
+The retained authoring adapter edits and saves this same scene.
+
+Arena currently requires one orbit camera, one directional light, and one ambient light.
+Actor spawns and quest markers are planar. Collider boxes remain axis-aligned.
+Scenery supports Y rotation and authored height. Unsupported transforms fail validation.
+Solo scenes retain the fixed arena bounds and three initial spawn kinds required by the wave rules.
+Scene components configure startup; live component edits do not automatically rebuild game resources.
 
 Offline Slang compilation produces checked-in WGSL outside Cargo's build graph.
 Hosts load shaders and prepare pipelines before their first redraw.

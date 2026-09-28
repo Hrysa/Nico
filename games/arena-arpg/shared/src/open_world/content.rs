@@ -1,7 +1,6 @@
 use super::{ITEM_SWORD, ObjectKind, Vec2, ZONE_LIMIT};
 use nico_assets::definition::DefinitionValidation;
 use serde::{Deserialize, Serialize};
-pub const DEFAULT_WORLD: &str = "games/arena-arpg/assets/logic/worlds/meadow.world.toml";
 pub const DEFAULT_ITEM: &str = "games/arena-arpg/assets/logic/items/iron-sword.item.toml";
 #[derive(Clone, Debug, Serialize, Deserialize, nico_assets::definition::Definition)]
 #[serde(deny_unknown_fields)]

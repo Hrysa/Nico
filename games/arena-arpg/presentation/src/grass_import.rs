@@ -424,11 +424,11 @@ mod tests {
         }
     }
     fn zone() -> ZoneDefinition {
-        ZoneDefinition::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/logic/worlds/meadow.world.toml"),
+        arena_arpg_shared::project::ProjectContent::open(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
         )
         .unwrap()
+        .zone
     }
     #[test]
     fn cached_provider_reentry_preserves_records_and_shares_prototype() {

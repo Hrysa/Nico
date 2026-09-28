@@ -19,24 +19,32 @@ impl Plugin for ArenaPlugin {
         install(app, Arena::default())
     }
 }
-pub struct ConfiguredArenaPlugin(std::sync::Arc<crate::characters::CharacterCatalog>);
+pub struct ConfiguredArenaPlugin(
+    std::sync::Arc<crate::characters::CharacterCatalog>,
+    crate::Level,
+);
 impl ArenaPlugin {
+    pub fn with_scene(
+        characters: std::sync::Arc<crate::characters::CharacterCatalog>,
+        level: crate::Level,
+    ) -> ConfiguredArenaPlugin {
+        ConfiguredArenaPlugin(characters, level)
+    }
     pub fn with_characters(
         characters: std::sync::Arc<crate::characters::CharacterCatalog>,
     ) -> ConfiguredArenaPlugin {
-        ConfiguredArenaPlugin(characters)
+        ConfiguredArenaPlugin(characters, crate::Level::default())
     }
 }
 impl Plugin for ConfiguredArenaPlugin {
     fn build(&self, app: &mut AppBuilder) -> RuntimeResult<()> {
-        let arena =
-            Arena::with_characters(crate::Level::default(), self.0.clone()).map_err(|e| {
-                RuntimeError::System {
-                    stage: "Startup",
-                    name: "arena::characters".into(),
-                    message: format!("invalid character spawn configuration: {e:?}"),
-                }
-            })?;
+        let arena = Arena::with_characters(self.1.clone(), self.0.clone()).map_err(|e| {
+            RuntimeError::System {
+                stage: "Startup",
+                name: "arena::characters".into(),
+                message: format!("invalid character spawn configuration: {e:?}"),
+            }
+        })?;
         install(app, arena)
     }
 }

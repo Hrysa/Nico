@@ -1,6 +1,6 @@
 version = 1
 name = "Arena ARPG"
-default_scene = "assets/presentation/worlds/meadow.world-vis.toml"
+default_scene = "assets/scenes/meadow.scene.toml"
 
 [targets]
 client = "arena-arpg-client"
@@ -8,6 +8,3 @@ server = "arena-arpg-server"
 
 [authoring]
 adapter = "arena-world-v1"
-[authoring.sources]
-logic = "assets/logic/worlds/meadow.world.toml"
-visual = "assets/presentation/worlds/meadow.world-vis.toml"

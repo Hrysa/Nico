@@ -264,7 +264,9 @@ fn equip_and_pickup_require_owned_items_and_proximity() {
 #[test]
 fn authored_zone_loads_obstacles_and_camp_and_rejects_blocked_spawns() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/logic");
-    let zone = content::ZoneDefinition::load(&root.join("worlds/meadow.world.toml")).unwrap();
+    let zone = crate::project::ProjectContent::open(&root.join("../.."))
+        .unwrap()
+        .zone;
     let item = content::ItemDefinition::load(&root.join("items/iron-sword.item.toml")).unwrap();
     let mut world = OpenWorld::with_content(CharacterCatalog::builtin(), zone, item).unwrap();
     assert_eq!(world.objects().len(), 3);
@@ -293,9 +295,11 @@ fn authored_zone_loads_obstacles_and_camp_and_rejects_blocked_spawns() {
 
 #[test]
 fn named_tree_obstacles_block_spawns_and_reject_duplicate_ids() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../assets/logic/worlds/meadow.world.toml");
-    let mut zone = content::ZoneDefinition::load(&path).unwrap();
+    let mut zone = crate::project::ProjectContent::open(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
+    )
+    .unwrap()
+    .zone;
     assert!(zone.blocked(Vec2::new(-20., -30.), 0.4));
     assert!(!zone.blocked(Vec2::new(0., -10.), 0.4));
     let mut world = OpenWorld::with_content(

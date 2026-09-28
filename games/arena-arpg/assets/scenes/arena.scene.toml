@@ -1,0 +1,64 @@
+schema_version = 1
+
+[[entities]]
+id = "world"
+name = "World"
+scope = "shared"
+[entities.components]
+"arena.world" = { "rules" = "assets/logic/worlds/arena.rules.toml", "characters" = "assets/logic/characters", "item" = "assets/logic/items/iron-sword.item.toml", "mode" = "arena" }
+"arena.environment" = { "library" = "assets/presentation/worlds/meadow.world-vis.toml", "characters" = "assets/presentation/characters" }
+
+[[entities]]
+id = "player-spawn"
+name = "Player Spawn"
+scope = "shared"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 0.0, -6.0], "rotation_radians" = [0.0, 0, 0.0], "scale" = 1.0 }
+"arena.player_spawn" = {  }
+
+[[entities]]
+id = "camera"
+name = "Camera"
+scope = "client"
+[entities.components]
+"nico.camera" = { "vertical_fov_radians" = 1.0, "near" = 0.05, "far" = 80.0, "active" = true }
+"nico.orbit" = { "sensitivity" = [-0.003, 0.003], "pitch_limits" = [0.15, 1.1], "distance" = 7.5, "minimum_distance" = 0.15, "radius" = 0.2, "collision_margin" = 0.02, "restoration_rate" = 10.0, "maximum_delta" = 0.1, "yaw" = 0.0, "pitch" = 0.48 }
+"arena.follow_player" = { "spawn" = "player-spawn", "offset" = [0.0, 1.2, 0.0] }
+
+[[entities]]
+id = "sun"
+name = "Sun"
+scope = "client"
+[entities.components]
+"nico.directional_light" = { "direction" = [0.0, 1.0, 0.0], "radiance" = [2.0, 2.0, 2.0] }
+
+[[entities]]
+id = "ambient"
+name = "Ambient"
+scope = "client"
+[entities.components]
+"nico.ambient_light" = { "radiance" = [0.15, 0.15, 0.15] }
+
+[[entities]]
+id = "monster-0"
+name = "Monster"
+scope = "shared"
+[entities.components]
+"nico.transform" = { "position" = [-5.0, 0.0, 5.0] }
+"arena.monster_spawn" = { "kind" = "grunt" }
+
+[[entities]]
+id = "monster-1"
+name = "Monster"
+scope = "shared"
+[entities.components]
+"nico.transform" = { "position" = [0.0, 0.0, 7.0] }
+"arena.monster_spawn" = { "kind" = "grunt" }
+
+[[entities]]
+id = "monster-2"
+name = "Monster"
+scope = "shared"
+[entities.components]
+"nico.transform" = { "position" = [5.0, 0.0, 5.0] }
+"arena.monster_spawn" = { "kind" = "brute" }

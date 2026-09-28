@@ -1,6 +1,7 @@
 # Meadow scenery
 
-`meadow.world-vis.toml` is client-only content, selected with `--visual-world`.
+`meadow.world-vis.toml` is a model library referenced by `meadow.scene.toml`.
+The scene owns scenery placements, collider boxes, camera settings, and lights.
 The current layout takes the Nature pack's `Preview_1.jpg` as its art reference:
 bright green planting in the west, warm autumn foliage in the east, rocky
 landmarks, flowers, ferns, and mushrooms along a winding dirt route. It loads 13
@@ -17,7 +18,7 @@ and uses only the remaining draw capacity. Curved grass blades vary in height an
 green/gold color while leaving the path and solid obstacle footprints open.
 The world camera uses a 200-metre far
 plane for the background. Directional sunlight and diffuse ambient lighting are
-configured only for this world; the standalone arena keeps its existing lighting.
+authored in each scene, including the standalone arena.
 
 Walkable ground remains flat, matching authoritative movement and prediction.
 The hills are background scenery, not walkable terrain. Clouds and grass are
@@ -27,21 +28,17 @@ inspected; user-observed approval and visual parity with the reference are not
 claimed. Tested build and scenario evidence belongs in the
 [roadmap](../../../../../docs/roadmap.md#meadow-scenery-milestone).
 
-`models` maps local names to GLB paths relative to the visual definition.
-`obstacles.<id>` selects a model for a named obstacle in the server-provided
-zone. Without `height_m`, a rock is fitted to the full authoritative box.
-With `height_m`, a tree is grounded at the trunk collider's X/Z centre and bottom
-Y, scaled uniformly to the authored canopy height. The logic file owns all solid
-positions and collider dimensions; the client never creates gameplay colliders.
-Unnamed/unmapped obstacles retain box visuals. A different zone ID disables this
-definition's imported scenery and procedural landscape.
+`models` maps local names to GLB paths relative to the library.
+Scene entities select these names through `arena.scenery` and set positions through `nico.transform`.
+Entities with `arena.box_collider` also define shared collision dimensions.
+Without `height_m`, scenery fits the full collider box.
+With `height_m`, trees stand at the collider bottom and scale uniformly to the authored canopy height.
+Colliders without scenery keep box visuals.
 
-`decorations` contains non-colliding model placements with `position`,
-`height_m`, and optional `yaw_radians`. Both obstacle bindings and decorations
-accept `autumn = true`: only materials named with `leaves` receive a warm RGB
-multiplier; bark, alpha cutouts, and normal maps are retained. Background decorative
-trees have no collision; solid trunks use the server's conservative boxes.
-Camera collision uses the same server obstacle boxes as authoritative movement.
+Decoration entities use client scope and provide `height_m` without a collider component.
+Transforms support Y rotation. `autumn = true` warms materials whose names contain `leaves`.
+Bark, alpha cutouts, and normal maps remain intact.
+Camera collision uses the same authoritative obstacle boxes as movement.
 
 Static geometry and palettes are shared and prepared at load/bind time. Identical
 encoded images across models share one decoded texture and GPU image identity,
@@ -65,6 +62,5 @@ source inventory remain in [../quaternius/import-manifest.json](../quaternius/im
 
 ## Editing world content
 
-Edit the logic and visual TOML sources directly, then restart the client/server
-to load the changes. The integrated editor has been removed. Arena's shared
+Edit `assets/scenes/meadow.scene.toml` and its referenced TOML sources, then restart affected hosts. The integrated editor has been removed. Arena's shared
 presentation and authoring adapter remain library APIs.

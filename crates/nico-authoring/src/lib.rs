@@ -1,20 +1,20 @@
 //! Game-provided authoring, called only at the editor runtime's update boundary.
 //! Implementations own game formats; the host owns UI, history, commands and transport.
 use nico_presentation::{Camera3d, Scene3d};
-use nico_scene::{Document, Project};
+use nico_scene::{Project, SceneDefinition};
 use std::{collections::BTreeMap, io};
 
 pub trait Session: Send + Sync {
-    fn document(&self) -> Document;
+    fn document(&self) -> SceneDefinition;
     /// Validate and prepare the entire edit before replacing live state.
-    fn replace(&mut self, document: &Document) -> io::Result<()>;
+    fn replace(&mut self, document: &SceneDefinition) -> io::Result<()>;
     fn render(&mut self, camera: Camera3d) -> Scene3d;
     fn save(&mut self) -> io::Result<()>;
     fn reload(&mut self) -> io::Result<()>;
     /// Reimport presentation assets without discarding authored edits.
     fn refresh_assets(&mut self) -> io::Result<()>;
     fn inspect(&self) -> serde_json::Value;
-    fn transform_help(&self, id: u64) -> &str;
+    fn transform_help(&self, id: &str) -> &str;
     fn initial_camera(&self) -> [f32; 3] {
         [0.5, 0.6, 60.]
     }

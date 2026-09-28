@@ -23,7 +23,7 @@ the executable entry point. Audio, UI, and broader devtools have no placeholder 
 Runtime must not depend on presentation, providers, or launch policy, and `nico-ecs`
 must not depend on runtime.
 
-`nico-scene` owns project manifests and the simple authored scene contract.
+`nico-scene` owns project manifests and the composed authored scene contract.
 `nico-authoring` owns the UI-free game adapter contract and registry. Arena shares
 its environment rendering and retained authoring adapter through
 `games/arena-arpg/presentation`; game formats stay outside engine crates.

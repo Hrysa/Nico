@@ -21,7 +21,9 @@ pub(crate) struct Definition {
     pub(crate) schema_version: u32,
     pub(crate) zone: String,
     pub(crate) models: BTreeMap<String, String>,
+    #[serde(default)]
     pub(crate) obstacles: BTreeMap<String, Solid>,
+    #[serde(default)]
     pub(crate) decorations: Vec<Decoration>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -106,6 +108,44 @@ impl DefinitionValidation for Definition {
 }
 
 impl Environment {
+    /// Replace scenery placements with the scene's composed entities.
+    pub fn apply_scene(&mut self, scene: &nico_scene::SceneDefinition) -> Result<()> {
+        let mut definition = self.definition.clone();
+        definition.obstacles.clear();
+        definition.decorations.clear();
+        for entity in &scene.entities {
+            let Some(visual) =
+                entity.component::<arena_arpg_shared::scene::Scenery>("arena.scenery")?
+            else {
+                continue;
+            };
+            let transform = entity
+                .component::<nico_scene::components::Transform>("nico.transform")?
+                .ok_or("scenery requires transform")?;
+            if entity.components.contains_key("arena.box_collider") {
+                definition.obstacles.insert(
+                    entity.id.clone(),
+                    Solid {
+                        model: visual.model,
+                        height_m: visual.height_m,
+                        autumn: visual.autumn,
+                    },
+                );
+            } else {
+                definition.decorations.push(Decoration {
+                    model: visual.model,
+                    position: transform.position.map(|v| v as f32),
+                    height_m: visual.height_m.ok_or("decoration requires height")?,
+                    yaw_radians: transform.rotation_radians[1],
+                    autumn: visual.autumn,
+                });
+            }
+        }
+        definition.validate()?;
+        self.definition = definition;
+        Ok(())
+    }
+
     pub fn dependencies(path: &Path) -> Result<Vec<std::path::PathBuf>> {
         let definition = Definition::load(path)?;
         definition
@@ -396,18 +436,20 @@ impl Placement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn environment() -> Environment {
-        Environment::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/presentation/worlds/meadow.world-vis.toml"),
+    fn content() -> arena_arpg_shared::project::ProjectContent {
+        arena_arpg_shared::project::ProjectContent::open(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
         )
         .unwrap()
     }
+    fn environment() -> Environment {
+        let content = content();
+        let mut environment = Environment::load(&content.source("visual").unwrap()).unwrap();
+        environment.apply_scene(&content.scene).unwrap();
+        environment
+    }
     fn zone() -> ZoneDefinition {
-        ZoneDefinition::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/logic/worlds/meadow.world.toml"),
-        )
-        .unwrap()
+        content().zone
     }
     #[test]
     fn scenery_uses_server_obstacle_bounds_and_rebinds_after_zone_changes() {

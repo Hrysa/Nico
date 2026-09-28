@@ -155,6 +155,7 @@ dependencies = [
  "glam 0.30.10",
  "nico-animation",
  "nico-assets",
+ "nico-ecs",
  "nico-input",
  "nico-launch",
  "nico-net",
@@ -163,6 +164,7 @@ dependencies = [
  "nico-presentation",
  "nico-presentation-control",
  "nico-runtime",
+ "nico-scene",
  "nico-winit",
  "serde",
  "serde_json",
@@ -196,6 +198,7 @@ dependencies = [
  "clap",
  "nico-launch",
  "nico-runtime",
+ "nico-scene",
  "tracing",
 ]
 
@@ -1659,6 +1662,7 @@ dependencies = [
 name = "nico-scene"
 version = "0.1.0"
 dependencies = [
+ "nico-assets",
  "nico-ecs",
  "serde",
  "serde_json",

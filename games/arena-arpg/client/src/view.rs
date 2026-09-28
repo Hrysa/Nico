@@ -30,6 +30,7 @@ struct ViewPlugin(
     [Option<Arc<crate::character::CharacterAssets>>; 3],
     [crate::character::definition::CharacterVisualDefinition; 3],
     Arc<arena_arpg_shared::characters::CharacterCatalog>,
+    nico_presentation::SceneLighting,
 );
 pub fn register_configured(
     builder: AppBuilder,
@@ -37,9 +38,10 @@ pub fn register_configured(
     character: [Option<Arc<crate::character::CharacterAssets>>; 3],
     definitions: [crate::character::definition::CharacterVisualDefinition; 3],
     logic: Arc<arena_arpg_shared::characters::CharacterCatalog>,
+    lighting: nico_presentation::SceneLighting,
 ) -> std::io::Result<AppBuilder> {
     let assets = json!({"schema_version":1,"definitions":definitions,"hero_imported":character[0].is_some(),"hero_resolved":character[0].as_ref().map(|a| a.inspection()),"resolved":character.iter().map(|a|a.as_ref().map(|a|a.inspection())).collect::<Vec<_>>()});
-    tools.register(Tool::new("client_characters", "Inspect validated character visual definitions loaded at startup. Paths are relative to --visual-characters; no live reload.", json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
+    tools.register(Tool::new("client_characters", "Inspect validated character visual definitions loaded at startup. Paths are relative to the scene character catalog; no live reload.", json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
         if !args.is_empty() { return error("invalid_arguments"); }
         CallToolResult::structured(assets.clone())
     })?;
@@ -76,7 +78,7 @@ pub fn register_configured(
     for name in ["client_characters", "client_state"] {
         tools.set_access(name, nico_ops::mcp::ToolAccess::Inspect)?;
     }
-    Ok(builder.add_plugin(ViewPlugin(ops, character, definitions, logic)))
+    Ok(builder.add_plugin(ViewPlugin(ops, character, definitions, logic, lighting)))
 }
 fn parse_edit(args: &serde_json::Map<String, Value>) -> Result<Edit, &'static str> {
     if args.get("action").and_then(Value::as_str) != Some("camera")
@@ -118,6 +120,7 @@ impl Plugin for ViewPlugin {
         builder.insert_resource(UiScene::default());
         builder.insert_resource(Scene3d::default());
         let ops = self.0.clone();
+        let lighting = self.4;
         let mut visuals = Visuals::configured(self.2.clone(), &self.3);
         visuals.imported = std::array::from_fn(|i| self.1[i].is_some());
         let assets = self.1.clone();
@@ -137,6 +140,7 @@ impl Plugin for ViewPlugin {
             let camera=ctx.world.resource_mut::<Camera>()?;
             let view=camera.view([snapshot.actors[0].position.x as f32,snapshot.actors[0].position.z as f32],dt);
             let (mut scene,hud)=visuals.render(&snapshot,view,window.logical_size,window.pointer_captured,dt);
+            scene.lighting=lighting;
             for (i, actor) in snapshot.actors.iter().enumerate() {
                 let index = match actor.kind { arena_arpg_shared::ActorKind::Hero => 0, arena_arpg_shared::ActorKind::Grunt => 1, arena_arpg_shared::ActorKind::Brute => 2 };
                 if kinds[i] != Some(actor.kind) {
@@ -207,7 +211,7 @@ mod tests {
     fn queued_camera_edits_publish_and_shutdown_cancels_pending_request() {
         let ops = Arc::new(Mutex::new(Operations::default()));
         let mut app = AppBuilder::new()
-            .add_plugin(ControlsPlugin)
+            .add_plugin(ControlsPlugin(Camera::default()))
             .add_plugin(ArenaPlugin)
             .add_plugin(ViewPlugin(
                 ops.clone(),
@@ -216,6 +220,7 @@ mod tests {
                     crate::character::definition::CharacterVisualDefinition::builtin,
                 ),
                 arena_arpg_shared::characters::CharacterCatalog::builtin(),
+                Default::default(),
             ))
             .build()
             .unwrap();

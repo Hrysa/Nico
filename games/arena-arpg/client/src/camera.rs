@@ -1,14 +1,19 @@
 use nico_presentation::Camera3d;
-use nico_presentation_control::camera::{OrbitCamera, OrbitSettings};
+use nico_presentation_control::camera::OrbitCamera;
+#[cfg(test)]
+use nico_presentation_control::camera::OrbitSettings;
 
 /// Arena-specific tuning and target selection; engine owns controller mechanics.
 #[derive(Clone, Debug)]
 pub struct Camera {
     pub rig: OrbitCamera,
+    pub follow_offset: [f32; 3],
 }
+#[cfg(test)]
 impl Default for Camera {
     fn default() -> Self {
         Self {
+            follow_offset: [0., 1.2, 0.],
             rig: OrbitCamera::new(
                 OrbitSettings {
                     sensitivity: [-0.003, 0.003],
@@ -35,15 +40,23 @@ impl Camera {
         self.rig.orbit(delta);
     }
     pub fn view(&mut self, hero: [f32; 2], delta: f32) -> Camera3d {
-        self.rig.view([hero[0], 1.2, hero[1]], delta, |sweep| {
-            arena_arpg_shared::geometry::WALLS
-                .into_iter()
-                .filter_map(|wall| {
-                    let [min, max] = wall.bounds();
-                    sweep.cast_aabb(min, max)
-                })
-                .reduce(f32::min)
-        })
+        self.rig.view(
+            [
+                hero[0] + self.follow_offset[0],
+                self.follow_offset[1],
+                hero[1] + self.follow_offset[2],
+            ],
+            delta,
+            |sweep| {
+                arena_arpg_shared::geometry::WALLS
+                    .into_iter()
+                    .filter_map(|wall| {
+                        let [min, max] = wall.bounds();
+                        sweep.cast_aabb(min, max)
+                    })
+                    .reduce(f32::min)
+            },
+        )
     }
 }
 #[cfg(test)]
