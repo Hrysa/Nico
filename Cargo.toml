@@ -5,6 +5,7 @@ members = [
     "apps/nico-character-preview",
     "apps/nico-shaderc",
     "crates/nico-assets",
+    "crates/nico-definition-derive",
     "crates/nico-scene",
     "crates/nico-authoring",
     "games/arena-arpg/presentation",

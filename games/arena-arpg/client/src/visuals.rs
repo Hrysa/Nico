@@ -26,7 +26,7 @@ impl ProceduralMeshes {
 }
 pub struct Visuals {
     character_meshes: [ProceduralMeshes; 3],
-    definitions: [crate::character::definition::VisualDefinition; 3],
+    definitions: [crate::character::definition::CharacterVisualDefinition; 3],
     pub imported: [bool; 3],
     white: Arc<Texture>,
     shade: Arc<Texture>,
@@ -53,12 +53,12 @@ impl Visuals {
     #[cfg(test)]
     pub fn new() -> Self {
         Self::configured(
-            std::array::from_fn(crate::character::definition::VisualDefinition::builtin),
+            std::array::from_fn(crate::character::definition::CharacterVisualDefinition::builtin),
             &arena_arpg_shared::characters::CharacterCatalog::builtin(),
         )
     }
     pub fn configured(
-        definitions: [crate::character::definition::VisualDefinition; 3],
+        definitions: [crate::character::definition::CharacterVisualDefinition; 3],
         logic: &arena_arpg_shared::characters::CharacterCatalog,
     ) -> Self {
         let white = Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap());

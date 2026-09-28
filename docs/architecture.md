@@ -24,7 +24,8 @@ Provider types stay inside their integration boundaries.
 | [nico-presentation-control](../crates/nico-presentation-control/src/lib.rs) | Camera, coordinates, text, model views, and instance streaming |
 | [nico-spatial](../crates/nico-spatial/src/lib.rs) | Conservative camera queries |
 | [nico-animation](../crates/nico-animation/src/lib.rs) | CPU poses, playback, skin matrices, and retargeting |
-| [nico-assets](../crates/nico-assets/src/lib.rs) | Asset identity, leases, import, models, and optional loading |
+| [nico-assets](../crates/nico-assets/src/lib.rs) | Asset identity, leases, imports, definition parsing, models, and optional loading |
+| [nico-definition-derive](../crates/nico-definition-derive/src/lib.rs) | Generates parse and load methods for validated definitions |
 | [nico-scene](../crates/nico-scene/src/lib.rs) | Project files, saved scenes, and ECS creation |
 | [nico-authoring](../crates/nico-authoring/src/lib.rs) | Game adapter contracts without UI |
 | [nico-physics](../crates/nico-physics/src/lib.rs) | Rapier bodies, colliders, queries, and optional runtime integration |
@@ -144,6 +145,8 @@ Games own shared, client, and server packages.
 Authoritative assets belong in assets/logic; client-only content belongs in assets/presentation.
 Logic assets never depend on presentation assets.
 Games own combat rules, character bindings, equipment, and content licenses.
+The optional `nico-assets` definition contract parses bounded TOML, then calls the explicit `DefinitionValidation` implementation.
+Its derive provides common parse and load methods. Games keep their own schema rules and extra loading checks.
 
 Handles identify assets; leases and scene references retain them.
 Importers own format rules and settings.

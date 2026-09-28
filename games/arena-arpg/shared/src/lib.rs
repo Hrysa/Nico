@@ -168,7 +168,7 @@ pub struct Actor {
     pub dodge_cooldown: u16,
 }
 impl Actor {
-    pub fn definition(&self) -> &characters::CharacterDefinition {
+    pub fn definition(&self) -> &characters::CharacterLogicDefinition {
         self.characters.get(self.kind)
     }
     pub fn stats(&self) -> CombatStats {

@@ -9,7 +9,7 @@ authoring = ["dep:nico-authoring", "dep:nico-scene"]
 
 [dependencies]
 arena-arpg-shared = { path = "../shared" }
-nico-assets = { path = "../../../crates/nico-assets", features = ["gltf-import", "png-import", "character"] }
+nico-assets = { path = "../../../crates/nico-assets", features = ["gltf-import", "png-import", "character", "definition"] }
 nico-animation = { path = "../../../crates/nico-animation" }
 nico-presentation = { path = "../../../crates/nico-presentation" }
 nico-presentation-control = { path = "../../../crates/nico-presentation-control" }

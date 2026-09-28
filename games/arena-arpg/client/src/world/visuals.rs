@@ -1,5 +1,7 @@
 use super::network::WorldClient;
-use crate::character::{Character, CharacterAssets, CharacterFrame, definition::VisualDefinition};
+use crate::character::{
+    Character, CharacterAssets, CharacterFrame, definition::CharacterVisualDefinition,
+};
 use arena_arpg_shared::{
     Action,
     open_world::{ObjectKind, WorldAction},
@@ -13,7 +15,7 @@ pub struct Visuals {
     pub environment: super::environment::Environment,
     assets: [Option<Arc<CharacterAssets>>; 3],
     characters: BTreeMap<u64, Character>,
-    definitions: [VisualDefinition; 3],
+    definitions: [CharacterVisualDefinition; 3],
     epoch: u64,
     white: Arc<Texture>,
     cube: Arc<Mesh>,
@@ -62,7 +64,7 @@ fn draw(
 impl Visuals {
     pub fn new(
         assets: [Option<Arc<CharacterAssets>>; 3],
-        definitions: [VisualDefinition; 3],
+        definitions: [CharacterVisualDefinition; 3],
         environment: super::environment::Environment,
     ) -> Self {
         let parts = definitions

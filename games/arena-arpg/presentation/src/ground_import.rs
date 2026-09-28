@@ -1,5 +1,6 @@
 //! Rebuildable generated ground pixels; server geometry remains authoritative.
 use arena_arpg_shared::open_world::content::ZoneDefinition;
+use nico_assets::definition::DefinitionValidation;
 use nico_assets::{
     Texture,
     import::{AssetImporter, ImportContext, ImportError, ImportErrorKind, ImporterDescriptor},

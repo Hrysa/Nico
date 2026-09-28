@@ -33,7 +33,10 @@ pub(super) fn authored_reference(
 }
 #[cfg(test)]
 fn reference(model: &Model) -> Result<Vec<Transform>> {
-    authored_reference(model, &definition::VisualDefinition::builtin(0).core.pose)
+    authored_reference(
+        model,
+        &definition::CharacterVisualDefinition::builtin(0).core.pose,
+    )
 }
 pub(super) fn weapon(parts: &[definition::WeaponPart]) -> Result<Mesh> {
     let mut vertices = Vec::new();
@@ -81,7 +84,7 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|(_, n)| {
-                definition::VisualDefinition::builtin(0)
+                definition::CharacterVisualDefinition::builtin(0)
                     .core
                     .pose
                     .iter()
@@ -124,7 +127,7 @@ mod tests {
         for (i, node) in model.data().nodes.iter().enumerate() {
             assert_eq!(posed[i].translation, node.transform.translation);
             assert_eq!(posed[i].scale, node.transform.scale);
-            if !definition::VisualDefinition::builtin(0)
+            if !definition::CharacterVisualDefinition::builtin(0)
                 .core
                 .pose
                 .iter()

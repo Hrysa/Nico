@@ -2,6 +2,7 @@
 use crate::environment::{Decoration, Definition, Environment};
 use arena_arpg_shared::open_world::content::ZoneDefinition;
 use nico_assets::cache::FileStamp;
+use nico_assets::definition::DefinitionValidation;
 use nico_authoring::Session;
 use nico_presentation::{Camera3d, Scene3d};
 use nico_scene::{Document, Object, Project};
@@ -75,8 +76,8 @@ impl WorldEditor {
         let visual_path = source("visual")?;
         let original_logic = fs::read(&logic_path)?;
         let original_visual = fs::read(&visual_path)?;
-        let visual: Definition =
-            toml::from_str(std::str::from_utf8(&original_visual).map_err(error)?).map_err(error)?;
+        let visual = Definition::parse(std::str::from_utf8(&original_visual).map_err(error)?)
+            .map_err(error)?;
         let mut source_stamps = source_stamps(&visual_path, &visual);
         let zone = ZoneDefinition::load(&logic_path).map_err(error)?;
         let mut environment = Environment::load(&visual_path).map_err(error)?;
@@ -248,8 +249,8 @@ impl Session for WorldEditor {
             .map_err(error)?
             .into_bytes();
         // Each file is replaced atomically; roll back logic if the second replacement fails.
-        let saved_zone: ZoneDefinition =
-            toml::from_str(std::str::from_utf8(&self.original_logic).map_err(error)?)
+        let saved_zone =
+            ZoneDefinition::parse(std::str::from_utf8(&self.original_logic).map_err(error)?)
                 .map_err(error)?;
         let logic_changed = toml::to_string_pretty(&saved_zone)
             .map_err(error)?

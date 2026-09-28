@@ -4,6 +4,8 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "character")]
 pub mod character;
+#[cfg(feature = "definition")]
+pub mod definition;
 
 mod texture;
 pub use texture::{Texture, TextureEncoding};

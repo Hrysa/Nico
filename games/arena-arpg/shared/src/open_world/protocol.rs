@@ -16,7 +16,7 @@ pub enum ServerMessage {
         player: u64,
         zone: super::content::ZoneDefinition,
         item: super::content::ItemDefinition,
-        characters: Box<[crate::characters::CharacterDefinition; 3]>,
+        characters: Box<[crate::characters::CharacterLogicDefinition; 3]>,
     },
     Snapshot {
         snapshot: WorldSnapshot,

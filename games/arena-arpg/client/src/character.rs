@@ -7,6 +7,7 @@ use nico_animation::{
     humanoid::{HumanoidProfile, HumanoidRig},
     playback::{AnimationClip, AnimationPlayer, AnimationSet, PlayMode},
 };
+use nico_assets::definition::DefinitionValidation;
 use nico_assets::{
     Mesh, SkinWeights, Texture,
     import::ImportBudget,
@@ -57,7 +58,7 @@ impl Motion {
 
 pub struct CharacterAssets {
     set: Arc<AnimationSet>,
-    definition: Arc<definition::VisualDefinition>,
+    definition: Arc<definition::CharacterVisualDefinition>,
     playback: Arc<PlaybackSettings>,
     visual: ModelVisual,
     scale: f32,
@@ -83,13 +84,13 @@ impl CharacterAssets {
     #[cfg(test)]
     pub fn load(model_path: &Path, animations: &Path) -> Result<Arc<Self>> {
         Self::load_definition(
-            definition::VisualDefinition::builtin(0),
+            definition::CharacterVisualDefinition::builtin(0),
             Path::new("."),
             Some((model_path, animations)),
         )
     }
     pub fn dependencies(
-        definition: &definition::VisualDefinition,
+        definition: &definition::CharacterVisualDefinition,
         root: &Path,
         overrides: Option<(&Path, &Path)>,
     ) -> Result<Vec<std::path::PathBuf>> {
@@ -125,14 +126,14 @@ impl CharacterAssets {
 
     #[cfg(test)]
     pub fn load_definition(
-        definition: definition::VisualDefinition,
+        definition: definition::CharacterVisualDefinition,
         root: &Path,
         overrides: Option<(&Path, &Path)>,
     ) -> Result<Arc<Self>> {
         Self::build(definition, root, overrides, None)
     }
     pub fn from_loaded(
-        definition: definition::VisualDefinition,
+        definition: definition::CharacterVisualDefinition,
         root: &Path,
         overrides: Option<(&Path, &Path)>,
         loaded: &nico_assets::graph::LoadedAssets,
@@ -140,7 +141,7 @@ impl CharacterAssets {
         Self::build(definition, root, overrides, Some(loaded))
     }
     fn build(
-        definition: definition::VisualDefinition,
+        definition: definition::CharacterVisualDefinition,
         root: &Path,
         overrides: Option<(&Path, &Path)>,
         assets: Option<&nico_assets::graph::LoadedAssets>,
@@ -331,7 +332,7 @@ struct PlaybackSettings {
     contact: f64,
 }
 impl PlaybackSettings {
-    fn new(definition: &definition::VisualDefinition, set: &AnimationSet) -> Self {
+    fn new(definition: &definition::CharacterVisualDefinition, set: &AnimationSet) -> Self {
         Self {
             contact: definition.arena.animations["attack"]
                 .contact_seconds
@@ -683,7 +684,7 @@ mod tests {
             .map(|(i, name)| AnimationClip::direct(model.clone(), i, *name).unwrap())
             .collect();
         {
-            let mut definition = definition::VisualDefinition::builtin(0);
+            let mut definition = definition::CharacterVisualDefinition::builtin(0);
             // Synthetic fixture clips are one second long, unlike the real sword clip.
             definition
                 .arena

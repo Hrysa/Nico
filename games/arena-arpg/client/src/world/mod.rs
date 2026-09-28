@@ -6,7 +6,7 @@ mod prediction;
 mod visuals;
 use crate::{
     camera::Camera,
-    character::{CharacterAssets, definition::VisualDefinition},
+    character::{CharacterAssets, definition::CharacterVisualDefinition},
 };
 use arena_arpg_shared::{
     Vec2,
@@ -124,7 +124,7 @@ pub fn register(
     mut builder: AppBuilder,
     client: WorldClient,
     assets: [Option<Arc<CharacterAssets>>; 3],
-    definitions: [VisualDefinition; 3],
+    definitions: [CharacterVisualDefinition; 3],
     environment: environment::Environment,
 ) -> std::io::Result<(AppBuilder, ToolExtensions)> {
     let ops = Arc::new(Mutex::new(Operations {

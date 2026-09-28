@@ -1,32 +1,25 @@
 //! Immutable game-owned character definitions. No model or renderer dependencies.
 use crate::{ActorKind, CombatStats};
 use nico_assets::character::CharacterCore;
+use nico_assets::definition::DefinitionResult;
+use nico_assets::definition::DefinitionValidation;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Read,
     path::Path,
     sync::{Arc, OnceLock},
 };
 
-pub type AssetResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type AssetResult<T> = DefinitionResult<T>;
 pub const DEFAULT_LOGIC_ROOT: &str = "games/arena-arpg/assets/logic/characters";
 pub const NAMES: [&str; 3] = ["hero", "grunt", "brute"];
 
 /// Bounded UTF-8 authoring input, also used by the client's visual importer.
-pub fn read_definition(path: &Path) -> AssetResult<String> {
-    let mut text = String::new();
-    std::fs::File::open(path)?
-        .take(1024 * 1024 + 1)
-        .read_to_string(&mut text)?;
-    if text.len() > 1024 * 1024 {
-        return Err(format!("{}: definition exceeds 1 MiB", path.display()).into());
-    }
-    Ok(text)
-}
+pub use nico_assets::definition::read_definition;
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, nico_assets::definition::Definition)]
 #[serde(deny_unknown_fields)]
-pub struct CharacterDefinition {
+/// Authoritative character rules shared by the server and client.
+pub struct CharacterLogicDefinition {
     pub schema_version: u32,
     pub core: CharacterCore,
     pub arena: ArenaRules,
@@ -73,13 +66,10 @@ pub struct Dodge {
     pub cooldown_ticks: u16,
     pub buffer_ticks: u16,
 }
-impl CharacterDefinition {
-    pub fn parse(text: &str) -> AssetResult<Self> {
-        let value: Self = toml::from_str(text)?;
-        value.validate()?;
-        Ok(value)
-    }
-    pub fn validate(&self) -> AssetResult<()> {
+impl DefinitionValidation for CharacterLogicDefinition {
+    type Error = nico_assets::definition::DefinitionError;
+
+    fn validate(&self) -> AssetResult<()> {
         let check = |valid: bool, field: &str| -> AssetResult<()> {
             if valid {
                 Ok(())
@@ -137,6 +127,9 @@ impl CharacterDefinition {
         )?;
         Ok(())
     }
+}
+
+impl CharacterLogicDefinition {
     pub fn combat_stats(&self) -> CombatStats {
         let a = &self.arena.attacks.primary;
         CombatStats {
@@ -155,10 +148,10 @@ impl CharacterDefinition {
 /// Fields are private so a published catalog cannot bypass validation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CharacterCatalog {
-    definitions: [CharacterDefinition; 3],
+    definitions: [CharacterLogicDefinition; 3],
 }
 impl CharacterCatalog {
-    pub fn new(definitions: [CharacterDefinition; 3]) -> AssetResult<Arc<Self>> {
+    pub fn new(definitions: [CharacterLogicDefinition; 3]) -> AssetResult<Arc<Self>> {
         for (i, definition) in definitions.iter().enumerate() {
             definition.validate()?;
             if definitions[..i]
@@ -174,20 +167,19 @@ impl CharacterCatalog {
         let mut values = Vec::new();
         for name in NAMES {
             let path = root.join(format!("{name}.char.toml"));
-            let value = CharacterDefinition::parse(&read_definition(&path)?)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let value = CharacterLogicDefinition::load(&path)?;
             values.push(value);
         }
         Self::new(values.try_into().unwrap())
     }
-    pub fn get(&self, kind: ActorKind) -> &CharacterDefinition {
+    pub fn get(&self, kind: ActorKind) -> &CharacterLogicDefinition {
         &self.definitions[match kind {
             ActorKind::Hero => 0,
             ActorKind::Grunt => 1,
             ActorKind::Brute => 2,
         }]
     }
-    pub fn definitions(&self) -> &[CharacterDefinition; 3] {
+    pub fn definitions(&self) -> &[CharacterLogicDefinition; 3] {
         &self.definitions
     }
     /// Embedded copies make headless library tests independent of the working directory.
@@ -197,15 +189,15 @@ impl CharacterCatalog {
         CATALOG
             .get_or_init(|| {
                 Self::new([
-                    CharacterDefinition::parse(include_str!(
+                    CharacterLogicDefinition::parse(include_str!(
                         "../../assets/logic/characters/hero.char.toml"
                     ))
                     .expect("hero definition"),
-                    CharacterDefinition::parse(include_str!(
+                    CharacterLogicDefinition::parse(include_str!(
                         "../../assets/logic/characters/grunt.char.toml"
                     ))
                     .expect("grunt definition"),
-                    CharacterDefinition::parse(include_str!(
+                    CharacterLogicDefinition::parse(include_str!(
                         "../../assets/logic/characters/brute.char.toml"
                     ))
                     .expect("brute definition"),
@@ -230,7 +222,7 @@ mod tests {
             source.replace("radius_m = 0.4", "radius_m = 0.4\nraduis = 1"),
             source.replace("invulnerable_ticks = 12", "invulnerable_ticks = 19"),
         ] {
-            assert!(CharacterDefinition::parse(&invalid).is_err());
+            assert!(CharacterLogicDefinition::parse(&invalid).is_err());
         }
         let mut values = CharacterCatalog::builtin().definitions().clone();
         values[1].core.id = values[0].core.id.clone();

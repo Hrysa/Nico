@@ -2,6 +2,7 @@
 use arena_arpg_shared::open_world::content::ZoneDefinition;
 use glam::{Mat4, Quat, Vec3};
 use nico_animation::Pose;
+use nico_assets::definition::DefinitionValidation;
 use nico_assets::{
     Texture,
     import::{AssetImporter, ImportBudget},
@@ -14,7 +15,7 @@ use std::{collections::BTreeMap, path::Path, sync::Arc};
 pub const DEFAULT_VISUAL_WORLD: &str =
     "games/arena-arpg/assets/presentation/worlds/meadow.world-vis.toml";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, nico_assets::definition::Definition)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Definition {
     pub(crate) schema_version: u32,
@@ -67,10 +68,46 @@ pub struct Environment {
 fn height_valid(height: f32) -> bool {
     height.is_finite() && (0.05..=20.).contains(&height)
 }
+impl DefinitionValidation for Definition {
+    type Error = nico_assets::definition::DefinitionError;
+
+    fn validate(&self) -> Result<()> {
+        if self.schema_version != 1
+            || self.zone.is_empty()
+            || self.zone.len() > 64
+            || self.models.is_empty()
+            || self.models.len() > 16
+            || self.obstacles.len() > 32
+            || self.decorations.len() > 128
+        {
+            return Err("invalid world visual definition".into());
+        }
+        for solid in self.obstacles.values() {
+            if !self.models.contains_key(&solid.model)
+                || solid.height_m.is_some_and(|h| !height_valid(h))
+            {
+                return Err("invalid world obstacle visual".into());
+            }
+        }
+        for decoration in &self.decorations {
+            if !self.models.contains_key(&decoration.model)
+                || !height_valid(decoration.height_m)
+                || decoration
+                    .position
+                    .iter()
+                    .any(|value| !value.is_finite() || value.abs() > 128.)
+                || !decoration.yaw_radians.is_finite()
+            {
+                return Err("invalid world decoration".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Environment {
     pub fn dependencies(path: &Path) -> Result<Vec<std::path::PathBuf>> {
-        let definition: Definition =
-            toml::from_str(&arena_arpg_shared::characters::read_definition(path)?)?;
+        let definition = Definition::load(path)?;
         definition
             .models
             .values()
@@ -89,34 +126,7 @@ impl Environment {
         Self::build(path, Some(assets))
     }
     fn build(path: &Path, assets: Option<&nico_assets::graph::LoadedAssets>) -> Result<Self> {
-        let definition: Definition =
-            toml::from_str(&arena_arpg_shared::characters::read_definition(path)?)?;
-        if definition.schema_version != 1
-            || definition.zone.is_empty()
-            || definition.zone.len() > 64
-            || definition.models.is_empty()
-            || definition.models.len() > 16
-            || definition.obstacles.len() > 32
-            || definition.decorations.len() > 128
-        {
-            return Err("invalid world visual definition".into());
-        }
-        for solid in definition.obstacles.values() {
-            if !definition.models.contains_key(&solid.model)
-                || solid.height_m.is_some_and(|h| !height_valid(h))
-            {
-                return Err("invalid world obstacle visual".into());
-            }
-        }
-        for d in &definition.decorations {
-            if !definition.models.contains_key(&d.model)
-                || !height_valid(d.height_m)
-                || d.position.iter().any(|x| !x.is_finite() || x.abs() > 128.)
-                || !d.yaw_radians.is_finite()
-            {
-                return Err("invalid world decoration".into());
-            }
-        }
+        let definition = Definition::load(path)?;
         let mut sources = Vec::new();
         let mut models = BTreeMap::new();
         let mut source_bytes = 0u64;

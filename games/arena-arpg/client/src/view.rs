@@ -28,14 +28,14 @@ impl Default for Operations {
 struct ViewPlugin(
     Arc<Mutex<Operations>>,
     [Option<Arc<crate::character::CharacterAssets>>; 3],
-    [crate::character::definition::VisualDefinition; 3],
+    [crate::character::definition::CharacterVisualDefinition; 3],
     Arc<arena_arpg_shared::characters::CharacterCatalog>,
 );
 pub fn register_configured(
     builder: AppBuilder,
     tools: &mut ToolExtensions,
     character: [Option<Arc<crate::character::CharacterAssets>>; 3],
-    definitions: [crate::character::definition::VisualDefinition; 3],
+    definitions: [crate::character::definition::CharacterVisualDefinition; 3],
     logic: Arc<arena_arpg_shared::characters::CharacterCatalog>,
 ) -> std::io::Result<AppBuilder> {
     let assets = json!({"schema_version":1,"definitions":definitions,"hero_imported":character[0].is_some(),"hero_resolved":character[0].as_ref().map(|a| a.inspection()),"resolved":character.iter().map(|a|a.as_ref().map(|a|a.inspection())).collect::<Vec<_>>()});
@@ -212,7 +212,9 @@ mod tests {
             .add_plugin(ViewPlugin(
                 ops.clone(),
                 std::array::from_fn(|_| None),
-                std::array::from_fn(crate::character::definition::VisualDefinition::builtin),
+                std::array::from_fn(
+                    crate::character::definition::CharacterVisualDefinition::builtin,
+                ),
                 arena_arpg_shared::characters::CharacterCatalog::builtin(),
             ))
             .build()

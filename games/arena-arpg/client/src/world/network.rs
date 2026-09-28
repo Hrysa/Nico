@@ -7,6 +7,7 @@ use arena_arpg_shared::{
         protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage},
     },
 };
+use nico_assets::definition::DefinitionValidation;
 use nico_net::{Connection, Connector};
 use std::{
     net::SocketAddr,

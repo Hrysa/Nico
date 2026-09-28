@@ -2,15 +2,18 @@
 use super::*;
 use arena_arpg_shared::characters::{CharacterCatalog, read_definition};
 pub use nico_assets::character::{PoseOverride, Socket, VisualCore, asset_path};
+use nico_assets::definition::DefinitionValidation;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const DEFAULT_VISUAL_ROOT: &str = "games/arena-arpg/assets/presentation/characters";
 pub const MOTIONS: [&str; 5] = ["idle", "run", "attack", "dodge", "death"];
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, nico_assets::definition::Definition)]
+#[definition(no_load)]
 #[serde(deny_unknown_fields)]
-pub struct VisualDefinition {
+/// Client-only character model, animation, and procedural visual settings.
+pub struct CharacterVisualDefinition {
     pub schema_version: u32,
     pub core: VisualCore,
     pub arena: ArenaVisualRules,
@@ -114,59 +117,10 @@ impl ProceduralParts {
         ]
     }
 }
-impl VisualDefinition {
-    pub fn parse(text: &str) -> Result<Self> {
-        let value: Self = toml::from_str(text)?;
-        value.validate()?;
-        Ok(value)
-    }
-    pub fn load(path: &Path, character_id: &str) -> Result<Self> {
-        let value =
-            Self::parse(&read_definition(path)?).map_err(|e| format!("{}: {e}", path.display()))?;
-        if value.core.character != character_id {
-            return Err(format!(
-                "{}: character {} does not match {character_id}",
-                path.display(),
-                value.core.character
-            )
-            .into());
-        }
-        Ok(value)
-    }
-    #[cfg(test)]
-    pub fn builtin(index: usize) -> Self {
-        Self::parse(
-            [
-                include_str!("../../../assets/presentation/characters/hero.char-vis.toml"),
-                include_str!("../../../assets/presentation/characters/grunt.char-vis.toml"),
-                include_str!("../../../assets/presentation/characters/brute.char-vis.toml"),
-            ][index],
-        )
-        .expect("built-in visual definition")
-    }
-    pub fn profile(&self, name: &str) -> Result<HumanoidProfile> {
-        use nico_animation::humanoid::{Bone, BoneBinding};
-        Ok(match name {
-            "mixamo" => HumanoidProfile::mixamo(),
-            "rpg" => HumanoidProfile::rpg(),
-            name => {
-                let profile = self
-                    .core
-                    .profiles
-                    .get(name)
-                    .ok_or_else(|| format!("profiles: unknown {name}"))?;
-                HumanoidProfile {
-                    bones: Bone::ALL
-                        .into_iter()
-                        .zip(profile.bones.iter().map(|n| BoneBinding::from(n.as_str())))
-                        .collect(),
-                    motion_root: Some(profile.motion_root.as_str().into()),
-                    ..Default::default()
-                }
-            }
-        })
-    }
-    pub fn validate(&self) -> Result<()> {
+impl DefinitionValidation for CharacterVisualDefinition {
+    type Error = nico_assets::definition::DefinitionError;
+
+    fn validate(&self) -> Result<()> {
         let check = |ok: bool, field: &str| -> Result<()> {
             if ok {
                 Ok(())
@@ -287,13 +241,65 @@ impl VisualDefinition {
         Ok(())
     }
 }
-pub fn load_visuals(root: &Path, logic: &CharacterCatalog) -> Result<[VisualDefinition; 3]> {
+
+impl CharacterVisualDefinition {
+    pub fn load(path: &Path, character_id: &str) -> Result<Self> {
+        let value =
+            Self::parse(&read_definition(path)?).map_err(|e| format!("{}: {e}", path.display()))?;
+        if value.core.character != character_id {
+            return Err(format!(
+                "{}: character {} does not match {character_id}",
+                path.display(),
+                value.core.character
+            )
+            .into());
+        }
+        Ok(value)
+    }
+    #[cfg(test)]
+    pub fn builtin(index: usize) -> Self {
+        Self::parse(
+            [
+                include_str!("../../../assets/presentation/characters/hero.char-vis.toml"),
+                include_str!("../../../assets/presentation/characters/grunt.char-vis.toml"),
+                include_str!("../../../assets/presentation/characters/brute.char-vis.toml"),
+            ][index],
+        )
+        .expect("built-in visual definition")
+    }
+    pub fn profile(&self, name: &str) -> Result<HumanoidProfile> {
+        use nico_animation::humanoid::{Bone, BoneBinding};
+        Ok(match name {
+            "mixamo" => HumanoidProfile::mixamo(),
+            "rpg" => HumanoidProfile::rpg(),
+            name => {
+                let profile = self
+                    .core
+                    .profiles
+                    .get(name)
+                    .ok_or_else(|| format!("profiles: unknown {name}"))?;
+                HumanoidProfile {
+                    bones: Bone::ALL
+                        .into_iter()
+                        .zip(profile.bones.iter().map(|n| BoneBinding::from(n.as_str())))
+                        .collect(),
+                    motion_root: Some(profile.motion_root.as_str().into()),
+                    ..Default::default()
+                }
+            }
+        })
+    }
+}
+pub fn load_visuals(
+    root: &Path,
+    logic: &CharacterCatalog,
+) -> Result<[CharacterVisualDefinition; 3]> {
     let mut definitions = Vec::new();
     for (name, character) in arena_arpg_shared::characters::NAMES
         .into_iter()
         .zip(logic.definitions())
     {
-        let definition = VisualDefinition::load(
+        let definition = CharacterVisualDefinition::load(
             &root.join(format!("{name}.char-vis.toml")),
             &character.core.id,
         )?;
@@ -322,9 +328,12 @@ mod tests {
     #[test]
     fn bestiary_models_retarget_all_motions_with_independent_players_and_embedded_weapons() {
         for index in [1, 2] {
-            let assets =
-                CharacterAssets::load_definition(VisualDefinition::builtin(index), &root(), None)
-                    .unwrap();
+            let assets = CharacterAssets::load_definition(
+                CharacterVisualDefinition::builtin(index),
+                &root(),
+                None,
+            )
+            .unwrap();
             assert!(assets.weapon.is_none());
             assert_eq!(assets.draw_count(), assets.visual.primitive_count());
             let mut first = AnimationPlayer::new(assets.set.clone());
@@ -347,7 +356,7 @@ mod tests {
     }
     #[test]
     fn arena_bindings_resolve_arbitrary_library_names_before_playback() {
-        let mut definition = VisualDefinition::builtin(0);
+        let mut definition = CharacterVisualDefinition::builtin(0);
         let clip = definition.core.animations.remove("attack").unwrap();
         definition
             .core
@@ -381,14 +390,16 @@ mod tests {
     }
     #[test]
     fn arena_requires_bindings_but_core_does_not() {
-        let mut definition = VisualDefinition::builtin(0);
+        let mut definition = CharacterVisualDefinition::builtin(0);
         definition.arena.animations.clear();
         definition.core.validate().unwrap();
         assert!(definition.validate().is_err());
         let source = include_str!("../../../assets/presentation/characters/hero.char-vis.toml");
         assert!(
-            VisualDefinition::parse(&source.replace("[arena.animations.attack]", "[core.dodge]"))
-                .is_err()
+            CharacterVisualDefinition::parse(
+                &source.replace("[arena.animations.attack]", "[core.dodge]")
+            )
+            .is_err()
         );
     }
     #[test]
@@ -403,9 +414,12 @@ mod tests {
             source.replace("hero/model.glb", "../model.glb"),
             source.replace("tip_m = 1.10", "tip_m = 2.0"),
         ] {
-            assert!(VisualDefinition::parse(&invalid).is_err());
+            assert!(CharacterVisualDefinition::parse(&invalid).is_err());
         }
-        assert!(VisualDefinition::load(&root().join("hero.char-vis.toml"), "arena.grunt").is_err());
+        assert!(
+            CharacterVisualDefinition::load(&root().join("hero.char-vis.toml"), "arena.grunt")
+                .is_err()
+        );
         for path in [
             "../model.glb",
             "C:/model.glb",
@@ -417,7 +431,7 @@ mod tests {
     }
     #[test]
     fn source_bone_and_clip_errors_are_rejected_during_resolution() {
-        let mut definition = VisualDefinition::builtin(0);
+        let mut definition = CharacterVisualDefinition::builtin(0);
         definition.core.sockets.get_mut("sword").unwrap().bone = "missing-bone".into();
         assert!(
             CharacterAssets::load_definition(definition, &root(), None)
@@ -426,7 +440,7 @@ mod tests {
                 .to_string()
                 .contains("missing-bone")
         );
-        let mut definition = VisualDefinition::builtin(0);
+        let mut definition = CharacterVisualDefinition::builtin(0);
         definition.core.animations.get_mut("idle").unwrap().clip = "missing-clip".into();
         assert!(
             CharacterAssets::load_definition(definition, &root(), None)
@@ -438,7 +452,7 @@ mod tests {
     }
     #[test]
     fn visual_height_floor_socket_and_contact_settings_reach_runtime_assets() {
-        let mut definition = VisualDefinition::builtin(0);
+        let mut definition = CharacterVisualDefinition::builtin(0);
         definition.core.model.as_mut().unwrap().floor_offset_m = 0.25;
         definition.core.model.as_mut().unwrap().target_height_m = 2.0;
         definition

@@ -1,9 +1,9 @@
 use super::{ITEM_SWORD, ObjectKind, Vec2, ZONE_LIMIT};
+use nico_assets::definition::DefinitionValidation;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 pub const DEFAULT_WORLD: &str = "games/arena-arpg/assets/logic/worlds/meadow.world.toml";
 pub const DEFAULT_ITEM: &str = "games/arena-arpg/assets/logic/items/iron-sword.item.toml";
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, nico_assets::definition::Definition)]
 #[serde(deny_unknown_fields)]
 pub struct ZoneDefinition {
     pub schema_version: u32,
@@ -46,7 +46,7 @@ pub struct Spawn {
     pub kind: ObjectKind,
     pub position: Vec2,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, nico_assets::definition::Definition)]
 #[serde(deny_unknown_fields)]
 pub struct ItemDefinition {
     pub schema_version: u32,
@@ -71,13 +71,10 @@ fn valid_color(color: [f32; 4]) -> bool {
         .into_iter()
         .all(|x| x.is_finite() && (0.0..=1.0).contains(&x))
 }
-impl ItemDefinition {
-    pub fn load(path: &Path) -> crate::characters::AssetResult<Self> {
-        let value: Self = toml::from_str(&crate::characters::read_definition(path)?)?;
-        value.validate()?;
-        Ok(value)
-    }
-    pub fn validate(&self) -> Result<(), &'static str> {
+impl DefinitionValidation for ItemDefinition {
+    type Error = &'static str;
+
+    fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1
             || self.id != ITEM_SWORD
             || self.name.is_empty()
@@ -90,13 +87,11 @@ impl ItemDefinition {
         Ok(())
     }
 }
-impl ZoneDefinition {
-    pub fn load(path: &Path) -> crate::characters::AssetResult<Self> {
-        let value: Self = toml::from_str(&crate::characters::read_definition(path)?)?;
-        value.validate()?;
-        Ok(value)
-    }
-    pub fn validate(&self) -> Result<(), &'static str> {
+
+impl DefinitionValidation for ZoneDefinition {
+    type Error = &'static str;
+
+    fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1
             || self.id.is_empty()
             || self.id.len() > 64
@@ -155,6 +150,9 @@ impl ZoneDefinition {
         }
         Ok(())
     }
+}
+
+impl ZoneDefinition {
     pub fn blocked(&self, p: Vec2, radius: f64) -> bool {
         self.obstacles.iter().any(|o| {
             (p.x - o.center[0]).abs() < o.size[0] / 2. + radius

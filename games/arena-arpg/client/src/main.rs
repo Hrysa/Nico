@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 fn load_project_assets(
     args: &Args,
-    definitions: &[character::definition::VisualDefinition; 3],
+    definitions: &[character::definition::CharacterVisualDefinition; 3],
 ) -> Result<nico_assets::graph::LoadedAssets, Box<dyn std::error::Error + Send + Sync>> {
     use std::path::Path;
     let root = args
@@ -182,7 +182,7 @@ fn load_project_assets(
         }
 
         if name.ends_with(".char-vis.toml") {
-            let definition = character::definition::VisualDefinition::parse(
+            let definition = character::definition::CharacterVisualDefinition::parse(
                 &arena_arpg_shared::characters::read_definition(path)?,
             )?;
             let hero = definition.core.character == definitions[0].core.character;

@@ -1480,12 +1480,14 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "gltf",
+ "nico-definition-derive",
  "nico-runtime",
  "notify",
  "png",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "texpresso",
  "toml",
  "tracing",
@@ -1517,6 +1519,15 @@ dependencies = [
  "nico-runtime",
  "nico-winit",
  "serde_json",
+]
+
+[[package]]
+name = "nico-definition-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

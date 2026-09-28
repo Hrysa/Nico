@@ -1,6 +1,7 @@
 //! Compact, rebuildable placement data. Camera and visual time never enter this recipe.
 use arena_arpg_shared::open_world::content::ZoneDefinition;
 use glam::{Mat4, Quat, Vec3};
+use nico_assets::definition::DefinitionValidation;
 use nico_assets::{
     Mesh, MeshVertex, PbrMaterial,
     import::{AssetImporter, ImportContext, ImportError, ImportErrorKind, ImporterDescriptor},

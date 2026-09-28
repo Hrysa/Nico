@@ -1,5 +1,6 @@
 //! Server-owned ECS world. Hosts call input/step only at runtime boundaries.
 //! Snapshots are owned values; no entity or physics handles cross this boundary.
+use nico_assets::definition::DefinitionValidation;
 pub mod content;
 pub mod persistence;
 pub mod protocol;

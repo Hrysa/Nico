@@ -13,7 +13,7 @@ network = ["dep:nico-net"]
 nico-scene = { path = "../../../crates/nico-scene", optional = true }
 nico-net = { path = "../../../crates/nico-net", optional = true }
 nico-ecs = { path = "../../../crates/nico-ecs" }
-nico-assets = { path = "../../../crates/nico-assets", features = ["character"] }
+nico-assets = { path = "../../../crates/nico-assets", features = ["character", "definition"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 nico-physics = { path = "../../../crates/nico-physics", default-features = false }
