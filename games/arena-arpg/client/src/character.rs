@@ -10,8 +10,8 @@ use nico_animation::{
 use nico_assets::{
     Mesh, SkinWeights, Texture,
     import::ImportBudget,
-    importers::{ModelGlbImporter, ModelGlbSettings, PngImporter, PngSettings},
-    model::{ImageEncoding, Model, Transform},
+    importers::ModelGlbSettings,
+    model::{Model, Transform},
 };
 use nico_presentation::MeshInstance;
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
@@ -88,31 +88,17 @@ impl CharacterAssets {
             Some((model_path, animations)),
         )
     }
-    pub fn load_definition(
-        definition: definition::VisualDefinition,
+    pub fn dependencies(
+        definition: &definition::VisualDefinition,
         root: &Path,
         overrides: Option<(&Path, &Path)>,
-    ) -> Result<Arc<Self>> {
+    ) -> Result<Vec<std::path::PathBuf>> {
         definition.validate()?;
-        let model_definition = definition.core.model.as_ref().ok_or("model required")?;
+        let Some(model_definition) = definition.core.model.as_ref() else {
+            return Ok(Vec::new());
+        };
         let model_path = definition::asset_path(root, &model_definition.asset)?;
-        let progress = nico_assets::progress::ImportProgress::new(
-            format!("{} models", definition.core.character),
-            1 + definition::MOTIONS.len(),
-        )?;
-        let model = load(overrides.map_or(model_path.as_path(), |v| v.0))?;
-        progress.complete_one();
-        let target = Arc::new(HumanoidRig::from_reference(
-            model.clone(),
-            grip::authored_reference(&model, &definition.core.pose)?,
-            definition.profile(&model_definition.profile)?,
-        )?);
-        // Validate even sockets which are currently unused by equipment.
-        for (name, socket) in &definition.core.sockets {
-            Attachment::new(model.clone(), &socket.bone, socket.transform())
-                .map_err(|e| format!("sockets.{name}.bone ({}): {e}", socket.bone))?;
-        }
-        let mut clips = Vec::new();
+        let mut paths = vec![overrides.map_or(model_path.as_path(), |v| v.0).to_owned()];
         let mut total = 0u64;
         for name in definition::MOTIONS {
             let binding = &definition.arena.animations[name];
@@ -132,7 +118,76 @@ impl CharacterAssets {
             if total > 256 * 1024 * 1024 {
                 return Err("animation source budget exceeded".into());
             }
-            let source = load(&path)?;
+            paths.push(path);
+        }
+        Ok(paths)
+    }
+
+    #[cfg(test)]
+    pub fn load_definition(
+        definition: definition::VisualDefinition,
+        root: &Path,
+        overrides: Option<(&Path, &Path)>,
+    ) -> Result<Arc<Self>> {
+        Self::build(definition, root, overrides, None)
+    }
+    pub fn from_loaded(
+        definition: definition::VisualDefinition,
+        root: &Path,
+        overrides: Option<(&Path, &Path)>,
+        loaded: &nico_assets::graph::LoadedAssets,
+    ) -> Result<Arc<Self>> {
+        Self::build(definition, root, overrides, Some(loaded))
+    }
+    fn build(
+        definition: definition::VisualDefinition,
+        root: &Path,
+        overrides: Option<(&Path, &Path)>,
+        assets: Option<&nico_assets::graph::LoadedAssets>,
+    ) -> Result<Arc<Self>> {
+        definition.validate()?;
+        let model_definition = definition.core.model.as_ref().ok_or("model required")?;
+        let model_path = definition::asset_path(root, &model_definition.asset)?;
+        let paths = Self::dependencies(&definition, root, overrides)?;
+        let models = if let Some(assets) = assets {
+            paths
+                .iter()
+                .map(|path| Ok(assets.model(path)?.model.clone()))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            nico_assets::batch::models(
+                paths.clone(),
+                format!("{} models", definition.core.character),
+                ModelGlbSettings {
+                    allow_material_fallback: true,
+                    ..Default::default()
+                },
+                ImportBudget {
+                    max_input_bytes: 64 * 1024 * 1024,
+                    max_decoded_bytes: 128 * 1024 * 1024,
+                },
+            )?
+        };
+        let mut loaded = models.into_iter();
+        let model = loaded.next().ok_or("missing character model")?;
+        let target = Arc::new(HumanoidRig::from_reference(
+            model.clone(),
+            grip::authored_reference(&model, &definition.core.pose)?,
+            definition.profile(&model_definition.profile)?,
+        )?);
+        // Validate even sockets which are currently unused by equipment.
+        for (name, socket) in &definition.core.sockets {
+            Attachment::new(model.clone(), &socket.bone, socket.transform())
+                .map_err(|e| format!("sockets.{name}.bone ({}): {e}", socket.bone))?;
+        }
+        let mut clips = Vec::new();
+        for ((name, source), path) in definition::MOTIONS
+            .into_iter()
+            .zip(loaded)
+            .zip(paths.iter().skip(1))
+        {
+            let binding = &definition.arena.animations[name];
+            let animation = &definition.core.animations[&binding.animation];
             let mut matching = source
                 .data()
                 .clips
@@ -158,59 +213,24 @@ impl CharacterAssets {
                 index,
                 &animation.clip,
             )?);
-            progress.complete_one();
         }
-        progress.finish();
-        let texture_count = (0..model.data().textures.len())
-            .filter(|i| {
-                model
-                    .data()
-                    .materials
-                    .iter()
-                    .any(|m| m.texture_indices().contains(&Some(*i)))
-            })
-            .count();
-        let progress = nico_assets::progress::ImportProgress::new(
-            format!("{} textures", definition.core.character),
-            texture_count,
-        )?;
-        let mut textures = Vec::new();
-        let mut decoded = 0usize;
-        for (index, texture) in model.data().textures.iter().enumerate() {
-            if !model
-                .data()
-                .materials
-                .iter()
-                .any(|m| m.texture_indices().contains(&Some(index)))
-            {
-                textures.push(None);
-                continue;
-            }
-            let image = &model.data().images[texture.image];
-            if image.encoding != ImageEncoding::Png {
-                return Err("arena currently supports PNG material images only".into());
-            }
-            let remaining = (256usize * 1024 * 1024).saturating_sub(decoded);
-            if remaining == 0 {
-                return Err("arena material texture budget exceeded".into());
-            }
-            let texture = nico_assets::cache::load_bytes(
-                overrides.map_or(model_path.as_path(), |v| v.0),
-                &format!("image/{}", texture.image),
-                &image.bytes,
-                &PngImporter,
-                &PngSettings::default(),
+        let textures = if let Some(assets) = assets {
+            assets.model(&paths[0])?.textures.clone()
+        } else {
+            nico_assets::batch::textures(
+                vec![(
+                    overrides.map_or(model_path.as_path(), |v| v.0).to_owned(),
+                    model.clone(),
+                )],
+                format!("{} textures", definition.core.character),
                 ImportBudget {
                     max_input_bytes: 64 * 1024 * 1024,
-                    max_decoded_bytes: remaining,
+                    max_decoded_bytes: 256 * 1024 * 1024,
                 },
-                &|| false,
-            )?;
-            decoded += texture.decoded_byte_len();
-            textures.push(Some(Arc::new(texture)));
-            progress.complete_one();
-        }
-        progress.finish();
+            )?
+            .pop()
+            .ok_or("missing model textures")?
+        };
         let visual = ModelVisual::new(model.clone(), textures)?;
         // Reserve enough of the renderer's 256 draw slots for arena geometry and telegraphs.
         if visual.primitive_count() > 32 {
@@ -608,22 +628,6 @@ impl Character {
     pub fn state(&self) -> serde_json::Value {
         serde_json::json!({"motion":self.controller.motion.map(Motion::name), "clip":self.controller.player.clip(), "time":self.controller.player.time(), "duration":self.controller.player.duration(), "finished":self.controller.player.finished(), "fade_weight":self.controller.player.fade_weight(), "hand_matrix":self.hand_matrix.to_cols_array_2d(), "weapon_matrix":self.weapon_matrix.to_cols_array_2d(), "weapon_length":self.assets.weapon.as_ref().map_or(0., |w| w.weapon_length),"attack_contact_seconds":self.assets.definition.arena.animations["attack"].contact_seconds.unwrap(), "model_draws":self.assets.visual.primitive_count(), "visible":self.visible, "render_bounds":self.render_bounds.map(|b| serde_json::json!({"min":b.min,"max":b.max}))})
     }
-}
-
-pub(crate) fn load(path: &Path) -> Result<Arc<Model>> {
-    Ok(Arc::new(nico_assets::cache::load_file(
-        path,
-        &ModelGlbImporter,
-        &ModelGlbSettings {
-            allow_material_fallback: true,
-            ..Default::default()
-        },
-        ImportBudget {
-            max_input_bytes: 64 * 1024 * 1024,
-            max_decoded_bytes: 128 * 1024 * 1024,
-        },
-        &|| false,
-    )?))
 }
 
 /// Discoverable animation observation; null means procedural visuals are selected.

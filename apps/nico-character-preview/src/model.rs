@@ -8,11 +8,7 @@ use nico_animation::{
     humanoid::{HumanoidProfile, HumanoidRig},
     playback::{AnimationClip, AnimationPlayer, AnimationSet, PlayMode},
 };
-use nico_assets::{
-    import::ImportBudget,
-    importers::{ModelGlbImporter, ModelGlbSettings, PngImporter, PngSettings},
-    model::{ImageEncoding, Model},
-};
+use nico_assets::{import::ImportBudget, importers::ModelGlbSettings, model::Model};
 use nico_presentation::MeshInstance;
 use std::{
     path::{Path, PathBuf},
@@ -69,21 +65,6 @@ pub fn spawn_character(
     },)))
 }
 
-fn load(path: &Path) -> Result<Arc<Model>> {
-    Ok(Arc::new(nico_assets::cache::load_file(
-        path,
-        &ModelGlbImporter,
-        &ModelGlbSettings {
-            allow_material_fallback: true,
-            ..Default::default()
-        },
-        ImportBudget {
-            max_input_bytes: 64 * 1024 * 1024,
-            max_decoded_bytes: 128 * 1024 * 1024,
-        },
-        &|| false,
-    )?))
-}
 fn validate_clip_labels(clips: &[AnimationClip]) -> Result<()> {
     if clips.len() > 128
         || clips
@@ -98,14 +79,35 @@ fn validate_clip_labels(clips: &[AnimationClip]) -> Result<()> {
 }
 impl CharacterAssets {
     pub fn load(model: &Path, sources: &[PathBuf]) -> Result<Self> {
-        let progress =
-            nico_assets::progress::ImportProgress::new("preview models", 1 + sources.len())?;
-        let model_path = model;
-        let model = load(model)?;
-        progress.complete_one();
         if sources.len() > 64 {
             return Err("preview accepts at most 64 animation files".into());
         }
+        let mut total_bytes = 0u64;
+        for path in sources {
+            total_bytes = total_bytes
+                .checked_add(std::fs::metadata(path)?.len())
+                .ok_or("animation input size overflow")?;
+            if total_bytes > 256 * 1024 * 1024 {
+                return Err("animation set exceeds 256 MiB source budget".into());
+            }
+        }
+        let model_path = model;
+        let mut loaded = nico_assets::batch::models(
+            std::iter::once(model.to_owned())
+                .chain(sources.iter().cloned())
+                .collect(),
+            "preview models",
+            ModelGlbSettings {
+                allow_material_fallback: true,
+                ..Default::default()
+            },
+            ImportBudget {
+                max_input_bytes: 64 * 1024 * 1024,
+                max_decoded_bytes: 128 * 1024 * 1024,
+            },
+        )?
+        .into_iter();
+        let model = loaded.next().ok_or("missing preview model")?;
         let mut clips = Vec::new();
         if sources.is_empty() {
             for (i, clip) in model.data().clips.iter().enumerate() {
@@ -113,15 +115,7 @@ impl CharacterAssets {
             }
         } else {
             let target = Arc::new(HumanoidRig::new(model.clone(), HumanoidProfile::mixamo())?);
-            let mut total_bytes = 0u64;
-            for path in sources {
-                total_bytes = total_bytes
-                    .checked_add(std::fs::metadata(path)?.len())
-                    .ok_or("animation input size overflow")?;
-                if total_bytes > 256 * 1024 * 1024 {
-                    return Err("animation set exceeds 256 MiB source budget".into());
-                }
-                let source = load(path)?;
+            for (path, source) in sources.iter().zip(loaded) {
                 let rig = Arc::new(HumanoidRig::new(source.clone(), HumanoidProfile::rpg())?);
                 for (i, clip) in source.data().clips.iter().enumerate() {
                     let name = format!(
@@ -136,60 +130,20 @@ impl CharacterAssets {
                         name,
                     )?);
                 }
-                progress.complete_one();
             }
         }
         validate_clip_labels(&clips)?;
         let animations = Arc::new(AnimationSet::new(model.clone(), clips)?);
-        progress.finish();
-        let texture_count = (0..model.data().textures.len())
-            .filter(|i| {
-                model
-                    .data()
-                    .materials
-                    .iter()
-                    .any(|m| m.texture_indices().contains(&Some(*i)))
-            })
-            .count();
-        let progress =
-            nico_assets::progress::ImportProgress::new("preview textures", texture_count)?;
-        let mut textures = Vec::new();
-        let mut decoded = 0usize;
-        for (index, texture) in model.data().textures.iter().enumerate() {
-            if !model
-                .data()
-                .materials
-                .iter()
-                .any(|m| m.texture_indices().contains(&Some(index)))
-            {
-                textures.push(None);
-                continue;
-            }
-            let image = &model.data().images[texture.image];
-            if image.encoding != ImageEncoding::Png {
-                return Err("preview currently supports PNG material images only".into());
-            }
-            let remaining = (256usize * 1024 * 1024).saturating_sub(decoded);
-            if remaining == 0 {
-                return Err("preview material texture budget exceeded".into());
-            }
-            let texture = nico_assets::cache::load_bytes(
-                model_path,
-                &format!("image/{}", texture.image),
-                &image.bytes,
-                &PngImporter,
-                &PngSettings::default(),
-                ImportBudget {
-                    max_input_bytes: 64 * 1024 * 1024,
-                    max_decoded_bytes: remaining,
-                },
-                &|| false,
-            )?;
-            decoded += texture.decoded_byte_len();
-            textures.push(Some(Arc::new(texture)));
-            progress.complete_one();
-        }
-        progress.finish();
+        let textures = nico_assets::batch::textures(
+            vec![(model_path.to_owned(), model.clone())],
+            "preview textures",
+            ImportBudget {
+                max_input_bytes: 64 * 1024 * 1024,
+                max_decoded_bytes: 256 * 1024 * 1024,
+            },
+        )?
+        .pop()
+        .ok_or("missing model textures")?;
         let visual = nico_presentation_control::model::ModelVisual::new(model.clone(), textures)?;
         Ok(Self {
             visual,

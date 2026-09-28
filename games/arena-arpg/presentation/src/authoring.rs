@@ -57,7 +57,7 @@ impl WorldEditor {
     fn open(project: Project) -> io::Result<Self> {
         let declaration = project
             .manifest
-            .editor
+            .authoring
             .as_ref()
             .ok_or_else(|| error("missing adapter"))?;
         if declaration.sources.len() != 2 {
@@ -85,11 +85,7 @@ impl WorldEditor {
         if zone.id != environment.definition.zone {
             return Err(error("logic and visual zone IDs differ"));
         }
-        let preparing =
-            nico_assets::progress::ImportProgress::new("preparing scenery and landscape", 1)?;
         environment.bind(&zone).map_err(error)?;
-        preparing.complete_one();
-        preparing.finish();
         let mut assets = BTreeMap::new();
         for (key, path) in &environment.definition.models {
             let full = visual_path.parent().unwrap().join(path).canonicalize()?;
@@ -283,10 +279,7 @@ impl Session for WorldEditor {
         Ok(())
     }
     fn refresh_assets(&mut self) -> io::Result<()> {
-        let checking = nico_assets::progress::ImportProgress::new("checking scenery sources", 1)?;
         let mut stamps = source_stamps(&self.visual_path, &self.base_visual);
-        checking.complete_one();
-        checking.finish();
         if stamps.values().all(Option::is_some) && stamps == self.source_stamps {
             return Ok(());
         }
@@ -299,11 +292,7 @@ impl Session for WorldEditor {
         environment.ground_cache =
             Some(nico_assets::cache::ImportCache::new(self.project.root()).map_err(error)?);
         environment.definition = self.environment.definition.clone();
-        let preparing =
-            nico_assets::progress::ImportProgress::new("preparing scenery and landscape", 1)?;
         environment.bind(&self.zone).map_err(error)?;
-        preparing.complete_one();
-        preparing.finish();
         self.environment = environment;
         verified_stamps(&mut stamps);
         self.source_stamps = stamps;
@@ -415,6 +404,11 @@ mod tests {
                 .values()
                 .map(|p| visual.parent().unwrap().join(p)),
         );
+        paths.extend(["hero", "grunt", "brute"].map(|name| {
+            std::path::PathBuf::from(format!(
+                "assets/presentation/characters/{name}.char-vis.toml"
+            ))
+        }));
         for path in paths {
             fs::create_dir_all(root.path().join(&path).parent().unwrap()).unwrap();
             fs::copy(source.join(&path), root.path().join(&path)).unwrap();

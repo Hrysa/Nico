@@ -151,9 +151,24 @@ They receive bounded bytes and cooperative cancellation, never world or GPU acce
 User import code is trusted and cannot be forcibly interrupted.
 Asset workers publish through runtime-owned boundaries.
 
-CLI imports read source files directly in every build profile.
-Persistent caches require explicit `ImportCache` use.
-Cache/watch libraries remain available, but automatic CLI caching is removed.
+Native file and embedded texture loads reuse persistent `ImportCache` data in every build profile.
+Sources, importer versions, settings, and budgets determine whether cached data can be reused.
+The cache sits beside the nearest project manifest, above `assets`, or beside a standalone source.
+Embedded bytes without an owner file import directly.
+Asset batches own up to four CPU workers and 1024 jobs. Results retain input order when collected.
+Polling does not block. Cancellation is cooperative; dropping a batch cancels queued work and joins workers.
+Workers return owned values. GPU work and runtime publication stay on their owning threads.
+Arena starts one dependency graph from `nico.project.toml`, using `default_scene` and its character catalog.
+Project asset references stay under the fixed `assets` folder.
+Content hashes and snapshots include the manifest, default scene, and `assets` folder.
+`assets/logic` holds authoritative content; `assets/presentation` holds client content.
+Game readers resolve definition references; engine workers load unique GLB and PNG sources and their embedded textures.
+Traversal rejects cycles and missing files before loading. One fixed progress total counts source files, including their embedded dependencies.
+The synchronous graph call waits; its asynchronous form supports polling and cancellation of child workers.
+Project `[authoring]` metadata selects the retained adapter. It replaces the removed `[editor]` section.
+Worker cache counts return through the caller's progress scope.
+Texture batches reserve their total RGBA budget before decoding and share identical images.
+Runtime asset stores keep their existing worker and update-boundary publication.
 Persistent import storage and GPU resource reuse are separate.
 
 Offline Slang compilation produces checked-in WGSL outside Cargo's build graph.

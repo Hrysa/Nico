@@ -1,22 +1,13 @@
 version = 1
 name = "Arena ARPG"
-asset_roots = ["assets/logic/worlds", "assets/presentation/worlds"]
 default_scene = "assets/presentation/worlds/meadow.world-vis.toml"
 
 [targets]
 client = "arena-arpg-client"
 server = "arena-arpg-server"
 
-[editor]
+[authoring]
 adapter = "arena-world-v1"
-[editor.sources]
+[authoring.sources]
 logic = "assets/logic/worlds/meadow.world.toml"
 visual = "assets/presentation/worlds/meadow.world-vis.toml"
-
-[play]
-content_roots = ["assets/logic", "assets/presentation"]
-server_args = ["--listen", "127.0.0.1:0"]
-client_args = ["--server", "{server_address}"]
-server_tool = "world_state"
-client_tool = "world_client_state"
-server_address = "/address"

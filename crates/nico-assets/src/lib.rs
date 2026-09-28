@@ -123,9 +123,15 @@ pub mod model;
 #[cfg(feature = "import-cache")]
 pub mod progress;
 
+#[cfg(feature = "import-cache")]
+pub mod batch;
+
 /// Native project discovery and asynchronous, stat-checked source reimport.
 #[cfg(feature = "watch")]
 pub mod watch;
 
 #[cfg(all(feature = "png-import", feature = "gltf-import"))]
 pub mod model_loading;
+
+#[cfg(all(feature = "png-import", feature = "gltf-import"))]
+pub mod graph;

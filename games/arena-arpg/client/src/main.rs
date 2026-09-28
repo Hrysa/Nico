@@ -61,7 +61,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(content) = &content {
         args.logic_characters = content.asset("assets/logic/characters")?;
         args.visual_characters = content.asset("assets/presentation/characters")?;
-        args.visual_world = content.source("visual")?;
+        args.visual_world = arena_arpg_shared::project::ProjectContent::default_scene(
+            args.project.as_deref().unwrap(),
+        )?;
+    }
+    if content.is_none()
+        && args.visual_world == std::path::Path::new(world::environment::DEFAULT_VISUAL_WORLD)
+    {
+        args.visual_world = arena_arpg_shared::project::ProjectContent::default_scene(
+            std::path::Path::new("games/arena-arpg"),
+        )?;
     }
     let logic = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
     let definitions = character::definition::load_visuals(&args.visual_characters, &logic)?;
@@ -69,20 +78,23 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .character_model
         .as_deref()
         .zip(args.character_animations.as_deref());
+    let loaded = load_project_assets(&args, &definitions)?;
     let mut character = std::array::from_fn(|_| None);
     for (index, definition) in definitions.iter().enumerate() {
         if definition.core.model.is_some() && !(index == 0 && args.procedural_hero) {
-            character[index] = Some(character::CharacterAssets::load_definition(
+            character[index] = Some(character::CharacterAssets::from_loaded(
                 definition.clone(),
                 &args.visual_characters,
                 if index == 0 { overrides } else { None },
+                &loaded,
             )?);
         }
     }
     let builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
     let (builder, tools) = if !args.arena {
         let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
-        let environment = world::environment::Environment::load(&args.visual_world)?;
+        let environment =
+            world::environment::Environment::from_loaded(&args.visual_world, &loaded)?;
         world::register(builder, client, character, definitions, environment)?
     } else {
         let (builder, mut tools) = arena_arpg_shared::tools::register(
@@ -134,9 +146,119 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+fn load_project_assets(
+    args: &Args,
+    definitions: &[character::definition::VisualDefinition; 3],
+) -> Result<nico_assets::graph::LoadedAssets, Box<dyn std::error::Error + Send + Sync>> {
+    use std::path::Path;
+    let root = args
+        .project
+        .as_deref()
+        .unwrap_or(Path::new("games/arena-arpg"));
+    nico_assets::graph::load(vec![root.join("nico.project.toml")], |path| {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("invalid asset filename")?;
+        if name == "nico.project.toml" {
+            // The project selects the scene; Arena's catalog selects its character definitions.
+            let scene =
+                arena_arpg_shared::project::ProjectContent::default_scene(path.parent().unwrap())?;
+            let scene = if args.visual_world == Path::new(world::environment::DEFAULT_VISUAL_WORLD)
+            {
+                scene
+            } else {
+                args.visual_world.canonicalize()?
+            };
+            let mut sources = vec![scene];
+            for name in arena_arpg_shared::characters::NAMES {
+                sources.push(
+                    args.visual_characters
+                        .join(format!("{name}.char-vis.toml"))
+                        .canonicalize()?,
+                );
+            }
+            return Ok(sources);
+        }
+
+        if name.ends_with(".char-vis.toml") {
+            let definition = character::definition::VisualDefinition::parse(
+                &arena_arpg_shared::characters::read_definition(path)?,
+            )?;
+            let hero = definition.core.character == definitions[0].core.character;
+            if hero && args.procedural_hero {
+                return Ok(Vec::new());
+            }
+            let overrides = if hero {
+                args.character_model
+                    .as_deref()
+                    .zip(args.character_animations.as_deref())
+            } else {
+                None
+            };
+            return character::CharacterAssets::dependencies(
+                &definition,
+                path.parent().unwrap(),
+                overrides,
+            );
+        }
+        if name.ends_with(".world-vis.toml") {
+            return if args.arena {
+                Ok(Vec::new())
+            } else {
+                world::environment::Environment::dependencies(path)
+            };
+        }
+        Err(format!("unsupported asset definition: {}", path.display()).into())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_load_supplies_all_character_and_world_assets_with_one_progress_total() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .canonicalize()
+            .unwrap();
+        let mut args = Args::parse_from(["arena"]);
+        args.project = Some(root.clone());
+        args.logic_characters = root.join("assets/logic/characters");
+        args.visual_characters = root.join("assets/presentation/characters");
+        args.visual_world = root.join("assets/presentation/worlds/meadow.world-vis.toml");
+        let logic =
+            arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters).unwrap();
+        let definitions =
+            character::definition::load_visuals(&args.visual_characters, &logic).unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let _observer = nico_assets::progress::observe_progress(move |update| {
+            send.send(update).unwrap();
+        });
+        let assets = load_project_assets(&args, &definitions).unwrap();
+        assert!(!assets.is_empty());
+        for definition in definitions {
+            if definition.core.model.is_some() {
+                character::CharacterAssets::from_loaded(
+                    definition,
+                    &args.visual_characters,
+                    None,
+                    &assets,
+                )
+                .unwrap();
+            }
+        }
+        world::environment::Environment::from_loaded(&args.visual_world, &assets).unwrap();
+        let updates: Vec<_> = receive.try_iter().collect();
+        assert!(
+            updates
+                .iter()
+                .all(|update| update.label == "project assets" && update.total == assets.len())
+        );
+        assert_eq!(updates.iter().filter(|update| update.finished).count(), 1);
+        assert_eq!(updates.last().unwrap().completed, assets.len());
+    }
 
     /// Measures CPU startup preparation only; never opens a window or connects a host.
     #[test]

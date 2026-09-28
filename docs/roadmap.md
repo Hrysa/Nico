@@ -85,9 +85,9 @@ Native checks covered acceptance and saved progress, but not the full kill-to-re
 **Remaining goal:** Make fresh-checkout builds, content changes, and reference tests repeatable.
 
 The integrated editor and Play launcher were removed on 2026-09-28.
-CLI hosts import source files directly and require restart after content edits.
+CLI hosts reuse cached imports and require restart after content edits.
 Project scenes, authoring libraries, explicit cache/watch APIs, and bridge debug attachment remain.
-Earlier editor and cached-startup results do not describe current CLI loading.
+Earlier editor results do not describe current CLI loading.
 
 Recorded removal checks passed Windows workspace and focused package checks.
 They did not include native visual gameplay.

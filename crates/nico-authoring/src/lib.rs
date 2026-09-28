@@ -33,13 +33,13 @@ impl Registry {
         Ok(())
     }
     pub fn open(&self, project: &Project) -> io::Result<Option<Box<dyn Session>>> {
-        let Some(editor) = &project.manifest.editor else {
+        let Some(authoring) = &project.manifest.authoring else {
             return Ok(None);
         };
-        let factory = self.factories.get(&editor.adapter).ok_or_else(|| {
+        let factory = self.factories.get(&authoring.adapter).ok_or_else(|| {
             io::Error::other(format!(
                 "authoring adapter '{}' is not registered in this editor build",
-                editor.adapter
+                authoring.adapter
             ))
         })?;
         factory(project).map(Some)

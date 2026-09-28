@@ -23,9 +23,8 @@ pub fn model_bundle(
     })
 }
 
-/// Use the watched project's cache even in release builds. Embedded image bytes
-/// participate in the key, so replacing a GLB cannot reuse its old pixels.
-#[cfg(feature = "watch")]
+/// Reuse the project's cache in every build profile.
+/// Embedded image bytes enter the key, so replacing a GLB cannot reuse its old pixels.
 pub(crate) fn cached_model_bundle(
     model: Model,
     cache: &crate::cache::ImportCache,

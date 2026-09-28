@@ -1,4 +1,4 @@
-//! Bounded saved-project snapshots for independently loaded play sessions.
+//! Bounded snapshots of saved project files.
 //! Revisions describe file bytes and paths, not a promise that every asset imports.
 use crate::Project;
 use sha2::{Digest, Sha256};
@@ -13,8 +13,7 @@ const MAX_FILES: usize = 32_768;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_DEPTH: usize = 64;
 
-/// Hash the declared saved content. Call off the UI/runtime thread.
-/// Cache directories outside declared roots and server data are not included.
+/// Hash the manifest, default scene, and asset folder. Call off the UI/runtime thread.
 pub fn revision(project: &Project, cancelled: &impl Fn() -> bool) -> io::Result<String> {
     digest(project, None, cancelled)
 }
@@ -107,21 +106,15 @@ fn digest(
     cancelled: &impl Fn() -> bool,
 ) -> io::Result<String> {
     if !project.is_declared() {
-        return Err(io::Error::other("play content requires a declared project"));
+        return Err(io::Error::other(
+            "content snapshots require a declared project",
+        ));
     }
     let mut files = BTreeSet::new();
     let mut entries = 0;
     for path in std::iter::once(Path::new("nico.project.toml"))
         .chain(std::iter::once(project.manifest.default_scene.as_path()))
-        .chain(project.manifest.asset_roots.iter().map(PathBuf::as_path))
-        .chain(
-            project
-                .manifest
-                .play
-                .content_roots
-                .iter()
-                .map(PathBuf::as_path),
-        )
+        .chain(std::iter::once(Path::new("assets")))
     {
         collect(project.root(), path, &mut files, 0, &mut entries, cancelled)?;
     }
@@ -172,16 +165,9 @@ fn digest(
             return Err(io::Error::other("content grew during preparation"));
         }
     }
-    // Preserve empty declared roots too.
+    // Preserve the asset folder when it is empty.
     if let Some(root) = destination {
-        for directory in project
-            .manifest
-            .asset_roots
-            .iter()
-            .chain(&project.manifest.play.content_roots)
-        {
-            fs::create_dir_all(root.join(directory))?;
-        }
+        fs::create_dir_all(root.join("assets"))?;
     }
     Ok(format!("sha256:{:x}", hash.finalize()))
 }
@@ -194,7 +180,7 @@ mod tests {
         fs::create_dir(root.path().join("assets")).unwrap();
         fs::write(
             root.path().join("nico.project.toml"),
-            "version=1\nname='Test'\nasset_roots=['assets']\ndefault_scene='scene.json'\n",
+            "version=1\nname='Test'\ndefault_scene='scene.json'\n",
         )
         .unwrap();
         fs::write(
@@ -237,34 +223,17 @@ mod tests {
         assert!(snapshot(&project, &root.path().join("nested"), &|| false).is_err());
     }
     #[test]
-    fn play_content_roots_are_snapshotted_without_expanding_authoring_asset_roots() {
+    fn snapshots_ignore_files_outside_the_asset_folder_and_scene() {
         let root = project();
-        fs::create_dir(root.path().join("logic")).unwrap();
-        fs::write(root.path().join("logic/tuning.toml"), "value=1").unwrap();
-        let manifest = root.path().join("nico.project.toml");
-        let original = fs::read_to_string(&manifest).unwrap();
-        fs::write(
-            &manifest,
-            format!("{original}\n[play]\ncontent_roots=['logic']\n"),
-        )
-        .unwrap();
+        fs::create_dir(root.path().join("other")).unwrap();
+        fs::write(root.path().join("other/tuning.toml"), "value=1").unwrap();
         let project = Project::open(root.path()).unwrap();
-        assert!(!project.allows_asset(Path::new("logic/tuning.toml")));
         let output = tempfile::tempdir().unwrap();
         let (copy, before) = snapshot(&project, &output.path().join("copy"), &|| false).unwrap();
-        assert_eq!(
-            fs::read(copy.root().join("logic/tuning.toml")).unwrap(),
-            b"value=1"
-        );
+        assert!(!copy.root().join("other").exists());
         assert_eq!(revision(&copy, &|| false).unwrap(), before);
-        fs::write(root.path().join("logic/tuning.toml"), "value=2").unwrap();
-        assert_ne!(revision(&project, &|| false).unwrap(), before);
-        fs::write(
-            &manifest,
-            format!("{original}\n[play]\ncontent_roots=['../outside']\n"),
-        )
-        .unwrap();
-        assert!(Project::open(root.path()).is_err());
+        fs::write(root.path().join("other/tuning.toml"), "value=2").unwrap();
+        assert_eq!(revision(&project, &|| false).unwrap(), before);
     }
 
     #[test]

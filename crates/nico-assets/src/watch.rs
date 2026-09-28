@@ -1,5 +1,6 @@
 //! Watched project sources. The worker owns filesystem/import work; consumers
 //! adopt immutable snapshots at their update boundary. No runtime world is shared.
+//! Discovery skips folders whose names start with `~`, including all their contents.
 use crate::{
     Texture,
     cache::{FileStamp, ImportCache},
@@ -313,11 +314,20 @@ impl Drop for WatchedProject {
         }
     }
 }
-fn ignored(path: &Path) -> bool {
+fn ignored(path: &Path, is_directory: bool) -> bool {
     path.components().any(|c| {
         c.as_os_str().to_str().is_some_and(|s| {
             matches!(s, ".nico" | ".git" | "target" | "node_modules") || s.starts_with("._")
         })
+    }) || (if is_directory {
+        Some(path)
+    } else {
+        path.parent()
+    })
+    .is_some_and(|directories| {
+        directories
+            .components()
+            .any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"~"))
     })
 }
 fn supported(path: &Path) -> bool {
@@ -329,10 +339,10 @@ fn relevant(root: &Path, event: &Event) -> bool {
     !matches!(event.kind, EventKind::Access(_))
         && (event.need_rescan()
             || event.paths.is_empty()
-            || event
-                .paths
-                .iter()
-                .any(|p| p.strip_prefix(root).is_ok_and(|p| !ignored(p))))
+            || event.paths.iter().any(|p| {
+                p.strip_prefix(root)
+                    .is_ok_and(|relative| !ignored(relative, p.is_dir()))
+            }))
 }
 fn discover(
     root: &Path,
@@ -343,6 +353,9 @@ fn discover(
     let mut files = BTreeMap::new();
     let mut visited = 0;
     while let Some(directory) = pending.pop() {
+        if ignored(directory.strip_prefix(root).unwrap(), true) {
+            continue;
+        }
         for entry in fs::read_dir(directory)? {
             if stop.load(Ordering::Acquire) {
                 return Err(io::Error::other("import cancelled"));
@@ -354,10 +367,10 @@ fn discover(
             }
             let path = entry.path();
             let relative = path.strip_prefix(root).unwrap();
-            if ignored(relative) {
+            let kind = entry.file_type()?;
+            if ignored(relative, kind.is_dir()) {
                 continue;
             }
-            let kind = entry.file_type()?;
             // Do not traverse source links outside the selected project.
             if kind.is_dir() {
                 pending.push(path);
@@ -619,6 +632,38 @@ mod tests {
                 .any(|(sources, ready, _)| *sources == 2 && *ready == 1)
         );
         assert_eq!(seen.last().unwrap(), &(2, 2, None));
+    }
+    #[test]
+    fn tilde_folders_are_skipped_but_tilde_files_are_imported() {
+        let project = Project::new();
+        for folder in ["~drafts/nested", "assets/~sources", "assets/visible"] {
+            fs::create_dir_all(project.0.join(folder)).unwrap();
+        }
+        project.png("~drafts/nested/hidden.png", 1);
+        project.png("assets/~sources/hidden.png", 1);
+        project.png("assets/visible/~image.png", 1);
+        let cache = ImportCache::new(&project.0).unwrap();
+        let mut state = CatalogSnapshot::default();
+        reconcile(&project.0, &cache, &mut state, &AtomicBool::new(false));
+        assert_eq!(state.assets.len(), 1);
+        assert!(
+            state.assets[Path::new("assets/visible/~image.png")]
+                .value
+                .is_some()
+        );
+        for root in ["~drafts", "~drafts/nested", "assets/~sources"] {
+            assert!(
+                discover(&project.0, &[project.0.join(root)], &AtomicBool::new(false))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let event =
+            Event::new(EventKind::Any).add_path(project.0.join("assets/~sources/hidden.png"));
+        assert!(!relevant(&project.0, &event));
+        let event =
+            Event::new(EventKind::Any).add_path(project.0.join("assets/visible/~image.png"));
+        assert!(relevant(&project.0, &event));
     }
     #[test]
     fn declared_roots_exclude_assets_next_to_code() {

@@ -199,10 +199,23 @@ Both Arena hosts accept --project for declared logic and visual content.
 It cannot be combined with --arena or conflicting content overrides.
 Restart affected hosts after editing source files.
 
-CLI games and preview tools import sources directly in debug and release builds.
-They do not read or update persistent .nico caches.
+CLI games and preview tools reuse imported data in debug and release builds.
+The `.nico` cache sits beside the project manifest, or above the nearest `assets` folder.
+Standalone sources keep their cache in the same folder.
+Source or import setting changes trigger a new import. Deleting `.nico` forces a rebuild.
 Explicit ImportCache and watch APIs remain available to library callers.
+Automatic discovery skips folders starting with `~` and everything inside them.
+This applies to declared asset roots too. Explicit file loads still work.
 GPU resource reuse is separate from persistent import caching.
+Arena and character preview load models and textures with up to four CPU workers per batch.
+Startup waits for required assets; library callers can poll batches without blocking.
+Arena makes one recursive load request from `nico.project.toml`.
+`default_scene` selects world content. Arena's character catalog supplies its character definitions.
+Game assets live under `assets/logic` and `assets/presentation`; the project needs no root or startup asset lists.
+Shared source files load once. Each model completes after its referenced textures are ready.
+Progress counts unique GLB and PNG source files once, then logs only completed-count changes.
+Embedded textures belong to their model's progress unit.
+The `[authoring]` section holds the retained adapter and source paths; `[editor]` has been removed.
 
 | Need | Starting point |
 | --- | --- |

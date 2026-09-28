@@ -14,49 +14,20 @@ pub struct Targets {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EditorDefinition {
+pub struct AuthoringDefinition {
     pub adapter: String,
     pub sources: std::collections::BTreeMap<String, PathBuf>,
 }
-/// Game-declared launch details. Arguments are passed directly, never through a shell.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct PlayDefinition {
-    pub content_roots: Vec<PathBuf>,
-    pub server_args: Vec<String>,
-    pub client_args: Vec<String>,
-    pub server_tool: String,
-    pub client_tool: String,
-    /// JSON pointer in the server tool result; substitutes the entire client arg
-    /// `{server_address}` only after the owned server reports readiness.
-    pub server_address: Option<String>,
-}
-impl Default for PlayDefinition {
-    fn default() -> Self {
-        Self {
-            content_roots: Vec::new(),
-            server_args: Vec::new(),
-            client_args: Vec::new(),
-            server_tool: "scene_state".into(),
-            client_tool: "scene_state".into(),
-            server_address: None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectManifest {
     pub version: u32,
     pub name: String,
-    pub asset_roots: Vec<PathBuf>,
     pub default_scene: PathBuf,
     #[serde(default)]
     pub targets: Targets,
     #[serde(default)]
-    pub play: PlayDefinition,
-    #[serde(default)]
-    pub editor: Option<EditorDefinition>,
+    pub authoring: Option<AuthoringDefinition>,
 }
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -65,8 +36,8 @@ pub struct Project {
     declared: bool,
 }
 impl Project {
-    /// Manifest projects use game-root-relative assets. A directory without a
-    /// manifest retains the initial editor's loose-content behavior.
+    /// Project asset paths are relative to the game folder and stay under `assets`.
+    /// A directory without a manifest can still hold a loose scene.
     pub fn open(root: impl AsRef<Path>) -> io::Result<Self> {
         let root = root.as_ref().canonicalize()?;
         if !root.is_dir() {
@@ -94,26 +65,18 @@ impl Project {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned(),
-                asset_roots: vec![PathBuf::from(".")],
                 default_scene: "scene.nico.json".into(),
                 targets: Targets::default(),
-                play: PlayDefinition::default(),
-                editor: None,
+                authoring: None,
             }
         };
         if manifest.version != 1
             || manifest.name.is_empty()
             || manifest.name.len() > 256
-            || manifest.asset_roots.is_empty()
-            || manifest.asset_roots.len() > 16
             || !relative(&manifest.default_scene)
-            || manifest
-                .asset_roots
-                .iter()
-                .any(|p| !relative(p) && (declared || p != Path::new(".")))
         {
             return Err(io::Error::other(
-                "invalid project version, name, asset roots, or default scene",
+                "invalid project version, name, or default scene",
             ));
         }
         for target in [&manifest.targets.client, &manifest.targets.server]
@@ -129,54 +92,23 @@ impl Project {
                 return Err(io::Error::other("game targets must be Cargo package names"));
             }
         }
-        let play = &manifest.play;
-        if play.content_roots.len() > 16
-            || play.content_roots.iter().any(|path| !relative(path))
-            || [&play.server_args, &play.client_args].iter().any(|args| {
-                args.len() > 32
-                    || args
-                        .iter()
-                        .any(|arg| arg.len() > 1024 || arg.contains('\0'))
-            })
-            || [&play.server_tool, &play.client_tool].iter().any(|name| {
-                name.is_empty()
-                    || name.len() > 128
-                    || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-            })
-            || play
-                .server_address
-                .as_ref()
-                .is_some_and(|pointer| !pointer.starts_with('/') || pointer.len() > 128)
-            || (play.client_args.iter().any(|arg| arg == "{server_address}")
-                && play.server_address.is_none())
-        {
-            return Err(io::Error::other("invalid project play configuration"));
-        }
         let project = Self {
             root,
             manifest,
             declared,
         };
-        for directory in project
-            .manifest
-            .asset_roots
-            .iter()
-            .chain(&project.manifest.play.content_roots)
-        {
-            let path = project.contained(directory)?;
-            if !path.is_dir() {
-                return Err(io::Error::other("asset root must be a directory"));
-            }
+        if project.declared && !project.contained(Path::new("assets"))?.is_dir() {
+            return Err(io::Error::other("asset root must be a directory"));
         }
-        if let Some(editor) = &project.manifest.editor {
-            if editor.adapter.is_empty()
-                || editor.adapter.len() > 128
-                || editor.sources.is_empty()
-                || editor.sources.len() > 16
+        if let Some(authoring) = &project.manifest.authoring {
+            if authoring.adapter.is_empty()
+                || authoring.adapter.len() > 128
+                || authoring.sources.is_empty()
+                || authoring.sources.len() > 16
             {
-                return Err(io::Error::other("invalid editor adapter declaration"));
+                return Err(io::Error::other("invalid authoring adapter declaration"));
             }
-            for path in editor.sources.values() {
+            for path in authoring.sources.values() {
                 project.resolve_asset(path)?;
             }
         }
@@ -212,7 +144,7 @@ impl Project {
         }
     }
     pub fn load_scene(&self) -> io::Result<Document> {
-        if self.manifest.editor.is_some() {
+        if self.manifest.authoring.is_some() {
             return Err(io::Error::other(
                 "this project requires its registered authoring adapter",
             ));
@@ -226,7 +158,7 @@ impl Project {
         Ok(scene)
     }
     pub fn save_scene(&self, scene: &Document) -> io::Result<()> {
-        if self.manifest.editor.is_some() {
+        if self.manifest.authoring.is_some() {
             return Err(io::Error::other(
                 "this project requires its registered authoring adapter",
             ));
@@ -241,7 +173,7 @@ impl Project {
         for object in &scene.objects {
             if !self.allows_asset(&object.asset) {
                 return Err(io::Error::other(format!(
-                    "asset is outside declared roots: {}",
+                    "asset is outside the assets folder: {}",
                     object.asset.display()
                 )));
             }
@@ -249,16 +181,11 @@ impl Project {
         Ok(())
     }
     pub fn allows_asset(&self, path: &Path) -> bool {
-        relative(path)
-            && self
-                .manifest
-                .asset_roots
-                .iter()
-                .any(|r| r == Path::new(".") || path.starts_with(r))
+        relative(path) && path.starts_with("assets")
     }
     pub fn resolve_asset(&self, path: &Path) -> io::Result<PathBuf> {
         if !self.allows_asset(path) {
-            return Err(io::Error::other("asset is outside declared roots"));
+            return Err(io::Error::other("asset is outside the assets folder"));
         }
         self.contained(path)
     }
@@ -271,15 +198,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("assets")).unwrap();
         fs::create_dir(root.path().join("scenes")).unwrap();
-        fs::write(root.path().join("nico.project.toml"), "version = 1\nname = 'Test'\nasset_roots = ['assets']\ndefault_scene = 'scenes/main.json'\n[targets]\nclient = 'test-client'\n").unwrap();
+        fs::write(root.path().join("nico.project.toml"), "version = 1\nname = 'Test'\ndefault_scene = 'scenes/main.json'\n[targets]\nclient = 'test-client'\n").unwrap();
         root
     }
     #[test]
-    fn manifest_selects_scene_and_roots_and_missing_declared_scene_fails() {
+    fn manifest_uses_fixed_asset_folder_and_missing_scene_fails() {
         let root = setup();
         let project = Project::open(root.path()).unwrap();
         assert!(project.load_scene().is_err());
         assert!(project.allows_asset(Path::new("assets/model.glb")));
+        assert!(project.allows_asset(Path::new("assets/logic/character.toml")));
+        assert!(project.allows_asset(Path::new("assets/presentation/model.glb")));
+        assert!(!project.allows_asset(Path::new("assets-other/model.glb")));
         assert!(!project.allows_asset(Path::new("client/model.glb")));
         assert!(!project.allows_asset(Path::new("assets/../outside.glb")));
         project.save_scene(&Document::default()).unwrap();
@@ -296,7 +226,7 @@ mod tests {
         let original = fs::read_to_string(&manifest).unwrap();
         fs::write(root.path().join("assets/world.toml"), "game_data = true").unwrap();
         let adapter = format!(
-            "{original}\n[editor]\nadapter = 'game-world'\n[editor.sources]\nworld = 'assets/world.toml'\n"
+            "{original}\n[authoring]\nadapter = 'game-world'\n[authoring.sources]\nworld = 'assets/world.toml'\n"
         );
         fs::write(&manifest, &adapter).unwrap();
         let project = Project::open(root.path()).unwrap();
@@ -310,7 +240,7 @@ mod tests {
         assert!(Project::open(root.path()).is_err());
     }
     #[test]
-    fn loading_and_saving_reject_references_outside_declared_roots() {
+    fn loading_and_saving_reject_references_outside_assets() {
         let root = setup();
         let project = Project::open(root.path()).unwrap();
         let scene = Document {

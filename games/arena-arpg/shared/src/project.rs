@@ -8,11 +8,15 @@ pub struct ProjectContent {
     pub revision: String,
 }
 impl ProjectContent {
+    /// Read the default scene. Game readers supply its dependencies.
+    pub fn default_scene(root: &Path) -> io::Result<PathBuf> {
+        nico_scene::Project::open(root)?.scene_path()
+    }
     pub fn open(root: &Path) -> io::Result<Self> {
         let project = nico_scene::Project::open(root)?;
         if project
             .manifest
-            .editor
+            .authoring
             .as_ref()
             .map(|editor| editor.adapter.as_str())
             != Some("arena-world-v1")
@@ -28,7 +32,7 @@ impl ProjectContent {
         let relative = self
             .project
             .manifest
-            .editor
+            .authoring
             .as_ref()
             .unwrap()
             .sources
@@ -37,27 +41,9 @@ impl ProjectContent {
         self.project.resolve_asset(relative)
     }
     pub fn asset(&self, relative: &str) -> io::Result<PathBuf> {
-        let relative = Path::new(relative);
-        if !nico_scene::relative(relative)
-            || !self
-                .project
-                .manifest
-                .play
-                .content_roots
-                .iter()
-                .chain(&self.project.manifest.asset_roots)
-                .any(|root| relative.starts_with(root))
-        {
-            return Err(io::Error::other(
-                "Arena play asset is outside declared content roots",
-            ));
-        }
-        let path = self.project.root().join(relative).canonicalize()?;
-        if !path.starts_with(self.project.root()) {
-            return Err(io::Error::other("Arena play asset escapes its project"));
-        }
-        Ok(path)
+        self.project.resolve_asset(Path::new(relative))
     }
+
     pub fn verify(&self) -> io::Result<()> {
         if nico_scene::content::revision(&self.project, &|| false)? != self.revision {
             return Err(io::Error::other("Arena content changed during startup"));

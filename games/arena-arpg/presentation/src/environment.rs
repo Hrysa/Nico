@@ -5,7 +5,6 @@ use nico_animation::Pose;
 use nico_assets::{
     Texture,
     import::{AssetImporter, ImportBudget},
-    importers::{PngImporter, PngSettings},
 };
 use nico_presentation::{Camera3d, MeshInstance, Scene3d};
 use nico_presentation_control::model::{ModelBounds, ModelVisual};
@@ -69,7 +68,27 @@ fn height_valid(height: f32) -> bool {
     height.is_finite() && (0.05..=20.).contains(&height)
 }
 impl Environment {
+    pub fn dependencies(path: &Path) -> Result<Vec<std::path::PathBuf>> {
+        let definition: Definition =
+            toml::from_str(&arena_arpg_shared::characters::read_definition(path)?)?;
+        definition
+            .models
+            .values()
+            .map(|asset| {
+                nico_assets::character::asset_path(
+                    path.parent().ok_or("world asset directory")?,
+                    asset,
+                )
+            })
+            .collect()
+    }
     pub fn load(path: &Path) -> Result<Self> {
+        Self::build(path, None)
+    }
+    pub fn from_loaded(path: &Path, assets: &nico_assets::graph::LoadedAssets) -> Result<Self> {
+        Self::build(path, Some(assets))
+    }
+    fn build(path: &Path, assets: Option<&nico_assets::graph::LoadedAssets>) -> Result<Self> {
         let definition: Definition =
             toml::from_str(&arena_arpg_shared::characters::read_definition(path)?)?;
         if definition.schema_version != 1
@@ -98,15 +117,9 @@ impl Environment {
                 return Err("invalid world decoration".into());
             }
         }
-        let progress = nico_assets::progress::ImportProgress::new(
-            "environment models",
-            definition.models.len(),
-        )?;
         let mut sources = Vec::new();
         let mut models = BTreeMap::new();
         let mut source_bytes = 0u64;
-        let mut decoded_bytes = 0usize;
-        let mut images: BTreeMap<Vec<u8>, Arc<Texture>> = BTreeMap::new();
         for (name, asset) in &definition.models {
             let path = nico_assets::character::asset_path(
                 path.parent().ok_or("world asset directory")?,
@@ -116,68 +129,54 @@ impl Environment {
             if source_bytes > 128 * 1024 * 1024 {
                 return Err("world model budget exceeded".into());
             }
-            let model = crate::load_model(&path)?;
+            sources.push((name.clone(), path));
+        }
+        let loaded = if let Some(assets) = assets {
+            sources
+                .iter()
+                .map(|(_, path)| Ok(assets.model(path)?.model.clone()))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            nico_assets::batch::models(
+                sources.iter().map(|(_, path)| path.clone()).collect(),
+                "environment models",
+                nico_assets::importers::ModelGlbSettings {
+                    allow_material_fallback: true,
+                    ..Default::default()
+                },
+                ImportBudget {
+                    max_input_bytes: 64 * 1024 * 1024,
+                    max_decoded_bytes: 128 * 1024 * 1024,
+                },
+            )?
+        };
+        let mut ready = Vec::new();
+        for ((name, path), model) in sources.into_iter().zip(loaded) {
             if !model.data().skins.is_empty() || !model.data().clips.is_empty() {
                 return Err("world decorations must be static".into());
             }
-            sources.push((name.clone(), path, model));
-            progress.complete_one();
+            ready.push((name, path, model));
         }
-        progress.finish();
-        let texture_count = sources
-            .iter()
-            .map(|(_, _, model)| {
-                (0..model.data().textures.len())
-                    .filter(|i| {
-                        model
-                            .data()
-                            .materials
-                            .iter()
-                            .any(|m| m.texture_indices().contains(&Some(*i)))
-                    })
-                    .count()
-            })
-            .sum();
-        let progress =
-            nico_assets::progress::ImportProgress::new("environment textures", texture_count)?;
-        for (name, path, model) in sources {
-            let mut textures = Vec::new();
-            for (index, texture) in model.data().textures.iter().enumerate() {
-                if !model
-                    .data()
-                    .materials
+        let sources = ready;
+        let textures = if let Some(assets) = assets {
+            sources
+                .iter()
+                .map(|(_, path, _)| Ok(assets.model(path)?.textures.clone()))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            nico_assets::batch::textures(
+                sources
                     .iter()
-                    .any(|m| m.texture_indices().contains(&Some(index)))
-                {
-                    textures.push(None);
-                    continue;
-                }
-                let image = &model.data().images[texture.image];
-                if let Some(texture) = images.get(&image.bytes) {
-                    textures.push(Some(texture.clone()));
-                    progress.reuse_one();
-                    continue;
-                }
-                let remaining = (256 * 1024 * 1024usize).saturating_sub(decoded_bytes);
-                let texture: Texture = nico_assets::cache::load_bytes(
-                    &path,
-                    &format!("image/{}", texture.image),
-                    &image.bytes,
-                    &PngImporter,
-                    &PngSettings::default(),
-                    ImportBudget {
-                        max_input_bytes: 16 * 1024 * 1024,
-                        max_decoded_bytes: remaining,
-                    },
-                    &|| false,
-                )?;
-                // All selected inputs are RGBA8; enforce the aggregate decoded budget.
-                decoded_bytes += texture.width() as usize * texture.height() as usize * 4;
-                let texture = Arc::new(texture);
-                images.insert(image.bytes.clone(), texture.clone());
-                textures.push(Some(texture));
-                progress.complete_one();
-            }
+                    .map(|(_, path, model)| (path.clone(), model.clone()))
+                    .collect(),
+                "environment textures",
+                ImportBudget {
+                    max_input_bytes: 16 * 1024 * 1024,
+                    max_decoded_bytes: 256 * 1024 * 1024,
+                },
+            )?
+        };
+        for ((name, _, model), textures) in sources.into_iter().zip(textures) {
             let foliage = model
                 .data()
                 .materials
@@ -201,7 +200,6 @@ impl Environment {
                 },
             );
         }
-        progress.finish();
         Ok(Self {
             source: path.to_owned(),
             ground_cache: None,

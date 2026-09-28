@@ -1,14 +1,5 @@
 //! Scoped loading progress with separate model and texture phases.
-use std::{
-    io,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-        mpsc,
-    },
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
-};
+use std::{cell::Cell, sync::Arc, time::Instant};
 
 /// Owned progress notification for a scoped UI observer on the importing thread.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -44,168 +35,164 @@ impl Drop for ProgressObserver {
     }
 }
 
-/// Prints completed/total, cache hits, imports, and in-memory reuse every three
-/// seconds. Count model files and referenced textures separately. Drop joins the
-/// reporter even on error, without claiming unfinished work completed.
+/// Reports a fixed total counted before the batch starts.
+/// Logs only the initial count and completed-count changes. No timer thread is used.
+/// Observers run on the calling thread; unfinished drops never report success.
 pub struct ImportProgress {
     started: Instant,
     observer: Option<Observer>,
-    completed: Arc<AtomicUsize>,
+    completed: Cell<usize>,
     activity: Arc<crate::cache::CacheActivity>,
     initial: crate::cache::CacheStats,
-    shared: Arc<AtomicUsize>,
+    shared: Cell<usize>,
     total: usize,
     label: String,
-    stop: mpsc::Sender<()>,
-    worker: Option<JoinHandle<()>>,
+    report: Box<dyn Fn(String)>,
 }
 impl ImportProgress {
-    pub fn new(label: impl Into<String>, total: usize) -> io::Result<Self> {
-        Self::start(label.into(), total, Duration::from_secs(3), |line| {
-            tracing::info!("{line}")
-        })
+    pub fn new(label: impl Into<String>, total: usize) -> Self {
+        Self::start(label.into(), total, |line| tracing::info!("{line}"))
     }
-    fn start(
-        label: String,
-        total: usize,
-        interval: Duration,
-        report: impl Fn(String) + Send + 'static,
-    ) -> io::Result<Self> {
-        let started = Instant::now();
+
+    fn start(label: String, total: usize, report: impl Fn(String) + 'static) -> Self {
         let activity = crate::cache::observe_current_thread();
-        let initial = activity.stats();
-        let observed_activity = activity.clone();
-        let completed = Arc::new(AtomicUsize::new(0));
-        let observed = completed.clone();
-        let shared = Arc::new(AtomicUsize::new(0));
-        let observed_shared = shared.clone();
-        let name = label.clone();
-        let (stop, receiver) = mpsc::channel();
-        let worker = thread::Builder::new()
-            .name("asset-import-progress".into())
-            .spawn(move || {
-                while let Err(mpsc::RecvTimeoutError::Timeout) = receiver.recv_timeout(interval) {
-                    report(line(
-                        observed.load(Ordering::Relaxed),
-                        total,
-                        &name,
-                        initial,
-                        observed_activity.stats(),
-                        observed_shared.load(Ordering::Relaxed),
-                    ));
-                }
-            })?;
-        let observer = OBSERVER.with(|slot| slot.borrow().clone());
-        if let Some(observer) = &observer {
-            observer(ProgressUpdate {
-                label: label.clone(),
-                completed: 0,
-                total,
-                finished: false,
-                elapsed_ms: 0.,
-                cache: Default::default(),
-                shared: 0,
-            });
-        }
-        Ok(Self {
-            started,
-            observer,
-            completed,
-            initial,
+        let progress = Self {
+            started: Instant::now(),
+            observer: OBSERVER.with(|slot| slot.borrow().clone()),
+            completed: Cell::new(0),
+            initial: activity.stats(),
             activity,
-            shared,
+            shared: Cell::new(0),
             total,
             label,
-            stop,
-            worker: Some(worker),
-        })
+            report: Box::new(report),
+        };
+        progress.report();
+        progress.notify(false);
+        progress
     }
+
     fn notify(&self, finished: bool) {
         if let Some(observer) = &self.observer {
             observer(ProgressUpdate {
                 label: self.label.clone(),
-                completed: self.completed.load(Ordering::Relaxed),
+                completed: self.completed.get(),
                 total: self.total,
                 finished,
                 elapsed_ms: self.started.elapsed().as_secs_f64() * 1000.,
                 cache: self.activity.stats().since(self.initial),
-                shared: self.shared.load(Ordering::Relaxed),
+                shared: self.shared.get(),
             });
         }
     }
-    pub fn complete_one(&self) {
-        let _ = self
-            .completed
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                (n < self.total).then(|| n + 1)
-            });
+
+    fn report(&self) {
+        let stats = self.activity.stats().since(self.initial);
+        (self.report)(format!(
+            "loading {}/{} ({}; cache hits {}, imported {}, shared {})",
+            self.completed.get(),
+            self.total,
+            self.label,
+            stats.hits,
+            stats.imports,
+            self.shared.get(),
+        ));
+    }
+
+    fn advance(&self, shared: bool) {
+        if self.completed.get() == self.total {
+            return;
+        }
+        self.completed.set(self.completed.get() + 1);
+        if shared {
+            self.shared.set(self.shared.get() + 1);
+        }
+        self.report();
         self.notify(false);
+    }
+
+    pub fn complete_one(&self) {
+        self.advance(false);
     }
     pub fn reuse_one(&self) {
-        if self
-            .completed
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                (n < self.total).then(|| n + 1)
-            })
-            .is_ok()
-        {
-            self.shared.fetch_add(1, Ordering::Relaxed);
-        }
-        self.notify(false);
+        self.advance(true);
     }
-    /// Stop periodic output and emit the final observed count immediately.
-    pub fn finish(mut self) {
-        self.stop();
+
+    /// End the observer's phase without repeating its last log line.
+    pub fn finish(self) {
         self.notify(true);
-        tracing::info!(
-            "{}",
-            line(
-                self.completed.load(Ordering::Relaxed),
-                self.total,
-                &self.label,
-                self.initial,
-                self.activity.stats(),
-                self.shared.load(Ordering::Relaxed)
-            )
-        );
-    }
-    fn stop(&mut self) {
-        let _ = self.stop.send(());
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-fn line(
-    completed: usize,
-    total: usize,
-    label: &str,
-    initial: crate::cache::CacheStats,
-    now: crate::cache::CacheStats,
-    shared: usize,
-) -> String {
-    format!(
-        "loading {completed}/{total} ({label}; cache hits {}, imported {}, shared {shared})",
-        now.hits.saturating_sub(initial.hits),
-        now.imports.saturating_sub(initial.imports)
-    )
-}
-impl Drop for ImportProgress {
-    fn drop(&mut self) {
-        self.stop();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
     #[test]
-    fn ui_observer_reports_phase_counts_and_is_scoped_to_importing_thread() {
+    fn reports_only_count_changes_with_a_fixed_total() {
+        let (send, receive) = mpsc::channel();
+        let progress = ImportProgress::start("test".into(), 2, move |line| {
+            send.send(line).unwrap();
+        });
+        assert!(
+            receive
+                .try_recv()
+                .unwrap()
+                .starts_with("loading 0/2 (test;")
+        );
+        assert!(receive.try_recv().is_err());
+        progress.complete_one();
+        assert!(
+            receive
+                .try_recv()
+                .unwrap()
+                .starts_with("loading 1/2 (test;")
+        );
+        progress.reuse_one();
+        let line = receive.try_recv().unwrap();
+        assert!(line.starts_with("loading 2/2 (test;"));
+        assert!(line.ends_with("shared 1)"));
+        progress.complete_one();
+        progress.reuse_one();
+        assert!(receive.try_recv().is_err());
+        progress.finish();
+        assert_eq!(receive.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+    }
+
+    #[test]
+    fn dropping_unfinished_progress_does_not_report_completion() {
+        let (send, receive) = mpsc::channel();
+        let progress = ImportProgress::start("test".into(), 2, move |line| {
+            send.send(line).unwrap();
+        });
+        progress.complete_one();
+        drop(progress);
+        let lines: Vec<_> = receive.try_iter().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].starts_with("loading 1/2 (test;"));
+    }
+
+    #[test]
+    fn empty_batch_reports_once() {
+        let (send, receive) = mpsc::channel();
+        let progress = ImportProgress::start("empty".into(), 0, move |line| {
+            send.send(line).unwrap();
+        });
+        progress.complete_one();
+        progress.finish();
+        let lines: Vec<_> = receive.try_iter().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("loading 0/0 (empty;"));
+    }
+
+    #[test]
+    fn ui_observer_reports_phase_counts_and_stays_on_the_calling_thread() {
         let (send, receive) = mpsc::channel();
         let observer = observe_progress(move |update| {
             send.send(update).unwrap();
         });
-        let progress = ImportProgress::new("models", 2).unwrap();
+        let progress = ImportProgress::new("models", 2);
         progress.complete_one();
         progress.reuse_one();
         progress.finish();
@@ -214,50 +201,17 @@ mod tests {
             updates.iter().map(|p| p.completed).collect::<Vec<_>>(),
             vec![0, 1, 2, 2]
         );
+        assert!(updates.iter().all(|p| p.total == 2));
         assert!(updates.last().unwrap().finished);
-        std::thread::spawn(|| ImportProgress::new("other", 1).unwrap().finish())
+        std::thread::spawn(|| ImportProgress::new("other", 1).finish())
             .join()
             .unwrap();
         assert!(receive.try_recv().is_err());
         drop(observer);
-        ImportProgress::new("unobserved", 1).unwrap().finish();
+        ImportProgress::new("unobserved", 1).finish();
         assert_eq!(
             receive.try_recv().unwrap_err(),
             mpsc::TryRecvError::Disconnected
         );
-    }
-    #[test]
-    fn reports_while_work_is_blocked_and_drop_stops_reporter() {
-        let (send, receive) = mpsc::channel();
-        let progress =
-            ImportProgress::start("test".into(), 2, Duration::from_millis(5), move |line| {
-                let _ = send.send(line);
-            })
-            .unwrap();
-        assert!(
-            receive
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .starts_with("loading 0/2 (test;")
-        );
-        progress.complete_one();
-        while !receive
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .starts_with("loading 1/2 (test;")
-        {}
-        drop(progress);
-        // Drop joins the worker; queued lines may remain, but no sender survives.
-        while receive.try_recv().is_ok() {}
-        assert_eq!(receive.try_recv(), Err(mpsc::TryRecvError::Disconnected));
-    }
-    #[test]
-    fn completion_is_bounded_and_does_not_wait_for_the_report_interval() {
-        let progress =
-            ImportProgress::start("test".into(), 1, Duration::from_secs(3600), |_| {}).unwrap();
-        progress.complete_one();
-        progress.complete_one();
-        assert_eq!(progress.completed.load(Ordering::Relaxed), 1);
-        drop(progress);
     }
 }
