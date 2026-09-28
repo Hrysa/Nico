@@ -1,5 +1,9 @@
 pub use arena_arpg_presentation::environment;
+mod combat_debug;
 mod frame_rate;
+
+#[derive(Default)]
+struct CombatDebug(bool);
 
 pub mod network;
 mod prediction;
@@ -32,7 +36,7 @@ use std::sync::{Arc, Mutex};
 pub struct FrameInput {
     movement: [f32; 2],
     look: [f32; 2],
-    pressed: [bool; 6],
+    pressed: [bool; 7],
 }
 pub fn map_input(input: &InputState, output: &mut Vec<FrameInput>) {
     let key = |key| input.button(Kind::Keyboard, key);
@@ -50,6 +54,7 @@ pub fn map_input(input: &InputState, output: &mut Vec<FrameInput>) {
             edge(keyboard::F),
             edge(keyboard::R),
             edge(keyboard::Q),
+            edge(keyboard::F3),
         ],
     });
 }
@@ -64,6 +69,7 @@ enum Edit {
     Equip,
     Respawn,
     Reconnect,
+    DebugCombat { enabled: bool },
     Camera { yaw: f32, pitch: f32, distance: f32 },
 }
 impl Edit {
@@ -117,6 +123,7 @@ fn schema() -> serde_json::Map<String, Value> {
         {"properties":{"action":{"const":"dodge"},"x":number,"z":number},"required":["action","x","z"],"additionalProperties":false},
         {"properties":{"action":{"const":"pickup"},"id":{"type":"integer","minimum":1}},"required":["action","id"],"additionalProperties":false},
         {"properties":{"action":{"enum":["talk","equip","respawn","reconnect"]}},"required":["action"],"additionalProperties":false},
+        {"properties":{"action":{"const":"debug_combat"},"enabled":{"type":"boolean"}},"required":["action","enabled"],"additionalProperties":false},
         {"properties":{"action":{"const":"camera"},"yaw":{"type":"number","minimum":-std::f32::consts::PI,"maximum":std::f32::consts::PI},"pitch":{"type":"number","minimum":0.15,"maximum":1.1},"distance":{"type":"number","minimum":0.5,"maximum":20}},"required":["action","yaw","pitch","distance"],"additionalProperties":false}
     ]}).as_object().unwrap().clone()
 }
@@ -138,7 +145,7 @@ pub fn register(
         if !args.is_empty(){return error("invalid_arguments");}read.lock().unwrap().snapshot.json().map(CallToolResult::structured).unwrap_or_else(||error("not_ready"))
     })?;
     let write = ops.clone();
-    tools.register(Tool::new("world_action","Queue local player input or camera/reconnect control at a fixed boundary. Move lasts bounded ticks. Poll world_client_state.commands; submitted is not proof of server action success. Never blindly retry timeouts.",schema()),move|args|{
+    tools.register(Tool::new("world_action","Queue local player input, combat debug overlay, or camera/reconnect control at a fixed boundary. Move lasts bounded ticks. Poll world_client_state.commands; submitted is not proof of server action success. Never blindly retry timeouts.",schema()),move|args|{
         let Ok(edit)=serde_json::from_value::<Edit>(Value::Object(args))else{return error("invalid_arguments");};if !edit.valid(){return error("invalid_arguments");}
         let mut ops=write.lock().unwrap();if ops.commands.is_closed(){return error("shutting_down");}
         match ops.commands.submit(|id|(id,edit)){Ok(id)=>CallToolResult::structured(json!({"accepted":true,"command_id":id})),Err(_)=>error("busy")}
@@ -166,18 +173,19 @@ pub fn register(
     }
     builder.insert_resource(client);
     builder.insert_resource(Camera::default());
+    builder.insert_resource(CombatDebug::default());
     builder.insert_resource(Scene3d::default());
     builder.insert_resource(UiScene::default());
     let mut frames = EventReader::<FrameInput>::new();
     let mut focus = EventReader::<WindowFocusLost>::new();
-    let mut held = FixedInput::<2, 2, 6>::default();
+    let mut held = FixedInput::<2, 2, 7>::default();
     let control = ops.clone();
     builder.add_system(Stage::FixedUpdate,"world_client::network_input",move|ctx|{
         let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
         for frame in ctx.events.read(&mut frames){held.push(InputFrame{held:frame.movement,deltas:frame.look,pressed:frame.pressed});}
         let lost=ctx.events.read(&mut focus).count()!=0;
         if lost||!window.focused||!window.pointer_captured{held.clear();}
-        let sample=held.take();let human=sample.held!=[0.;2]||sample.pressed.iter().any(|x|*x);
+        let sample=held.take();let human=sample.held!=[0.;2]||sample.pressed[..6].iter().any(|x|*x);
         let mut ops=control.lock().unwrap();
         let mut movement=ops.movement.take();
         if (human||lost)&&let Some(active)=movement.take(){ops.commands.record(json!({"command_id":active.id,"state":"cancelled","reason":"human_input_or_focus_loss"}));}
@@ -190,14 +198,16 @@ pub fn register(
             ops.movement=movement;
             return Ok(());
         }
+        if sample.pressed[6] { let debug=ctx.world.resource_mut::<CombatDebug>()?;debug.0 = !debug.0; }
         let camera=ctx.world.resource_mut::<Camera>()?;camera.orbit(sample.deltas);let yaw=f64::from(camera.rig.yaw()).clamp(-std::f64::consts::PI,std::f64::consts::PI);
         let mut direction=nico_presentation_control::coordinates::rotate_on_floor(yaw,[-f64::from(sample.held[0]),f64::from(sample.held[1])]);let length=direction[0].hypot(direction[1]).max(1.);direction[0]/=length;direction[1]/=length;
         let mut input=PlayerInput{movement:Vec2::new(direction[0],direction[1]),..Default::default()};
         let request=ops.commands.pop();let mut command=None;let mut reconnect=sample.pressed[5];
         if let Some((id,edit))=request {
-            if let Some(active)=movement.take(){ops.commands.record(json!({"command_id":active.id,"state":"cancelled","reason":"replaced"}));}
+            if !matches!(edit, Edit::DebugCombat{..}) && let Some(active)=movement.take(){ops.commands.record(json!({"command_id":active.id,"state":"cancelled","reason":"replaced"}));}
             match edit{
                 Edit::Camera{yaw,pitch,distance}=>{camera.rig.set_angles(yaw,pitch);camera.rig.set_distance(distance);ops.commands.record(json!({"command_id":id,"state":"applied"}));},
+                Edit::DebugCombat{enabled}=>{ctx.world.resource_mut::<CombatDebug>()?.0=enabled;ops.commands.record(json!({"command_id":id,"state":"applied"}));},
                 Edit::Reconnect=>{reconnect=true;ops.commands.record(json!({"command_id":id,"state":"applied"}));},
                 Edit::Move{x,z,ticks}=>movement=Some(Movement{id,direction:Vec2::new(x,z),remaining:ticks}),
                 edit=>{command=Some(id);match edit{Edit::Attack{yaw}=>input.attack_yaw=Some(yaw),Edit::Dodge{x,z}=>input.dodge=Some(Vec2::new(x,z)),Edit::Pickup{id}=>input.pickup=Some(id),Edit::Talk=>input.talk=true,Edit::Equip=>input.equip=Some(ITEM_SWORD.into()),Edit::Respawn=>input.respawn=true,_=>unreachable!()};}
@@ -230,9 +240,10 @@ pub fn register(
         let camera_info=json!({"yaw":camera.rig.yaw(),"pitch":camera.rig.pitch(),"distance":camera.rig.distance(),"position":view.position});
         let client=ctx.world.resource::<WorldClient>()?;
         view.far=200.;
+        visuals.debug_combat=ctx.world.resource::<CombatDebug>()?.0;
         let (scene,hud)=visuals.render(client,view,window.logical_size,window.pointer_captured,dt).map_err(|message|RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message})?;
         if scene.meshes.len()>256{return Err(RuntimeError::System{stage:"Update",name:"world_client::extract".into(),message:"world draw budget exceeded".into()});}
-        let mut ops=read.lock().unwrap();let state=json!({"ready":client.input_ready(),"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"environment":visuals.environment.inspection,"rendered_meshes":scene.meshes.len(),"frame_timing":visuals.frame_rate.json(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);
+        let mut ops=read.lock().unwrap();let state=json!({"ready":client.input_ready(),"connection":client.status,"error":client.error,"last_disconnect":client.last_disconnect,"input_ready":client.input_ready(),"character":client.name,"server":client.address.to_string(),"epoch":client.epoch,"sent_input":client.sequence,"authoritative":client.latest,"server_snapshot_age_ms":client.received.map(|t|t.elapsed().as_millis()as u64),"prediction":client.prediction.as_ref().map(|p|json!({"actor":p.actor,"pending_inputs":p.pending.len(),"acknowledged_input":p.acknowledged,"correction_m":p.correction_m,"tick":p.tick})),"camera":camera_info,"debug_combat":visuals.debug_combat,"animation":visuals.animation,"actor_animations":visuals.actor_animations,"environment":visuals.environment.inspection,"rendered_meshes":scene.meshes.len(),"frame_timing":visuals.frame_rate.json(),"active_movement":ops.movement.as_ref().map(|m|json!({"command_id":m.id,"remaining_inputs":m.remaining})),"commands":ops.commands.history()});ops.snapshot.publish(state);
         *ctx.world.resource_mut::<Scene3d>()?=scene;*ctx.world.resource_mut::<UiScene>()?=hud;Ok(())
     });
     builder.add_system(Stage::Shutdown, "world_client::close", move |ctx| {
@@ -265,6 +276,26 @@ impl Operations {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn combat_debug_requires_an_explicit_boolean_and_is_discoverable() {
+        let edit: Edit =
+            serde_json::from_value(json!({"action":"debug_combat","enabled":true})).unwrap();
+        assert!(matches!(edit, Edit::DebugCombat { enabled: true }));
+        assert!(edit.valid());
+        for invalid in [
+            json!({"action":"debug_combat"}),
+            json!({"action":"debug_combat","enabled":"true"}),
+        ] {
+            assert!(serde_json::from_value::<Edit>(invalid).is_err());
+        }
+        assert!(
+            schema()["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["properties"]["action"]["const"] == "debug_combat")
+        );
+    }
     #[test]
     fn shutdown_finishes_active_and_queued_commands_in_final_publication() {
         let mut ops = Operations {

@@ -11,7 +11,7 @@ pub mod runtime;
 pub mod server;
 use crate::{ActorKind, Vec2, characters::CharacterCatalog};
 use nico_ecs::{Entity, World};
-use nico_physics::{BodyDesc, BodyId, BodyKind, CharacterSettings, PhysicsWorld, Pose, Shape};
+use nico_physics::{BodyDesc, BodyId, BodyKind, PhysicsWorld, Pose, Shape};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -537,13 +537,12 @@ impl OpenWorld {
                 }
                 continue;
             }
-            let radius = self
-                .characters
-                .get(o.kind.character())
-                .core
-                .collision
-                .radius_m;
-            let pose = Pose::at([o.position.x, radius, o.position.z]);
+            let definition = self.characters.get(o.kind.character());
+            let pose = Pose::at([
+                o.position.x,
+                definition.core.collision.center_height_m(),
+                o.position.z,
+            ]);
             if let Some(&body) = self.bodies.get(&o.id) {
                 self.physics.set_pose(body, pose).unwrap();
             } else {
@@ -551,7 +550,7 @@ impl OpenWorld {
                     .physics
                     .insert(BodyDesc::new(
                         BodyKind::Kinematic,
-                        Shape::Ball { radius },
+                        definition.physics_shape(),
                         pose,
                     ))
                     .unwrap();
@@ -691,19 +690,14 @@ impl OpenWorld {
                 _ => Vec2::default(),
             };
             if let Some(&body) = self.bodies.get(&o.id) {
-                let result = self
-                    .physics
-                    .move_character(
-                        body,
-                        [travel.x, 0., travel.z],
-                        crate::FIXED_STEP,
-                        CharacterSettings {
-                            offset: 0.0001,
-                            max_slope_angle: 0.,
-                            snap_distance: None,
-                        },
-                    )
-                    .unwrap();
+                let result = crate::move_on_floor(
+                    &mut self.physics,
+                    body,
+                    def.physics_shape(),
+                    Pose::at([position.x, def.core.collision.center_height_m(), position.z]),
+                    travel,
+                )
+                .unwrap();
                 let limit = self.zone.half_extent_m - def.core.collision.radius_m;
                 position = Vec2::new(
                     (position.x + result.translation[0]).clamp(-limit, limit),
@@ -712,7 +706,7 @@ impl OpenWorld {
                 self.physics
                     .set_pose(
                         body,
-                        Pose::at([position.x, def.core.collision.radius_m, position.z]),
+                        Pose::at([position.x, def.core.collision.center_height_m(), position.z]),
                     )
                     .unwrap();
             }
@@ -803,12 +797,17 @@ impl OpenWorld {
                     continue;
                 }
                 let delta = b.position.sub(a.position);
-                let dist = distance(a.position, b.position);
-                if dist > attack.range_m
-                    || (dist > 0.
-                        && a.facing.dot(delta.scale(1. / dist))
-                            < attack.half_angle_degrees.to_radians().cos())
-                {
+                if !crate::geometry::sector_hits_body(
+                    delta,
+                    a.facing,
+                    attack.range_m,
+                    attack.half_angle_degrees.to_radians(),
+                    self.characters
+                        .get(b.kind.character())
+                        .core
+                        .collision
+                        .radius_m,
+                ) {
                     continue;
                 }
                 let invulnerable = matches!(b.action,WorldAction::Dodge{elapsed,..} if elapsed<self.characters.get(b.kind.character()).arena.dodge.invulnerable_ticks);

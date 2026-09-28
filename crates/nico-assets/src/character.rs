@@ -19,11 +19,25 @@ pub struct CharacterCore {
 pub struct Collision {
     pub shape: CollisionShape,
     pub radius_m: f64,
+    /// Total height for capsules; balls omit this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_m: Option<f64>,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollisionShape {
     Ball,
+    /// Upright capsule; height includes both rounded ends.
+    Capsule,
+}
+impl Collision {
+    /// Centre height when the collider rests on the ground.
+    pub fn center_height_m(&self) -> f64 {
+        match self.shape {
+            CollisionShape::Ball => self.radius_m,
+            CollisionShape::Capsule => self.height_m.expect("validated capsule height") / 2.,
+        }
+    }
 }
 /// Shared visual content. Animation keys have no built-in gameplay meaning.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -102,7 +116,17 @@ impl CharacterCore {
         check(
             self.collision.radius_m.is_finite() && self.collision.radius_m > 0.,
             "core.collision.radius_m",
-        )
+        )?;
+        check(
+            match self.collision.shape {
+                CollisionShape::Ball => self.collision.height_m.is_none(),
+                CollisionShape::Capsule => self.collision.height_m.is_some_and(|height| {
+                    height.is_finite() && height >= 2. * self.collision.radius_m
+                }),
+            },
+            "core.collision.height_m",
+        )?;
+        Ok(())
     }
 }
 impl VisualCore {
@@ -207,6 +231,29 @@ mod tests {
         assert!(invalid.validate().is_err());
         invalid.collision.radius_m = -1.;
         assert!(invalid.validate().is_err());
+    }
+    #[test]
+    fn capsules_require_finite_total_height_and_roundtrip() {
+        let source = "id = 'example.worker'\n[collision]\nshape = 'capsule'\nradius_m = 0.4\nheight_m = 1.8\n";
+        let core: CharacterCore = toml::from_str(source).unwrap();
+        core.validate().unwrap();
+        assert_eq!(core.collision.center_height_m(), 0.9);
+        assert_eq!(
+            toml::from_str::<CharacterCore>(&toml::to_string(&core).unwrap()).unwrap(),
+            core
+        );
+        for height in [
+            None,
+            Some(0.7),
+            Some(-1.),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+        ] {
+            let mut invalid = core.clone();
+            invalid.collision.height_m = height;
+            assert!(invalid.validate().is_err());
+        }
+        assert!(toml::from_str::<CharacterCore>(&source.replace("height_m", "heigth_m")).is_err());
     }
     #[test]
     fn visual_library_has_no_required_game_actions() {

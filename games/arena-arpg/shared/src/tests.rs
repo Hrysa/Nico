@@ -292,7 +292,7 @@ fn sector_rejects_behind_and_out_of_range_but_hits_multiple_targets() {
         [35, 35, 60]
     );
     let mut a = duel();
-    a.snapshot.actors[1].position.z = 2.01;
+    a.snapshot.actors[1].position.z = 2.41;
     attack(&mut a, 0.0);
     idle(&mut a, 17);
     assert_eq!(a.snapshot.actors[1].health, 60);
@@ -460,13 +460,13 @@ fn play_encounter(a: &mut Arena) {
                 && matches!(m.action, Action::Attack { elapsed, .. } if elapsed < m.stats().windup)).collect();
             if hero.dodge_cooldown == 0 && let Some(threat) = threats.iter().find(|m| matches!(m.action, Action::Attack { elapsed, .. } if elapsed >= m.stats().windup - 12)) {
                 input.dodge = Some(Vec2::new(threat.facing.z, -threat.facing.x));
-            } else if toward.dot(toward) <= 4.0
+            } else if toward.dot(toward) <= (hero.stats().range + target.definition().core.collision.radius_m - 0.05).powi(2)
                 && threats.iter().all(|m| matches!(m.action,
                     Action::Attack { elapsed, .. }
                     if m.stats().windup - elapsed > hero.stats().windup + hero.stats().active))
             {
                 input.attack_yaw = Some(toward.x.atan2(toward.z));
-            } else if toward.dot(toward) > 4.0 {
+            } else if toward.dot(toward) > (hero.stats().range + target.definition().core.collision.radius_m - 0.05).powi(2) {
                 input.movement = toward.unit();
             }
         }
@@ -595,7 +595,11 @@ fn simulated_actors_remain_inside_arena_and_never_overlap() {
             for other in &a.snapshot.actors[..i] {
                 if other.health > 0 {
                     let d = actor.position.sub(other.position);
-                    assert!(d.dot(d) >= 0.8_f64.powi(2) - 1e-8);
+                    assert!(
+                        d.dot(d) >= 0.8_f64.powi(2) - 1e-8,
+                        "tick={tick} distance={} actor={i}",
+                        d.dot(d).sqrt()
+                    );
                 }
             }
         }

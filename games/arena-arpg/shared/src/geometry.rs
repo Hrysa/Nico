@@ -70,3 +70,59 @@ mod tests {
         assert!(INNER_FACE - p.x - ACTOR_RADIUS < 0.001);
     }
 }
+
+/// Ground-plane overlap between a finite attack sector and an upright capsule's footprint.
+/// Combat is planar; capsule height affects obstacle collision, not attack reach.
+pub(crate) fn sector_hits_body(
+    delta: crate::Vec2,
+    facing: crate::Vec2,
+    range: f64,
+    half_angle: f64,
+    radius: f64,
+) -> bool {
+    let distance = delta.dot(delta).sqrt();
+    if distance <= radius {
+        return true;
+    }
+    if distance > range + radius {
+        return false;
+    }
+    if facing.dot(delta) >= distance * half_angle.cos() {
+        return true;
+    }
+    // Outside the wedge, test its finite side segments, including their endpoints.
+    [-half_angle, half_angle].into_iter().any(|angle| {
+        let ray = crate::Vec2::new(
+            facing.x * angle.cos() + facing.z * angle.sin(),
+            facing.z * angle.cos() - facing.x * angle.sin(),
+        );
+        let closest = ray.scale(delta.dot(ray).clamp(0., range));
+        let separation = delta.sub(closest);
+        separation.dot(separation) <= radius * radius + 1e-12
+    })
+}
+
+#[cfg(test)]
+mod hurtbox_tests {
+    use super::*;
+    use crate::Vec2;
+    #[test]
+    fn sector_overlaps_capsule_edges_without_expanding_empty_corners() {
+        let hit = |x, z| {
+            sector_hits_body(
+                Vec2::new(x, z),
+                Vec2::new(0., 1.),
+                2.,
+                std::f64::consts::FRAC_PI_4,
+                0.4,
+            )
+        };
+        assert!(hit(0., 2.39));
+        assert!(!hit(0., 2.41));
+        assert!(hit(1.2, 0.8));
+        assert!(!hit(1.6, 0.8));
+        assert!(hit(0., -0.39));
+        assert!(!hit(0., -0.41));
+        assert!(!hit(1.95, 1.3));
+    }
+}

@@ -80,6 +80,37 @@ fn queued_packets_cannot_speed_up_movement_and_missing_input_stops() {
     );
 }
 #[test]
+fn server_attack_hits_body_edge_but_not_beyond_the_hurtbox() {
+    for (distance, expected_health) in [(2.39, 35), (2.41, 60)] {
+        let mut w = world();
+        let hero = player(&mut w, "alice", Vec2::new(0., 0.));
+        let monster = w
+            .spawn_monster(ObjectKind::Grunt, Vec2::new(0., distance))
+            .unwrap();
+        // Hold the target in recovery so movement cannot change the boundary under test.
+        w.entities
+            .entities()
+            .get::<&mut Combat>(w.ids[&monster])
+            .unwrap()
+            .action = WorldAction::Attack { id: 1, elapsed: 40 };
+        w.submit(
+            hero,
+            PlayerInput {
+                attack_yaw: Some(0.),
+                ..input(1)
+            },
+        )
+        .unwrap();
+        for _ in 0..13 {
+            w.step();
+        }
+        assert_eq!(
+            w.objects().iter().find(|o| o.id == monster).unwrap().health,
+            expected_health
+        );
+    }
+}
+#[test]
 fn server_combat_awards_one_drop_and_one_player_can_claim_it() {
     let mut catalog = CharacterCatalog::builtin().definitions().clone();
     catalog[0].arena.attacks.primary.damage = 100;

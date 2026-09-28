@@ -83,6 +83,7 @@ pub mod keyboard {
     pub const E: InputControlId = InputControlId::new(12);
     pub const F: InputControlId = InputControlId::new(13);
     pub const Q: InputControlId = InputControlId::new(14);
+    pub const F3: InputControlId = InputControlId::new(15);
 }
 
 /// Configuration owned by the concrete native host.
@@ -666,6 +667,7 @@ fn keyboard_control(key: PhysicalKey) -> Option<InputControlId> {
         PhysicalKey::Code(KeyCode::KeyE) => Some(keyboard::E),
         PhysicalKey::Code(KeyCode::KeyF) => Some(keyboard::F),
         PhysicalKey::Code(KeyCode::KeyQ) => Some(keyboard::Q),
+        PhysicalKey::Code(KeyCode::F3) => Some(keyboard::F3),
         PhysicalKey::Code(KeyCode::Escape) => Some(keyboard::ESCAPE),
         _ => None,
     }
@@ -1536,6 +1538,10 @@ mod tests {
 
     #[test]
     fn keyboard_adapter_uses_stable_engine_control_ids() {
+        assert_eq!(
+            keyboard_control(PhysicalKey::Code(KeyCode::F3)),
+            Some(keyboard::F3)
+        );
         assert_eq!(
             keyboard_control(PhysicalKey::Code(KeyCode::KeyW)),
             Some(keyboard::W)

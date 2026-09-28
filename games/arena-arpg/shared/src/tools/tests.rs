@@ -641,6 +641,8 @@ fn tool_commands_complete_a_real_encounter_and_restart_after_victory() {
                 })
                 .unwrap();
             let toward = position(target).sub(hero);
+            // Attack reach includes the target capsule radius, matching shared combat rules.
+            let reach = state["actors"][0]["attack_range"].as_f64().unwrap() + 0.4 - 0.05;
             let threats: Vec<_> = state["actors"].as_array().unwrap()[1..]
                 .iter()
                 .filter(|m| {
@@ -661,15 +663,21 @@ fn tool_commands_complete_a_real_encounter_and_restart_after_victory() {
                     "game_dodge",
                     json!({"run_id":1,"x":m["facing"]["z"],"z":-m["facing"]["x"].as_f64().unwrap()}),
                 )
-            } else if toward.dot(toward) <= 4.0 && !threats.is_empty() {
-                tick(&mut app, 1);
-                continue;
-            } else if toward.dot(toward) <= 4.0 {
-                call(
-                    &endpoint,
-                    "game_attack",
-                    json!({"run_id":1,"yaw":toward.x.atan2(toward.z)}),
-                )
+            } else if toward.dot(toward) <= reach.powi(2) {
+                // Avoid trading into a windup that lands during the hero's 18-tick attack.
+                if threats
+                    .iter()
+                    .all(|m| m["action"]["phase_ticks_remaining"].as_u64().unwrap() > 18)
+                {
+                    call(
+                        &endpoint,
+                        "game_attack",
+                        json!({"run_id":1,"yaw":toward.x.atan2(toward.z)}),
+                    )
+                } else {
+                    tick(&mut app, 1);
+                    continue;
+                }
             } else {
                 let d = toward.unit();
                 call(

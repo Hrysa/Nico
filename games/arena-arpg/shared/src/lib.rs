@@ -2,6 +2,7 @@
 //! immutable snapshots. No presentation, transport, or platform dependencies.
 pub mod characters;
 mod collision;
+pub use collision::move_on_floor;
 pub mod open_world;
 #[cfg(feature = "project")]
 pub mod project;
@@ -576,19 +577,19 @@ impl Arena {
                     continue;
                 }
                 let delta = target.position.sub(actor.position);
-                let range = stats.range;
-                if delta.dot(delta) > range * range
-                    || actor.facing.dot(delta) + 1e-12
-                        < delta.dot(delta).sqrt()
-                            * actor
-                                .definition()
-                                .arena
-                                .attacks
-                                .primary
-                                .half_angle_degrees
-                                .to_radians()
-                                .cos()
-                {
+                if !geometry::sector_hits_body(
+                    delta,
+                    actor.facing,
+                    stats.range,
+                    actor
+                        .definition()
+                        .arena
+                        .attacks
+                        .primary
+                        .half_angle_degrees
+                        .to_radians(),
+                    target.definition().core.collision.radius_m,
+                ) {
                     continue;
                 }
                 // A dodged strike is consumed too: the same swing cannot hit later.

@@ -12,6 +12,10 @@ use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
 use nico_presentation_control::text::{BitmapFont, rectangle};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 pub struct Visuals {
+    pub debug_combat: bool,
+    debug_colliders: Vec<Arc<Mesh>>,
+    debug_sectors: Vec<Arc<Mesh>>,
+    debug_obstacles: Vec<Arc<Mesh>>,
     pub environment: super::environment::Environment,
     assets: [Option<Arc<CharacterAssets>>; 3],
     characters: BTreeMap<u64, Character>,
@@ -78,6 +82,10 @@ impl Visuals {
             })
             .collect();
         Self {
+            debug_combat: false,
+            debug_colliders: vec![],
+            debug_sectors: vec![],
+            debug_obstacles: vec![],
             environment,
             assets,
             characters: BTreeMap::new(),
@@ -132,6 +140,36 @@ impl Visuals {
                 .obstacles
                 .iter()
                 .map(|o| mesh(o.size.map(|x| x as f32)))
+                .collect();
+            self.debug_colliders = client
+                .characters
+                .definitions()
+                .iter()
+                .map(|d| {
+                    let c = &d.core.collision;
+                    super::combat_debug::capsule(
+                        c.radius_m as f32,
+                        (c.center_height_m() - c.radius_m) as f32,
+                    )
+                })
+                .collect();
+            self.debug_obstacles = client
+                .zone
+                .obstacles
+                .iter()
+                .map(|o| super::combat_debug::bounds(o.size))
+                .collect();
+            self.debug_sectors = client
+                .characters
+                .definitions()
+                .iter()
+                .map(|d| {
+                    let a = &d.arena.attacks.primary;
+                    super::combat_debug::sector(
+                        a.range_m as f32,
+                        a.half_angle_degrees.to_radians() as f32,
+                    )
+                })
                 .collect();
             self.sectors = client
                 .characters
@@ -258,6 +296,12 @@ impl Visuals {
                     .as_ref()
                     .map_or(11, |a| a.draw_count() + 2)
             };
+            let required = required
+                + if self.debug_combat && o.kind != ObjectKind::Loot {
+                    3
+                } else {
+                    0
+                };
             if scene.meshes.len() + required > 256 {
                 continue;
             }
@@ -273,6 +317,40 @@ impl Visuals {
                 continue;
             }
             let def = client.characters.get(o.kind.character());
+            if self.debug_combat && o.health > 0 {
+                let center_height = def.core.collision.center_height_m() as f32;
+                let position = [o.position.x as f32, center_height, o.position.z as f32];
+                scene.meshes.push(draw(
+                    self.debug_colliders[index].clone(),
+                    self.white.clone(),
+                    position,
+                    Quat::IDENTITY,
+                    1.,
+                    [0.1, 1., 0.3, 1.],
+                ));
+                scene.meshes.push(draw(
+                    self.cube.clone(),
+                    self.white.clone(),
+                    [position[0], 0.06, position[2]],
+                    Quat::IDENTITY,
+                    0.07,
+                    [1., 0.1, 1., 1.],
+                ));
+                let attack = &def.arena.attacks.primary;
+                let active = matches!(o.action, WorldAction::Attack{elapsed,..} if elapsed>=attack.windup_ticks && elapsed<attack.windup_ticks+attack.active_ticks);
+                scene.meshes.push(draw(
+                    self.debug_sectors[index].clone(),
+                    self.white.clone(),
+                    [position[0], 0.06, position[2]],
+                    Quat::from_rotation_y(o.facing.x.atan2(o.facing.z) as f32),
+                    1.,
+                    if active {
+                        [1., 0.15, 0.05, 1.]
+                    } else {
+                        [1., 0.85, 0.05, 1.]
+                    },
+                ));
+            }
             let moving = self
                 .positions
                 .insert(o.id, o.position)
@@ -415,6 +493,29 @@ impl Visuals {
         self.positions
             .retain(|id, _| objects.iter().any(|(_, o)| o.id == *id));
         self.environment.decorate(projection, &mut scene);
+        if self.debug_combat {
+            for (obstacle, outline) in client.zone.obstacles.iter().zip(&self.debug_obstacles) {
+                if scene.meshes.len() >= 256 {
+                    break;
+                }
+                scene.meshes.push(draw(
+                    outline.clone(),
+                    self.white.clone(),
+                    obstacle.center.map(|v| v as f32),
+                    Quat::IDENTITY,
+                    1.,
+                    [0.1, 1., 0.3, 1.],
+                ));
+            }
+            self.font.draw(
+                &mut hud.quads,
+                "F3 DEBUG: GREEN COLLISION / MAGENTA TARGET
+YELLOW REACH / RED ACTIVE HIT",
+                [12., 190.],
+                1.,
+                [1.; 4],
+            );
+        }
         let scale = (size[0] / 800.).clamp(1., 2.5);
         let margin = 12.;
         rectangle(

@@ -196,6 +196,12 @@ Entity removal releases the matching body and collider.
 Queries must see current geometry without consuming pending dynamics changes.
 Contacts describe touching pairs, not game damage.
 Games own movement policy, collision rules, and hit tests.
+Humanoid definitions use upright capsules with total height and radius. Their lower ends rest on the ground plane.
+World authority, client prediction, and solo Arena share collider dimensions and floor movement checks.
+Planar movement is swept again after sliding to prevent capsule overlap while preserving tangent movement.
+Attack sectors intersect circular capsule footprints, including the arc and both finite side edges.
+The initial hurtbox shares movement dimensions. Combat has no vertical hit test or animated sword collision.
+The world debug overlay draws these capsules and the unchanged attack sectors from client presentation state.
 Solo Arena owns its physics world directly for shared headless and runtime stepping.
 Single-threaded stepping and enhanced determinism do not prove cross-platform repeatability.
 

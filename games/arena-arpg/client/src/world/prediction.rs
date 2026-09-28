@@ -7,7 +7,7 @@ use arena_arpg_shared::{
         content::ZoneDefinition,
     },
 };
-use nico_physics::{BodyDesc, BodyId, BodyKind, CharacterSettings, PhysicsWorld, Pose, Shape};
+use nico_physics::{BodyDesc, BodyId, BodyKind, PhysicsWorld, Pose, Shape};
 use std::{collections::VecDeque, sync::Arc};
 pub struct Prediction {
     pub actor: ObjectSnapshot,
@@ -121,19 +121,18 @@ impl Prediction {
             ),
             _ => Vec2::default(),
         };
-        let motion = self
-            .physics
-            .move_character(
-                self.body,
-                [travel.x, 0., travel.z],
-                arena_arpg_shared::FIXED_STEP,
-                CharacterSettings {
-                    offset: 0.0001,
-                    max_slope_angle: 0.,
-                    snap_distance: None,
-                },
-            )
-            .expect("validated prediction geometry");
+        let motion = arena_arpg_shared::move_on_floor(
+            &mut self.physics,
+            self.body,
+            def.physics_shape(),
+            Pose::at([
+                self.actor.position.x,
+                def.core.collision.center_height_m(),
+                self.actor.position.z,
+            ]),
+            travel,
+        )
+        .expect("validated prediction geometry");
         let radius = def.core.collision.radius_m;
         let limit = self.zone.half_extent_m - radius;
         self.actor.position = Vec2::new(
@@ -143,7 +142,11 @@ impl Prediction {
         self.physics
             .set_pose(
                 self.body,
-                Pose::at([self.actor.position.x, radius, self.actor.position.z]),
+                Pose::at([
+                    self.actor.position.x,
+                    def.core.collision.center_height_m(),
+                    self.actor.position.z,
+                ]),
             )
             .unwrap();
         self.actor.action = match self.actor.action {
@@ -187,16 +190,16 @@ fn scene(
         if object.kind == ObjectKind::Loot || (object.health == 0 && object.id != snapshot.player) {
             continue;
         }
-        let radius = characters
-            .get(object.kind.character())
-            .core
-            .collision
-            .radius_m;
+        let definition = characters.get(object.kind.character());
         let body = physics
             .insert(BodyDesc::new(
                 BodyKind::Kinematic,
-                Shape::Ball { radius },
-                Pose::at([object.position.x, radius, object.position.z]),
+                definition.physics_shape(),
+                Pose::at([
+                    object.position.x,
+                    definition.core.collision.center_height_m(),
+                    object.position.z,
+                ]),
             ))
             .map_err(|e| format!("{e:?}"))?;
         if object.id == snapshot.player {

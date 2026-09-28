@@ -10,8 +10,9 @@ max_health = 100
 speed_mps = 4.0
 
 [core.collision]
-# Ball rests on the floor: centre Y equals radius; movement stays on X/Z.
-shape = "ball"
+# Upright capsule rests on the floor; movement stays on X/Z.
+shape = "capsule"
+height_m = 1.8
 radius_m = 0.4
 
 [arena.attacks.primary]

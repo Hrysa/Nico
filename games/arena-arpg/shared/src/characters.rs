@@ -130,6 +130,19 @@ impl DefinitionValidation for CharacterLogicDefinition {
 }
 
 impl CharacterLogicDefinition {
+    /// Backend-neutral collider shared by authority and client prediction.
+    pub fn physics_shape(&self) -> nico_physics::Shape {
+        let c = &self.core.collision;
+        match c.shape {
+            nico_assets::character::CollisionShape::Ball => {
+                nico_physics::Shape::Ball { radius: c.radius_m }
+            }
+            nico_assets::character::CollisionShape::Capsule => nico_physics::Shape::Capsule {
+                radius: c.radius_m,
+                half_height: c.center_height_m() - c.radius_m,
+            },
+        }
+    }
     pub fn combat_stats(&self) -> CombatStats {
         let a = &self.arena.attacks.primary;
         CombatStats {
@@ -334,6 +347,6 @@ mod tests {
         let contact = arena
             .collision
             .slide(0, actors[0].position, Vec2::new(0., 10.));
-        assert!((contact.z - (3.0 - 2.0 * (0.8_f64 * 0.6).sqrt())).abs() < 0.01);
+        assert!((contact.z - (3.0 - 0.8 - 0.6)).abs() < 0.01);
     }
 }

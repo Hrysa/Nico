@@ -38,10 +38,20 @@ Networking is loopback-only; these names are development identities, not authent
 | F | Equip the iron sword |
 | R | Respawn after death |
 | Q | Reconnect |
+| F3 | Toggle world combat debug shapes |
 | Escape | Release pointer capture |
 
 Click the viewport to capture the pointer.
 Speak to the warden, defeat three camp monsters, and return to complete Meadow Watch.
+
+Combat debug shows green character capsules and obstacle boxes, plus magenta target centres.
+Yellow outlines show attack sectors; red marks active hit ticks.
+Attacks overlap these sectors with capsule footprints, including the target radius at range and angle boundaries.
+The sword mesh does not determine damage. Capsule heights affect movement collision; combat remains on the ground plane.
+Hero, grunt, and brute capsules are 1.8, 1.65, and 2.05 metres tall, each with a 0.4-metre radius.
+Rebuild and restart both world hosts after changing character collision definitions.
+The overlay uses client presentation state, including local prediction and remote interpolation.
+It does not prove a server hit. Geometry follows normal depth testing and the scene draw budget.
 
 The game endpoint defaults to 127.0.0.1:47640.
 Override it with server --listen and client --server.
@@ -166,6 +176,9 @@ Use these fixed tools when dynamic tool names do not refresh.
 | World client | world_client_state, world_action, client_characters |
 | Solo Arena | Discover game_state and the registered game action tools |
 | Character preview | preview_state, preview_control |
+
+Use `world_action` with `{"action":"debug_combat","enabled":true}` to enable the world overlay through MCP.
+Read `world_client_state.debug_combat` and command outcomes to confirm application. Set `enabled` to `false` to hide it.
 
 Mutation results may only acknowledge queued work.
 Check request IDs and resulting state for completion.

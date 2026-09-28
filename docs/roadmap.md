@@ -68,6 +68,11 @@ Windows/Vulkan checks on 2026-09-16 covered an imported-hero encounter; the user
 This does not establish full art quality, exact contacts, or the earlier crowd timing claims.
 Native enemy captures also predate removal of visual injury playback.
 
+On 2026-09-29, humanoid capsules and sector-to-body hit tests passed focused macOS checks.
+These covered 43 shared gameplay tests, three asset definition tests, and eight world client tests.
+Workspace checks passed for all targets. The debug overlay now uses capsule dimensions.
+Native rendering and user-observed combat feel remain unverified for this change.
+
 **Remaining:** Resolve source/license questions and check reference poses, floor contact, strike timing, and replacement character assets.
 
 ### Meadow scenery milestone
