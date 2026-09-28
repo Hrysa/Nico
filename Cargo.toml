@@ -50,13 +50,20 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 
+# Reduce debug information to shorten development builds and linking.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Development cache verification hashes large decoded texture objects. Keep the
-# hash implementation optimized while engine/game code remains debuggable.
+# hash implementation optimized while preserving engine/game backtrace locations.
 [profile.dev.package.sha2]
 opt-level = 3
 
 # Keep native graphics submission usable during gameplay debugging. Workspace
-# crates retain normal debug optimization, symbols, assertions and overflow checks.
+# crates retain normal debug optimization, assertions and overflow checks.
 [profile.dev.package.wgpu]
 opt-level = 3
 [profile.dev.package.wgpu-core]

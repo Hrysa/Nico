@@ -82,6 +82,16 @@ Use --all-features when checking optional library paths.
 GPU and manual measurement tests may require separate runs.
 A passing default test run does not cover every native or GPU path.
 
+Development and test builds keep only file and line information for workspace crates.
+External dependencies omit debug information. Variable inspection and dependency source locations are unavailable with these settings.
+Runtime optimization levels and release settings remain unchanged.
+This follows [Cargo's build performance guidance](https://doc.rust-lang.org/cargo/guide/build-performance.html#reduce-amount-of-generated-debug-information).
+For full debug information, rebuild with:
+
+~~~sh
+cargo build --config 'profile.dev.debug="full"' --config 'profile.dev.package."*".debug="full"'
+~~~
+
 Build Arena smoke binaries separately to avoid Windows locks from running games:
 
 ~~~sh
