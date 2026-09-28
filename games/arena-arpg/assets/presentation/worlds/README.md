@@ -63,15 +63,8 @@ are from Quaternius's Stylized Nature MegaKit Standard, under CC0. The notice is
 retained in [nature/License.txt](nature/License.txt); the original archive hash and
 source inventory remain in [../quaternius/import-manifest.json](../quaternius/import-manifest.json).
 
-## Editor authoring
+## Editing world content
 
-`cargo run -p nico-editor -- --project games/arena-arpg` opens this world through
-Arena's registered authoring adapter. It shares the client environment/landscape
-code and previews the static world without a server. Obstacle and decoration
-transforms use the rules shown in the Inspector; Save updates the original world
-sources. Spawn and quest data remain inspectable without being simulated. The
-editor's Play control builds and runs the declared client target as a separate
-process, which for the multiplayer world still expects its server; Stop terminates
-the launched client. See the
-[editor workflow](../../../../../README.md#game-code-and-authored-scenes) for save,
-reload, asset refresh, and formatting limits.
+Edit the logic and visual TOML sources directly, then restart the client/server
+to load the changes. The integrated editor has been removed. Arena's shared
+presentation and authoring adapter remain library APIs.

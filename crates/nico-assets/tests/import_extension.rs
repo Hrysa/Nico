@@ -86,8 +86,7 @@ fn external_importers_share_an_engine_output_type_and_keep_per_asset_settings() 
                 Default::default(),
             )
             .unwrap();
-        let bytes =
-            include_bytes!("../../../games/minimal-game/assets/presentation/textures/sample.png");
+        let bytes = include_bytes!("fixtures/textures/sample.png");
         assert_eq!(
             registry
                 .import_bytes(id(3), bytes, &|| false)
@@ -239,7 +238,7 @@ fn static_glb_importer_works_without_runtime() {
             Default::default(),
         )
         .unwrap();
-    let bytes = include_bytes!("../../../games/minimal-game/assets/presentation/meshes/cube.glb");
+    let bytes = include_bytes!("fixtures/meshes/cube.glb");
     let mesh = registry.import_bytes(id(1), bytes, &|| false).unwrap();
     assert_eq!(mesh.vertices().len(), 24);
 }

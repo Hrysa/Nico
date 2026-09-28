@@ -1,4 +1,4 @@
-//! Headless consumer for the shared sprite/HUD texture.
+//! Load a small test texture, then release it and stop the worker.
 use nico_assets::{
     AssetId, Handle,
     loading::{Texture, TextureLimits, TextureState, TextureStore},
@@ -11,8 +11,7 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../games/minimal-game/assets/presentation");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let id = AssetId::from_u128(1);
     let handle = Handle::<Texture>::new(id);
     let mut builder = AppBuilder::new();

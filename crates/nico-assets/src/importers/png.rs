@@ -85,8 +85,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     fn fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../games/minimal-game/assets/presentation/textures/sample.png")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/textures/sample.png")
     }
     #[test]
     fn real_png_is_decoded_and_limits_are_enforced() {

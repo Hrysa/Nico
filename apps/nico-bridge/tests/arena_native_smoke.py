@@ -1,7 +1,7 @@
 """Isolated arena desktop checks through real MCP; opens one client window."""
 import argparse, json, math, pathlib, shutil, socket, subprocess, time, sys
 sys.dont_write_bytecode = True
-from native_smoke import Mcp
+from mcp_client import Mcp
 
 def main():
     parser=argparse.ArgumentParser()

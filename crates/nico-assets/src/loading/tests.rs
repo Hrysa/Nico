@@ -285,8 +285,7 @@ fn snapshot_can_pin_pixels_after_store_release() {
 }
 
 fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../games/minimal-game/assets/presentation/textures/sample.png")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/textures/sample.png")
 }
 
 #[test]

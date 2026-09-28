@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "apps/nico-bridge",
     "apps/nico-character-preview",
-    "apps/nico-editor",
     "apps/nico-shaderc",
     "crates/nico-assets",
     "crates/nico-scene",
@@ -24,9 +23,6 @@ members = [
     "crates/nico-rhi-wgpu",
     "crates/nico-runtime",
     "crates/nico-winit",
-    "games/minimal-game/client",
-    "games/minimal-game/server",
-    "games/minimal-game/shared",
     "games/arena-arpg/shared",
     "games/arena-arpg/client",
     "games/arena-arpg/server",

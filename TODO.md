@@ -4,25 +4,12 @@ This file owns concrete next actions. Phase goals, scope, completion criteria, a
 validation evidence belong in the [roadmap](docs/roadmap.md); the
 [architecture](docs/architecture.md) defines ownership and contracts.
 
-## Following: editor authoring
-
-Acceptance: [roadmap phase 8](docs/roadmap.md#8-make-development-repeatable).
-
-- [ ] Use `editor_loading` to reduce the remaining warm-open scene preparation
-      and preparation-to-first-presentation delay. The latest isolated native Windows
-      run takes about 1.06 seconds from loader start to scene presentation API success;
-      source imports are zero. See
-      [instance evidence](docs/roadmap.md#common-mesh-instancing-2026-09-20-feature-complete).
+## Deferred rendering optimization
 
 - [ ] Follow-up optimization (deferred): reduce the remaining moving-camera frame-time
       gap against expanded grass without changing visible results. The common instance
       feature is complete without LOD; further performance investigation is deferred
-      by the user. See the [delivery audit](docs/validation/2026-09-20-common-mesh-instancing.md#final-feature-delivery-2026-09-21).
-
-- [ ] Extend Arena authoring to encounters/spawns/colliders, followed by validated
-      reload and separation of generic editor code from game adapter registration.
-- [ ] Add source-reference relinking for renamed assets and project import settings
-      when extending the initial PNG/embedded-GLB workflow.
+      by the user. See [phase 8](docs/roadmap.md#8-make-development-repeatable).
 
 ## World camera stutter
 
@@ -37,23 +24,15 @@ Acceptance: [roadmap phase 8](docs/roadmap.md#8-make-development-repeatable).
 
 Acceptance: [roadmap phase 7 character milestone](docs/roadmap.md#client-character-milestone).
 
-- [ ] Finalize the supplied character selection: verify the RPG animation upstream
-      source/license and finish visual acceptance of the currently bound clips; see the
-      [asset inspection](docs/plans/2026-09-16-character-assets.md) and
-      [first visual review](docs/reviews/2026-09-17-hero-clip-review.md).
-- [ ] Visually validate RPG clips retargeted onto Ch03, including reference-pose
-      alignment, root-motion policy, contacts, and proportions. Finish floor/foot
-      contact and native strike-frame checks with denser samples; the
-      [sword/grip review](docs/reviews/2026-09-17-sword-grip.md) records implemented
-      grip, sword selection and numerical contact/weapon-clearance coverage. Tune
-      alignment, playback and authored stride speed through the
-      [character definitions](docs/plans/2026-09-17-character-definitions.md). Refine profiles
-      and add twist handling only when observed poses require it.
+- [ ] Verify the RPG animation source and license. Finish visual checks for the selected clips.
+- [ ] Check RPG clips retargeted onto Ch03 for reference pose, root motion, contacts, and body shape.
+      Use denser samples for floor contact and native strike frames.
+      Tune alignment, playback, and stride speed through the character definition files.
+      Add twist handling only when observed poses require it.
 - [ ] Extend preview controls with skeleton visualization,
       and a timeline widget; validate native reference pose and more motion samples.
-- [ ] Broaden character-art acceptance across wave compositions and replacement
-      assets, including Imp/Puglin stride and weapon-contact calibration; see the
-      [Bestiary review](docs/reviews/2026-09-17-bestiary.md).
+- [ ] Check character art across wave groups and replacement assets.
+      Include Imp/Puglin stride and weapon contact.
 
 ## Following: client presentation
 

@@ -25,7 +25,7 @@ must not depend on runtime.
 
 `nico-scene` owns project manifests and the simple authored scene contract.
 `nico-authoring` owns the UI-free game adapter contract and registry. Arena shares
-its environment rendering between client and editor through
+its environment rendering and retained authoring adapter through
 `games/arena-arpg/presentation`; game formats stay outside engine crates.
 
 Executable development tools belong in `apps/` when a concrete tool justifies a
@@ -41,23 +41,19 @@ belong in `docs/`.
 - `cargo test --workspace`: run all unit and integration tests.
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: enforce lint-clean code.
-- `cargo build -p nico-bridge -p minimal-game-client -p minimal-game-server`: build
-  the bridge and both hosts.
-- `cargo run -p minimal-game-client`: run the native client until its window closes.
-- `cargo run -p minimal-game-client -- --smoke-frames 3`: run bounded client-session
-  frames; this counter does not guarantee three successful GPU presentations.
+- `cargo build -p nico-bridge -p arena-arpg-client -p arena-arpg-server`: build the bridge and both hosts.
+- `cargo run -p arena-arpg-client`: run the native world client.
+- `cargo run -p arena-arpg-client -- --arena --smoke-frames 3`: run a bounded solo client session.
+  The counter does not guarantee three successful GPU presentations.
+- `cargo run -p arena-arpg-server`: run the authoritative world server at 60 Hz.
 - `cargo run -p nico-shaderc -- --check`: verify generated shaders; requires `slangc`.
-- `cargo run -p minimal-game-server`: run the continuous 60 Hz headless server;
-  stop it with Ctrl+C.
-- `cargo run -p minimal-game-server --example controlled`: demonstrate in-process
-  readiness observation and orderly stop with the real server runner.
 
-For isolated native validation, build those three packages with `--target-dir
-target/bridge-validation`, then run `python apps/nico-bridge/tests/native_smoke.py
---bin-dir target/bridge-validation/debug`. This test opens a client window, uses its own
-bridge port, and cleans up only its own processes. Do not replace or stop a user's
-running session to run tests. On Windows, running executables can lock build outputs;
-use an isolated target directory for validation when needed.
+For isolated native checks, build these packages with `--target-dir target/bridge-validation`.
+Run `python apps/nico-bridge/tests/arena_native_smoke.py --bin-dir target/bridge-validation/debug` for solo combat and window checks.
+Run `python apps/nico-bridge/tests/world_native_smoke.py --bin-dir target/bridge-validation/debug` for the two-client world scenario.
+These scripts open test windows, use private ports, and clean up only their own processes.
+Do not replace or stop a user's running session.
+Windows can lock running executable files; use a separate target directory when needed.
 
 ## Coding Style & Naming Conventions
 
@@ -117,10 +113,12 @@ visual test passed or assuming the user missed the action. Report command, rende
 and user-observed results separately, with any unresolved limits.
 
 Native diagnostic capture uses bounded tracing events, exclusive process-local cursors,
-eviction counts, and truncation flags. It shares the host logging filter, excludes span
-timing, and survives bridge reconnects but not game exit. This is operational
-diagnostics, not profiling. Protocol bounds and deployment scope live in the [bridge
-contract](docs/plans/2026-09-11-mcp-bridge.md).
+eviction counts, and truncation flags.
+It shares the host logging filter, excludes span
+timing, and survives bridge reconnects but not game exit.
+This is operational
+diagnostics, not profiling.
+Keep protocol bounds and deployment limits clear in code and [architecture](docs/architecture.md#ai-operation-requirements).
 
 Keep transport and process control outside the headless runtime. Apply simulation
 commands at runtime-owned boundaries; tooling threads read owned snapshots or queue
@@ -157,6 +155,18 @@ architectural impact, and validation commands; link relevant issues and include
 screenshots only for visible presentation changes. Do not mix unrelated formatting or
 generated-file changes into a feature PR.
 
+## Writing style
+
+Use CEFR B1-B2 English for explanations, documents, source code comments, and Rust documentation comments.
+Apply these rules when creating, editing, simplifying, or refining that text:
+
+- Use common words whenever possible.
+- Avoid business English and academic words.
+- Keep technical terms when needed for accuracy.
+- Keep each sentence at 20 words or fewer.
+- Split long explanations into short, clear sentences.
+- Preserve technical meaning, ownership rules, and known limits.
+
 ## Documentation ownership
 
 Each document has one primary purpose:
@@ -168,11 +178,9 @@ Each document has one primary purpose:
 - [TODO](TODO.md): concrete unfinished actions linked to roadmap phases. Remove
   completed actions after recording meaningful results in the roadmap. Do not
   copy phase scope or completion criteria into TODO.
-- [Review guide](docs/review.md): criteria for assessing proposed changes.
-- ADRs: accepted decisions and their rationale. Preserve history; append dated
-  implementation updates rather than rewriting earlier status as current fact.
-- Plans: detailed scoped designs. Mark superseded plans clearly and link to the
-  replacement; they must not appear to describe current capabilities.
+- Keep current design decisions and their reasons in architecture.
+- Keep dated test results and their limits in the roadmap.
+- Do not recreate separate decisions, plans, reviews, or validation folders without a user request.
 
 When behavior changes, update the owning document and use links elsewhere. Distinguish
 implemented, unverified, and deferred work. Keep validation claims specific to the

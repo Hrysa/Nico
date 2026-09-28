@@ -1,7 +1,8 @@
 """Validate release-server debug opt-in and editor RPC through an isolated bridge.
 
-Build nico-bridge (debug) and minimal-game-server (--release) first. No windows open;
-only this test's subprocesses are cleaned up. Native editor UI acceptance is separate.
+Build nico-bridge in debug and arena-arpg-server in release first.
+No windows open; cleanup stops only processes owned by this test.
+Arena supplies game snapshots. Entity inspection stays covered by engine unit tests.
 """
 import argparse
 import json
@@ -12,7 +13,7 @@ import subprocess
 import tempfile
 import time
 
-from native_smoke import Mcp
+from mcp_client import Mcp
 
 
 def address():
@@ -89,7 +90,7 @@ def main():
 
         try:
             mcp = bridge()
-            disabled = start(args.release_server, "--bridge", game_address)
+            disabled = start(args.release_server, "--arena", "--bridge", game_address)
             # Explicit custom address must not bypass the release default. Observe
             # a live process for two heartbeat windows, never just a failed launch.
             for _ in range(20):
@@ -99,7 +100,7 @@ def main():
             disabled.terminate()  # Debugging is deliberately disabled in this fixture.
             disabled.wait(timeout=10)
 
-            server = start(args.release_server, "--enable-debug", "--bridge", game_address,
+            server = start(args.release_server, "--arena", "--enable-debug", "--bridge", game_address,
                            "--debug-access-file", str(policy))
             first = mcp.ready("server")
             status = mcp.call("instance_status", {"instance_id": first})
@@ -118,11 +119,6 @@ def main():
             assert not attach.get("isError"), attach
             assert attach["structuredContent"]["debug_access"]["nico.debug"]["permissions"] == ["inspect"]
             assert not connection.call("game_state").get("isError")
-            page = connection.call("debug_entities", limit=1)["structuredContent"]
-            reference = page["entities"][0]["reference"]
-            assert reference["process_session"] == identity["process_session"]
-            detail = connection.call("debug_entity", snapshot_id=page["snapshot_id"], reference=reference)["structuredContent"]
-            assert detail["tick"] == page["tick"] and "position" in detail["properties"]
             error(connection.call("stop"), "access_denied")
             assert not connection.request(method="detach").get("isError")
             assert server.poll() is None
@@ -150,8 +146,6 @@ def main():
                                      api_version="1", credential=host_token), "incompatible_instance")
             assert not connection.request(method="attach", instance_id=second,
                                           api_version="1", credential=host_token).get("isError")
-            error(connection.call("debug_entity", snapshot_id=page["snapshot_id"], reference=reference), "stale_entity")
-            assert not connection.call("debug_entities", limit=1).get("isError")
             assert not connection.call("diagnostics", limit=8).get("isError")
             policy.write_text(json.dumps({"grants": [{"credential": host_token,
                                                       "permissions": ["inspect", "stop"]}]}))
@@ -164,7 +158,7 @@ def main():
                 log.flush()
                 contents = pathlib.Path(log.name).read_text()
                 assert endpoint_token not in contents and host_token not in contents
-            print("PASS: release default, explicit opt-in, inspection, denied stop, host revocation, detach survival, bridge restart, stale IDs, diagnostics, authorized stop, credential redaction, executable identity, paged inspection, and reconnect handle invalidation")
+            print("PASS: release access, inspection, stop permissions, revocation, detach, reconnects, diagnostics, credential redaction, and executable identity.")
         finally:
             for connection in editors:
                 connection.close()

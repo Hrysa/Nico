@@ -6,9 +6,6 @@
 
 use std::error::Error;
 
-#[cfg(feature = "play")]
-pub mod play;
-
 #[cfg(any(feature = "client", feature = "server"))]
 mod diagnostics;
 

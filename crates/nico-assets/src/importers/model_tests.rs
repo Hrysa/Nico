@@ -196,8 +196,7 @@ fn importer_limits_and_optional_material_fallback_are_explicit() {
 #[test]
 fn retains_embedded_images_and_core_material_bindings() {
     let (mut doc, mut blob) = fixture();
-    let png =
-        include_bytes!("../../../../games/minimal-game/assets/presentation/textures/sample.png");
+    let png = include_bytes!("../../tests/fixtures/textures/sample.png");
     let offset = blob.len();
     blob.extend(png);
     while !blob.len().is_multiple_of(4) {

@@ -618,32 +618,8 @@ impl ImportCache {
         Ok(output)
     }
 }
-/// Development means debug assertions enabled. Release builds keep the explicit
-/// source import path until a separately specified cooked-content loader exists.
-/// Project loaders share the `.nico` beside the nearest `nico.project.toml`.
-/// Legacy layouts without a manifest use the parent of the nearest `assets`
-/// directory; standalone external sources use their containing directory.
-pub fn development_cache(path: &Path) -> Result<Option<ImportCache>, ImportError> {
-    if !cfg!(debug_assertions) {
-        return Ok(None);
-    }
-    let full = path.canonicalize().map_err(|e| error("source_path", e))?;
-    let parent = full
-        .parent()
-        .ok_or_else(|| error("source_path", "missing source parent"))?;
-    let root = parent
-        .ancestors()
-        .find(|p| p.join("nico.project.toml").is_file())
-        .or_else(|| {
-            parent
-                .ancestors()
-                .find(|p| p.file_name().is_some_and(|n| n == "assets"))
-                .and_then(Path::parent)
-        })
-        .unwrap_or(parent);
-    ImportCache::new(root).map(Some)
-}
-/// Native file loading shared by startup consumers and asynchronous asset stores.
+/// Native file loading imports authoritative source bytes in every build profile.
+/// Persistent caching is available only through an explicit `ImportCache`.
 pub fn load_file<I: AssetImporter>(
     path: &Path,
     importer: &I,
@@ -651,40 +627,25 @@ pub fn load_file<I: AssetImporter>(
     budget: ImportBudget,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<I::Output, ImportError> {
-    if let Some(cache) = development_cache(path)? {
-        cache.import_input(path, "", Input::File, importer, settings, budget, cancelled)
-    } else {
-        let bytes = crate::import::read_source(path, budget, cancelled)?;
-        load_bytes(path, "", &bytes, importer, settings, budget, cancelled)
-    }
+    let bytes = crate::import::read_source(path, budget, cancelled)?;
+    load_bytes(path, "", &bytes, importer, settings, budget, cancelled)
 }
-/// Embedded textures use their owning source path plus a stable subresource name.
+/// Import embedded bytes directly; the owner need not exist on disk.
 pub fn load_bytes<I: AssetImporter>(
-    path: &Path,
-    subresource: &str,
+    _path: &Path,
+    _subresource: &str,
     bytes: &[u8],
     importer: &I,
     settings: &I::Settings,
     budget: ImportBudget,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<I::Output, ImportError> {
-    if let Some(cache) = development_cache(path)? {
-        cache.import_input(
-            path,
-            subresource,
-            Input::Bytes(bytes),
-            importer,
-            settings,
-            budget,
-            cancelled,
-        )
-    } else {
-        importer.validate_settings(settings)?;
-        let output =
-            importer.import(&mut ImportContext::new(bytes, budget, cancelled)?, settings)?;
-        check(cancelled)?;
-        Ok(output)
-    }
+    importer.validate_settings(settings)?;
+    let output = importer.import(&mut ImportContext::new(bytes, budget, cancelled)?, settings)?;
+    check(cancelled)?;
+    IMPORTS.fetch_add(1, Ordering::Relaxed);
+    ACTIVITY.with(|a| a.imports.fetch_add(1, Ordering::Relaxed));
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -793,64 +754,59 @@ mod tests {
         assert_eq!(observer.stats().object_checks, before.object_checks);
         assert_eq!(i.calls.load(Ordering::SeqCst), 1);
     }
-    #[cfg(debug_assertions)]
     #[test]
-    fn development_loaders_share_the_explicit_project_cache() {
+    fn native_file_loading_ignores_existing_cache_and_reimports_sources() {
         let f = Fixture::new();
-        fs::write(f.0.join("nico.project.toml"), "version = 1").unwrap();
-        // Custom roots and nested directories named assets must still select
-        // the owning project, not create per-content caches.
-        for relative in [
-            "assets/presentation/model.bin",
-            "content/vendor/assets/model.bin",
-        ] {
-            let source = f.0.join(relative);
-            fs::create_dir_all(source.parent().unwrap()).unwrap();
-            fs::write(&source, b"abc").unwrap();
-            let importer = Counting::default();
-            f.cache()
-                .load(&source, &importer, &0, budget(), &|| false)
-                .unwrap();
-            let cache = development_cache(&source).unwrap().unwrap();
-            assert_eq!(cache.directory(), f.cache().directory());
+        let importer = Counting::default();
+        fs::write(f.source(), b"abc").unwrap();
+        file_run(&f, &importer).unwrap();
+        fs::write(f.source(), b"def").unwrap();
+        for _ in 0..2 {
             assert_eq!(
-                cache
-                    .load(&source, &importer, &0, budget(), &|| false)
-                    .unwrap(),
-                b"abc"
+                load_file(&f.source(), &importer, &0, budget(), &|| false).unwrap(),
+                b"def"
             );
-            assert_eq!(importer.calls.load(Ordering::SeqCst), 1);
-            assert!(!source.parent().unwrap().join(".nico").exists());
         }
-        assert!(!f.0.join("assets/.nico").exists());
-        let nested = f.0.join("nested");
-        fs::create_dir_all(nested.join("assets")).unwrap();
-        fs::write(nested.join("nico.project.toml"), "version = 1").unwrap();
-        let source = nested.join("assets/model.bin");
-        fs::write(&source, b"abc").unwrap();
-        assert_eq!(
-            development_cache(&source).unwrap().unwrap().directory(),
-            nested.canonicalize().unwrap().join(".nico")
-        );
+        assert_eq!(importer.calls.load(Ordering::SeqCst), 3);
+        fs::write(f.source(), b"bad").unwrap();
+        assert!(load_file(&f.source(), &importer, &0, budget(), &|| false).is_err());
     }
-    #[cfg(debug_assertions)]
+
     #[test]
-    fn development_cache_uses_game_root_for_legacy_assets_and_parent_for_standalone_files() {
+    fn native_imports_do_not_create_cache_and_preserve_bounds_and_cancellation() {
         let f = Fixture::new();
-        let source = f.0.join("assets/presentation/model.bin");
-        fs::create_dir_all(source.parent().unwrap()).unwrap();
-        fs::write(&source, b"abc").unwrap();
-        assert_eq!(
-            development_cache(&source).unwrap().unwrap().directory(),
-            f.cache().directory()
-        );
+        let importer = Counting::default();
         fs::write(f.source(), b"abc").unwrap();
         assert_eq!(
-            development_cache(&f.source()).unwrap().unwrap().directory(),
-            f.cache().directory()
+            load_file(&f.source(), &importer, &0, budget(), &|| false).unwrap(),
+            b"abc"
         );
-        assert!(development_cache(&f.0.join("missing.bin")).is_err());
+        let missing = f.0.join("missing.glb");
+        assert_eq!(
+            load_bytes(
+                &missing,
+                "image/0",
+                b"def",
+                &importer,
+                &0,
+                budget(),
+                &|| false
+            )
+            .unwrap(),
+            b"def"
+        );
+        assert!(load_file(&missing, &importer, &0, budget(), &|| false).is_err());
+        assert!(load_file(&f.source(), &importer, &0, budget(), &|| true).is_err());
+        assert!(load_bytes(&missing, "", b"def", &importer, &0, budget(), &|| true).is_err());
+        let small = ImportBudget {
+            max_input_bytes: 2,
+            ..budget()
+        };
+        assert!(load_file(&f.source(), &importer, &0, small, &|| false).is_err());
+        assert!(load_bytes(&missing, "", b"def", &importer, &0, small, &|| false).is_err());
+        assert!(!f.0.join(".nico").exists());
     }
+
     #[cfg(feature = "watch")]
     #[test]
     fn metadata_probe_checks_recipe_source_and_object_without_loading_content() {

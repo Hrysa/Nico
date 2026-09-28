@@ -102,7 +102,9 @@ impl BridgeClient {
                         Err(error) => Err(error),
                     };
                     if *closing.borrow() { break; }
-                    if let Err(error) = result { eprintln!("Nico bridge disconnected: {error}; retrying"); }
+                    if let Err(error) = result {
+                        tracing::trace!(target: "nico::bridge", %address, %error, "bridge connection ended or unavailable; retrying");
+                    }
                     tokio::select! {
                         _ = closing.changed() => break,
                         _ = tokio::time::sleep(Duration::from_secs(1)) => {}

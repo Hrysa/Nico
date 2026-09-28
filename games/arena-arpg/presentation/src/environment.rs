@@ -204,7 +204,7 @@ impl Environment {
         progress.finish();
         Ok(Self {
             source: path.to_owned(),
-            ground_cache: nico_assets::cache::development_cache(path)?,
+            ground_cache: None,
             definition,
             models,
             solids: BTreeMap::new(),

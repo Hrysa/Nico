@@ -16,7 +16,7 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
-from native_smoke import Mcp
+from mcp_client import Mcp
 
 
 def endpoint():

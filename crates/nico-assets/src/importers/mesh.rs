@@ -146,8 +146,7 @@ mod tests {
     use super::*;
     #[test]
     fn real_mesh_and_bounds_are_checked() {
-        let bytes =
-            include_bytes!("../../../../games/minimal-game/assets/presentation/meshes/cube.glb");
+        let bytes = include_bytes!("../../tests/fixtures/meshes/cube.glb");
         let mesh = decode_bytes(bytes, AssetLimits::default()).unwrap();
         assert_eq!(mesh.vertices().len(), 24);
         assert_eq!(mesh.indices().len(), 36);
@@ -166,8 +165,7 @@ mod tests {
     }
 
     fn changed(change: impl FnOnce(&mut serde_json::Value, &mut Vec<u8>)) -> Vec<u8> {
-        let original =
-            include_bytes!("../../../../games/minimal-game/assets/presentation/meshes/cube.glb");
+        let original = include_bytes!("../../tests/fixtures/meshes/cube.glb");
         let length = u32::from_le_bytes(original[12..16].try_into().unwrap()) as usize;
         let mut doc = serde_json::from_slice(&original[20..20 + length]).unwrap();
         let mut binary = original[28 + length..].to_vec();
@@ -212,8 +210,7 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
         let mut builder = AppBuilder::new().with_event_capacity(1);
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../games/minimal-game/assets/presentation");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let mesh = Handle::<Mesh>::new(AssetId::from_u128(1));
         let texture = Handle::<Texture>::new(AssetId::from_u128(1));
         MeshStore::install(

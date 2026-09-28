@@ -13,8 +13,8 @@ a license or establish permission to redistribute the raw assets.
   redistribution terms remain unverified; the workspace code license does not
   establish the license of these files.
 
-The [asset provenance record](../../../../../../docs/plans/2026-09-16-character-assets.md)
-owns source investigation and the outstanding attribution work. Retain the actual
+Source investigation and attribution work remain unfinished.
+Retain the actual
 upstream notices when that work is resolved, before public distribution.
 
 ## Library 2 attack migration (2026-09-17)
