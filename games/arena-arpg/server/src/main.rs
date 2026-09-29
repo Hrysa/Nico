@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     args.logic_characters = content.source("logic_characters")?;
     args.item_asset = content.source("item")?;
     let characters = arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters)?;
-    let (mut builder, tools) = if !args.arena {
+    let (mut builder, mut tools) = if !args.arena {
         use arena_arpg_shared::open_world::{
             OpenWorld, content::ItemDefinition, server::WorldServer,
         };
@@ -78,11 +78,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     content.attach(&mut builder, nico_scene::HostRole::Server)?;
     let mut app = builder.build()?;
     tracing::info!(arena = args.arena, "game server starting");
-    let mut host = ServerHost::new(args.host)
+    content.register_tools(&mut tools)?;
+    let host = ServerHost::new(args.host)
         .with_game_identity("arena_arpg", "1")
         .with_mcp_tools(tools);
-    content.verify()?;
-    host = host.with_content_revision(content.revision.clone());
     host.run(&mut app)?;
     tracing::info!("game server stopped");
     Ok(())

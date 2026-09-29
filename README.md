@@ -193,6 +193,7 @@ Use these fixed tools when dynamic tool names do not refresh.
 | Tool group | Main operations |
 | --- | --- |
 | All native hosts | status, stop, diagnostics |
+| Arena client and server gameplay | scene_info: selected scene and definition validation, without a calculated content revision |
 | Native clients | window_state, window_control, window_snapshot |
 | World server | world_state, world_spawn |
 | World client | world_client_state, world_action, client_characters |
@@ -255,6 +256,7 @@ Scenes compose entities from typed components, including world references, place
 Servers create shared gameplay components and skip client components.
 Restart affected hosts after editing source files.
 The `scene_loading` MCP tool reports splash, loading, preparing, loaded, or failed state.
+It also reports application frames and active scene generation. The application remains alive across the switch.
 Scene transitions refresh bridge registration; discover the new instance ID before calling game tools.
 Loading errors remain on the splash and include details in diagnostics and `scene_loading`.
 Run the isolated native check with

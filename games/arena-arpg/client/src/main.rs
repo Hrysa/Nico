@@ -20,7 +20,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(about = "Persistent multiplayer action RPG with an optional arena combat test")]
 struct Args {
-    /// Saved Arena project; loads its world and character assets as one revision.
+    /// Saved Arena project; loads its scene and referenced resources.
     #[arg(long)]
     project: Option<PathBuf>,
     /// Scene asset relative to the project root.
@@ -80,9 +80,12 @@ fn main() -> Result<()> {
     )?;
     let config = native_config(prepared.args.arena);
     let ready = compose_game(prepared)?;
-    host.with_mcp_tools(ready.tools)
-        .with_content_revision(ready.content_revision.unwrap())
-        .run_scenes(ready.scene, config, |_| Ok(None))?;
+    host.with_mcp_tools(ready.tools).run_scenes(
+        AppBuilder::new().build()?,
+        ready.scene,
+        config,
+        |_| Ok(None),
+    )?;
     Ok(())
 }
 
@@ -151,7 +154,6 @@ fn prepare_game(
         None
     };
     check()?;
-    content.verify()?;
     Ok(PreparedGame {
         args,
         content,
@@ -175,7 +177,7 @@ fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientSce
     } = prepared;
     let mut builder = AppBuilder::new().with_fixed_step(FIXED_STEP);
     content.attach(&mut builder, nico_scene::HostRole::Client)?;
-    let (builder, tools) = if !args.arena {
+    let (builder, mut tools) = if !args.arena {
         let client = world::network::WorldClient::new(args.server, args.character.clone(), logic)?;
         let environment = environment.expect("prepared world environment");
         world::register(
@@ -207,7 +209,8 @@ fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientSce
             tools,
         )
     };
-    let app = builder.build()?;
+    content.register_tools(&mut tools)?;
+    let app = builder.build_scene()?;
     let scene = if args.arena {
         nico_winit::NativeScene::new(app, controls::map_input)
     } else {
@@ -216,7 +219,7 @@ fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientSce
     Ok(nico_launch::client::ClientScene {
         scene,
         tools,
-        content_revision: Some(content.revision),
+        content_revision: None,
     })
 }
 
@@ -383,48 +386,85 @@ mod tests {
     #[ignore = "manual startup elapsed-time measurement using local game assets"]
     fn startup_asset_preparation_measurement() {
         use std::time::Instant;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let args = Args::parse_from(["arena"]);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut args = Args::parse_from(["client"]);
+        args.project = Some(root.clone());
         let start = Instant::now();
-        let logic = arena_arpg_shared::characters::CharacterCatalog::load(
-            &root.join(args.logic_characters),
-        )
-        .unwrap();
-        let visual_root = root.join(args.visual_characters);
-        let definitions = character::definition::load_visuals(&visual_root, &logic).unwrap();
-        let mut characters = Vec::new();
-        for definition in definitions {
+        let content =
+            arena_arpg_shared::project::ProjectContent::load(&root, nico_scene::HostRole::Client)
+                .unwrap();
+        eprintln!(
+            "startup content_ms={:.3}",
+            start.elapsed().as_secs_f64() * 1000.
+        );
+        args.logic_characters = content.source("logic_characters").unwrap();
+        args.visual_characters = content.source("visual_characters").unwrap();
+        args.visual_world = content.source("visual").unwrap();
+        let presentation = scene::Presentation::load(&content).unwrap();
+        let logic =
+            arena_arpg_shared::characters::CharacterCatalog::load(&args.logic_characters).unwrap();
+        let definitions =
+            character::definition::load_visuals(&args.visual_characters, &logic).unwrap();
+        let phase = Instant::now();
+        let loaded = load_project_assets(&args, &definitions, &content).unwrap();
+        eprintln!(
+            "startup assets_ms={:.3}",
+            phase.elapsed().as_secs_f64() * 1000.
+        );
+        let preparation = Instant::now();
+        let mut character = std::array::from_fn(|_| None);
+        for (index, definition) in definitions.iter().enumerate() {
+            let phase = Instant::now();
             if definition.core.model.is_some() {
-                let name = definition.core.character.clone();
-                let phase = Instant::now();
-                characters.push(
-                    character::CharacterAssets::load_definition(definition, &visual_root, None)
-                        .unwrap(),
+                character[index] = Some(
+                    character::CharacterAssets::from_loaded(
+                        definition.clone(),
+                        &args.visual_characters,
+                        None,
+                        &loaded,
+                    )
+                    .unwrap(),
                 );
-                eprintln!("startup measurement: {name} {:?}", phase.elapsed());
             }
+            eprintln!(
+                "startup character={} prepare_ms={:.3}",
+                definition.core.character,
+                phase.elapsed().as_secs_f64() * 1000.
+            );
         }
         let phase = Instant::now();
         let mut environment =
-            world::environment::Environment::load(&root.join(args.visual_world)).unwrap();
+            world::environment::Environment::from_loaded(&args.visual_world, &loaded).unwrap();
         eprintln!(
-            "startup measurement: environment assets {:?}",
-            phase.elapsed()
+            "startup environment_ms={:.3}",
+            phase.elapsed().as_secs_f64() * 1000.
         );
-        let content =
-            arena_arpg_shared::project::ProjectContent::open(&root.join("games/arena-arpg"))
-                .unwrap();
-        environment.apply_scene(&content.scene).unwrap();
-        let zone = content.zone;
         let phase = Instant::now();
-        environment.bind(&zone).unwrap();
+        environment.apply_scene(&content.scene).unwrap();
         eprintln!(
-            "startup measurement: scenery preparation {:?}; total {:?}; cache {:?}",
-            phase.elapsed(),
-            start.elapsed(),
-            nico_assets::cache::stats()
+            "startup apply_scene_ms={:.3}",
+            phase.elapsed().as_secs_f64() * 1000.
         );
-        assert_eq!(characters.len(), 3);
+        let phase = Instant::now();
+        environment.bind(&content.zone).unwrap();
+        eprintln!(
+            "startup bind_ms={:.3}",
+            phase.elapsed().as_secs_f64() * 1000.
+        );
+        eprintln!(
+            "startup preparation_ms={:.3} total_ms={:.3}",
+            preparation.elapsed().as_secs_f64() * 1000.,
+            start.elapsed().as_secs_f64() * 1000.
+        );
+        std::hint::black_box(PreparedGame {
+            args,
+            content,
+            presentation,
+            logic,
+            definitions,
+            character,
+            environment: Some(environment),
+        });
     }
 
     #[test]

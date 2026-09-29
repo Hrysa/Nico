@@ -45,6 +45,19 @@ Rust plugins register state and systems through `AppBuilder`.
 Hosts drive Startup, FixedUpdate, Update, and Shutdown; runtime owns no permanent loop.
 ECS holds simulation state, not windows or GPU resources.
 
+`App` is the persistent program root. Its systems, resources, events, and clock survive scene changes.
+`AppBuilder::build_scene` creates scene-owned worlds, systems, events, and local clocks without starting them.
+`App::switch_scene` runs between ticks, cleans up the old scene, then starts the prepared replacement.
+`App::world` and host input events target the active scene, falling back to the root when no scene exists.
+`App::app_world` and `app_events` always expose program-owned state.
+Scene systems access persistent singleton resources through `SystemContext::app_world`.
+Root systems run before scene ticks. Scene clocks start at zero; application clocks remain continuous.
+Scene shutdown runs every cleanup hook, even after a hook fails, then drops entities, resources, events, and system captures.
+Scene services close during cleanup; external workers need scene-owned cancellation and join handles.
+Entity IDs are local to each world. External references must also carry the active `SceneId`.
+Preparation failure keeps the current scene. Cleanup or activation failure leaves no active scene and returns an error.
+Application shutdown unloads the scene before running root cleanup. Native hosts stop on activation errors.
+
 Successful structural commands and event writes become visible before the next system.
 Failed systems discard those queued writes.
 Direct component and resource changes are not rolled back.
@@ -162,6 +175,9 @@ Asset workers publish through runtime-owned boundaries.
 
 Native file and embedded texture loads reuse persistent `ImportCache` data in every build profile.
 Sources, importer versions, settings, and budgets determine whether cached data can be reused.
+Native loading reads and hashes required resource bytes before cache reuse, then verifies cached payload hashes.
+Metadata alone never approves native resource reuse. Explicit `ImportCache::load` remains a metadata-based library shortcut.
+Use `ImportCache::load_verified` when metadata shortcuts are unacceptable.
 The cache sits beside the nearest project manifest, above `assets`, or beside a standalone source.
 Embedded bytes without an owner file import directly.
 Asset batches own up to four CPU workers and 1024 jobs. Results retain input order when collected.
@@ -169,7 +185,9 @@ Polling does not block. Cancellation is cooperative; dropping a batch cancels qu
 Workers return owned values. GPU work and runtime publication stay on their owning threads.
 Arena starts one dependency graph from `nico.project.toml`, using `default_scene` and its character catalog.
 Project asset references stay under the fixed `assets` folder.
-Content hashes include the selected scene path, manifest, and `assets` folder.
+Normal startup parses and validates definitions without calculating a project content hash or scanning unrelated resources.
+Client and server `scene_info` report the selected scene; their content revision remains absent.
+Explicit authoring conflict checks calculate content hashes over the selected scene path, manifest, and `assets` folder.
 Snapshots include the manifest and project assets.
 Content hashes and snapshots skip generated `.nico` cache directories, including caches inside `assets` from older layouts.
 Content hashing and snapshots have no total byte limit. Both stream file bytes through a 64 KiB buffer.
@@ -209,15 +227,18 @@ It waits one second of active runtime time before starting Meadow preparation.
 `nico-assets::Batch` owns the worker. Progress observers publish owned counts through shared state.
 Workers prepare owned CPU data; runtime composition and network setup happen on the window thread.
 Asset cancellation is cooperative. Closing the host joins remaining work after its next cancellation check.
-Import completion changes the label to preparation while character and scenery data finish.
+Import completion changes the label to preparation while character and scenery data finish; the completed import fill disappears.
 Loading failures keep the splash visible. No partial gameplay runtime starts.
 
-`nico-winit::NativeScene` keeps the same window and renderer when changing runtimes.
-A host frame boundary shuts down the old runtime, installs the new runtime, and resets input state.
-`nico-launch::ClientHost::run_scenes` replaces bridge registration with the new tools and loaded content revision.
+`nico-winit::NativeScene` holds prepared scene data and input mapping, not an application runtime.
+A host frame boundary asks the persistent `App` to switch scenes, then resets input state.
+Window, GPU backend, renderer, and presentation session remain alive.
+Arena's root owns its loading worker; shutdown cancels and joins that worker.
+`nico-launch::ClientHost::run_scenes` replaces bridge registration with new tools and an optional content revision.
 Bridge reconnects use new instance IDs. Host frame counts remain continuous across scene changes.
 Host readiness can describe a rendered splash. `scene_loading` reports gameplay asset loading separately.
 Its loaded phase does not prove server connection, GPU completion, or desktop visibility.
+Its application frame count and active scene generation expose the persistent root across the switch.
 Headless hosts and the retained world authoring adapter follow the splash target without showing it.
 Splash targets must be gameplay scenes; self-references and splash chains are rejected.
 

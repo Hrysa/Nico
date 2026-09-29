@@ -58,6 +58,15 @@ Asset progress reached 24 of 24 files. Host status recorded 437 successful prese
 Captures and status snapshots were separate samples. Desktop visibility and user-observed approval were not verified.
 The test stopped its own hosts and closed its window.
 
+Scene activation now keeps one `App` root and replaces only scene-owned worlds, systems, events, and local clocks.
+The root owns background loading, persistent resources, and application timing; cleanup closes scene services before releasing scene state.
+On 2026-09-29, Windows workspace tests passed using `target/bridge-validation`; strict workspace Clippy and formatting also passed.
+Runtime coverage includes root persistence, scene cleanup, failed preparation, failed activation, and cleanup hooks that return errors.
+The isolated splash test passed with client PID 32888. Scene generations advanced from 1 to 2 without resetting application frames.
+The client log contained one runtime startup and one final shutdown; status recorded 779 successful presentation calls.
+Inspected captures showed splash and connected Meadow. The test stopped its own hosts and closed its window.
+Snapshots and captures were separate samples; desktop visibility and user-observed smoothness remain unverified.
+
 ## 1. Run a native client
 
 **Remaining goal:** Complete native lifecycle checks on supported platforms.
@@ -186,6 +195,28 @@ The matching startup check reduced render-call time from 367 ms to 120 ms and to
 It still took 17 frames at 16 ms pacing and uploaded the same record bytes.
 Byte compatibility tests cover full and compact layouts, mirrored affine transforms, foliage parameters, and appended records.
 All 27 renderer tests and the offscreen startup check passed; native-window smoothness remains unverified.
+
+A later Windows debug startup check separated work after file-import progress finished.
+Preparation took 2.69 seconds: environment binding used 1.24 seconds and final content verification used 1.14 seconds.
+Ground generation now reuses axis distances, skips unaffected obstacle rows, and appends complete pixels.
+It uses a temporary 4 MiB shade buffer; every Meadow pixel matches the previous generator.
+Ground generation fell from 1.19 seconds to 0.31 seconds with unchanged debug settings.
+The matching preparation run fell to 1.83 seconds; final content verification still used 1.15 seconds.
+These single-run elapsed measurements exclude window creation, GPU preparation, and scene activation.
+Repeat with the ignored client `startup_asset_preparation_measurement` and presentation `landscape_preparation_measurement` tests.
+
+On 2026-09-29, normal Arena startup stopped calculating and rechecking whole-project content hashes.
+Definitions still receive parsing and validation. Required resources and cached payloads receive byte-hash checks before cache reuse.
+A regression test covers changed bytes with matching metadata and a corrupted cached payload.
+One debug CPU measurement fell from 3.85 seconds to 2.11 seconds, excluding window creation and GPU setup.
+Post-import preparation fell from 1.83 seconds to 0.68 seconds; verified resource loading took 1.35 seconds.
+The isolated Windows native test passed with client PID 28176 and 515 successful presentation calls.
+Client and server `scene_info` reported Meadow, validated definitions, and no calculated content revision.
+Rendered captures showed preparation without a completed import bar, followed by connected Meadow gameplay.
+Captures and MCP state were separate samples. Desktop visibility and user-observed smoothness were not verified.
+Workspace tests with all features, strict all-target Clippy, formatting, and whitespace checks passed.
+Bridge lifecycle tests required execution outside the sandbox to create their private Windows daemons.
+The default debug client was rebuilt. The isolated server build passed; a running process locked the default server executable.
 
 ## 9. Validate performance
 

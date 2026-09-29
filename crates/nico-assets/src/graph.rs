@@ -93,7 +93,7 @@ pub fn load_with_cancel(
             || cancelled.load(Ordering::Acquire) || local_cancelled.load(Ordering::Acquire);
         let asset = if extension(&path) == "glb" {
             let cache = crate::cache::source_cache(&path)?;
-            let model = cache.load(
+            let model = cache.load_verified(
                 &path,
                 &ModelGlbImporter,
                 &ModelGlbSettings {

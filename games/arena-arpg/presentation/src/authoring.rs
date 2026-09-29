@@ -15,6 +15,7 @@ pub fn open(project: &Project) -> io::Result<Box<dyn Session>> {
 struct WorldEditor {
     project: Project,
     original: Vec<u8>,
+    revision: String,
     content: ProjectContent,
     environment: Environment,
 }
@@ -36,12 +37,14 @@ impl WorldEditor {
             project.manifest.default_scene = splash.next_scene;
         }
         let original = fs::read(project.scene_path()?)?;
+        let revision = nico_scene::content::revision(&project, &|| false)?;
         let content =
             ProjectContent::from_scene(project.clone(), project.load_scene()?, HostRole::Client)?;
         let environment = environment(&content)?;
         Ok(Self {
             project,
             original,
+            revision,
             content,
             environment,
         })
@@ -88,10 +91,12 @@ impl Session for WorldEditor {
         if fs::read(&path)? != self.original {
             return Err(error("scene changed on disk; reload before saving"));
         }
-        self.content.verify()?;
+        if nico_scene::content::revision(&self.project, &|| false)? != self.revision {
+            return Err(error("project changed on disk; reload before saving"));
+        }
         self.project.save_scene(&self.content.scene)?;
         self.original = fs::read(path)?;
-        self.content.revision = nico_scene::content::revision(&self.project, &|| false)?;
+        self.revision = nico_scene::content::revision(&self.project, &|| false)?;
         Ok(())
     }
     fn reload(&mut self) -> io::Result<()> {

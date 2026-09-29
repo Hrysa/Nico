@@ -103,13 +103,30 @@ fn vertex(position: [f32; 3], uv: [f32; 2]) -> MeshVertex {
 }
 pub(super) fn ground_texture(zone: &ZoneDefinition) -> Texture {
     let h = zone.half_extent_m as f32;
+    let coordinates: [f32; 1024] = std::array::from_fn(|i| (i as f32 / 1023. * 2. - 1.) * h);
+    let mut shades = vec![0_f32; 1024 * 1024];
+    // Shade only affected rows. Reuse axis distances instead of dividing at every pixel.
+    for obstacle in &zone.obstacles {
+        let rx = (obstacle.size[0] as f32 * 0.65).max(2.);
+        let rz = (obstacle.size[2] as f32 * 0.65).max(2.);
+        let dx: [f32; 1024] =
+            coordinates.map(|wx| ((wx - obstacle.center[0] as f32 - 0.8) / rx).powi(2));
+        for (y, &wz) in coordinates.iter().enumerate() {
+            let dz = ((wz - obstacle.center[2] as f32 - 0.4) / rz).powi(2);
+            if dz >= 2. {
+                continue;
+            }
+            for (shade, &dx) in shades[y * 1024..(y + 1) * 1024].iter_mut().zip(&dx) {
+                *shade = shade.max((1. - (dx + dz) * 0.5).clamp(0., 1.) * 0.30);
+            }
+        }
+    }
     let mut pixels = Vec::with_capacity(1024 * 1024 * 4);
-    for y in 0..1024 {
-        for x in 0..1024 {
-            let wx = (x as f32 / 1023. * 2. - 1.) * h;
-            let wz = (y as f32 / 1023. * 2. - 1.) * h;
+    for (y, &wz) in coordinates.iter().enumerate() {
+        let path_center = path_x(wz);
+        for (x, &wx) in coordinates.iter().enumerate() {
             let n = ground_noise(wx * 0.20, wz * 0.20, 721);
-            let distance = (wx - path_x(wz)).abs();
+            let distance = (wx - path_center).abs();
             let path = ((3.2 + (n - 0.5) * 0.65 - distance) * 1.8).clamp(0., 1.);
             let grass = [92. + n * 27., 135. + n * 34., 29. + n * 18.];
             let earth = [181. + n * 27., 159. + n * 23., 92. + n * 24.];
@@ -118,22 +135,11 @@ pub(super) fn ground_texture(zone: &ZoneDefinition) -> Texture {
             let grain = 0.94
                 + 0.08 * ground_noise(wx * 0.83 + wz * 0.37, wz * 0.83 - wx * 0.37, 193)
                 + 0.04 * ground_noise(wx * 2.1, wz * 2.1, 947);
-            // Authored ground shading around static obstacles, not a dynamic shadow map.
-            let shade = zone
-                .obstacles
-                .iter()
-                .map(|o| {
-                    let rx = (o.size[0] as f32 * 0.65).max(2.);
-                    let rz = (o.size[2] as f32 * 0.65).max(2.);
-                    let d = ((wx - o.center[0] as f32 - 0.8) / rx).powi(2)
-                        + ((wz - o.center[2] as f32 - 0.4) / rz).powi(2);
-                    (1. - d * 0.5).clamp(0., 1.) * 0.30
-                })
-                .fold(0_f32, f32::max);
-            pixels.extend((0..3).map(|i| {
+            let shade = shades[y * 1024 + x];
+            let channel = |i: usize| {
                 ((grass[i] * (1. - path) + earth[i] * path) * grain * (1. - shade)) as u8
-            }));
-            pixels.push(255);
+            };
+            pixels.extend_from_slice(&[channel(0), channel(1), channel(2), 255]);
         }
     }
     Texture::rgba8(1024, 1024, pixels).unwrap()
@@ -411,6 +417,78 @@ impl Landscape {
 }
 #[cfg(test)]
 mod tests {
+    fn reference_ground_texture(zone: &ZoneDefinition) -> Texture {
+        let h = zone.half_extent_m as f32;
+        let mut pixels = Vec::with_capacity(1024 * 1024 * 4);
+        for y in 0..1024 {
+            for x in 0..1024 {
+                let wx = (x as f32 / 1023. * 2. - 1.) * h;
+                let wz = (y as f32 / 1023. * 2. - 1.) * h;
+                let n = ground_noise(wx * 0.20, wz * 0.20, 721);
+                let distance = (wx - path_x(wz)).abs();
+                let path = ((3.2 + (n - 0.5) * 0.65 - distance) * 1.8).clamp(0., 1.);
+                let grass = [92. + n * 27., 135. + n * 34., 29. + n * 18.];
+                let earth = [181. + n * 27., 159. + n * 23., 92. + n * 24.];
+                // Low-contrast irregular mottling, with detail resolved by the
+                // 1024-pixel ground map rather than near-Nyquist wave patterns.
+                let grain = 0.94
+                    + 0.08 * ground_noise(wx * 0.83 + wz * 0.37, wz * 0.83 - wx * 0.37, 193)
+                    + 0.04 * ground_noise(wx * 2.1, wz * 2.1, 947);
+                // Authored ground shading around static obstacles, not a dynamic shadow map.
+                let shade = zone
+                    .obstacles
+                    .iter()
+                    .map(|o| {
+                        let rx = (o.size[0] as f32 * 0.65).max(2.);
+                        let rz = (o.size[2] as f32 * 0.65).max(2.);
+                        let d = ((wx - o.center[0] as f32 - 0.8) / rx).powi(2)
+                            + ((wz - o.center[2] as f32 - 0.4) / rz).powi(2);
+                        (1. - d * 0.5).clamp(0., 1.) * 0.30
+                    })
+                    .fold(0_f32, f32::max);
+                pixels.extend((0..3).map(|i| {
+                    ((grass[i] * (1. - path) + earth[i] * path) * grain * (1. - shade)) as u8
+                }));
+                pixels.push(255);
+            }
+        }
+        Texture::rgba8(1024, 1024, pixels).unwrap()
+    }
+    #[test]
+    fn ground_preparation_preserves_every_pixel() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let content = arena_arpg_shared::project::ProjectContent::open(&root).unwrap();
+        let actual = super::ground_texture(&content.zone);
+        let expected = reference_ground_texture(&content.zone);
+        assert_eq!(actual.pixels(), expected.pixels());
+    }
+
+    #[test]
+    #[ignore = "manual ground and foliage preparation elapsed-time measurement"]
+    fn landscape_preparation_measurement() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let content = arena_arpg_shared::project::ProjectContent::open(&root).unwrap();
+        let start = std::time::Instant::now();
+        let ground = super::ground_texture(&content.zone);
+        eprintln!(
+            "landscape ground_ms={:.3}",
+            start.elapsed().as_secs_f64() * 1000.
+        );
+        let start = std::time::Instant::now();
+        let grass =
+            crate::grass_import::GrassPlacements::generate(&content.zone, || Ok(())).unwrap();
+        eprintln!(
+            "landscape placements_ms={:.3}",
+            start.elapsed().as_secs_f64() * 1000.
+        );
+        let start = std::time::Instant::now();
+        std::hint::black_box(super::Landscape::streamed(&content.zone, ground, grass));
+        eprintln!(
+            "landscape assembly_ms={:.3}",
+            start.elapsed().as_secs_f64() * 1000.
+        );
+    }
+
     use super::*;
     #[test]
     fn streamed_landscape_loads_evicts_and_reenters_from_camera_distance() {

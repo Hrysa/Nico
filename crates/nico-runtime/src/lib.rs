@@ -6,12 +6,16 @@
 mod error;
 pub mod events;
 mod host;
+mod scene;
+#[cfg(test)]
+mod scene_tests;
 mod schedule;
 pub mod services;
 mod time;
 
 pub use error::{RuntimeError, RuntimeResult};
 pub use host::AppRunner;
+pub use scene::{Scene, SceneId};
 pub use schedule::Stage;
 pub use time::Time;
 
@@ -45,6 +49,9 @@ pub enum AppState {
 pub struct SystemContext<'a> {
     /// The authoritative simulation world.
     pub world: &'a mut World,
+    /// Persistent application world, available to scene systems only.
+    /// Application systems already receive this world through `world`.
+    pub app_world: Option<&'a mut World>,
     /// Deferred ECS structural changes, flushed after this system succeeds.
     pub commands: &'a mut nico_ecs::CommandBuffer,
     /// Typed events committed by earlier systems and writes pending from this
@@ -169,7 +176,7 @@ impl AppBuilder {
     }
 
     /// Builds the configured application.
-    pub fn build(mut self) -> RuntimeResult<App> {
+    fn prepare(mut self) -> RuntimeResult<Self> {
         if self.fixed_step.is_zero() {
             return Err(RuntimeError::InvalidFixedStep);
         }
@@ -180,19 +187,39 @@ impl AppBuilder {
         for plugin in std::mem::take(&mut self.plugins) {
             plugin.build(&mut self)?;
         }
+        Ok(self)
+    }
+
+    /// Builds scene-owned entities, resources, systems, events, and service cleanup.
+    /// Startup runs only when an application activates this scene.
+    pub fn build_scene(self) -> RuntimeResult<Scene> {
+        let prepared = self.prepare()?;
+        Ok(Scene::new(
+            prepared.world,
+            prepared.schedule,
+            prepared.fixed_step,
+            prepared.event_capacity,
+        ))
+    }
+
+    /// Builds the persistent application root.
+    pub fn build(self) -> RuntimeResult<App> {
+        let prepared = self.prepare()?;
 
         Ok(App {
             state: AppState::Created,
-            world: self.world,
-            schedule: self.schedule,
-            events: EventBus::new(self.event_capacity),
-            fixed_step: self.fixed_step,
+            world: prepared.world,
+            schedule: prepared.schedule,
+            events: EventBus::new(prepared.event_capacity),
+            fixed_step: prepared.fixed_step,
             accumulator: Duration::ZERO,
             elapsed: Duration::ZERO,
             fixed_elapsed: Duration::ZERO,
             frame: 0,
             fixed_tick: 0,
             exit_requested: false,
+            scene: None,
+            scene_generation: 0,
         })
     }
 }
@@ -210,6 +237,8 @@ pub struct App {
     frame: u64,
     fixed_tick: u64,
     exit_requested: bool,
+    scene: Option<Scene>,
+    scene_generation: u64,
 }
 
 impl App {
@@ -219,21 +248,83 @@ impl App {
         self.state
     }
 
-    /// Returns the simulation world.
+    /// Returns the active scene world, or the application world when no scene is active.
     #[must_use]
-    pub const fn world(&self) -> &World {
-        &self.world
+    pub fn world(&self) -> &World {
+        self.scene
+            .as_ref()
+            .map_or(&self.world, |scene| &scene.world)
     }
 
     /// Returns mutable access to the simulation world.
-    pub const fn world_mut(&mut self) -> &mut World {
+    pub fn world_mut(&mut self) -> &mut World {
+        self.scene
+            .as_mut()
+            .map_or(&mut self.world, |scene| &mut scene.world)
+    }
+
+    /// Persistent entities and singleton resources, independent of the active scene.
+    pub fn app_world(&self) -> &World {
+        &self.world
+    }
+
+    /// Mutable persistent entities and singleton resources.
+    pub fn app_world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Identity of the active scene. Pair it with entity IDs retained outside the scene.
+    pub fn scene_id(&self) -> Option<SceneId> {
+        self.scene.as_ref().map(|_| SceneId(self.scene_generation))
+    }
+
+    /// Activate prepared data between ticks. Created applications defer scene startup until `start`.
+    /// Cleanup errors remove the old scene and leave the application running without a scene.
+    /// Startup errors clean up the new scene. They never shut down application systems.
+    pub fn switch_scene(&mut self, mut scene: Scene) -> RuntimeResult<SceneId> {
+        if !matches!(self.state, AppState::Created | AppState::Running) {
+            return Err(RuntimeError::InvalidState {
+                expected: AppState::Running,
+                actual: self.state,
+            });
+        }
+        let generation = self
+            .scene_generation
+            .checked_add(1)
+            .ok_or(RuntimeError::SceneGenerationExhausted)?;
+        self.unload_scene()?;
+        self.scene_generation = generation;
+        if self.state == AppState::Running {
+            scene.start(&mut self.world, &mut self.exit_requested)?;
+        }
+        self.scene = Some(scene);
+        Ok(SceneId(generation))
+    }
+
+    /// Stop scene systems and release all scene-owned state without stopping the application.
+    pub fn unload_scene(&mut self) -> RuntimeResult<()> {
+        if let Some(mut scene) = self.scene.take() {
+            scene.shutdown(&mut self.world, &mut self.exit_requested)?;
+        }
+        Ok(())
     }
 
     /// Returns the committed runtime event streams.
     #[must_use]
-    pub const fn events(&self) -> &EventBus {
+    pub fn events(&self) -> &EventBus {
+        self.scene
+            .as_ref()
+            .map_or(&self.events, |scene| &scene.events)
+    }
+
+    /// Persistent event streams consumed by application systems.
+    pub fn app_events(&self) -> &EventBus {
         &self.events
+    }
+
+    /// Publish to application systems without routing through the active scene.
+    pub fn send_app_event<T: Event>(&mut self, event: T) {
+        self.events.send(event);
     }
 
     /// Publishes an event from the application host.
@@ -241,7 +332,10 @@ impl App {
     /// Host events are visible to the next system that runs. Runtime systems
     /// should use [`SystemContext::events`] for transactional publication.
     pub fn send_event<T: Event>(&mut self, event: T) {
-        self.events.send(event);
+        match &mut self.scene {
+            Some(scene) => scene.events.send(event),
+            None => self.events.send(event),
+        }
     }
 
     /// Requests an orderly stop from the host loop.
@@ -268,9 +362,16 @@ impl App {
             "runtime starting"
         );
         self.state = AppState::Running;
-        if let Err(error) = self.run_stage(Stage::Startup, Time::startup()) {
+        let startup =
+            self.run_stage(Stage::Startup, Time::startup())
+                .and_then(|()| match &mut self.scene {
+                    Some(scene) => scene.start(&mut self.world, &mut self.exit_requested),
+                    None => Ok(()),
+                });
+        if let Err(error) = startup {
             tracing::error!(error = %error, "runtime startup failed");
             self.state = AppState::Stopping;
+            let _ = self.unload_scene();
             let _ = self.run_stage(Stage::Shutdown, Time::shutdown(0, Duration::ZERO));
             self.state = AppState::Stopped;
             return Err(error);
@@ -312,6 +413,9 @@ impl App {
             interpolation,
         );
         self.run_stage(Stage::Update, time)?;
+        if let Some(scene) = &mut self.scene {
+            scene.tick(delta, &mut self.world, &mut self.exit_requested)?;
+        }
         self.frame = self.frame.saturating_add(1);
         Ok(())
     }
@@ -321,7 +425,9 @@ impl App {
         self.require_state(AppState::Running)?;
         tracing::info!(frame = self.frame, "runtime stopping");
         self.state = AppState::Stopping;
-        let result = self.run_stage(Stage::Shutdown, Time::shutdown(self.frame, self.elapsed));
+        let scene = self.unload_scene();
+        let root = self.run_stage(Stage::Shutdown, Time::shutdown(self.frame, self.elapsed));
+        let result = scene.and(root);
         self.state = AppState::Stopped;
         tracing::info!("runtime stopped");
         result
@@ -370,6 +476,7 @@ impl App {
         self.schedule.run(
             stage,
             &mut self.world,
+            None,
             &mut self.events,
             time,
             &mut self.exit_requested,

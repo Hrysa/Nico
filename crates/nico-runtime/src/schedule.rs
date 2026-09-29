@@ -8,13 +8,13 @@ use crate::{
 /// Ordered lifecycle stages supported by the minimal runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Stage {
-    /// Executes once when the app starts.
+    /// Executes once when the owning application or scene starts.
     Startup,
     /// Executes zero or more times per host frame at a fixed timestep.
     FixedUpdate,
     /// Executes once per host frame.
     Update,
-    /// Executes once when the app shuts down.
+    /// Executes once when the owning application stops or its scene unloads.
     Shutdown,
 }
 
@@ -70,15 +70,18 @@ impl Schedule {
         &mut self,
         stage: Stage,
         world: &mut World,
+        mut app_world: Option<&mut World>,
         events: &mut EventBus,
         time: Time,
         exit_requested: &mut bool,
     ) -> RuntimeResult<()> {
+        let mut failure = None;
         for system in &mut self.stages[stage.index()] {
             let mut commands = CommandBuffer::new();
             let mut pending_events = PendingEvents::default();
             let mut context = SystemContext {
                 world,
+                app_world: app_world.as_deref_mut(),
                 commands: &mut commands,
                 events: SystemEvents::new(events, &mut pending_events),
                 time,
@@ -87,15 +90,20 @@ impl Schedule {
             let span = tracing::trace_span!("runtime_system", system = %system.name);
             let _entered = span.enter();
             if let Err(error) = (system.run)(&mut context) {
-                return Err(RuntimeError::System {
+                let error = RuntimeError::System {
                     stage: stage.name(),
                     name: system.name.clone(),
                     message: error.to_string(),
-                });
+                };
+                if stage != Stage::Shutdown {
+                    return Err(error);
+                }
+                failure.get_or_insert(error);
+                continue;
             }
             context.commands.run_on(context.world.entities_mut());
             pending_events.commit(events);
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 }

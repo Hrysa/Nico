@@ -87,6 +87,7 @@ impl ClientHost {
     /// Scene changes reconnect the bridge with the new tool catalog and content revision.
     pub fn run_scenes(
         self,
+        app: App,
         scene: nico_winit::NativeScene,
         config: NativeClientConfig,
         mut poll: impl FnMut(&App) -> NativeClientResult<Option<ClientScene>> + 'static,
@@ -98,7 +99,7 @@ impl ClientHost {
             config
         };
         let Some(address) = self.args.bridge_address() else {
-            return nico_winit::run_native_scenes(scene, config, None, move |app| {
+            return nico_winit::run_native_scenes(app, scene, config, None, move |app| {
                 Ok(poll(app)?.map(|next| next.scene))
             });
         };
@@ -124,7 +125,7 @@ impl ClientHost {
             )?)
         };
         let mut bridge = Some(connect(self.tools, self.content_revision)?);
-        nico_winit::run_native_scenes(scene, config, Some(endpoint), move |app| {
+        nico_winit::run_native_scenes(app, scene, config, Some(endpoint), move |app| {
             let Some(next) = poll(app)? else {
                 return Ok(None);
             };

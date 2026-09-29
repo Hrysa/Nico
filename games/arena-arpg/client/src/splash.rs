@@ -19,9 +19,17 @@ struct LoadingState {
     completed: usize,
     total: usize,
     elapsed_seconds: f64,
+    application_frames: u64,
+    active_scene_generation: Option<u64>,
     error: Option<String>,
 }
 type Shared = Arc<Mutex<LoadingState>>;
+// Application-owned loading survives scene cleanup. Dropping its batch cancels and joins workers.
+struct Loader {
+    args: Option<Args>,
+    batch: Option<Batch<PreparedGame>>,
+    state: Shared,
+}
 fn state(splash: &Splash) -> Shared {
     Arc::new(Mutex::new(LoadingState {
         phase: "splash",
@@ -29,6 +37,8 @@ fn state(splash: &Splash) -> Shared {
         completed: 0,
         total: 0,
         elapsed_seconds: 0.,
+        application_frames: 0,
+        active_scene_generation: None,
         error: None,
     }))
 }
@@ -62,12 +72,36 @@ pub fn run(mut args: Args, entry: StartupScene) -> Result<()> {
     let host = ClientHost::new(args.host.clone())
         .with_game_identity("arena_arpg", "1")
         .with_mcp_tools(tools);
-    let mut args = Some(args);
-    let mut batch: Option<Batch<PreparedGame>> = None;
+    let mut root = AppBuilder::new();
+    let observed = state.clone();
+    root.add_system(
+        Stage::Update,
+        "scene_loader::application_progress",
+        move |ctx| {
+            observed.lock().unwrap().application_frames = ctx.time.frame_number().saturating_add(1);
+            Ok(())
+        },
+    );
+    root.insert_resource(Mutex::new(Loader {
+        args: Some(args),
+        batch: None,
+        state,
+    }));
+    root.add_system(Stage::Shutdown, "scene_loader::close", |ctx| {
+        ctx.world.remove_resource::<Mutex<Loader>>();
+        Ok(())
+    });
     host.run_scenes(
-        NativeScene::new(builder.build()?, |_, _: &mut Vec<()>| {}),
+        root.build()?,
+        NativeScene::new(builder.build_scene()?, |_, _: &mut Vec<()>| {}),
         crate::native_config(false),
-        move |_| poll_loading(&mut args, &mut batch, &state),
+        |app| {
+            let mut loader = app.app_world().resource::<Mutex<Loader>>()?.lock().unwrap();
+            let Loader { args, batch, state } = &mut *loader;
+            state.lock().unwrap().active_scene_generation =
+                app.scene_id().map(|id| id.generation());
+            poll_loading(args, batch, state)
+        },
     )?;
     Ok(())
 }
@@ -154,7 +188,7 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
                 "failed" => "LOAD FAILED".to_owned(),
                 "preparing" => "PREPARING MEADOW".to_owned(),
                 _ if state.total == 0 => "LOADING MEADOW".to_owned(),
-                _ => format!("LOADING MEADOW  {}/{}", state.completed, state.total),
+                _ => format!("IMPORTING ASSETS  {}/{}", state.completed, state.total),
             };
             let text_scale = (size[0] / 640.).clamp(1., 2.);
             let text_size = BitmapFont::measure(&label);
@@ -174,7 +208,7 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
                 [0.07, 0.11, 0.12, 1.],
                 white.clone(),
             );
-            if state.total > 0 {
+            if state.phase == "loading" && state.total > 0 {
                 let fraction = (state.completed as f32 / state.total as f32).clamp(0., 1.);
                 nico_presentation_control::text::rectangle(
                     &mut ui,
@@ -241,7 +275,7 @@ mod tests {
         assert_eq!(observed.phase, "loaded");
         assert!(observed.total > 0);
         assert_eq!(observed.completed, observed.total);
-        assert!(next.content_revision.is_some());
+        assert!(next.content_revision.is_none());
         assert_eq!(
             next.tools.access("scene_loading"),
             Some(ToolAccess::Inspect)
@@ -288,6 +322,24 @@ mod tests {
         app.tick(Duration::from_millis(1)).unwrap();
         assert_eq!(state.lock().unwrap().phase, "loading");
         assert!(app.world().resource::<UiScene>().unwrap().quads.len() > splash_quads);
+        {
+            let mut progress = state.lock().unwrap();
+            progress.total = 24;
+            progress.completed = 24;
+        }
+        app.tick(Duration::from_millis(16)).unwrap();
+        let has_import_fill = |app: &nico_runtime::App| {
+            app.world()
+                .resource::<UiScene>()
+                .unwrap()
+                .quads
+                .iter()
+                .any(|quad| quad.color == [0.26, 0.72, 0.52, 1.])
+        };
+        assert!(has_import_fill(&app));
+        state.lock().unwrap().phase = "preparing";
+        app.tick(Duration::from_millis(16)).unwrap();
+        assert!(!has_import_fill(&app));
         fail(&state, "missing model".into());
         app.tick(Duration::from_secs(1)).unwrap();
         assert_eq!(state.lock().unwrap().phase, "failed");

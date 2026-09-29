@@ -16,6 +16,8 @@ pub enum RuntimeError {
     InvalidFixedStep,
     /// The retained capacity of an event stream was zero.
     InvalidEventCapacity,
+    /// No unused scene identity remains in this application.
+    SceneGenerationExhausted,
     /// A requested typed resource was absent.
     MissingResource(&'static str),
     /// A system failed while executing.
@@ -47,6 +49,7 @@ impl fmt::Display for RuntimeError {
                 )
             }
             Self::InvalidFixedStep => formatter.write_str("fixed simulation step must be non-zero"),
+            Self::SceneGenerationExhausted => formatter.write_str("scene generation exhausted"),
             Self::InvalidEventCapacity => {
                 formatter.write_str("event stream capacity must be non-zero")
             }

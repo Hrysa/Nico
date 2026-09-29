@@ -342,7 +342,8 @@ impl ImportCache {
             index: self.index()?,
         })
     }
-    /// Explicit project-cache loading, including in release editor builds.
+    /// Load with metadata shortcuts. Equal metadata can hide changed source or cached bytes.
+    /// Use `load_verified` to check byte hashes before cache reuse.
     pub fn load<I: AssetImporter>(
         &self,
         path: &Path,
@@ -352,6 +353,18 @@ impl ImportCache {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<I::Output, ImportError> {
         self.import_input(path, "", Input::File, importer, settings, budget, cancelled)
+    }
+    /// Read source bytes before cache reuse. Metadata never proves content equality on this path.
+    pub fn load_verified<I: AssetImporter>(
+        &self,
+        path: &Path,
+        importer: &I,
+        settings: &I::Settings,
+        budget: ImportBudget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<I::Output, ImportError> {
+        let bytes = crate::import::read_source(path, budget, cancelled)?;
+        self.import(path, "", &bytes, importer, settings, budget, cancelled)
     }
     /// Select an asset root explicitly. `.nico` is always a child of this root.
     pub fn new(root: impl AsRef<Path>) -> Result<Self, ImportError> {
@@ -545,7 +558,8 @@ impl ImportCache {
             if let Ok(payload) = read_bounded(&object, limit) {
                 let after = FileStamp::path(&object);
                 let stable = before.is_some() && before == after;
-                let object_quick = stable && entry.object_stat == before;
+                let object_quick =
+                    matches!(input, Input::File) && stable && entry.object_stat == before;
                 if object_quick || object_digest(&payload) == entry.object {
                     let mut context = ImportContext::new(&[], budget, cancelled)?;
                     context.claim_decoded(entry.decoded_bytes)?;
@@ -646,7 +660,7 @@ pub(crate) fn source_cache(path: &Path) -> Result<ImportCache, ImportError> {
         .unwrap_or(parent);
     ImportCache::new(root)
 }
-/// Reuse imported file data across launches in debug and release builds.
+/// Read source bytes and reuse verified imports across launches in debug and release builds.
 /// Store `.nico` beside the nearest project manifest, or above the nearest `assets` folder.
 /// Standalone sources use their containing folder. Sources remain authoritative.
 pub fn load_file<I: AssetImporter>(
@@ -657,7 +671,7 @@ pub fn load_file<I: AssetImporter>(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<I::Output, ImportError> {
     check(cancelled)?;
-    source_cache(path)?.load(path, importer, settings, budget, cancelled)
+    source_cache(path)?.load_verified(path, importer, settings, budget, cancelled)
 }
 /// Cache embedded bytes by owner, subresource, settings, and content.
 /// Without an owner file, import directly without creating a cache.
@@ -783,6 +797,49 @@ mod tests {
             .join(&hash[..2])
             .join(&hash[2..])
     }
+    #[test]
+    fn verified_loading_checks_bytes_even_when_metadata_matches() {
+        let f = Fixture::new();
+        let importer = Counting::default();
+        let cache = f.cache();
+        fs::write(f.source(), b"abc").unwrap();
+        cache
+            .load_verified(&f.source(), &importer, &0, budget(), &|| false)
+            .unwrap();
+        fs::write(f.source(), b"def").unwrap();
+        // Simulate changed bytes whose metadata matches the recorded values.
+        let mut index = cache.index().unwrap();
+        index.entries.values_mut().next().unwrap().source_stat = FileStamp::path(&f.source());
+        cache.save(&index).unwrap();
+        assert_eq!(
+            cache
+                .load_verified(&f.source(), &importer, &0, budget(), &|| false)
+                .unwrap(),
+            b"def"
+        );
+        assert_eq!(importer.calls.load(Ordering::SeqCst), 2);
+
+        let object = object_path(&f);
+        fs::write(&object, encode(&b"xyz".to_vec()).unwrap()).unwrap();
+        let mut index = cache.index().unwrap();
+        index.entries.values_mut().next().unwrap().object_stat = FileStamp::path(&object);
+        cache.save(&index).unwrap();
+        assert_eq!(
+            cache
+                .load_verified(&f.source(), &importer, &0, budget(), &|| false)
+                .unwrap(),
+            b"def"
+        );
+        assert_eq!(importer.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            cache
+                .load_verified(&f.source(), &importer, &0, budget(), &|| false)
+                .unwrap(),
+            b"def"
+        );
+        assert_eq!(importer.calls.load(Ordering::SeqCst), 3);
+    }
+
     #[test]
     fn unchanged_files_skip_source_and_object_content_checks() {
         let f = Fixture::new();

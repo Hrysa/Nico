@@ -75,7 +75,6 @@ impl StartupScene {
 pub struct SceneEntities(pub Vec<nico_ecs::Entity>);
 pub struct ProjectContent {
     project: nico_scene::Project,
-    pub revision: String,
     pub scene: SceneDefinition,
     pub entities: nico_ecs::World,
     pub zone: crate::open_world::content::ZoneDefinition,
@@ -110,10 +109,8 @@ impl ProjectContent {
         scene::validate_library(&project, &scene, &zone)?;
         let mut entities = nico_ecs::World::new();
         prepared.instantiate(&mut entities);
-        let revision = nico_scene::content::revision(&project, &|| false)?;
         Ok(Self {
             project,
-            revision,
             scene,
             entities,
             zone,
@@ -169,11 +166,32 @@ impl ProjectContent {
     pub fn root(&self) -> &Path {
         self.project.root()
     }
-    pub fn verify(&self) -> io::Result<()> {
-        if nico_scene::content::revision(&self.project, &|| false)? != self.revision {
-            return Err(error("scene content changed during startup"));
-        }
-        Ok(())
+    /// Publish the selected scene without claiming a project content revision.
+    #[cfg(feature = "tools")]
+    pub fn register_tools(&self, tools: &mut nico_ops::mcp::ToolExtensions) -> io::Result<()> {
+        use nico_ops::mcp::{CallToolResult, Tool, ToolAccess};
+        use serde_json::json;
+        let state = json!({"scene": self.project.manifest.default_scene,
+            "content_revision": null, "definition_state": "parsed_and_validated"});
+        tools.register(
+            Tool::new(
+                "scene_info",
+                "Inspect the selected scene. No project revision is calculated during startup.",
+                json!({"type":"object","properties":{},"additionalProperties":false})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            move |args| {
+                if !args.is_empty() {
+                    return CallToolResult::structured_error(
+                        json!({"error":"No arguments expected"}),
+                    );
+                }
+                CallToolResult::structured(state.clone())
+            },
+        )?;
+        tools.set_access("scene_info", ToolAccess::Inspect)
     }
 }
 #[cfg(test)]
@@ -231,7 +249,7 @@ mod tests {
             HostRole::Server,
         )
         .unwrap();
-        assert_eq!(server.revision, direct.revision);
+        assert_eq!(server.scene_path().unwrap(), direct.scene_path().unwrap());
         assert!(
             StartupScene::load(&root, Some(Path::new("assets/scenes/arena.scene.toml")))
                 .unwrap()
@@ -295,7 +313,7 @@ mod tests {
         assert_eq!(app.world().entities().len(), 1);
     }
     #[test]
-    fn scene_selection_changes_mode_and_revision_and_missing_scene_fails() {
+    fn scene_selection_changes_mode_and_path_and_missing_scene_fails() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let meadow = ProjectContent::load(&root, HostRole::Server).unwrap();
         let arena = ProjectContent::load_scene(
@@ -309,7 +327,7 @@ mod tests {
             scene::arena_level(&arena.zone).unwrap(),
             crate::Level::default()
         );
-        assert_ne!(meadow.revision, arena.revision);
+        assert_ne!(meadow.scene_path().unwrap(), arena.scene_path().unwrap());
         assert!(
             ProjectContent::load_scene(
                 &root,

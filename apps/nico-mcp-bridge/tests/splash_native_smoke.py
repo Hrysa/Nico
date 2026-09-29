@@ -72,7 +72,8 @@ def main():
                 phases.add(phase)
                 report["samples"].append({"instance_id": cid, "pid": client.pid, "loading": state})
                 assert phase != "failed", state
-                if phase in ("splash", "loading", "preparing", "loaded") and phase not in captured and current["ready"]:
+                activated = phase != "loaded" or state["active_scene_generation"] == 2
+                if phase in ("splash", "loading", "preparing", "loaded") and phase not in captured and current["ready"] and activated:
                     before = state
                     try:
                         capture = bridge.game(cid, "window_snapshot")
@@ -89,7 +90,7 @@ def main():
                             captured.add(phase)
                     except AssertionError:
                         pass
-                if phase == "loaded" and "loaded" in captured:
+                if phase == "loaded" and state["active_scene_generation"] == 2 and "loaded" in captured:
                     assert state["total"] > 0 and state["completed"] == state["total"], state
                     final_id = cid
                     break
@@ -97,6 +98,12 @@ def main():
             assert final_id is not None, report
             assert "splash" in phases and phases.intersection({"loading", "preparing"}), phases
             assert "splash" in captured, captured
+            frames = [sample["loading"]["application_frames"] for sample in report["samples"]]
+            generations = {sample["loading"]["active_scene_generation"] for sample in report["samples"]}
+            assert frames == sorted(frames), "application frame count reset during scene switch"
+            assert {1, 2}.issubset(generations), generations
+            report["root_lifecycle"] = {"frames_before": frames[0], "frames_after": frames[-1],
+                                        "scene_generations": sorted(g for g in generations if g is not None)}
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 world = bridge.game(final_id, "world_client_state")
@@ -105,6 +112,13 @@ def main():
                 time.sleep(.03)
             assert world["connection"] == "connected", world
             report["world_after_loading"] = world
+            report["scene_info"] = {}
+            for role, instance in (("client", final_id), ("server", sid)):
+                scene = bridge.game(instance, "scene_info")
+                assert scene["content_revision"] is None, scene
+                assert scene["definition_state"] == "parsed_and_validated", scene
+                assert scene["scene"].replace("\\", "/").endswith("meadow.scene.toml"), scene
+                report["scene_info"][role] = scene
             capture = bridge.game(final_id, "window_snapshot")
             deadline = time.monotonic() + 10
             while capture["state"] == "pending" and time.monotonic() < deadline:
