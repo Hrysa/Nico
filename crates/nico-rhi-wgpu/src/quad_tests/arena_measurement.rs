@@ -1,5 +1,5 @@
 //! Manual integration measurement using the game's public presentation adapter.
-//! Loading and streaming settle before timing; this is not a startup benchmark.
+//! Steady-frame checks settle streaming first. The opt-in startup case measures cold instance residency.
 use super::*;
 use arena_arpg_presentation::environment::Environment;
 use nico_presentation::{Camera3d, Scene3d};
@@ -173,6 +173,92 @@ fn arena_measurement(expanded_baseline: bool, moving: bool) {
             })
             .unwrap()
     };
+    if let Ok(pacing) = std::env::var("NICO_MEASUREMENT_STARTUP_MS") {
+        let pacing = Duration::from_millis(
+            pacing
+                .parse()
+                .expect("startup frame pacing in milliseconds"),
+        );
+        let mut camera =
+            Camera3d::looking_at([0., 2.97536, -25.25435], [0., 1.35, -20.], [0., 1., 0.]).unwrap();
+        camera.far = 200.;
+        let start = Instant::now();
+        let mut preparation = Duration::ZERO;
+        let mut submission = Duration::ZERO;
+        let mut completion_wait = Duration::ZERO;
+        let mut uploads = 0_u64;
+        let mut record_uploads = 0_u64;
+        let mut mesh_uploads = 0_u64;
+        let mut deferred_frames = 0;
+        let mut idle_worker_frames = 0;
+        let mut first_visible = None;
+        for frame in 0..2000 {
+            let frame_start = Instant::now();
+            let mut scene = Scene3d {
+                camera,
+                ..Default::default()
+            };
+            environment.decorate(camera.view_projection(840. / 764.), &mut scene);
+            // Isolate grass and shrubs from terrain, scenery, characters, and their uploads.
+            scene.meshes.clear();
+            preparation += frame_start.elapsed();
+            let status = &environment.inspection["grass_streaming"];
+            let resident = status["resident"].as_u64().unwrap();
+            assert_eq!(status["failed"], 0);
+            if resident < 64 && status["outstanding_workers"] == 0 {
+                idle_worker_frames += 1;
+            }
+            let submit_start = Instant::now();
+            renderer
+                .render(
+                    &device,
+                    &queue,
+                    &mut target,
+                    &scene,
+                    &Scene2d::default(),
+                    &UiScene::default(),
+                    [840., 764.],
+                    extent,
+                )
+                .unwrap();
+            submission += submit_start.elapsed();
+            let wait_start = Instant::now();
+            wait();
+            completion_wait += wait_start.elapsed();
+            let stats = renderer.instance_stats();
+            uploads += stats.instance_upload_bytes + stats.visibility_upload_bytes;
+            record_uploads += stats.instance_upload_bytes;
+            mesh_uploads += stats.mesh_upload_bytes;
+            deferred_frames += usize::from(stats.deferred_upload_chunks > 0);
+            if stats.visible_chunks > 0 && first_visible.is_none() {
+                first_visible = Some(start.elapsed());
+            }
+            if resident == 64 && stats.deferred_upload_chunks == 0 {
+                eprintln!(
+                    "grass_startup pacing_ms={} frames={} elapsed_ms={:.3} first_visible_ms={:.3} prepare_elapsed_ms={:.3} submit_elapsed_ms={:.3} gpu_wait_elapsed_ms={:.3} idle_worker_frames={} deferred_frames={} instance_source_bytes={} record_bytes={} mesh_bytes={}",
+                    pacing.as_millis(),
+                    frame + 1,
+                    start.elapsed().as_secs_f64() * 1000.,
+                    first_visible.unwrap_or_default().as_secs_f64() * 1000.,
+                    preparation.as_secs_f64() * 1000.,
+                    submission.as_secs_f64() * 1000.,
+                    completion_wait.as_secs_f64() * 1000.,
+                    idle_worker_frames,
+                    deferred_frames,
+                    uploads,
+                    record_uploads,
+                    mesh_uploads
+                );
+                return;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "startup did not settle"
+            );
+            std::thread::sleep(pacing.saturating_sub(frame_start.elapsed()));
+        }
+        panic!("startup frame limit exceeded");
+    }
     let editor_eye = (glam::Vec3::new(
         0.5_f32.sin() * 0.4_f32.cos(),
         0.4_f32.sin(),

@@ -1116,6 +1116,84 @@ fn pack_record(bytes: &mut Vec<u8>, record: &nico_presentation::InstanceRecord) 
 #[cfg(test)]
 mod segment_tests {
     #[test]
+    #[ignore = "manual packing elapsed-time measurement using Arena startup batches"]
+    fn arena_startup_packing_measurement() {
+        use arena_arpg_presentation::environment::Environment;
+        use nico_presentation::{Camera3d, Scene3d};
+        use std::{
+            hint::black_box,
+            time::{Duration, Instant},
+        };
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../games/arena-arpg");
+        let content = arena_arpg_shared::project::ProjectContent::open(&root).unwrap();
+        let mut environment =
+            Environment::load(&root.join("assets/presentation/worlds/meadow.world-vis.toml"))
+                .unwrap();
+        environment.apply_scene(&content.scene).unwrap();
+        environment.bind(&content.zone).unwrap();
+        let mut camera =
+            Camera3d::looking_at([0., 2.97536, -25.25435], [0., 1.35, -20.], [0., 1., 0.]).unwrap();
+        camera.far = 200.;
+        let projection = camera.view_projection(840. / 764.).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let scene = loop {
+            let mut scene = Scene3d {
+                camera,
+                ..Default::default()
+            };
+            environment.decorate(Some(projection), &mut scene);
+            assert_eq!(environment.inspection["grass_streaming"]["failed"], 0);
+            if environment.inspection["grass_streaming"]["resident"] == 64 {
+                break scene;
+            }
+            assert!(Instant::now() < deadline, "streaming did not settle");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let batches: Vec<_> = scene
+            .instance_batches
+            .iter()
+            .filter(|batch| {
+                batch.bounds().is_some_and(|bounds| {
+                    bounds.visible_in_view(
+                        projection,
+                        camera.position.into(),
+                        batch.max_draw_distance(),
+                    )
+                })
+            })
+            .collect();
+        let records: usize = batches.iter().map(|batch| batch.records().len()).sum();
+        let prepared: Vec<_> = batches
+            .iter()
+            .map(|batch| super::packed_records(batch, super::Encoding::Full))
+            .collect();
+        for trial in 0..5 {
+            let start = Instant::now();
+            let mut bytes = 0;
+            for batch in &batches {
+                let packed = super::packed_records(black_box(batch), super::Encoding::Full);
+                bytes += packed.len();
+                black_box(packed);
+            }
+            eprintln!(
+                "arena_packing trial={trial} batches={} records={records} bytes={bytes} elapsed_ms={:.3}",
+                batches.len(),
+                start.elapsed().as_secs_f64() * 1000.
+            );
+            assert_eq!(bytes, records * 112);
+            let start = Instant::now();
+            for bytes in &prepared {
+                black_box(black_box(bytes).clone());
+            }
+            eprintln!(
+                "arena_packed_copy trial={trial} elapsed_ms={:.3}",
+                start.elapsed().as_secs_f64() * 1000.
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "manual resident identity lookup comparison"]
     fn resident_identity_lookup_measurement() {
         use std::{hint::black_box, sync::Arc, time::Instant};

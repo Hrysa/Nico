@@ -121,6 +121,8 @@ Detailed material and shader rules belong in [rendering code](../crates/nico-ren
 ### Instancing and streaming
 
 Immutable batches own placement data, bounds, IDs, and shared prototypes.
+GPU serialization assembles fixed float arrays and copies whole records on little-endian hosts.
+Big-endian hosts retain explicit conversion; full and compact shader layouts stay unchanged.
 Current instancing supports opaque or masked static meshes.
 Culling stays conservative and uses maximum foliage deformation bounds.
 GPU compaction can change tied-depth draw order.
@@ -131,6 +133,7 @@ Reusing shared GPU ranges must not overwrite live neighbors.
 Residency, upload pacing, and CPU copies have separate budgets.
 
 Presentation-control owns bounded streaming workers and publication.
+Each update applies evictions, collects finished jobs, then fills available worker slots.
 Game providers decode placement data without changing simulation state.
 Owner and generation checks reject stale results.
 Cancellation does not release worker capacity before thread exit.

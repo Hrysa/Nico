@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bytemuck = "1"
 glam = "0.30"
 nico-assets = { path = "../nico-assets" }
 nico-presentation = { path = "../nico-presentation", default-features = false }
@@ -14,4 +15,7 @@ nico-rhi = { path = "../nico-rhi" }
 workspace = true
 
 [dev-dependencies]
+# Manual Arena packing measurement; production rendering stays game-independent.
+arena-arpg-presentation = { path = "../../games/arena-arpg/presentation" }
+arena-arpg-shared = { path = "../../games/arena-arpg/shared" }
 nico-assets = { path = "../nico-assets", features = ["texture-compression"] }

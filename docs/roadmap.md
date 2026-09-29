@@ -160,6 +160,33 @@ Recorded Vulkan and DX12 graphics checks passed on the tested build.
 Frame-time parity with expanded geometry remains unproven; further optimization is deferred.
 Removed editor checks do not prove current CLI startup or user-observed smoothness.
 
+On 2026-09-29, a startup check found idle frames between completed worker batches.
+Streaming now collects finished jobs before starting the next batch, while preserving eviction checks.
+An isolated grass/shrub check used GTX 1660, Vulkan, a debug build, and an 840-by-764 offscreen target.
+At 16 ms frame pacing, all 64 chunks became resident in 17 frames, previously 32.
+Elapsed time fell from 683 ms to 473 ms; 33 ms pacing fell from 1104 ms to 606 ms.
+These are single trials with a GPU completion wait each frame, excluding asset loading and pipeline creation.
+Shared mesh uploads totaled 652 bytes; instance and visibility source uploads totaled 20,988,560 bytes.
+Neither run deferred uploads because of the upload budget.
+Render submission took about 375–390 ms across startup; this elapsed scope does not isolate CPU or GPU execution.
+These results do not establish native window startup time or user-observed smoothness.
+Repeat with `NICO_MEASUREMENT_STARTUP_MS=16` and the ignored `gpu_arena_instance_path_measurement` test in `nico-rhi-wgpu`.
+
+A follow-up packing check used the same camera and 60 visible batches containing 145,976 records.
+Five debug trials of the production packing function took 259–264 ms, including output allocation and release.
+Copying prepared buffers took 1.2–1.7 ms for the same 16,349,312 bytes.
+A matching offscreen startup run uploaded exactly that record size and spent 367 ms inside rendering calls.
+The standalone packing cost was about 71% of that rendering scope; these were separate runs, not nested timings.
+This supports packing as a major debug-build cost, without establishing release performance or exact in-frame attribution.
+Repeat with `cargo test -p nico-render arena_startup_packing_measurement -- --ignored --nocapture`.
+
+Packing now assembles fixed arrays and appends each record once, using safe byte casts on little-endian hosts.
+With unchanged debug settings, five trials took 18.4–18.8 ms, compared with 259–264 ms before this change.
+The matching startup check reduced render-call time from 367 ms to 120 ms and total elapsed time to 277 ms.
+It still took 17 frames at 16 ms pacing and uploaded the same record bytes.
+Byte compatibility tests cover full and compact layouts, mirrored affine transforms, foliage parameters, and appended records.
+All 27 renderer tests and the offscreen startup check passed; native-window smoothness remains unverified.
+
 ## 9. Validate performance
 
 **Status:** Deferred.

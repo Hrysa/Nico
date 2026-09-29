@@ -1623,6 +1623,9 @@ dependencies = [
 name = "nico-render"
 version = "0.1.0"
 dependencies = [
+ "arena-arpg-presentation",
+ "arena-arpg-shared",
+ "bytemuck",
  "glam 0.30.10",
  "nico-assets",
  "nico-presentation",

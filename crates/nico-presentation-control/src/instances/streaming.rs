@@ -72,7 +72,17 @@ impl InstanceStreaming {
         }
         let mut outcomes = Vec::new();
         // Reconcile before publishing so an evicted completion cannot become resident.
-        policy.requests_per_update = policy.requests_per_update.min(self.workers.available());
+        let request_limit = policy.requests_per_update;
+        policy.requests_per_update = 0;
+        self.chunks.schedule(eye, policy, catalog)?;
+        for (request, result) in self.workers.poll() {
+            outcomes.push(ChunkOutcome {
+                key: request.key(),
+                result: self.chunks.complete(&request, result),
+            });
+        }
+        // Finished jobs release their slots before scheduling this frame's work.
+        policy.requests_per_update = request_limit.min(self.workers.available());
         let requests = self.chunks.schedule(eye, policy, catalog)?;
         for request in requests {
             if let Err(error) = self.workers.submit(
@@ -84,12 +94,6 @@ impl InstanceStreaming {
                     result: self.chunks.complete(&request, Err(error)),
                 });
             }
-        }
-        for (request, result) in self.workers.poll() {
-            outcomes.push(ChunkOutcome {
-                key: request.key(),
-                result: self.chunks.complete(&request, result),
-            });
         }
         Ok(outcomes)
     }
@@ -203,10 +207,12 @@ mod tests {
         assert_eq!(stream.status().pending, 0);
         release.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while stream.outstanding() != 0 {
+        let mut stale_collected = false;
+        while !stale_collected {
             for outcome in stream.update(glam::Vec3::ZERO, policy, &catalog).unwrap() {
                 assert_eq!(outcome.key, first);
                 assert_eq!(outcome.result, Err(ChunkError::Stale));
+                stale_collected = true;
             }
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
@@ -233,5 +239,53 @@ mod tests {
             stream.update(glam::Vec3::ZERO, policy, &catalog),
             Err(ChunkError::Closed)
         ));
+    }
+
+    #[test]
+    fn completed_job_starts_next_chunk_in_the_same_update() {
+        let (started_tx, started) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let provider = Arc::new(Gated {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+        });
+        let mut stream =
+            InstanceStreaming::new(2, 10, 1, 10000, 10000, vec![(0, provider)]).unwrap();
+        let first = ChunkKey {
+            provider: 0,
+            chunk: 0,
+        };
+        let second = ChunkKey {
+            provider: 0,
+            chunk: 1,
+        };
+        let bounds = InstanceBounds::new([0.; 3], [1.; 3]).unwrap();
+        let catalog = [(first, bounds), (second, bounds)];
+        let policy = StreamingPolicy::new(5., 10., 1).unwrap();
+        stream.update(glam::Vec3::ZERO, policy, &catalog).unwrap();
+        assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), first);
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let outcomes = stream.update(glam::Vec3::ZERO, policy, &catalog).unwrap();
+            if !outcomes.is_empty() {
+                assert_eq!(outcomes[0].key, first);
+                assert_eq!(outcomes[0].result, Ok(()));
+                assert_eq!(
+                    stream.outstanding(),
+                    1,
+                    "next chunk must start without an idle update"
+                );
+                assert_eq!(
+                    started.recv_timeout(Duration::from_secs(5)).unwrap(),
+                    second
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        release.send(()).unwrap();
+        stream.shutdown_and_join();
     }
 }

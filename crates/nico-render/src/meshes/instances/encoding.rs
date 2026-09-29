@@ -24,35 +24,58 @@ impl Encoding {
     }
 
     pub fn pack(self, bytes: &mut Vec<u8>, record: &InstanceRecord) {
-        for row in 0..3 {
-            for value in record.transform().row(row).to_array() {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
+        let transform = record.transform();
+        let [a, b, c, d] = transform.to_cols_array_2d();
+        let position = [
+            [a[0], b[0], c[0], d[0]],
+            [a[1], b[1], c[1], d[1]],
+            [a[2], b[2], c[2], d[2]],
+        ];
+        let response = record.foliage_response().parameters();
         match self {
             Self::Full => {
-                for row in 0..3 {
-                    for value in record
-                        .normal_transform()
-                        .row(row)
-                        .extend(record.foliage_response().parameters()[row])
-                        .to_array()
-                    {
-                        bytes.extend_from_slice(&value.to_le_bytes());
-                    }
-                }
+                let [a, b, c] = record.normal_transform().to_cols_array_2d();
+                append_rows(
+                    bytes,
+                    &[
+                        position[0],
+                        position[1],
+                        position[2],
+                        [a[0], b[0], c[0], response[0]],
+                        [a[1], b[1], c[1], response[1]],
+                        [a[2], b[2], c[2], response[2]],
+                        record.tint(),
+                    ],
+                );
             }
             Self::Compact => {
-                for value in record.foliage_response().parameters().into_iter().chain([
-                    glam::Mat3::from_mat4(record.transform())
-                        .determinant()
-                        .recip(),
-                ]) {
-                    bytes.extend_from_slice(&value.to_le_bytes());
-                }
+                append_rows(
+                    bytes,
+                    &[
+                        position[0],
+                        position[1],
+                        position[2],
+                        [
+                            response[0],
+                            response[1],
+                            response[2],
+                            glam::Mat3::from_mat4(transform).determinant().recip(),
+                        ],
+                        record.tint(),
+                    ],
+                );
             }
         }
-        for value in record.tint() {
+    }
+}
+
+fn append_rows(bytes: &mut Vec<u8>, rows: &[[f32; 4]]) {
+    // Arrays have no padding. Copy one record while preserving the shader's little-endian layout.
+    #[cfg(target_endian = "little")]
+    bytes.extend_from_slice(bytemuck::cast_slice(rows));
+    #[cfg(target_endian = "big")]
+    for row in rows {
+        for value in row {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     }
@@ -98,6 +121,67 @@ fn compact_normal_is_safe(record: &InstanceRecord) -> bool {
 mod tests {
     use super::*;
     use glam::{Mat4, Quat, Vec3};
+    #[test]
+    fn bulk_packing_preserves_shader_bytes_for_both_layouts() {
+        let mut shear = Mat4::IDENTITY;
+        shear.y_axis.x = 0.35;
+        for transform in [
+            Mat4::IDENTITY,
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(-0.5, 2., 1.5),
+                Quat::from_rotation_y(0.7),
+                Vec3::new(12., -3., 5.),
+            ) * shear,
+        ] {
+            let record = InstanceRecord::new(7, 42, transform, [0.2, 0.4, 0.7, 0.9])
+                .unwrap()
+                .with_foliage_response(
+                    nico_presentation::foliage::FoliageResponse::from_seed(42, 0.6, 0.8).unwrap(),
+                );
+            for encoding in [Encoding::Full, Encoding::Compact] {
+                let mut expected = vec![1, 2, 3];
+                let mut actual = expected.clone();
+                for _ in 0..2 {
+                    for row in 0..3 {
+                        for value in record.transform().row(row).to_array() {
+                            expected.extend_from_slice(&value.to_le_bytes());
+                        }
+                    }
+                    match encoding {
+                        Encoding::Full => {
+                            for row in 0..3 {
+                                for value in record
+                                    .normal_transform()
+                                    .row(row)
+                                    .extend(record.foliage_response().parameters()[row])
+                                    .to_array()
+                                {
+                                    expected.extend_from_slice(&value.to_le_bytes());
+                                }
+                            }
+                        }
+                        Encoding::Compact => {
+                            for value in record
+                                .foliage_response()
+                                .parameters()
+                                .into_iter()
+                                .chain([glam::Mat3::from_mat4(transform).determinant().recip()])
+                            {
+                                expected.extend_from_slice(&value.to_le_bytes());
+                            }
+                        }
+                    }
+                    for value in record.tint() {
+                        expected.extend_from_slice(&value.to_le_bytes());
+                    }
+                    encoding.pack(&mut actual, &record);
+                }
+                assert_eq!(actual.len(), 3 + 2 * encoding.bytes() as usize);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
     #[test]
     fn compact_selection_preserves_full_fallback_for_badly_conditioned_affine_data() {
         for scale in [Vec3::ONE, Vec3::new(0.5, 2., -1.)] {
