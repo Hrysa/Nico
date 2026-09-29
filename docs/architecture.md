@@ -168,6 +168,8 @@ Arena starts one dependency graph from `nico.project.toml`, using `default_scene
 Project asset references stay under the fixed `assets` folder.
 Content hashes include the selected scene path, manifest, and `assets` folder.
 Snapshots include the manifest and project assets.
+Content hashes and snapshots skip generated `.nico` cache directories, including caches inside `assets` from older layouts.
+Content hashing and snapshots have no total byte limit. Both stream file bytes through a 64 KiB buffer.
 `assets/logic` holds authoritative content; `assets/presentation` holds client content.
 Game readers resolve definition references; engine workers load unique GLB and PNG sources and their embedded textures.
 Traversal rejects cycles and missing files before loading. One fixed progress total counts source files, including their embedded dependencies.

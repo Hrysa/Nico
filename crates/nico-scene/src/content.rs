@@ -10,10 +10,10 @@ use std::{
 };
 
 const MAX_FILES: usize = 32_768;
-const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_DEPTH: usize = 64;
 
-/// Hash the manifest, default scene, and asset folder. Call off the UI/runtime thread.
+/// Hash the manifest, default scene, and asset folder, excluding `.nico` cache directories.
+/// Call off the UI/runtime thread.
 pub fn revision(project: &Project, cancelled: &impl Fn() -> bool) -> io::Result<String> {
     digest(project, None, cancelled)
 }
@@ -75,6 +75,10 @@ fn collect(
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
+            // Import caches are generated data, including caches from older layouts.
+            if entry.file_name() == ".nico" && entry.file_type()?.is_dir() {
+                continue;
+            }
             collect(
                 root,
                 &relative.join(entry.file_name()),
@@ -123,7 +127,6 @@ fn digest(
     let selected = project.manifest.default_scene.to_string_lossy();
     hash.update((selected.len() as u64).to_le_bytes());
     hash.update(selected.as_bytes());
-    let mut total = 0_u64;
     for relative in files {
         check(cancelled)?;
         let path = project.root().join(&relative);
@@ -133,10 +136,6 @@ fn digest(
         }
         let mut source = fs::File::open(path)?;
         let length = source.metadata()?.len();
-        total = total
-            .checked_add(length)
-            .filter(|n| *n <= MAX_BYTES)
-            .ok_or_else(|| io::Error::other("content exceeds 512 MiB"))?;
         let name = relative
             .iter()
             .map(|p| p.to_str().unwrap())
@@ -240,13 +239,39 @@ mod tests {
     }
 
     #[test]
-    fn oversized_sources_fail_without_allocating_their_size() {
+    fn cache_directories_do_not_change_revisions_or_enter_snapshots() {
+        let root = project();
+        let project = Project::open(root.path()).unwrap();
+        let before = revision(&project, &|| false).unwrap();
+        for relative in ["assets/.nico", "assets/models/.nico"] {
+            let cache = root.path().join(relative);
+            fs::create_dir_all(&cache).unwrap();
+            fs::File::create(cache.join("large"))
+                .unwrap()
+                .set_len(512 * 1024 * 1024 + 1)
+                .unwrap();
+        }
+        assert_eq!(revision(&project, &|| false).unwrap(), before);
+        let output = tempfile::tempdir().unwrap();
+        let (copy, copied_revision) =
+            snapshot(&project, &output.path().join("copy"), &|| false).unwrap();
+        assert_eq!(copied_revision, before);
+        assert_eq!(revision(&copy, &|| false).unwrap(), before);
+        assert!(!copy.root().join("assets/.nico").exists());
+        assert!(!copy.root().join("assets/models/.nico").exists());
+        fs::write(root.path().join("assets/model.bin"), b"changed").unwrap();
+        assert_ne!(revision(&project, &|| false).unwrap(), before);
+    }
+
+    #[test]
+    fn revisions_accept_sources_larger_than_512_mib() {
         let root = project();
         fs::File::create(root.path().join("assets/large"))
             .unwrap()
-            .set_len(MAX_BYTES + 1)
+            .set_len(512 * 1024 * 1024 + 1)
             .unwrap();
-        assert!(revision(&Project::open(root.path()).unwrap(), &|| false).is_err());
+        let revision = revision(&Project::open(root.path()).unwrap(), &|| false).unwrap();
+        assert!(revision.starts_with("sha256:"));
     }
     #[cfg(unix)]
     #[test]

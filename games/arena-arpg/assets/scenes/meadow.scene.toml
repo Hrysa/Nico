@@ -33,8 +33,8 @@ scope = "client"
 name = "Camera"
 [entities.components]
 "nico.camera" = { "vertical_fov_radians" = 1.0, "near" = 0.05, "far" = 200.0, "active" = true }
-"nico.orbit" = { "sensitivity" = [-0.003, 0.003], "pitch_limits" = [0.15, 1.1], "distance" = 7.5, "minimum_distance" = 0.15, "radius" = 0.2, "collision_margin" = 0.02, "restoration_rate" = 10.0, "maximum_delta" = 0.1, "yaw" = 0.0, "pitch" = 0.48 }
-"arena.follow_player" = { "spawn" = "player-spawn", "offset" = [0.0, 1.2, 0.0] }
+"nico.orbit" = { "sensitivity" = [-0.003, 0.003], "pitch_limits" = [0.15, 1.1], "distance" = 5.5, "minimum_distance" = 0.15, "radius" = 0.2, "collision_margin" = 0.02, "restoration_rate" = 10.0, "maximum_delta" = 0.1, "yaw" = 0.0, "pitch" = 0.30 }
+"arena.follow_player" = { "spawn" = "player-spawn", "offset" = [0.0, 1.35, 0.0] }
 
 [[entities]]
 id = "sun"

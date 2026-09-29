@@ -76,6 +76,11 @@ Engine rendering remains; Arena and character preview are the native consumers.
 
 **Remaining goal:** Verify native camera smoothness after rendering changes.
 
+On 2026-09-29, Meadow's default camera changed to 0.30 radians pitch, 5.5 metres distance, and 1.35 metres target height.
+Vertical FOV remains 1.0 radian. Two client scene tests passed on Windows.
+The projection test places an unobstructed, upright 1.8 metre hero within 25–30% of screen height.
+Its feet fall within 69–71% from the top. Animated rendering and user-observed framing remain unverified.
+
 GPU tests confirm that scenery reentry no longer causes repeated uploads.
 Earlier offscreen measurements supported the debug dependency and driver-validation changes.
 Neither result proves native frame-time improvement or user-observed smoothness.
@@ -122,6 +127,12 @@ The integrated editor and Play launcher were removed on 2026-09-28.
 CLI hosts reuse cached imports and require restart after content edits.
 Project scenes, authoring libraries, explicit cache/watch APIs, and local MCP operations remain.
 Earlier editor results do not describe current CLI loading.
+
+On 2026-09-29, Windows checks passed seven scene tests and six Arena project tests after excluding generated caches from content scans.
+Arena loaded the local 220 MiB source tree despite 539 MiB of old caches inside `assets`.
+The content byte limit was then removed. Seven scene tests passed, including hashing a source larger than 512 MiB.
+The server build passed in `target/bridge-validation`; Windows blocked replacement of the default executable.
+Formatting checks passed. No live server or visual session was tested.
 
 Recorded removal checks passed Windows workspace and focused package checks.
 They did not include native visual gameplay.

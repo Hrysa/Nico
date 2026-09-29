@@ -65,6 +65,30 @@ impl Presentation {
 mod tests {
     use super::*;
     #[test]
+    fn meadow_frames_standing_hero_with_forward_space() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let content = arena_arpg_shared::project::ProjectContent::load_scene(
+            &root,
+            Some(std::path::Path::new("assets/scenes/meadow.scene.toml")),
+            nico_scene::HostRole::Client,
+        )
+        .unwrap();
+        let mut presentation = Presentation::load(&content).unwrap();
+        let camera = &mut presentation.camera;
+        // Use an unobstructed, upright 1.8 metre hero. Animation can change these bounds.
+        let view = camera.rig.view(camera.follow_offset, 0., |_| None);
+        let projection = view.view_projection(16. / 9.).unwrap();
+        let screen_y =
+            |height| (1. - projection.project_point3(glam::Vec3::new(0., height, 0.)).y) / 2.;
+        let feet = screen_y(0.);
+        let head = screen_y(1.8);
+        assert!((0.25..=0.30).contains(&(feet - head)));
+        assert!((0.69..=0.71).contains(&feet));
+        assert!(camera.rig.pitch() < 0.48);
+        assert_eq!(view.vertical_fov_radians, 1.0);
+    }
+
+    #[test]
     fn scene_camera_and_lights_drive_runtime_settings() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut project = nico_scene::Project::open(root).unwrap();
