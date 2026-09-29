@@ -251,8 +251,25 @@ Single-threaded stepping and enhanced determinism do not prove cross-platform re
 Codex connects only to nico-mcp-bridge.
 Users launch games independently; the bridge never launches or owns them.
 Bridge and Codex disconnect never stop games.
-Reconnects preserve gameplay and receive new instance IDs.
+Game reconnects preserve gameplay and receive new instance IDs.
 Retry diagnostics use trace-level logging.
+
+Each MCP connection owns a stdio frontend. A shared daemon owns game registrations, cached catalogs, and command routing.
+Both implementations live in `nico-ops`; the executable only selects the mode and configuration.
+Frontends connect through separate MCP sessions on a discovered loopback endpoint.
+An endpoint token checks local discovery. This is not a remote access boundary.
+The state directory belongs to the local user. Do not share it with untrusted users.
+An OS-held startup lock prevents concurrent frontend launches from starting duplicate daemons.
+A second lock protects daemon ownership for its full lifetime. Stale endpoint files are checked before use.
+Windows startup requests process-job breakaway and hides the console. A CIM process broker handles jobs that forbid breakaway.
+Unix startup uses a separate process group and detached standard streams; service-manager process policies still apply.
+Frontends never stop an existing process to free a port.
+Each daemon accepts up to 32 frontend sessions and 32 game connections.
+Readiness and MCP initialization have timeouts. Endpoint files are limited to 4 KiB.
+The daemon exits after 30 idle seconds only when no frontend or game connection remains.
+Frontend loss preserves the daemon and game IDs. Daemon loss triggers frontend startup coordination and game reconnection.
+The frontend reports lost calls as uncertain outcomes. It never replays them after reconnecting.
+Tool-list changes reach each frontend separately. Mutating the same game still requires coordination between users.
 
 Engine hosts own transport, service threads, and lifecycle tools.
 Keep built-in status, stop, and native diagnostics names.

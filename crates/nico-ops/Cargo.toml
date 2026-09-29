@@ -7,7 +7,7 @@ license.workspace = true
 [features]
 default = []
 mcp = ["dep:rmcp", "dep:serde_json", "dep:serde", "dep:uuid"]
-bridge = ["mcp", "dep:sha2", "dep:tokio", "dep:tracing", "rmcp/transport-io", "tokio/net", "tokio/sync", "tokio/io-util", "tokio/macros"]
+bridge = ["mcp", "dep:sha2", "dep:tokio", "dep:tracing", "rmcp/client", "rmcp/transport-io", "tokio/net", "tokio/sync", "tokio/io-util", "tokio/macros"]
 
 [dependencies]
 uuid = { version = "1", features = ["v4"], optional = true }

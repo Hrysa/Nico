@@ -123,6 +123,14 @@ Native checks covered acceptance and saved progress, but not the full kill-to-re
 
 **Remaining goal:** Make fresh-checkout builds, content changes, and reference tests repeatable.
 
+On 2026-09-29, Windows checks passed 40 `nico-ops` tests and six bridge process tests for shared daemon support.
+Coverage includes concurrent startup, frontend exit, stable game IDs, daemon crash recovery, idle shutdown, and occupied-port failure.
+A lost mutation returned an uncertain result and was not replayed.
+The Windows job smoke test killed the first frontend's job while the second frontend retained access to the same daemon.
+The CIM fallback passed with a state-directory path containing spaces. Workspace type checks and focused Clippy checks passed.
+The tested executable is under `target/bridge-validation/debug`; a running old bridge blocked replacement under `target/debug`.
+Unix process lifetime and live Codex reconnection after this upgrade remain unverified. No user game was stopped.
+
 The integrated editor and Play launcher were removed on 2026-09-28.
 CLI hosts reuse cached imports and require restart after content edits.
 Project scenes, authoring libraries, explicit cache/watch APIs, and local MCP operations remain.

@@ -6,17 +6,21 @@
 
 mod access;
 mod client;
+mod daemon;
+mod frontend;
 mod server;
 mod wire;
 
 pub use access::DebugAccess;
 pub use client::{BridgeClient, GameRegistration};
+pub use daemon::{DaemonConfig, serve_daemon};
+pub use frontend::serve_frontend;
 pub use server::serve_stdio;
 pub use wire::GameRole;
 
 use std::{io, net::SocketAddr};
 
-/// Default local game-registration endpoint. MCP itself uses the bridge's stdio.
+/// Default game-registration endpoint. MCP clients use separate stdio frontends.
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:47631";
 
 fn check_address(address: SocketAddr) -> io::Result<()> {

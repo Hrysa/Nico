@@ -139,8 +139,30 @@ args = ["--listen", "127.0.0.1:47631"]
 
 Replace the executable path with your build output.
 Reload the MCP connection after changing its configuration.
-The MCP client may start the bridge; you start games independently.
+The MCP client starts a stdio frontend. It connects to a shared daemon, starting one when needed.
+Several Codex conversations can share this daemon and its connected game instances.
+You start games independently.
 The bridge never launches games, and bridge disconnect never stops them.
+
+Closing one frontend does not stop the daemon or other frontends.
+The daemon exits after 30 seconds without connected frontends or games.
+Use `--idle-seconds N` to set this timeout when starting a new daemon.
+Frontend reconnects keep game instance IDs. Daemon restarts require fresh instance discovery.
+Lost calls return an uncertain outcome and are never replayed automatically.
+
+Daemon state and startup logs live under the temporary directory in `nico-mcp-bridge/<game-address>/`.
+Use `--state-dir PATH` to override this location; frontends sharing an address must use the same directory.
+The daemon publishes a private loopback endpoint there. Port `47631` remains the game-registration endpoint.
+On Windows, startup uses a detached process, with a CIM process-broker fallback when job rules forbid breakaway.
+If local policy blocks both paths, run `nico-mcp-bridge --daemon` separately before connecting MCP.
+After upgrading from the old bridge, close its MCP connections before using the new executable.
+An old bridge holding port `47631` prevents daemon startup; the frontend never stops it automatically.
+
+Windows process-lifetime validation:
+
+~~~sh
+python apps/nico-mcp-bridge/tests/daemon_job_smoke.py --bin-dir target/bridge-validation/debug
+~~~
 
 Development hosts connect to 127.0.0.1:47631 by default.
 They retry quietly when the bridge is unavailable.
@@ -164,7 +186,7 @@ Example arguments for call_game_tool:
 }
 ~~~
 
-Reconnects create new instance IDs.
+Game reconnects create new instance IDs. Reconnecting only an MCP frontend preserves them.
 Cached schemas do not prove a host is connected.
 Use these fixed tools when dynamic tool names do not refresh.
 

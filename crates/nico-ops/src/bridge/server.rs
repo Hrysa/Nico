@@ -224,6 +224,22 @@ pub(super) struct Bridge {
 }
 
 impl Bridge {
+    pub(super) fn new() -> Self {
+        Self {
+            registry: Arc::new(Mutex::new(Registry::new())),
+            revision: watch::channel(0).0,
+        }
+    }
+
+    pub(super) fn has_games(&self) -> bool {
+        self.registry
+            .lock()
+            .unwrap()
+            .instances
+            .values()
+            .any(|instance| instance.sender.is_some())
+    }
+
     fn changed(&self) {
         self.revision
             .send_modify(|revision| *revision = revision.wrapping_add(1));
@@ -253,7 +269,7 @@ impl Bridge {
                 return CallToolResult::structured(
                     json!({"connected_instances":registry.instances.values().filter(|instance| instance.sender.is_some()).count(),
                     "cached_catalogs":registry.catalogs.len(), "retained_instances":registry.instances.len(),
-                    "cache_lifetime":"bridge_process", "launches_games":false}),
+                    "cache_lifetime":"bridge_process", "bridge_pid":std::process::id(), "launches_games":false}),
                 );
             }
             "list_instances" => {
@@ -398,15 +414,19 @@ impl ServerHandler for Bridge {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_tool_list_changed().build())
             .with_server_info(Implementation::new("nico-mcp-bridge", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Games start independently. First list_instances; use connected instance IDs. Cached tools may be offline. list_game_tools returns original game schemas; call_game_tool invokes them even if dynamic tool refresh is unavailable. A timeout or disconnect may leave execution outcome unknown. The bridge never starts or kills processes.")
+            .with_instructions("Games start independently. First list_instances; use connected instance IDs. Cached tools may be offline. list_game_tools returns original game schemas; call_game_tool invokes them even if dynamic tool refresh is unavailable. A timeout or disconnect may leave execution outcome unknown. The bridge never starts or kills game processes.")
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         let mut changes = self.revision.subscribe();
         tokio::spawn(async move {
-            while changes.changed().await.is_ok() {
-                if context.peer.notify_tool_list_changed().await.is_err() {
-                    break;
+            let mut check = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                tokio::select! {
+                    changed = changes.changed() => {
+                        if changed.is_err() || context.peer.notify_tool_list_changed().await.is_err() { break; }
+                    }
+                    _ = check.tick() => { if context.peer.is_transport_closed() { break; } }
                 }
             }
         });
@@ -437,7 +457,7 @@ impl ServerHandler for Bridge {
     }
 }
 
-fn management_tools() -> Vec<Tool> {
+pub(super) fn management_tools() -> Vec<Tool> {
     [
         ("bridge_status", "Read bridge connectivity and schema-cache counts. Never launches games.", json!({}), json!([])),
         ("list_instances", "List connected and retained disconnected game instances with reported host state and snapshot age.", json!({}), json!([])),
@@ -449,7 +469,7 @@ fn management_tools() -> Vec<Tool> {
     }).collect()
 }
 
-async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
+pub(super) async fn serve_game(stream: TcpStream, bridge: Bridge) -> io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let hello = tokio::time::timeout(wire::IO_TIMEOUT, wire::read_message(&mut reader))

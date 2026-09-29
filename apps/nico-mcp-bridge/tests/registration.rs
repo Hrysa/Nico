@@ -23,10 +23,10 @@ impl Mcp {
     fn start(address: SocketAddr) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_nico-mcp-bridge"));
         command
-            .args(["--listen", &address.to_string()])
+            .args(["--listen", &address.to_string(), "--idle-seconds", "1"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -62,6 +62,11 @@ impl Mcp {
         input.flush().unwrap();
     }
     fn request(&mut self, method: &str, params: Value) -> Value {
+        let message = self.response(method, params);
+        assert!(message.get("error").is_none(), "{message}");
+        message["result"].clone()
+    }
+    fn response(&mut self, method: &str, params: Value) -> Value {
         self.next_id += 1;
         self.send(json!({"jsonrpc":"2.0","id":self.next_id,"method":method,"params":params}));
         loop {
@@ -71,8 +76,7 @@ impl Mcp {
                 continue;
             }
             assert_eq!(message["id"], self.next_id, "{message}");
-            assert!(message.get("error").is_none(), "{message}");
-            return message["result"].clone();
+            return message;
         }
     }
     fn call(&mut self, name: &str, args: Value) -> Value {
@@ -120,6 +124,175 @@ fn address() -> SocketAddr {
         .local_addr()
         .unwrap()
 }
+
+fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(Instant::now() < deadline, "condition timed out");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+struct OwnedDaemon(Child);
+impl OwnedDaemon {
+    fn start(address: SocketAddr) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nico-mcp-bridge"));
+        command
+            .args([
+                "--daemon",
+                "--listen",
+                &address.to_string(),
+                "--idle-seconds",
+                "10",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut daemon = Self(command.spawn().unwrap());
+        wait_until(|| {
+            assert!(daemon.0.try_wait().unwrap().is_none());
+            std::net::TcpStream::connect(address).is_ok()
+        });
+        daemon
+    }
+    fn crash(&mut self) {
+        self.0.kill().unwrap();
+        self.0.wait().unwrap();
+    }
+}
+impl Drop for OwnedDaemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn concurrent_frontends_share_daemon_and_survive_first_frontend_exit() {
+    let address = address();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let first = {
+        let barrier = barrier.clone();
+        thread::spawn(move || {
+            barrier.wait();
+            Mcp::start(address)
+        })
+    };
+    barrier.wait();
+    let mut second = Mcp::start(address);
+    let mut first = first.join().unwrap();
+    let pid = first.call("bridge_status", json!({}))["structuredContent"]["bridge_pid"].clone();
+    assert_ne!(pid, json!(first.child.id()));
+    assert_eq!(
+        pid,
+        second.call("bridge_status", json!({}))["structuredContent"]["bridge_pid"]
+    );
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
+    assert_eq!(
+        pid,
+        second.call("bridge_status", json!({}))["structuredContent"]["bridge_pid"]
+    );
+    second.close();
+    wait_until(|| TcpListener::bind(address).is_ok());
+}
+
+#[test]
+fn daemon_restart_reconnects_frontends_and_games_without_replaying_a_mutation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let address = address();
+    let mut daemon = OwnedDaemon::start(address);
+    let mut first = Mcp::start(address);
+    let mut second = Mcp::start(address);
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut game_tools = ToolExtensions::default();
+    game_tools
+        .register(
+            Tool::new(
+                "mutate",
+                "Test mutation",
+                json!({"type":"object"}).as_object().unwrap().clone(),
+            ),
+            move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(500));
+                CallToolResult::structured(json!({"applied":true}))
+            },
+        )
+        .unwrap();
+    let (control, mut host) = control_channel();
+    host.running(1);
+    let game = BridgeClient::start(
+        address,
+        GameRegistration::new("demo", GameRole::Server, "1"),
+        control,
+        game_tools,
+    )
+    .unwrap();
+    let old_id = first.connected("server");
+    assert_eq!(second.connected("server"), old_id);
+    first.next_id += 1;
+    first.send(json!({"jsonrpc":"2.0","id":first.next_id,"method":"tools/call","params":{
+        "name":"call_game_tool","arguments":{"instance_id":old_id,"tool_name":"mutate","arguments":{}}
+    }}));
+    wait_until(|| calls.load(Ordering::SeqCst) == 1);
+    daemon.crash();
+    loop {
+        let response = first.output.recv_timeout(Duration::from_secs(10)).unwrap();
+        if response.get("id").is_none() {
+            continue;
+        }
+        assert_eq!(response["id"], first.next_id);
+        assert_eq!(response["error"]["data"]["code"], "bridge_outcome_unknown");
+        break;
+    }
+    let new_id = first.connected("server");
+    assert_ne!(old_id, new_id);
+    assert_eq!(second.connected("server"), new_id);
+    assert_ne!(
+        first.call("bridge_status", json!({}))["structuredContent"]["bridge_pid"],
+        json!(daemon.0.id())
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!host.stop_requested());
+    first.close();
+    second.close();
+    // Connected games keep the daemon alive after the last frontend exits.
+    thread::sleep(Duration::from_millis(1300));
+    let mut third = Mcp::start(address);
+    assert_eq!(third.connected("server"), new_id);
+    drop(game);
+    host.finish(Ok(()));
+    third.close();
+    wait_until(|| TcpListener::bind(address).is_ok());
+}
+
+#[test]
+fn occupied_game_port_fails_without_stopping_its_owner() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nico-mcp-bridge"));
+    command
+        .args(["--listen", &address.to_string(), "--idle-seconds", "1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut process = command.spawn().unwrap();
+    wait_until(|| process.try_wait().unwrap().is_some());
+    assert!(!process.wait().unwrap().success());
+    assert!(std::net::TcpStream::connect(address).is_ok());
+}
 fn tools() -> ToolExtensions {
     let mut tools = ToolExtensions::default();
     tools.register(Tool::new("echo", "Game-owned echo",json!({"type":"object","required":["message"],"properties":{"message":{"type":"string"}},"additionalProperties":false}).as_object().unwrap().clone()),|args| {
@@ -130,7 +303,7 @@ fn tools() -> ToolExtensions {
 }
 
 #[test]
-fn games_register_tools_dynamically_and_survive_bridge_restart() {
+fn games_register_tools_dynamically_and_survive_frontend_reconnect() {
     let address = address();
     let (server_control, mut server) = control_channel();
     server.running(1);
@@ -226,7 +399,7 @@ fn games_register_tools_dynamically_and_survive_bridge_restart() {
     );
     let mut restarted = Mcp::start(address);
     let new_id = restarted.connected("server");
-    assert_ne!(server_id, new_id);
+    assert_eq!(server_id, new_id);
     assert!(!server.stop_requested());
     let result = restarted.call(
         "demo.server.stop",
@@ -317,7 +490,7 @@ fn arena_tools_route_through_bridge_and_preserve_commands_across_reconnect() {
     app.tick(FIXED_STEP).unwrap();
     let mut reconnected = Mcp::start(endpoint);
     let second = reconnected.connected("server");
-    assert_ne!(first, second);
+    assert_eq!(first, second);
     let completed = routed(
         &mut reconnected,
         &second,
