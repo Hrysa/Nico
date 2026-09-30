@@ -83,6 +83,24 @@ Session-frame counts alone do not prove successful presentation.
 The standalone sample game was removed on 2026-09-28.
 Engine rendering remains; Arena and character preview are the native consumers.
 
+### TrueType text — 2026-09-30
+
+Splash, Meadow, Arena, and character preview now use bundled Noto Sans through the shared `TextFont` API.
+The hardcoded bitmap alphabet has been removed. Shaping, glyph rasterization, and native pixel density use the existing quad renderer.
+Font handles share CPU caches across scene changes. Ownership, budgets, and script limits are documented in [architecture](architecture.md#text).
+
+On Windows, 119 focused tests passed across presentation control, native hosting, Arena client, and character preview.
+One existing startup measurement remained ignored. Eight text tests cover input rejection, shaping, whitespace, density, cache reuse, and eviction.
+Workspace checking and strict Clippy passed with all targets and features. Formatting and diff checks also passed.
+
+The isolated splash test passed with client PID 28284 and recorded 436 successful presentation calls.
+Inspected captures showed splash, loading labels, and connected Meadow text through scene generations 1 and 2.
+The character preview check passed with PID 3012; its capture showed readable multiline text.
+Arena captures from PID 13232 showed its HUD and controls. The broader combat smoke failed during server wave two.
+Its automated server hero died before victory, so that run does not establish a complete combat regression pass.
+All test processes stopped and their windows closed. Captures and status snapshots were separate samples.
+Desktop visibility, user-observed acceptance, macOS rendering, and additional script fallback fonts were not verified.
+
 **Remaining goal:** Verify native camera smoothness after rendering changes.
 
 On 2026-09-29, Meadow's default camera changed to 0.30 radians pitch, 5.5 metres distance, and 1.35 metres target height.

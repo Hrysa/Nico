@@ -6,7 +6,7 @@ Nico is a Rust 2024 workspace. Engine crates live under `crates/`: `nico-runtime
 headless application kernel and depends on the hecs-backed `nico-ecs` world crate.
 `nico-input` owns device state, `nico-presentation` owns the immutable presentation
 boundary. `nico-presentation-control` owns camera control, coordinate helpers, and
-cached bitmap text; `nico-spatial` owns conservative camera queries. `nico-physics`
+shaped TrueType text; `nico-spatial` owns conservative camera queries. `nico-physics`
 owns the Rapier 3D integration, body/collider lifecycle, and optional runtime adapter.
 `nico-render` uses `nico-rhi` contracts. `nico-rhi-wgpu` implements those
 contracts; `nico-winit` composes the native client. `nico-assets` owns asset identity,

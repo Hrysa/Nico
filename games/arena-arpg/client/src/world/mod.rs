@@ -134,6 +134,7 @@ pub fn register(
     definitions: [CharacterVisualDefinition; 3],
     environment: environment::Environment,
     presentation: crate::scene::Presentation,
+    font: nico_presentation_control::text::TextFont,
 ) -> std::io::Result<(AppBuilder, ToolExtensions)> {
     let ops = Arc::new(Mutex::new(Operations {
         commands: FifoCommands::new(128),
@@ -232,11 +233,12 @@ pub fn register(
         Ok(())
     });
     let read = ops.clone();
-    let mut visuals = visuals::Visuals::new(assets, definitions, environment);
+    let mut visuals = visuals::Visuals::new(assets, definitions, environment, font);
     visuals.lighting = presentation.lighting;
     builder.add_system(Stage::Update,"world_client::extract",move|ctx|{
         let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
         let client=ctx.world.resource::<WorldClient>()?;let position=client.prediction.as_ref().map(|p|p.actor.position).unwrap_or(client.zone.settlement);let obstacles=client.zone.obstacles.clone();let dt=ctx.time.delta();
+        visuals.set_raster_scale(window.scale_factor);
         let camera=ctx.world.resource_mut::<Camera>()?;
         let view=camera.rig.view([position.x as f32+camera.follow_offset[0],camera.follow_offset[1],position.z as f32+camera.follow_offset[2]],dt.as_secs_f32(),|sweep|obstacles.iter().filter_map(|o|sweep.cast_aabb(std::array::from_fn(|i|(o.center[i]-o.size[i]/2.)as f32),std::array::from_fn(|i|(o.center[i]+o.size[i]/2.)as f32))).reduce(f32::min));
         let camera_info=json!({"yaw":camera.rig.yaw(),"pitch":camera.rig.pitch(),"distance":camera.rig.distance(),"position":view.position});

@@ -11,7 +11,7 @@ use nico_launch::{
     init_logging,
 };
 use nico_presentation::{Camera3d, Scene3d, UiScene};
-use nico_presentation_control::text::BitmapFont;
+use nico_presentation_control::text::TextFont;
 use nico_runtime::{AppBuilder, RuntimeError, Stage, events::EventReader};
 use nico_winit::NativeClientConfig;
 use serde_json::json;
@@ -102,7 +102,10 @@ fn main() -> Result<()> {
     });
     let mut input = EventReader::<controls::Input>::new();
     let mut camera = controls::Orbit::default();
-    let mut font = BitmapFont::default();
+    let mut font = TextFont::from_bytes(include_bytes!(
+        "../../../games/arena-arpg/assets/presentation/fonts/NotoSans.ttf"
+    ))?;
+    builder.insert_resource(font.clone());
     let mut selected = 0usize;
     let mut last_camera = None;
     let mut framed = false;
@@ -111,6 +114,8 @@ fn main() -> Result<()> {
     let p = publication.clone();
     builder.add_system(Stage::Update, "preview::extract", move |ctx| {
         frame_rate.observe(std::time::Instant::now());
+        font.set_raster_scale(ctx.world.resource::<nico_winit::NativeWindowState>()
+            .map_or(1., |window| window.scale_factor));
         let mut query = ctx.world.query::<&mut Character>();
         let mut characters: Vec<_> = query.iter().collect();
         characters.sort_by_key(|c| c.id);
@@ -192,7 +197,7 @@ fn main() -> Result<()> {
             character.player.clip().unwrap_or(0), character.player.time() * 1000., character.duration() * 1000.,
         );
         let heading = format!("{heading}\nCHAR {} OF {}   VISIBLE {}   EVALUATED {}", selected + 1, count, visible_count, evaluated);
-        font.draw(&mut hud.quads, &heading, [16., 16.], 2., [1.; 4]);
+        font.draw(&mut hud.quads, &heading, [16., 16.], 20., [1.; 4]);
         let clips: Vec<_> = character.assets.clips().iter().enumerate()
             .map(|(i,c)| json!({"index": i, "name": c.name(), "duration": c.duration()})).collect();
         let value = json!({

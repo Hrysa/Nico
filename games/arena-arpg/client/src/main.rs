@@ -3,6 +3,7 @@ mod character;
 mod controls;
 mod scene;
 mod splash;
+mod text;
 mod view;
 mod visuals;
 mod world;
@@ -60,6 +61,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 fn main() -> Result<()> {
     let mut args = Args::parse();
     init_logging(args.common.log_level)?;
+    let font = text::load()?;
     let entry = arena_arpg_shared::project::StartupScene::load(
         args.project.as_deref().unwrap_or(std::path::Path::new(
             arena_arpg_shared::project::DEFAULT_PROJECT,
@@ -71,25 +73,25 @@ fn main() -> Result<()> {
     )?;
     args.project = Some(entry.project.root().to_owned());
     if entry.splash.is_some() {
-        return splash::run(args, entry);
+        return splash::run(args, entry, font);
     }
     let host = ClientHost::new(args.host.clone()).with_game_identity("arena_arpg", "1");
     let prepared = prepare_game(
         args,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        font.clone(),
     )?;
     let config = native_config(prepared.args.arena);
     let ready = compose_game(prepared)?;
-    host.with_mcp_tools(ready.tools).run_scenes(
-        AppBuilder::new().build()?,
-        ready.scene,
-        config,
-        |_| Ok(None),
-    )?;
+    let mut root = AppBuilder::new();
+    root.insert_resource(font);
+    host.with_mcp_tools(ready.tools)
+        .run_scenes(root.build()?, ready.scene, config, |_| Ok(None))?;
     Ok(())
 }
 
 struct PreparedGame {
+    font: nico_presentation_control::text::TextFont,
     args: Args,
     content: arena_arpg_shared::project::ProjectContent,
     presentation: scene::Presentation,
@@ -101,6 +103,7 @@ struct PreparedGame {
 fn prepare_game(
     mut args: Args,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    font: nico_presentation_control::text::TextFont,
 ) -> Result<PreparedGame> {
     let check = || -> Result<()> {
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
@@ -155,6 +158,7 @@ fn prepare_game(
     };
     check()?;
     Ok(PreparedGame {
+        font,
         args,
         content,
         presentation,
@@ -167,6 +171,7 @@ fn prepare_game(
 
 fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientScene> {
     let PreparedGame {
+        font,
         args,
         content,
         presentation,
@@ -187,6 +192,7 @@ fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientSce
             definitions,
             environment,
             presentation,
+            font,
         )?
     } else {
         let (builder, mut tools) = arena_arpg_shared::tools::register(
@@ -205,6 +211,7 @@ fn compose_game(prepared: PreparedGame) -> Result<nico_launch::client::ClientSce
                 definitions,
                 logic,
                 presentation.lighting,
+                font,
             )?,
             tools,
         )
@@ -457,6 +464,7 @@ mod tests {
             start.elapsed().as_secs_f64() * 1000.
         );
         std::hint::black_box(PreparedGame {
+            font: text::load().unwrap(),
             args,
             content,
             presentation,

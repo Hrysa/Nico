@@ -3,6 +3,8 @@
 Nico is an experimental Rust 2024 game engine with shared headless gameplay and native 2D/3D rendering.
 The reference game includes a persistent multiplayer world and a separate Arena combat test.
 Native clients use Winit and wgpu.
+Splash screens and HUDs use bundled Noto Sans with TrueType shaping and cached glyph textures.
+See the [font license and coverage](games/arena-arpg/assets/presentation/fonts/README.md).
 See [roadmap](docs/roadmap.md) for current progress and known test limits.
 
 ## Quick start

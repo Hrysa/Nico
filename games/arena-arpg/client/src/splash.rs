@@ -5,7 +5,7 @@ use nico_assets::batch::Batch;
 use nico_launch::client::ClientHost;
 use nico_ops::mcp::{CallToolResult, Tool, ToolAccess, ToolExtensions};
 use nico_presentation::{Quad, UiScene};
-use nico_presentation_control::text::BitmapFont;
+use nico_presentation_control::text::TextFont;
 use nico_runtime::{AppBuilder, Stage};
 use nico_winit::{NativeScene, NativeWindowState};
 use serde::Serialize;
@@ -53,11 +53,11 @@ fn register(tools: &mut ToolExtensions, state: Shared) -> Result<()> {
     Ok(())
 }
 
-pub fn run(mut args: Args, entry: StartupScene) -> Result<()> {
+pub fn run(mut args: Args, entry: StartupScene, font: TextFont) -> Result<()> {
     let splash = entry.splash.as_ref().unwrap().clone();
     args.scene = Some(splash.next_scene.clone());
     let state = state(&splash);
-    let mut builder = splash_app(splash, state.clone());
+    let mut builder = splash_app(splash, state.clone(), font.clone());
     let mut prepared = Some(arena_arpg_shared::scene::registry()?.prepare(
         &entry.scene,
         nico_scene::HostRole::Client,
@@ -73,6 +73,7 @@ pub fn run(mut args: Args, entry: StartupScene) -> Result<()> {
         .with_game_identity("arena_arpg", "1")
         .with_mcp_tools(tools);
     let mut root = AppBuilder::new();
+    root.insert_resource(font.clone());
     let observed = state.clone();
     root.add_system(
         Stage::Update,
@@ -95,12 +96,12 @@ pub fn run(mut args: Args, entry: StartupScene) -> Result<()> {
         root.build()?,
         NativeScene::new(builder.build_scene()?, |_, _: &mut Vec<()>| {}),
         crate::native_config(false),
-        |app| {
+        move |app| {
             let mut loader = app.app_world().resource::<Mutex<Loader>>()?.lock().unwrap();
             let Loader { args, batch, state } = &mut *loader;
             state.lock().unwrap().active_scene_generation =
                 app.scene_id().map(|id| id.generation());
-            poll_loading(args, batch, state)
+            poll_loading(args, batch, state, &font)
         },
     )?;
     Ok(())
@@ -109,11 +110,13 @@ fn poll_loading(
     args: &mut Option<Args>,
     batch: &mut Option<Batch<PreparedGame>>,
     state: &Shared,
+    font: &TextFont,
 ) -> Result<Option<nico_launch::client::ClientScene>> {
     if state.lock().unwrap().phase == "loading"
         && let Some(args) = args.take()
     {
         let observed = state.clone();
+        let font = font.clone();
         match Batch::start(vec![args], move |args, cancelled| {
             let observed = observed.clone();
             let _observer = nico_assets::progress::observe_progress(move |update| {
@@ -124,7 +127,7 @@ fn poll_loading(
                     state.phase = "preparing";
                 }
             });
-            crate::prepare_game(args, cancelled.clone())
+            crate::prepare_game(args, cancelled.clone(), font.clone())
         }) {
             Ok(started) => *batch = Some(started),
             Err(error) => fail(state, error.to_string()),
@@ -153,9 +156,8 @@ fn fail(state: &Shared, error: String) {
     state.error = Some(error);
 }
 
-fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
+fn splash_app(splash: Splash, state: Shared, mut font: TextFont) -> AppBuilder {
     let mut builder = AppBuilder::new();
-    let mut font = BitmapFont::default();
     let white = Arc::new(nico_assets::Texture::rgba8(1, 1, vec![255; 4]).unwrap());
     builder.add_system(Stage::Update, "splash::progress", move |ctx| {
         let mut state = state.lock().unwrap();
@@ -167,6 +169,11 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
             .world
             .resource::<NativeWindowState>()
             .map_or([1280., 720.], |s| s.logical_size);
+        font.set_raster_scale(
+            ctx.world
+                .resource::<NativeWindowState>()
+                .map_or(1., |s| s.scale_factor),
+        );
         let mut ui = UiScene::default();
         ui.quads.push(Quad {
             center: [size[0] / 2., size[1] / 2.],
@@ -175,12 +182,12 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
             texture: Some(white.clone()),
         });
         let scale = (size[0] / 160.).clamp(2., 8.);
-        let title_size = BitmapFont::measure(&splash.title);
+        let title_size = font.measure(&splash.title, scale * 10.);
         font.draw(
             &mut ui.quads,
             &splash.title,
-            [(size[0] - title_size[0] * scale) / 2., size[1] * 0.38],
-            scale,
+            [(size[0] - title_size[0]) / 2., size[1] * 0.38],
+            scale * 10.,
             [0.82, 0.94, 0.88, 1.],
         );
         if state.phase != "splash" {
@@ -191,12 +198,12 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
                 _ => format!("IMPORTING ASSETS  {}/{}", state.completed, state.total),
             };
             let text_scale = (size[0] / 640.).clamp(1., 2.);
-            let text_size = BitmapFont::measure(&label);
+            let text_size = font.measure(&label, text_scale * 10.);
             font.draw(
                 &mut ui.quads,
                 &label,
-                [(size[0] - text_size[0] * text_scale) / 2., size[1] * 0.57],
-                text_scale,
+                [(size[0] - text_size[0]) / 2., size[1] * 0.57],
+                text_scale * 10.,
                 [0.65, 0.74, 0.72, 1.],
             );
             let width = (size[0] * 0.4).min(480.);
@@ -220,12 +227,12 @@ fn splash_app(splash: Splash, state: Shared) -> AppBuilder {
             }
             if state.error.is_some() {
                 let message = "SEE LOG FOR DETAILS";
-                let extent = BitmapFont::measure(message);
+                let extent = font.measure(message, text_scale * 10.);
                 font.draw(
                     &mut ui.quads,
                     message,
-                    [(size[0] - extent[0] * text_scale) / 2., size[1] * 0.69],
-                    text_scale,
+                    [(size[0] - extent[0]) / 2., size[1] * 0.69],
+                    text_scale * 10.,
                     [0.9, 0.45, 0.4, 1.],
                 );
             }
@@ -252,14 +259,15 @@ mod tests {
         args.scene = Some(splash.next_scene.clone());
         let mut args = Some(args);
         let mut batch = None;
-        assert!(poll_loading(&mut args, &mut batch, &state)?.is_none());
+        let font = crate::text::load()?;
+        assert!(poll_loading(&mut args, &mut batch, &state, &font)?.is_none());
         assert!(args.is_some() && batch.is_none());
-        let mut app = splash_app(splash, state.clone()).build()?;
+        let mut app = splash_app(splash, state.clone(), font.clone()).build()?;
         app.start()?;
         app.tick(Duration::from_secs(1))?;
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         let next = loop {
-            if let Some(next) = poll_loading(&mut args, &mut batch, &state)? {
+            if let Some(next) = poll_loading(&mut args, &mut batch, &state, &font)? {
                 break next;
             }
             assert!(
@@ -280,7 +288,7 @@ mod tests {
             next.tools.access("scene_loading"),
             Some(ToolAccess::Inspect)
         );
-        assert!(poll_loading(&mut args, &mut batch, &state)?.is_none());
+        assert!(poll_loading(&mut args, &mut batch, &state, &font)?.is_none());
         app.shutdown()?;
         Ok(())
     }
@@ -296,9 +304,10 @@ mod tests {
         args.scene = Some("assets/scenes/missing.scene.toml".into());
         let mut args = Some(args);
         let mut batch = None;
+        let font = crate::text::load()?;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while state.lock().unwrap().phase != "failed" {
-            assert!(poll_loading(&mut args, &mut batch, &state)?.is_none());
+            assert!(poll_loading(&mut args, &mut batch, &state, &font)?.is_none());
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -314,7 +323,10 @@ mod tests {
             duration_seconds: 1.,
         };
         let state = state(&splash);
-        let mut app: nico_runtime::App = splash_app(splash, state.clone()).build().unwrap();
+        let mut app: nico_runtime::App =
+            splash_app(splash, state.clone(), crate::text::load().unwrap())
+                .build()
+                .unwrap();
         app.start().unwrap();
         app.tick(Duration::from_millis(999)).unwrap();
         assert_eq!(state.lock().unwrap().phase, "splash");

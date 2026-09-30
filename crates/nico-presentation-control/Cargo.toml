@@ -8,6 +8,7 @@ license.workspace = true
 scene = ["dep:nico-scene", "dep:nico-animation", "nico-assets/png-import", "nico-assets/gltf-import"]
 
 [dependencies]
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 nico-scene = { path = "../nico-scene", optional = true }
 nico-animation = { path = "../nico-animation", optional = true }
 glam = "0.30"

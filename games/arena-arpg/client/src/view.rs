@@ -31,6 +31,7 @@ struct ViewPlugin(
     [crate::character::definition::CharacterVisualDefinition; 3],
     Arc<arena_arpg_shared::characters::CharacterCatalog>,
     nico_presentation::SceneLighting,
+    nico_presentation_control::text::TextFont,
 );
 pub fn register_configured(
     builder: AppBuilder,
@@ -39,6 +40,7 @@ pub fn register_configured(
     definitions: [crate::character::definition::CharacterVisualDefinition; 3],
     logic: Arc<arena_arpg_shared::characters::CharacterCatalog>,
     lighting: nico_presentation::SceneLighting,
+    font: nico_presentation_control::text::TextFont,
 ) -> std::io::Result<AppBuilder> {
     let assets = json!({"schema_version":1,"definitions":definitions,"hero_imported":character[0].is_some(),"hero_resolved":character[0].as_ref().map(|a| a.inspection()),"resolved":character.iter().map(|a|a.as_ref().map(|a|a.inspection())).collect::<Vec<_>>()});
     tools.register(Tool::new("client_characters", "Inspect validated character visual definitions loaded at startup. Paths are relative to the scene character catalog; no live reload.", json!({"type":"object","properties":{},"additionalProperties":false}).as_object().unwrap().clone()), move |args| {
@@ -78,7 +80,14 @@ pub fn register_configured(
     for name in ["client_characters", "client_state"] {
         tools.set_access(name, nico_ops::mcp::ToolAccess::Inspect)?;
     }
-    Ok(builder.add_plugin(ViewPlugin(ops, character, definitions, logic, lighting)))
+    Ok(builder.add_plugin(ViewPlugin(
+        ops,
+        character,
+        definitions,
+        logic,
+        lighting,
+        font,
+    )))
 }
 fn parse_edit(args: &serde_json::Map<String, Value>) -> Result<Edit, &'static str> {
     if args.get("action").and_then(Value::as_str) != Some("camera")
@@ -121,7 +130,7 @@ impl Plugin for ViewPlugin {
         builder.insert_resource(Scene3d::default());
         let ops = self.0.clone();
         let lighting = self.4;
-        let mut visuals = Visuals::configured(self.2.clone(), &self.3);
+        let mut visuals = Visuals::configured(self.2.clone(), &self.3, self.5.clone());
         visuals.imported = std::array::from_fn(|i| self.1[i].is_some());
         let assets = self.1.clone();
         let mut kinds = [None; 4];
@@ -136,6 +145,7 @@ impl Plugin for ViewPlugin {
             }
             let snapshot=ctx.world.resource::<Arena>()?.snapshot().clone();
             let window=ctx.world.resource::<NativeWindowState>().cloned().unwrap_or_default();
+            visuals.set_raster_scale(window.scale_factor);
             let dt=ctx.time.delta().as_secs_f32();
             let camera=ctx.world.resource_mut::<Camera>()?;
             let view=camera.view([snapshot.actors[0].position.x as f32,snapshot.actors[0].position.z as f32],dt);
@@ -221,6 +231,7 @@ mod tests {
                 ),
                 arena_arpg_shared::characters::CharacterCatalog::builtin(),
                 Default::default(),
+                crate::text::load().unwrap(),
             ))
             .build()
             .unwrap();

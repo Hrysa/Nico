@@ -1,7 +1,7 @@
 use arena_arpg_shared::{Action, RunState, Snapshot};
 use nico_assets::{Mesh, Texture};
 use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
-use nico_presentation_control::text::{BitmapFont, rectangle};
+use nico_presentation_control::text::{TextFont, rectangle};
 use std::sync::Arc;
 
 struct ProceduralMeshes {
@@ -30,7 +30,8 @@ pub struct Visuals {
     pub imported: [bool; 3],
     white: Arc<Texture>,
     shade: Arc<Texture>,
-    font: BitmapFont,
+    font: TextFont,
+    raster_scale: f32,
     tile: Arc<Mesh>,
     walls: [Arc<Mesh>; 4],
     body: Arc<Mesh>,
@@ -55,11 +56,13 @@ impl Visuals {
         Self::configured(
             std::array::from_fn(crate::character::definition::CharacterVisualDefinition::builtin),
             &arena_arpg_shared::characters::CharacterCatalog::builtin(),
+            crate::text::load().unwrap(),
         )
     }
     pub fn configured(
         definitions: [crate::character::definition::CharacterVisualDefinition; 3],
         logic: &arena_arpg_shared::characters::CharacterCatalog,
+        font: TextFont,
     ) -> Self {
         let white = Arc::new(Texture::rgba8(1, 1, vec![255; 4]).unwrap());
         let mut pixels = Vec::new();
@@ -74,7 +77,8 @@ impl Visuals {
             imported: [false; 3],
             white,
             shade: Arc::new(Texture::rgba8(6, 1, pixels).unwrap()),
-            font: BitmapFont::default(),
+            font,
+            raster_scale: 1.,
             tile: box_mesh([2.0, 0.1, 2.0]),
             walls: arena_arpg_shared::geometry::WALLS
                 .map(|wall| box_mesh(wall.size.map(|v| v as f32))),
@@ -458,6 +462,8 @@ impl Visuals {
         let mut hud = UiScene::default();
         // Keep a readable authored layout at small native window sizes.
         let hud_scale = (size[0] / 480.0).min(size[1] / 360.0).clamp(0.01, 1.0);
+        self.font
+            .set_raster_scale((self.raster_scale * hud_scale).clamp(0.25, 4.));
         let width = size[0] / hud_scale;
         let height = size[1] / hud_scale;
         self.rect(
@@ -646,7 +652,10 @@ impl Visuals {
         rectangle(hud, p, size, color, self.white.clone());
     }
     fn text(&mut self, hud: &mut UiScene, text: &str, p: [f32; 2], scale: f32, color: [f32; 4]) {
-        self.font.draw(&mut hud.quads, text, p, scale, color);
+        self.font.draw(&mut hud.quads, text, p, scale * 10., color);
+    }
+    pub fn set_raster_scale(&mut self, scale: f32) {
+        self.raster_scale = scale;
     }
 }
 pub(crate) fn box_mesh(size: [f32; 3]) -> Arc<Mesh> {

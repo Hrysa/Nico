@@ -80,6 +80,8 @@ pub struct NativeWindowState {
     pub focused: bool,
     pub pointer_captured: bool,
     pub logical_size: [f32; 2],
+    /// Physical pixels per logical pixel, used for text rasterization.
+    pub scale_factor: f32,
     pub capture_error: Option<String>,
 }
 impl Default for NativeWindowState {
@@ -88,6 +90,7 @@ impl Default for NativeWindowState {
             focused: false,
             pointer_captured: false,
             logical_size: [1280.0, 720.0],
+            scale_factor: 1.,
             capture_error: None,
         }
     }
@@ -434,6 +437,7 @@ impl NativeClientHost {
         if let Some(window) = &self.window {
             let logical = self.size.to_logical::<f32>(window.scale_factor());
             self.window_state.logical_size = [logical.width, logical.height];
+            self.window_state.scale_factor = window.scale_factor() as f32;
         }
         self.session
             .app

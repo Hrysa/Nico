@@ -9,7 +9,7 @@ use arena_arpg_shared::{
 use glam::{Quat, Vec3};
 use nico_assets::{Mesh, Texture};
 use nico_presentation::{Camera3d, MeshInstance, Scene3d, UiScene};
-use nico_presentation_control::text::{BitmapFont, rectangle};
+use nico_presentation_control::text::{TextFont, rectangle};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 pub struct Visuals {
     pub lighting: nico_presentation::SceneLighting,
@@ -32,7 +32,7 @@ pub struct Visuals {
     positions: BTreeMap<u64, arena_arpg_shared::Vec2>,
     path: Arc<Mesh>,
     parts: Vec<Vec<Arc<Mesh>>>,
-    font: BitmapFont,
+    font: TextFont,
     pub frame_rate: super::frame_rate::FrameRate,
     pub animation: serde_json::Value,
     pub actor_animations: Vec<serde_json::Value>,
@@ -71,6 +71,7 @@ impl Visuals {
         assets: [Option<Arc<CharacterAssets>>; 3],
         definitions: [CharacterVisualDefinition; 3],
         environment: super::environment::Environment,
+        font: TextFont,
     ) -> Self {
         let parts = definitions
             .iter()
@@ -115,11 +116,14 @@ impl Visuals {
             positions: BTreeMap::new(),
             path: mesh([6., 0.02, 44.]),
             parts,
-            font: BitmapFont::default(),
+            font,
             frame_rate: super::frame_rate::FrameRate::default(),
             animation: serde_json::Value::Null,
             actor_animations: Vec::new(),
         }
+    }
+    pub fn set_raster_scale(&mut self, scale: f32) {
+        self.font.set_raster_scale(scale);
     }
     pub fn render(
         &mut self,
@@ -515,7 +519,7 @@ impl Visuals {
                 "F3 DEBUG: GREEN COLLISION / MAGENTA TARGET
 YELLOW REACH / RED ACTIVE HIT",
                 [12., 190.],
-                1.,
+                1. * 10.,
                 [1.; 4],
             );
         }
@@ -533,7 +537,7 @@ YELLOW REACH / RED ACTIVE HIT",
             &mut hud.quads,
             &title,
             [margin + 8., margin + 8.],
-            scale,
+            scale * 10.,
             [0.6, 0.95, 1., 1.],
         );
         if let Some(snapshot) = &client.latest
@@ -562,7 +566,7 @@ YELLOW REACH / RED ACTIVE HIT",
                 &mut hud.quads,
                 &info,
                 [margin + 8., margin + 22. * scale],
-                scale,
+                scale * 10.,
                 [1.; 4],
             );
         } else {
@@ -570,7 +574,7 @@ YELLOW REACH / RED ACTIVE HIT",
                 &mut hud.quads,
                 "WAITING FOR WORLD SERVER",
                 [margin + 8., margin + 28. * scale],
-                scale,
+                scale * 10.,
                 [1.; 4],
             );
         }
@@ -608,7 +612,7 @@ YELLOW REACH / RED ACTIVE HIT",
                 &mut hud.quads,
                 &format!("{text}\nOBJECTIVE {distance:.0}M\n{hint}"),
                 [margin + 8., 108. * scale],
-                scale,
+                scale * 10.,
                 [1., 0.9, 0.5, 1.],
             );
         }
@@ -624,7 +628,7 @@ YELLOW REACH / RED ACTIVE HIT",
             &mut hud.quads,
             help,
             [margin + 8., (size[1] - 32. * scale).max(0.)],
-            scale,
+            scale * 10.,
             [1.; 4],
         );
         if !captured {
@@ -632,7 +636,7 @@ YELLOW REACH / RED ACTIVE HIT",
                 &mut hud.quads,
                 "CLICK TO CONTROL",
                 [(size[0] - 96. * scale) / 2., 16.],
-                scale,
+                scale * 10.,
                 [1., 0.9, 0.5, 1.],
             );
         }
@@ -641,7 +645,7 @@ YELLOW REACH / RED ACTIVE HIT",
                 &mut hud.quads,
                 "CONNECTION LOST / RETRYING",
                 [margin + 8., 160. * scale],
-                scale,
+                scale * 10.,
                 [1., 0.5, 0.4, 1.],
             );
         }
@@ -657,7 +661,7 @@ YELLOW REACH / RED ACTIVE HIT",
             &mut hud.quads,
             &self.frame_rate.hud(),
             [fps_origin[0] + 8. * scale, fps_origin[1] + 8. * scale],
-            scale,
+            scale * 10.,
             [1.; 4],
         );
         Ok((scene, hud))

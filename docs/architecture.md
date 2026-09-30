@@ -131,6 +131,28 @@ Transparency sorting is per draw, so intersecting surfaces can still show orderi
 Cameras use unit quaternions and zero-to-one depth.
 Detailed material and shader rules belong in [rendering code](../crates/nico-render/src/meshes.rs).
 
+### Text
+
+`nico-presentation-control::text::TextFont` shapes supplied fonts with cosmic-text and rasterizes glyphs with Swash.
+It creates ordinary textured UI quads. The existing quad renderer and shaders draw those quads.
+The hardcoded bitmap alphabet has been removed. TrueType glyphs still become raster textures before drawing.
+Position and color changes reuse glyph textures. Prepared layouts retain logical pixel sizes across density changes.
+Native hosts publish pixel density through `NativeWindowState`; games use it when preparing text.
+
+Arena and character preview embed [Noto Sans](../games/arena-arpg/assets/presentation/fonts/README.md) from the game's presentation assets.
+The application loads one shared font handle before scene startup and retains it as an application resource.
+Splash and gameplay scenes receive clones. Scene cleanup releases their handles without clearing the shared CPU caches.
+GPU canvas textures follow the renderer's existing frame retention rules.
+
+No system font search occurs. Games can provide more font bytes for script fallback.
+Unsupported characters use a replacement glyph; bundled Noto Sans does not provide complete Unicode coverage.
+Font sources have a combined 16 MiB limit. A text call accepts at most 4096 UTF-8 bytes.
+Font sizes range from 1 through 256 logical pixels. Supported pixel densities range from 0.25 through 4.
+The cache retains 64 layouts, up to 1024 glyph entries, and up to 16 MiB of glyph pixels.
+Older layouts retire first. Reaching either glyph budget clears cached layouts and glyph entries.
+Snapshots can retain texture references after cache eviction; these budgets do not bound total application memory.
+Atlas packing and signed distance fields remain outside this implementation.
+
 ### Instancing and streaming
 
 Immutable batches own placement data, bounds, IDs, and shared prototypes.
